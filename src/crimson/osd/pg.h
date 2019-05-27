@@ -12,7 +12,9 @@
 #include <seastar/core/shared_future.hh>
 
 #include "crimson/net/Fwd.h"
+#include "os/Transaction.h"
 #include "osd/osd_types.h"
+#include "osd/osd_internal_types.h"
 #include "recovery_state.h"
 
 template<typename T> using Ref = boost::intrusive_ptr<T>;
@@ -128,7 +130,13 @@ private:
 			    const std::vector<int>& new_acting,
 			    int new_acting_primary);
   seastar::future<Ref<MOSDOpReply>> do_osd_ops(Ref<MOSDOp> m);
-  seastar::future<> do_osd_op(const object_info_t& oi, OSDOp* op);
+  seastar::future<> do_osd_op(
+    ObjectState& os,
+    OSDOp& op,
+    ceph::os::Transaction& txn);
+  seastar::future<ceph::bufferlist> do_pgnls(ceph::bufferlist& indata,
+					     const std::string& nspace,
+					     uint64_t limit);
 
 private:
   const spg_t pgid;

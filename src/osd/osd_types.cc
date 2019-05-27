@@ -35,7 +35,6 @@ extern "C" {
 }
 
 #include "common/Formatter.h"
-
 #include "OSDMap.h"
 #include "osd_types.h"
 
@@ -1028,9 +1027,9 @@ std::string pg_state_string(uint64_t state)
   return ret;
 }
 
-boost::optional<uint64_t> pg_string_state(const std::string& state)
+std::optional<uint64_t> pg_string_state(const std::string& state)
 {
-  boost::optional<uint64_t> type;
+  std::optional<uint64_t> type;
   if (state == "active")
     type = PG_STATE_ACTIVE;
   else if (state == "clean")
@@ -1096,7 +1095,7 @@ boost::optional<uint64_t> pg_string_state(const std::string& state)
   else if (state == "unknown")
     type = 0;
   else
-    type = boost::none;
+    type = std::nullopt;
   return type;
 }
 
@@ -4121,7 +4120,7 @@ void ObjectModDesc::visit(Visitor *visitor) const
 	break;
       }
       case SETATTRS: {
-	map<string, boost::optional<ceph::buffer::list> > attrs;
+	map<string, std::optional<ceph::buffer::list> > attrs;
 	decode(attrs, bp);
 	visitor->setattrs(attrs);
 	break;
@@ -4175,7 +4174,7 @@ struct DumpVisitor : public ObjectModDesc::Visitor {
     f->dump_unsigned("old_size", old_size);
     f->close_section();
   }
-  void setattrs(map<string, boost::optional<ceph::buffer::list> > &attrs) override {
+  void setattrs(map<string, std::optional<ceph::buffer::list> > &attrs) override {
     f->open_object_section("op");
     f->dump_string("code", "SETATTRS");
     f->open_array_section("attrs");
@@ -4235,7 +4234,7 @@ void ObjectModDesc::dump(Formatter *f) const
 
 void ObjectModDesc::generate_test_instances(list<ObjectModDesc*>& o)
 {
-  map<string, boost::optional<ceph::buffer::list> > attrs;
+  map<string, std::optional<ceph::buffer::list> > attrs;
   attrs[OI_ATTR];
   attrs[SS_ATTR];
   attrs["asdf"];
@@ -4275,6 +4274,125 @@ void ObjectModDesc::decode(ceph::buffer::list::const_iterator &_bl)
   DECODE_FINISH(_bl);
 }
 
+std::atomic<int32_t> ObjectCleanRegions::max_num_intervals = {10};
+
+void ObjectCleanRegions::set_max_num_intervals(int32_t num)
+{
+  max_num_intervals = num;
+}
+
+void ObjectCleanRegions::trim()
+{
+  while(clean_offsets.num_intervals() > max_num_intervals) {
+    typename interval_set<uint64_t>::iterator shortest_interval = clean_offsets.begin();
+    if (shortest_interval == clean_offsets.end())
+      break;
+    for (typename interval_set<uint64_t>::iterator it = clean_offsets.begin();
+        it != clean_offsets.end();
+        ++it) {
+      if (it.get_len() < shortest_interval.get_len())
+        shortest_interval = it;
+    }
+    clean_offsets.erase(shortest_interval);
+  }
+}
+
+void ObjectCleanRegions::merge(const ObjectCleanRegions &other)
+{
+  clean_offsets.intersection_of(other.clean_offsets);
+  clean_omap = clean_omap && other.clean_omap;
+  trim();
+}
+
+void ObjectCleanRegions::mark_data_region_dirty(uint64_t offset, uint64_t len)
+{
+  interval_set<uint64_t> clean_region;
+  clean_region.insert(0, (uint64_t)-1);
+  clean_region.erase(offset, len);
+  clean_offsets.intersection_of(clean_region);
+  trim();
+}
+
+void ObjectCleanRegions::mark_omap_dirty()
+{
+  clean_omap = false;
+}
+
+void ObjectCleanRegions::mark_object_new()
+{
+  new_object = true;
+}
+
+void ObjectCleanRegions::mark_fully_dirty()
+{
+  mark_data_region_dirty(0, (uint64_t)-1);
+  mark_omap_dirty();
+  mark_object_new();
+}
+
+interval_set<uint64_t> ObjectCleanRegions::get_dirty_regions() const
+{
+   interval_set<uint64_t> dirty_region;
+   dirty_region.insert(0, (uint64_t)-1);
+   dirty_region.subtract(clean_offsets);
+   return dirty_region;
+}
+
+bool ObjectCleanRegions::omap_is_dirty() const
+{
+  return !clean_omap;
+}
+
+bool ObjectCleanRegions::object_is_exist() const
+{
+  return !new_object;
+}
+
+void ObjectCleanRegions::encode(bufferlist &bl) const
+{
+  ENCODE_START(1, 1, bl);
+  using ceph::encode;
+  encode(clean_offsets, bl);
+  encode(clean_omap, bl);
+  encode(new_object, bl);
+  ENCODE_FINISH(bl);
+}
+
+void ObjectCleanRegions::decode(bufferlist::const_iterator &bl)
+{
+  DECODE_START(1, bl);
+  using ceph::decode;
+  decode(clean_offsets, bl);
+  decode(clean_omap, bl);
+  decode(new_object, bl);
+  DECODE_FINISH(bl);
+}
+
+void ObjectCleanRegions::dump(Formatter *f) const
+{
+  f->open_object_section("object_clean_regions");
+  f->dump_stream("clean_offsets") << clean_offsets;
+  f->dump_bool("clean_omap", clean_omap);
+  f->dump_bool("new_object", new_object);
+  f->close_section();
+}
+
+void ObjectCleanRegions::generate_test_instances(list<ObjectCleanRegions*>& o)
+{
+  o.push_back(new ObjectCleanRegions());
+  o.push_back(new ObjectCleanRegions());
+  o.back()->mark_data_region_dirty(4096, 40960);
+  o.back()->mark_omap_dirty();
+  o.back()->mark_object_new();
+}
+
+ostream& operator<<(ostream& out, const ObjectCleanRegions& ocr)
+{
+  return out << "clean_offsets: " << ocr.clean_offsets
+             << ", clean_omap: " << ocr.clean_omap
+             << ", object_new: " << ocr.new_object;
+}
+
 // -- pg_log_entry_t --
 
 string pg_log_entry_t::get_key_name() const
@@ -4307,7 +4425,7 @@ void pg_log_entry_t::decode_with_checksum(ceph::buffer::list::const_iterator& p)
 
 void pg_log_entry_t::encode(ceph::buffer::list &bl) const
 {
-  ENCODE_START(12, 4, bl);
+  ENCODE_START(13, 4, bl);
   encode(op, bl);
   encode(soid, bl);
   encode(version, bl);
@@ -4336,6 +4454,7 @@ void pg_log_entry_t::encode(ceph::buffer::list &bl) const
     encode(return_code, bl);
   if (!extra_reqids.empty())
     encode(extra_reqid_return_codes, bl);
+  encode(clean_regions, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -4397,6 +4516,10 @@ void pg_log_entry_t::decode(ceph::buffer::list::const_iterator &bl)
     decode(return_code, bl);
   if (struct_v >= 12 && !extra_reqids.empty())
     decode(extra_reqid_return_codes, bl);
+  if (struct_v >= 13)
+    ::decode(clean_regions, bl);
+  else
+    clean_regions.mark_fully_dirty();
   DECODE_FINISH(bl);
 }
 
@@ -4444,6 +4567,11 @@ void pg_log_entry_t::dump(Formatter *f) const
     mod_desc.dump(f);
     f->close_section();
   }
+  {
+    f->open_object_section("clean_regions");
+    clean_regions.dump(f);
+    f->close_section();
+  }
 }
 
 void pg_log_entry_t::generate_test_instances(list<pg_log_entry_t*>& o)
@@ -4475,6 +4603,7 @@ ostream& operator<<(ostream& out, const pg_log_entry_t& e)
     }
     out << " snaps " << snaps;
   }
+  out << " ObjectCleanRegions " << e.clean_regions;
   return out;
 }
 
@@ -4654,11 +4783,41 @@ void pg_log_t::generate_test_instances(list<pg_log_t*>& o)
     o.back()->log.push_back(**p);
 }
 
-void pg_log_t::copy_after(const pg_log_t &other, eversion_t v) 
+static void _handle_dups(CephContext* cct, pg_log_t &target, const pg_log_t &other, unsigned maxdups)
+{
+  auto earliest_dup_version =
+	        target.head.version < maxdups ? 0u : target.head.version - maxdups + 1;
+  lgeneric_subdout(cct, osd, 20) << "copy_up_to/copy_after earliest_dup_version " << earliest_dup_version << dendl;
+
+  for (auto d = other.dups.cbegin(); d != other.dups.cend(); ++d) {
+    if (d->version.version >= earliest_dup_version) {
+      lgeneric_subdout(cct, osd, 20)
+	      << "copy_up_to/copy_after copy dup version "
+	      << d->version << dendl;
+      target.dups.push_back(pg_log_dup_t(*d));
+    }
+  }
+
+  for (auto i = other.log.cbegin(); i != other.log.cend(); ++i) {
+    ceph_assert(i->version > other.tail);
+    if (i->version > target.tail)
+      break;
+    if (i->version.version >= earliest_dup_version) {
+      lgeneric_subdout(cct, osd, 20)
+		<< "copy_up_to/copy_after copy dup from log version "
+		<< i->version << dendl;
+      target.dups.push_back(pg_log_dup_t(*i));
+    }
+  }
+}
+
+
+void pg_log_t::copy_after(CephContext* cct, const pg_log_t &other, eversion_t v)
 {
   can_rollback_to = other.can_rollback_to;
   head = other.head;
   tail = other.tail;
+  lgeneric_subdout(cct, osd, 20) << __func__ << " v " << v << dendl;
   for (auto i = other.log.crbegin(); i != other.log.crend(); ++i) {
     ceph_assert(i->version > other.tail);
     if (i->version <= v) {
@@ -4666,43 +4825,29 @@ void pg_log_t::copy_after(const pg_log_t &other, eversion_t v)
       tail = i->version;
       break;
     }
+    lgeneric_subdout(cct, osd, 20) << __func__ << " copy log version " << i->version << dendl;
     log.push_front(*i);
   }
+  _handle_dups(cct, *this, other, cct->_conf->osd_pg_log_dups_tracked);
 }
 
-void pg_log_t::copy_range(const pg_log_t &other, eversion_t from, eversion_t to)
-{
-  can_rollback_to = other.can_rollback_to;
-  auto i = other.log.crbegin();
-  ceph_assert(i != other.log.rend());
-  while (i->version > to) {
-    ++i;
-    ceph_assert(i != other.log.rend());
-  }
-  ceph_assert(i->version == to);
-  head = to;
-  for ( ; i != other.log.rend(); ++i) {
-    if (i->version <= from) {
-      tail = i->version;
-      break;
-    }
-    log.push_front(*i);
-  }
-}
-
-void pg_log_t::copy_up_to(const pg_log_t &other, int max)
+void pg_log_t::copy_up_to(CephContext* cct, const pg_log_t &other, int max)
 {
   can_rollback_to = other.can_rollback_to;
   int n = 0;
   head = other.head;
   tail = other.tail;
+  lgeneric_subdout(cct, osd, 20) << __func__ << " max " << max << dendl;
   for (auto i = other.log.crbegin(); i != other.log.crend(); ++i) {
+    ceph_assert(i->version > other.tail);
     if (n++ >= max) {
       tail = i->version;
       break;
     }
+    lgeneric_subdout(cct, osd, 20) << __func__ << " copy log version " << i->version << dendl;
     log.push_front(*i);
   }
+  _handle_dups(cct, *this, other, cct->_conf->osd_pg_log_dups_tracked);
 }
 
 ostream& pg_log_t::print(ostream& out) const
@@ -4723,7 +4868,8 @@ ostream& operator<<(ostream& out, const pg_missing_item& i)
   out << i.need;
   if (i.have != eversion_t())
     out << "(" << i.have << ")";
-  out << " flags = " << i.flag_str();
+  out << " flags = " << i.flag_str()
+      << " " << i.clean_regions;
   return out;
 }
 
@@ -5767,7 +5913,7 @@ void ObjectRecoveryProgress::dump(Formatter *f) const
 
 void ObjectRecoveryInfo::encode(ceph::buffer::list &bl, uint64_t features) const
 {
-  ENCODE_START(2, 1, bl);
+  ENCODE_START(3, 1, bl);
   encode(soid, bl);
   encode(version, bl);
   encode(size, bl);
@@ -5775,13 +5921,14 @@ void ObjectRecoveryInfo::encode(ceph::buffer::list &bl, uint64_t features) const
   encode(ss, bl);
   encode(copy_subset, bl);
   encode(clone_subset, bl);
+  encode(object_exist, bl);
   ENCODE_FINISH(bl);
 }
 
 void ObjectRecoveryInfo::decode(ceph::buffer::list::const_iterator &bl,
 				int64_t pool)
 {
-  DECODE_START(2, bl);
+  DECODE_START(3, bl);
   decode(soid, bl);
   decode(version, bl);
   decode(size, bl);
@@ -5789,8 +5936,11 @@ void ObjectRecoveryInfo::decode(ceph::buffer::list::const_iterator &bl,
   decode(ss, bl);
   decode(copy_subset, bl);
   decode(clone_subset, bl);
+  if (struct_v > 2)
+    decode(object_exist, bl);
+  else
+    object_exist = false;
   DECODE_FINISH(bl);
-
   if (struct_v < 2) {
     if (!soid.is_max() && soid.pool == -1)
       soid.pool = pool;
@@ -5812,6 +5962,7 @@ void ObjectRecoveryInfo::generate_test_instances(
   o.back()->soid = hobject_t(sobject_t("key", CEPH_NOSNAP));
   o.back()->version = eversion_t(0,0);
   o.back()->size = 100;
+  o.back()->object_exist = false;
 }
 
 
@@ -5832,6 +5983,7 @@ void ObjectRecoveryInfo::dump(Formatter *f) const
   }
   f->dump_stream("copy_subset") << copy_subset;
   f->dump_stream("clone_subset") << clone_subset;
+  f->dump_stream("object_exist") << object_exist;
 }
 
 ostream& operator<<(ostream& out, const ObjectRecoveryInfo &inf)
@@ -5847,6 +5999,7 @@ ostream &ObjectRecoveryInfo::print(ostream &out) const
 	     << ", copy_subset: " << copy_subset
 	     << ", clone_subset: " << clone_subset
 	     << ", snapset: " << ss
+	     << ", object_exist: " << object_exist
 	     << ")";
 }
 
@@ -6420,3 +6573,75 @@ void OSDOp::clear_data(vector<OSDOp>& ops)
     }
   }
 }
+
+int prepare_info_keymap(
+  CephContext* cct,
+  map<string,bufferlist> *km,
+  epoch_t epoch,
+  pg_info_t &info,
+  pg_info_t &last_written_info,
+  PastIntervals &past_intervals,
+  bool dirty_big_info,
+  bool dirty_epoch,
+  bool try_fast_info,
+  PerfCounters *logger,
+  DoutPrefixProvider *dpp)
+{
+  if (dirty_epoch) {
+    encode(epoch, (*km)[string(epoch_key)]);
+  }
+
+  if (logger)
+    logger->inc(l_osd_pg_info);
+
+  // try to do info efficiently?
+  if (!dirty_big_info && try_fast_info &&
+      info.last_update > last_written_info.last_update) {
+    pg_fast_info_t fast;
+    fast.populate_from(info);
+    bool did = fast.try_apply_to(&last_written_info);
+    ceph_assert(did);  // we verified last_update increased above
+    if (info == last_written_info) {
+      encode(fast, (*km)[string(fastinfo_key)]);
+      if (logger)
+	logger->inc(l_osd_pg_fastinfo);
+      return 0;
+    }
+    if (dpp) {
+      ldpp_dout(dpp, 30) << __func__ << " fastinfo failed, info:\n";
+      {
+	JSONFormatter jf(true);
+	jf.dump_object("info", info);
+	jf.flush(*_dout);
+      }
+      {
+	*_dout << "\nlast_written_info:\n";
+	JSONFormatter jf(true);
+	jf.dump_object("last_written_info", last_written_info);
+	jf.flush(*_dout);
+      }
+      *_dout << dendl;
+    }
+  }
+
+  last_written_info = info;
+
+  // info.  store purged_snaps separately.
+  interval_set<snapid_t> purged_snaps;
+  purged_snaps.swap(info.purged_snaps);
+  encode(info, (*km)[string(info_key)]);
+  purged_snaps.swap(info.purged_snaps);
+
+  if (dirty_big_info) {
+    // potentially big stuff
+    bufferlist& bigbl = (*km)[string(biginfo_key)];
+    encode(past_intervals, bigbl);
+    encode(info.purged_snaps, bigbl);
+    //dout(20) << "write_info bigbl " << bigbl.length() << dendl;
+    if (logger)
+      logger->inc(l_osd_pg_biginfo);
+  }
+
+  return 0;
+}
+

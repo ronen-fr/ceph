@@ -98,7 +98,7 @@ ostream &operator<<(ostream &lhs, const ECBackend::read_result_t &rhs)
   lhs << "read_result_t(r=" << rhs.r
       << ", errors=" << rhs.errors;
   if (rhs.attrs) {
-    lhs << ", attrs=" << rhs.attrs.get();
+    lhs << ", attrs=" << *(rhs.attrs);
   } else {
     lhs << ", noattrs";
   }
@@ -414,7 +414,7 @@ void ECBackend::handle_recovery_push_reply(
 void ECBackend::handle_recovery_read_complete(
   const hobject_t &hoid,
   boost::tuple<uint64_t, uint64_t, map<pg_shard_t, bufferlist> > &to_read,
-  boost::optional<map<string, bufferlist> > attrs,
+  std::optional<map<string, bufferlist> > attrs,
   RecoveryMessages *m)
 {
   dout(10) << __func__ << ": returned " << hoid << " "
@@ -1482,7 +1482,7 @@ void ECBackend::submit_transaction(
   const eversion_t &trim_to,
   const eversion_t &roll_forward_to,
   const vector<pg_log_entry_t> &log_entries,
-  boost::optional<pg_hit_set_history_t> &hset_history,
+  std::optional<pg_hit_set_history_t> &hset_history,
   Context *on_all_commit,
   ceph_tid_t tid,
   osd_reqid_t reqid,
@@ -2102,7 +2102,7 @@ bool ECBackend::try_finish_rmw()
   if (op->version > committed_to)
     committed_to = op->version;
 
-  if (get_osdmap()->require_osd_release >= CEPH_RELEASE_KRAKEN) {
+  if (get_osdmap()->require_osd_release >= ceph_release_t::kraken) {
     if (op->version > get_parent()->get_log().get_can_rollback_to() &&
 	waiting_reads.empty() &&
 	waiting_commit.empty()) {

@@ -510,7 +510,8 @@ void IoCtx::close() {
 int IoCtx::create(const std::string& oid, bool exclusive) {
   TestIoCtxImpl *ctx = reinterpret_cast<TestIoCtxImpl*>(io_ctx_impl);
   return ctx->execute_operation(
-    oid, boost::bind(&TestIoCtxImpl::create, _1, _2, exclusive));
+    oid, boost::bind(&TestIoCtxImpl::create, _1, _2, exclusive,
+                     ctx->get_snap_context()));
 }
 
 void IoCtx::dup(const IoCtx& rhs) {
@@ -914,7 +915,7 @@ void ObjectWriteOperation::append(const bufferlist &bl) {
 
 void ObjectWriteOperation::create(bool exclusive) {
   TestObjectOperationImpl *o = reinterpret_cast<TestObjectOperationImpl*>(impl);
-  o->ops.push_back(boost::bind(&TestIoCtxImpl::create, _1, _2, exclusive));
+  o->ops.push_back(boost::bind(&TestIoCtxImpl::create, _1, _2, exclusive, _4));
 }
 
 void ObjectWriteOperation::omap_set(const std::map<std::string, bufferlist> &map) {
@@ -1204,7 +1205,7 @@ WatchCtx2::~WatchCtx2() {
 int cls_cxx_create(cls_method_context_t hctx, bool exclusive) {
   librados::TestClassHandler::MethodContext *ctx =
     reinterpret_cast<librados::TestClassHandler::MethodContext*>(hctx);
-  return ctx->io_ctx_impl->create(ctx->oid, exclusive);
+  return ctx->io_ctx_impl->create(ctx->oid, exclusive, ctx->snapc);
 }
 
 int cls_cxx_remove(cls_method_context_t hctx) {
@@ -1471,6 +1472,6 @@ int cls_register_cxx_filter(cls_handle_t hclass,
   return cls->create_filter(hclass, filter_name, fn);
 }
 
-int8_t cls_get_required_osd_release(cls_handle_t hclass) {
-  return CEPH_FEATURE_SERVER_NAUTILUS;
+ceph_release_t cls_get_required_osd_release(cls_handle_t hclass) {
+  return ceph_release_t::nautilus;
 }

@@ -461,7 +461,7 @@ int write_info(ObjectStore::Transaction &t, epoch_t epoch, pg_info_t &info,
   ghobject_t pgmeta_oid(info.pgid.make_pgmeta_oid());
   map<string,bufferlist> km;
   pg_info_t last_written_info;
-  int ret = PG::_prepare_write_info(
+  int ret = prepare_info_keymap(
     g_ceph_context,
     &km, epoch,
     info,
@@ -4232,6 +4232,16 @@ int main(int argc, char **argv)
   }
 
 out:
+  if (debug) {
+    ostringstream ostr;
+    Formatter* f = Formatter::create("json-pretty", "json-pretty", "json-pretty");
+    cct->get_perfcounters_collection()->dump_formatted(f, false);
+    ostr << "ceph-objectstore-tool ";
+    f->flush(ostr);
+    delete f;
+    cout <<  ostr.str() << std::endl;
+  }
+
   int r = fs->umount();
   if (r < 0) {
     cerr << "umount failed: " << cpp_strerror(r) << std::endl;
