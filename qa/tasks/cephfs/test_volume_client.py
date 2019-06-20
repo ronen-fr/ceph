@@ -19,7 +19,9 @@ class TestVolumeClient(CephFSTestCase):
     def setUp(self):
         CephFSTestCase.setUp(self)
         self.py_version = self.ctx.config.get('overrides', {}).get('python', 'python')
-        log.info("using python version: %s".format(self.py_version))
+        log.info("using python version: {python_version}".format(
+            python_version=self.py_version
+        ))
 
     def _volume_client_python(self, client, script, vol_prefix=None, ns_prefix=None):
         # Can't dedent this *and* the script we pass in, because they might have different
@@ -686,8 +688,7 @@ vc.disconnect()
             volume_id=volume_id,
         )))
         # Check the list of authorized IDs for the volume.
-        expected_result = None
-        self.assertEqual(str(expected_result), auths)
+        self.assertEqual('None', auths)
 
         # Allow two auth IDs access to the volume.
         auths = self._volume_client_python(volumeclient_mount, dedent("""
@@ -724,8 +725,7 @@ vc.disconnect()
             guest_entity_2=guest_entity_2,
         )))
         # Check the list of authorized IDs for the volume.
-        expected_result = None
-        self.assertItemsEqual(str(expected_result), auths)
+        self.assertEqual('None', auths)
 
     def test_multitenant_volumes(self):
         """

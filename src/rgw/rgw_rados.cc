@@ -2369,7 +2369,7 @@ int RGWRados::Bucket::update_bucket_id(const string& new_bucket_id)
   auto obj_ctx = store->svc.sysobj->init_obj_ctx();
 
   bucket_info.objv_tracker.clear();
-  int ret = store->get_bucket_instance_info(obj_ctx, bucket, bucket_info, nullptr, nullptr);
+  int ret = store->get_bucket_instance_info(obj_ctx, bucket, bucket_info, nullptr, nullptr, null_yield);
   if (ret < 0) {
     return ret;
   }
@@ -2854,7 +2854,7 @@ int RGWRados::create_bucket(const RGWUserInfo& owner, rgw_bucket& bucket,
       RGWObjVersionTracker instance_ver = info.objv_tracker;
       info.objv_tracker.clear();
       auto obj_ctx = svc.sysobj->init_obj_ctx();
-      r = get_bucket_info(obj_ctx, bucket.tenant, bucket.name, info, NULL, NULL);
+      r = get_bucket_info(obj_ctx, bucket.tenant, bucket.name, info, NULL, null_yield, NULL);
       if (r < 0) {
         if (r == -ENOENT) {
           continue;
@@ -3212,7 +3212,7 @@ int RGWRados::BucketShard::init(const rgw_bucket& _bucket,
   RGWBucketInfo* bucket_info_p =
     bucket_info_out ? bucket_info_out : &bucket_info;
   
-  int ret = store->get_bucket_instance_info(obj_ctx, bucket, *bucket_info_p, NULL, NULL);
+  int ret = store->get_bucket_instance_info(obj_ctx, bucket, *bucket_info_p, NULL, NULL, null_yield);
   if (ret < 0) {
     return ret;
   }
@@ -3239,7 +3239,7 @@ int RGWRados::BucketShard::init(const rgw_bucket& _bucket,
   RGWBucketInfo bucket_info;
   RGWBucketInfo* bucket_info_p =
     bucket_info_out ? bucket_info_out : &bucket_info;
-  int ret = store->get_bucket_instance_info(obj_ctx, bucket, *bucket_info_p, NULL, NULL);
+  int ret = store->get_bucket_instance_info(obj_ctx, bucket, *bucket_info_p, NULL, NULL, null_yield);
   if (ret < 0) {
     return ret;
   }
@@ -3365,7 +3365,7 @@ int RGWRados::swift_versioning_copy(RGWObjectCtx& obj_ctx,
 
   auto sysobj_ctx = svc.sysobj->init_obj_ctx();
 
-  r = get_bucket_info(sysobj_ctx, bucket_info.bucket.tenant, bucket_info.swift_ver_location, dest_bucket_info, NULL, NULL);
+  r = get_bucket_info(sysobj_ctx, bucket_info.bucket.tenant, bucket_info.swift_ver_location, dest_bucket_info, NULL, null_yield, NULL);
   if (r < 0) {
     ldout(cct, 10) << "failed to read dest bucket info: r=" << r << dendl;
     if (r == -ENOENT) {
@@ -3442,7 +3442,7 @@ int RGWRados::swift_versioning_restore(RGWSysObjectCtx& sysobj_ctx,
 
   int ret = get_bucket_info(sysobj_ctx, bucket_info.bucket.tenant,
                             bucket_info.swift_ver_location, archive_binfo,
-                            nullptr, nullptr);
+                            nullptr, null_yield, nullptr);
   if (ret < 0) {
     return ret;
   }
@@ -4346,6 +4346,7 @@ int RGWRados::fetch_remote_obj(RGWObjectCtx& obj_ctx,
 
   string etag;
   real_time set_mtime;
+  uint64_t expected_size = 0;
 
   RGWObjState *dest_state = NULL;
 
@@ -4380,12 +4381,19 @@ int RGWRados::fetch_remote_obj(RGWObjectCtx& obj_ctx,
     goto set_err_state;
   }
 
-  ret = conn->complete_request(in_stream_req, &etag, &set_mtime, nullptr, nullptr, nullptr);
+  ret = conn->complete_request(in_stream_req, &etag, &set_mtime,
+                               &expected_size, nullptr, nullptr);
   if (ret < 0) {
     goto set_err_state;
   }
   ret = cb.flush();
   if (ret < 0) {
+    goto set_err_state;
+  }
+  if (cb.get_data_len() != expected_size) {
+    ret = -EIO;
+    ldout(cct, 0) << "ERROR: object truncated during fetching, expected "
+        << expected_size << " bytes but received " << cb.get_data_len() << dendl;
     goto set_err_state;
   }
   if (compressor && compressor->is_compressed()) {
@@ -5050,9 +5058,9 @@ int RGWRados::set_bucket_owner(rgw_bucket& bucket, ACLOwner& owner)
   auto obj_ctx = svc.sysobj->init_obj_ctx();
   int r;
   if (bucket.bucket_id.empty()) {
-    r = get_bucket_info(obj_ctx, bucket.tenant, bucket.name, info, NULL, &attrs);
+    r = get_bucket_info(obj_ctx, bucket.tenant, bucket.name, info, NULL, null_yield, &attrs);
   } else {
-    r = get_bucket_instance_info(obj_ctx, bucket, info, nullptr, &attrs);
+    r = get_bucket_instance_info(obj_ctx, bucket, info, nullptr, &attrs, null_yield);
   }
   if (r < 0) {
     ldout(cct, 0) << "NOTICE: get_bucket_info on bucket=" << bucket.name << " returned err=" << r << dendl;
@@ -5087,7 +5095,7 @@ int RGWRados::set_buckets_enabled(vector<rgw_bucket>& buckets, bool enabled)
     RGWBucketInfo info;
     map<string, bufferlist> attrs;
     auto obj_ctx = svc.sysobj->init_obj_ctx();
-    int r = get_bucket_info(obj_ctx, bucket.tenant, bucket.name, info, NULL, &attrs);
+    int r = get_bucket_info(obj_ctx, bucket.tenant, bucket.name, info, NULL, null_yield, &attrs);
     if (r < 0) {
       ldout(cct, 0) << "NOTICE: get_bucket_info on bucket=" << bucket.name << " returned err=" << r << ", skipping bucket" << dendl;
       ret = r;
@@ -5113,7 +5121,7 @@ int RGWRados::bucket_suspended(rgw_bucket& bucket, bool *suspended)
 {
   RGWBucketInfo bucket_info;
   auto obj_ctx = svc.sysobj->init_obj_ctx();
-  int ret = get_bucket_info(obj_ctx, bucket.tenant, bucket.name, bucket_info, NULL);
+  int ret = get_bucket_info(obj_ctx, bucket.tenant, bucket.name, bucket_info, NULL, null_yield);
   if (ret < 0) {
     return ret;
   }
@@ -5163,8 +5171,11 @@ int RGWRados::open_bucket_index(const RGWBucketInfo& bucket_info,
 {
   const rgw_bucket& bucket = bucket_info.bucket;
   int r = open_bucket_index_ctx(bucket_info, index_ctx);
-  if (r < 0)
+  if (r < 0) {
+    ldout(cct, 20) << "open_bucket_index: open_bucket_index_ctx() returned "
+                   << r << dendl;
     return r;
+  }
 
   if (bucket.bucket_id.empty()) {
     ldout(cct, 0) << "ERROR: empty bucket id for bucket operation" << dendl;
@@ -5182,8 +5193,11 @@ int RGWRados::open_bucket_index_base(const RGWBucketInfo& bucket_info,
 				     string& bucket_oid_base) {
   const rgw_bucket& bucket = bucket_info.bucket;
   int r = open_bucket_index_ctx(bucket_info, index_ctx);
-  if (r < 0)
+  if (r < 0) {
+    ldout(cct, 20) << "open_bucket_index_base: open_bucket_index_ctx() returned "
+                   << r << dendl;
     return r;
+  }
 
   if (bucket.bucket_id.empty()) {
     ldout(cct, 0) << "ERROR: empty bucket_id for bucket operation" << dendl;
@@ -5205,6 +5219,8 @@ int RGWRados::open_bucket_index(const RGWBucketInfo& bucket_info,
   string bucket_oid_base;
   int ret = open_bucket_index_base(bucket_info, index_ctx, bucket_oid_base);
   if (ret < 0) {
+    ldout(cct, 20) << "open_bucket_index: open_bucket_index_base() returned "
+                   << ret << dendl;
     return ret;
   }
 
@@ -5634,7 +5650,7 @@ int RGWRados::delete_obj_index(const rgw_obj& obj, ceph::real_time mtime)
   auto obj_ctx = svc.sysobj->init_obj_ctx();
 
   RGWBucketInfo bucket_info;
-  int ret = get_bucket_instance_info(obj_ctx, obj.bucket, bucket_info, NULL, NULL);
+  int ret = get_bucket_instance_info(obj_ctx, obj.bucket, bucket_info, NULL, NULL, null_yield);
   if (ret < 0) {
     ldout(cct, 0) << "ERROR: " << __func__ << "() get_bucket_instance_info(bucket=" << obj.bucket << ") returned ret=" << ret << dendl;
     return ret;
@@ -8113,7 +8129,7 @@ void RGWRados::get_bucket_instance_obj(const rgw_bucket& bucket, rgw_raw_obj& ob
 }
 
 int RGWRados::get_bucket_instance_info(RGWSysObjectCtx& obj_ctx, const string& meta_key, RGWBucketInfo& info,
-                                       real_time *pmtime, map<string, bufferlist> *pattrs)
+                                       real_time *pmtime, map<string, bufferlist> *pattrs, optional_yield y)
 {
   size_t pos = meta_key.find(':');
   if (pos == string::npos) {
@@ -8122,11 +8138,11 @@ int RGWRados::get_bucket_instance_info(RGWSysObjectCtx& obj_ctx, const string& m
   string oid = RGW_BUCKET_INSTANCE_MD_PREFIX + meta_key;
   rgw_bucket_instance_key_to_oid(oid);
 
-  return get_bucket_instance_from_oid(obj_ctx, oid, info, pmtime, pattrs);
+  return get_bucket_instance_from_oid(obj_ctx, oid, info, pmtime, pattrs, y);
 }
 
 int RGWRados::get_bucket_instance_info(RGWSysObjectCtx& obj_ctx, const rgw_bucket& bucket, RGWBucketInfo& info,
-                                       real_time *pmtime, map<string, bufferlist> *pattrs)
+                                       real_time *pmtime, map<string, bufferlist> *pattrs, optional_yield y)
 {
   string oid;
   if (bucket.oid.empty()) {
@@ -8135,11 +8151,12 @@ int RGWRados::get_bucket_instance_info(RGWSysObjectCtx& obj_ctx, const rgw_bucke
     oid = bucket.oid;
   }
 
-  return get_bucket_instance_from_oid(obj_ctx, oid, info, pmtime, pattrs);
+  return get_bucket_instance_from_oid(obj_ctx, oid, info, pmtime, pattrs, y);
 }
 
 int RGWRados::get_bucket_instance_from_oid(RGWSysObjectCtx& obj_ctx, const string& oid, RGWBucketInfo& info,
                                            real_time *pmtime, map<string, bufferlist> *pattrs,
+                                           optional_yield y,
                                            rgw_cache_entry_info *cache_info,
 					   boost::optional<obj_version> refresh_version)
 {
@@ -8150,9 +8167,10 @@ int RGWRados::get_bucket_instance_from_oid(RGWSysObjectCtx& obj_ctx, const strin
   bufferlist epbl;
 
   int ret = rgw_get_system_obj(this, obj_ctx, domain_root,
-			       oid, epbl, &info.objv_tracker, pmtime, pattrs,
+			       oid, epbl, &info.objv_tracker, pmtime, y, pattrs,
 			       cache_info, refresh_version);
   if (ret < 0) {
+    ldout(cct, 20) << "rgw_get_system_obj() returned " << ret << dendl;
     return ret;
   }
 
@@ -8182,7 +8200,7 @@ int RGWRados::get_bucket_entrypoint_info(RGWSysObjectCtx& obj_ctx,
 
   rgw_make_bucket_entry_name(tenant_name, bucket_name, bucket_entry);
   int ret = rgw_get_system_obj(this, obj_ctx, svc.zone->get_zone_params().domain_root,
-			       bucket_entry, bl, objv_tracker, pmtime, pattrs,
+			       bucket_entry, bl, objv_tracker, pmtime, null_yield, pattrs,
 			       cache_info, refresh_version);
   if (ret < 0) {
     return ret;
@@ -8242,7 +8260,8 @@ int RGWRados::_get_bucket_info(RGWSysObjectCtx& obj_ctx,
                                RGWBucketInfo& info,
                                real_time *pmtime,
                                map<string, bufferlist> *pattrs,
-                               boost::optional<obj_version> refresh_version)
+                               boost::optional<obj_version> refresh_version,
+                               optional_yield y)
 {
   string bucket_entry;
   rgw_make_bucket_entry_name(tenant, bucket_name, bucket_entry);
@@ -8306,7 +8325,7 @@ int RGWRados::_get_bucket_info(RGWSysObjectCtx& obj_ctx,
 
   rgw_cache_entry_info cache_info;
 
-  ret = get_bucket_instance_from_oid(obj_ctx, oid, e.info, &e.mtime, &e.attrs,
+  ret = get_bucket_instance_from_oid(obj_ctx, oid, e.info, &e.mtime, &e.attrs, y,
 				     &cache_info, refresh_version);
   e.info.ep_objv = ot.read_version;
   info = e.info;
@@ -8341,10 +8360,11 @@ int RGWRados::_get_bucket_info(RGWSysObjectCtx& obj_ctx,
 int RGWRados::get_bucket_info(RGWSysObjectCtx& obj_ctx,
                               const string& tenant, const string& bucket_name,
                               RGWBucketInfo& info,
-                              real_time *pmtime, map<string, bufferlist> *pattrs)
+                              real_time *pmtime,
+                              optional_yield y, map<string, bufferlist> *pattrs)
 {
   return _get_bucket_info(obj_ctx, tenant, bucket_name, info, pmtime,
-                          pattrs, boost::none);
+                          pattrs, boost::none, y);
 }
 
 int RGWRados::try_refresh_bucket_info(RGWBucketInfo& info,
@@ -8354,7 +8374,7 @@ int RGWRados::try_refresh_bucket_info(RGWBucketInfo& info,
   RGWSysObjectCtx obj_ctx = svc.sysobj->init_obj_ctx();
 
   return _get_bucket_info(obj_ctx, info.bucket.tenant, info.bucket.name,
-                          info, pmtime, pattrs, info.objv_tracker.read_version);
+                          info, pmtime, pattrs, info.objv_tracker.read_version, null_yield);
 }
 
 int RGWRados::put_bucket_entrypoint_info(const string& tenant_name, const string& bucket_name, RGWBucketEntryPoint& entry_point,
@@ -8441,7 +8461,7 @@ int RGWRados::update_containers_stats(map<string, RGWBucketEnt>& m)
     vector<rgw_bucket_dir_header> headers;
 
     RGWBucketInfo bucket_info;
-    int ret = get_bucket_instance_info(obj_ctx, bucket, bucket_info, NULL, NULL);
+    int ret = get_bucket_instance_info(obj_ctx, bucket, bucket_info, NULL, NULL, null_yield);
     if (ret < 0) {
       return ret;
     }
@@ -9556,12 +9576,18 @@ int RGWRados::cls_bucket_head(const RGWBucketInfo& bucket_info, int shard_id, ve
   map<int, string> oids;
   map<int, struct rgw_cls_list_ret> list_results;
   int r = open_bucket_index(bucket_info, index_ctx, oids, list_results, shard_id, bucket_instance_ids);
-  if (r < 0)
+  if (r < 0) {
+    ldout(cct, 20) << "cls_bucket_head: open_bucket_index() returned "
+                   << r << dendl;
     return r;
+  }
 
   r = CLSRGWIssueGetDirHeader(index_ctx, oids, list_results, cct->_conf->rgw_bucket_index_max_aio)();
-  if (r < 0)
+  if (r < 0) {
+    ldout(cct, 20) << "cls_bucket_head: CLSRGWIssueGetDirHeader() returned "
+                   << r << dendl;
     return r;
+  }
 
   map<int, struct rgw_cls_list_ret>::iterator iter = list_results.begin();
   for(; iter != list_results.end(); ++iter) {
@@ -9695,7 +9721,7 @@ int RGWRados::cls_user_get_bucket_stats(const rgw_bucket& bucket, cls_user_bucke
   vector<rgw_bucket_dir_header> headers;
   RGWBucketInfo bucket_info;
   auto obj_ctx = svc.sysobj->init_obj_ctx();
-  int ret = get_bucket_instance_info(obj_ctx, bucket, bucket_info, NULL, NULL);
+  int ret = get_bucket_instance_info(obj_ctx, bucket, bucket_info, NULL, NULL, null_yield);
   if (ret < 0) {
     return ret;
   }

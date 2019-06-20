@@ -5,7 +5,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { I18n } from '@ngx-translate/i18n-polyfill';
 import * as _ from 'lodash';
 import { BsModalService } from 'ngx-bootstrap/modal';
-import { forkJoin as observableForkJoin, Observable } from 'rxjs';
+import { concat as observableConcat, forkJoin as observableForkJoin, Observable } from 'rxjs';
 
 import { RgwUserService } from '../../../shared/api/rgw-user.service';
 import { ActionLabelsI18n, URLVerbs } from '../../../shared/constants/app.constants';
@@ -90,11 +90,13 @@ export class RgwUserFormComponent implements OnInit {
       user_quota_max_size: [
         null,
         [
-          CdValidators.requiredIf({
-            user_quota_enabled: true,
-            user_quota_max_size_unlimited: false
-          }),
-          this.quotaMaxSizeValidator
+          CdValidators.composeIf(
+            {
+              user_quota_enabled: true,
+              user_quota_max_size_unlimited: false
+            },
+            [Validators.required, this.quotaMaxSizeValidator]
+          )
         ]
       ],
       user_quota_max_objects_unlimited: [true],
@@ -114,11 +116,13 @@ export class RgwUserFormComponent implements OnInit {
       bucket_quota_max_size: [
         null,
         [
-          CdValidators.requiredIf({
-            bucket_quota_enabled: true,
-            bucket_quota_max_size_unlimited: false
-          }),
-          this.quotaMaxSizeValidator
+          CdValidators.composeIf(
+            {
+              bucket_quota_enabled: true,
+              bucket_quota_max_size_unlimited: false
+            },
+            [Validators.required, this.quotaMaxSizeValidator]
+          )
         ]
       ],
       bucket_quota_max_objects_unlimited: [true],
@@ -238,17 +242,17 @@ export class RgwUserFormComponent implements OnInit {
       const bucketQuotaArgs = this._getBucketQuotaArgs();
       this.submitObservables.push(this.rgwUserService.updateQuota(uid, bucketQuotaArgs));
     }
-    // Finally execute all observables.
-    observableForkJoin(this.submitObservables).subscribe(
-      () => {
-        this.notificationService.show(NotificationType.success, notificationTitle);
-        this.goToListView();
-      },
-      () => {
+    // Finally execute all observables one by one in serial.
+    observableConcat(...this.submitObservables).subscribe({
+      error: () => {
         // Reset the 'Submit' button.
         this.userForm.setErrors({ cdSubmitButton: true });
+      },
+      complete: () => {
+        this.notificationService.show(NotificationType.success, notificationTitle);
+        this.goToListView();
       }
-    );
+    });
   }
 
   /**

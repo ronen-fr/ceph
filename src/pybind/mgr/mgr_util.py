@@ -1,3 +1,5 @@
+import contextlib
+import socket
 
 (
     BLACK,
@@ -71,3 +73,36 @@ def format_dimless(n, width, colored=True):
 
 def format_bytes(n, width, colored=True):
     return format_units(n, width, colored, decimal=False)
+
+
+def merge_dicts(*args):
+    # type: (dict) -> dict
+    """
+    >>> assert merge_dicts({1:2}, {3:4}) == {1:2, 3:4}
+        You can also overwrite keys:
+    >>> assert merge_dicts({1:2}, {1:4}) == {1:4}
+    :rtype: dict[str, Any]
+    """
+    ret = {}
+    for arg in args:
+        ret.update(arg)
+    return ret
+
+
+def get_default_addr():
+    def is_ipv6_enabled():
+        try:
+            sock = socket.socket(socket.AF_INET6)
+            with contextlib.closing(sock):
+                sock.bind(("::1", 0))
+                return True
+        except (AttributeError, socket.error) as e:
+           return False
+
+    try:
+        return get_default_addr.result
+    except AttributeError:
+        result = '::' if is_ipv6_enabled() else '0.0.0.0'
+        get_default_addr.result = result
+        return result
+
