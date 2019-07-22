@@ -41,8 +41,10 @@ SocketMessenger::SocketMessenger(const entity_name_t& myname,
     nonce{nonce}
 {}
 
+// RRR dnm if we are going to copy addrs as our 1st step, why not just pass it by value?
 seastar::future<> SocketMessenger::set_myaddrs(const entity_addrvec_t& addrs)
 {
+  //  RRR dnm make the updating of the nonce into an operation of entity_addrvec_t
   auto my_addrs = addrs;
   for (auto& addr : my_addrs.v) {
     addr.nonce = nonce;

@@ -69,16 +69,16 @@ class Protocol {
 
  protected:
   // write_state is changed with state atomically, indicating the write
-  // behavior of the according state.
+  // behavior of the corresponding state.
   enum class write_state_t {
     none,
     delay,
     open,
     drop
   };
-  void set_write_state(const write_state_t& state) {
+  void set_write_state(const write_state_t& state) { // RRR dnm why do we need the &
     write_state = state;
-    state_changed.set_value();
+    state_changed.set_value();  // RRR dnm for myself: understand what these two lines accomplish
     state_changed = seastar::shared_promise<>();
   }
 

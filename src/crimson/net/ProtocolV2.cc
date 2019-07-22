@@ -127,6 +127,7 @@ ProtocolV2::~ProtocolV2() {}
 void ProtocolV2::start_connect(const entity_addr_t& _peer_addr,
                                const entity_type_t& _peer_type)
 {
+  // RRR dnm when r we using _xx names?
   ceph_assert(state == state_t::NONE);
   ceph_assert(!socket);
   conn.peer_addr = _peer_addr;

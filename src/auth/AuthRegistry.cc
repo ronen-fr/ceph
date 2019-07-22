@@ -57,6 +57,10 @@ void AuthRegistry::handle_conf_change(
   _refresh_config();
 }
 
+// RRR dnm 
+// make the auth methods into an enum class
+// make the vector into a static vector? or just reserve
+// _parse_method_list: in one step, using compile-time regex pattern, to identify the specific patterns
 
 void AuthRegistry::_parse_method_list(const string& s,
 				      std::vector<uint32_t> *v)
@@ -110,6 +114,9 @@ void AuthRegistry::_parse_mode_list(const string& s,
   ldout(cct,20) << __func__ << " " << s << " -> " << *v << dendl;
 }
 
+//  RRR dnm
+//  _parse_method_list() should return the list once (and - BTW - create it using reg-ex), then
+//      use it for all *_methods
 void AuthRegistry::_refresh_config()
 {
   if (cct->_conf->auth_supported.size()) {
@@ -168,6 +175,7 @@ void AuthRegistry::_refresh_config()
 	}
       }
     }
+    // RRR dnm Can it happen that we'll have 'cephx' twice in the original methods configuration? erased only once
     if (_no_keyring_disabled_cephx) {
       lderr(cct) << "no keyring found at " << cct->_conf->keyring
 	       << ", disabling cephx" << dendl;
@@ -176,7 +184,7 @@ void AuthRegistry::_refresh_config()
 }
 
 void AuthRegistry::get_supported_methods(
-  int peer_type,
+  int peer_type,        // RRR dnm why is this an 'int'?
   std::vector<uint32_t> *methods,
   std::vector<uint32_t> *modes) const
 {
@@ -253,6 +261,7 @@ void AuthRegistry::get_supported_methods(
   }
 }
 
+// RRR dnm why are we copying the vector here?
 bool AuthRegistry::is_supported_method(int peer_type, int method) const
 {
   std::vector<uint32_t> s;

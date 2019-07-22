@@ -48,6 +48,10 @@ namespace ceph::mon {
 
 using ceph::common::local_conf;
 
+/*
+  RF (note to myself) I'd prefer having the .h files "marked" as either "exported" or "private"
+    via cmake (i.e. - the exported placed into a separate directory                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          )
+ */
 class Connection {
 public:
   Connection(const AuthRegistry& auth_registry,
@@ -248,7 +252,8 @@ Connection::do_auth_single(Connection::request_t what)
   default:
     assert(0);
   }
-  logger().info("sending {}", *m);
+
+  logger().info("sending {}", *m); 
   return conn->send(m).then([this] {
     logger().info("waiting");
     return reply.get_future();
@@ -282,6 +287,8 @@ Connection::do_auth_single(Connection::request_t what)
   });
 }
 
+// RRR will need to create a "repeat_until_value()" that handles boost::outcome
+// RRR note that never return with "eagain" - jusr success or failure (or exception)
 seastar::future<Connection::AuthResult>
 Connection::do_auth(Connection::request_t what) {
   return seastar::repeat_until_value([this, what]() {
@@ -586,6 +593,14 @@ AuthAuthorizeHandler* Client::get_auth_authorize_handler(int peer_type,
   return auth_registry.get_handler(peer_type, auth_method);
 }
 
+// RRR dnm
+//inline static bool is_in_range_ge_le(int x, int v0, int vsize)
+inline static bool is_outside_range(int x, int r0, int rsize)
+{
+  return ((uint)(x-r0) < rsize);
+}
+
+
 
 int Client::handle_auth_request(ceph::net::ConnectionRef con,
                                 AuthConnectionMetaRef auth_meta,
@@ -889,6 +904,8 @@ std::vector<unsigned> Client::get_random_mons(unsigned n) const
   for (auto [name, info] : monmap.mon_info) {
     // TODO: #msgr-v2
     if (info.public_addrs.legacy_addr().is_blank_ip()) {
+      // RRR dnm: what if the one w the min priority does not have an IP?
+      //  BTW - add a comment explaining how come we do not have an IP
       continue;
     }
     if (info.priority == min_priority) {

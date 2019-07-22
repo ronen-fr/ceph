@@ -68,6 +68,7 @@ public:
     decode(epoch, p);
     decode(pg_list, p);
   }
+  
   void print(ostream& out) const override {
     out << "pg_notify(";
     for (auto i = pg_list.begin();

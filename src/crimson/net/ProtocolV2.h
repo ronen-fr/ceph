@@ -25,6 +25,7 @@ class ProtocolV2 final : public Protocol {
 
   void trigger_close() override;
 
+// RRR dnm wht is this fn?
   ceph::bufferlist do_sweep_messages(
       const std::deque<MessageRef>& msgs,
       size_t num_msgs,
@@ -47,7 +48,7 @@ class ProtocolV2 final : public Protocol {
   };
   state_t state = state_t::NONE;
 
-  static const char *get_state_name(state_t state) {
+  static constexpr const char *get_state_name(state_t state) {
     const char *const statenames[] = {"NONE",
                                       "ACCEPTING",
                                       "CONNECTING",
