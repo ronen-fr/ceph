@@ -123,7 +123,26 @@ SocketMessenger::connect(const entity_addr_t& peer_addr, const entity_type_t& pe
       return msgr.do_connect(peer_addr, peer_type);
     }).then([](seastar::foreign_ptr<ConnectionRef>&& conn) {
       return seastar::make_lw_shared<seastar::foreign_ptr<ConnectionRef>>(std::move(conn));
-    });
+    }); // RRR dnm ask yinx to explain the back & forth of foreign/unlocked
+}
+
+seastar::future<ceph::net::XConnOrFault>
+SocketMessenger::connect_wcatch(const entity_addr_t& peer_addr, const entity_type_t& peer_type)
+{
+  // make sure we connect to a valid peer_addr
+  ceph_assert(peer_addr.is_legacy() || peer_addr.is_msgr2());
+  ceph_assert(peer_addr.get_port() > 0);
+
+  auto shard = locate_shard(peer_addr);
+  return container().invoke_on(shard, [peer_addr, peer_type](auto& msgr) {
+      return msgr.do_connect_wcatch(peer_addr, peer_type);
+    }).then([](ForeignConnOrFault&& conn) {
+
+      if (conn.has_failure()) {
+        return outcome::outcome<ConnectionXRef>{outcome::in_place_type<std::error_code>, std::make_error_code(std::errc::bad_address)};
+      }
+      return  outcome::outcome<ConnectionXRef>{seastar::make_lw_shared<seastar::foreign_ptr<ConnectionRef>>(std::move(conn.value()))};
+    });    
 }
 
 seastar::future<> SocketMessenger::stop()
@@ -195,6 +214,9 @@ seastar::future<> SocketMessenger::do_start(Dispatcher *disp)
   return seastar::now();
 }
 
+// RRR dnm do_connect() may well throw. See for example Kefu's comment in ProtocolV2.cc, 574:
+//  "let execute_connecting() take care of the thrown exception" (do_connect() calls start_connect(), which
+//  calls execute_connecting()
 seastar::foreign_ptr<ceph::net::ConnectionRef>
 SocketMessenger::do_connect(const entity_addr_t& peer_addr, const entity_type_t& peer_type)
 {
@@ -206,6 +228,24 @@ SocketMessenger::do_connect(const entity_addr_t& peer_addr, const entity_type_t&
   conn->start_connect(peer_addr, peer_type);
   return seastar::make_foreign(conn->shared_from_this());
 }
+
+ForeignConnOrFault SocketMessenger::do_connect_wcatch(const entity_addr_t& peer_addr,
+                                const entity_type_t& peer_type)
+{
+  try {
+    if (auto found = lookup_conn(peer_addr); found) {
+      return ForeignConnOrFault{seastar::make_foreign(found->shared_from_this())};
+    }
+
+    SocketConnectionRef conn = seastar::make_shared<SocketConnection>(
+        *this, *dispatcher, peer_addr.is_msgr2());
+    conn->start_connect(peer_addr, peer_type);
+    return ForeignConnOrFault{seastar::make_foreign(conn->shared_from_this())};
+  } catch (...) {
+    return ForeignConnOrFault{std::make_error_code(std::errc::connection_refused)}; // fix to pass the exception
+  }
+}
+
 
 seastar::future<> SocketMessenger::do_shutdown()
 {

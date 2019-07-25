@@ -16,7 +16,8 @@ endif()
 foreach(python_version ${py_vers})
   set(PYTHON_VERSION ${python_version})
 
-  find_package(Cython REQUIRED)
+  #find_package(Cython REQUIRED)
+  find_package(Cython )
 
   add_subdirectory(rados rados${PYTHON_VERSION})
   add_custom_target(cython${PYTHON_VERSION}_modules ALL

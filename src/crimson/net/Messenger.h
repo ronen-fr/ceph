@@ -19,6 +19,10 @@
 #include "Fwd.h"
 #include "crimson/thread/Throttle.h"
 #include "msg/Policy.h"
+// RRR fix the include
+#include "../outcome.hpp"
+namespace outcome = OUTCOME_V2_NAMESPACE;
+
 
 class AuthAuthorizer;
 
@@ -31,6 +35,8 @@ namespace ceph::net {
 
 using Throttle = ceph::thread::Throttle;
 using SocketPolicy = ceph::net::Policy<Throttle>;
+using XConnOrFault = outcome::outcome<ConnectionXRef>;
+
 
 class Messenger {
   entity_name_t my_name;
@@ -70,6 +76,12 @@ public:
   /// or a new pending connection
   virtual seastar::future<ConnectionXRef>
   connect(const entity_addr_t& peer_addr,
+          const entity_type_t& peer_type) = 0;
+
+  /// either return an existing connection to the peer,
+  /// or a new pending connection
+  virtual seastar::future<XConnOrFault>
+  connect_wcatch(const entity_addr_t& peer_addr,
           const entity_type_t& peer_type) = 0;
 
   // wait for messenger shutdown

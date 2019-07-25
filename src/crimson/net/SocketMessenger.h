@@ -22,10 +22,55 @@
 #include <seastar/core/sharded.hh>
 #include <seastar/core/shared_future.hh>
 
+
 #include "Messenger.h"
 #include "SocketConnection.h"
 
+
+template <typename S, typename T>
+struct FST
+{
+        using type = seastar::future<T> (*)(S);
+};
+
+template <typename S, typename T, typename F = typename FST<S, T>::type>
+auto FuturePass(F f, S s) -> seastar::future<T>
+{
+        if (s.has_value())
+        {
+                //std::cout << "\n{ pass: v= " << s.value() << " }\n";
+                return f(s);
+        }
+        else
+        {
+                //std::cout << "\n{ pass: no value! }\n";
+                return seastar::make_ready_future<T>(T{outcome::in_place_type<std::error_code>, s.error()});
+        }
+}
+
+
+
+template <typename S, typename T, typename F = typename FST<S, T>::type>
+auto FutureSplit(F happy_days, F on_error, S s) -> seastar::future<T>
+{
+        // debug prints:
+
+        if (s.has_value())
+        {
+                //std::cout << " { Split: happy path }\n";
+                return happy_days(s);
+        }
+        else
+        {
+                //std::cout << " { Split: error path }\n";
+                return on_error(s);
+        }
+}
+
+
 namespace ceph::net {
+
+using ForeignConnOrFault = outcome::outcome<seastar::foreign_ptr<ConnectionRef>>;
 
 class SocketMessenger final : public Messenger, public seastar::peering_sharded_service<SocketMessenger> {
   const int master_sid;
@@ -53,6 +98,10 @@ class SocketMessenger final : public Messenger, public seastar::peering_sharded_
   seastar::future<> do_start(Dispatcher *disp);
   seastar::foreign_ptr<ConnectionRef> do_connect(const entity_addr_t& peer_addr,
                                                  const entity_type_t& peer_type);
+  
+  ForeignConnOrFault do_connect_wcatch(const entity_addr_t& peer_addr,
+                                const entity_type_t& peer_type);
+  
   seastar::future<> do_shutdown();
   // conn sharding options:
   // 0. Compatible (master_sid >= 0): place all connections to one master shard
@@ -80,6 +129,10 @@ class SocketMessenger final : public Messenger, public seastar::peering_sharded_
 
   seastar::future<ConnectionXRef> connect(const entity_addr_t& peer_addr,
                                           const entity_type_t& peer_type) override;
+
+  seastar::future<XConnOrFault> connect_wcatch(const entity_addr_t& peer_addr,
+                                          const entity_type_t& peer_type) override;
+
   // can only wait once
   seastar::future<> wait() override {
     return shutdown_promise.get_future();

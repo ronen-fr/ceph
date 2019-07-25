@@ -30,6 +30,25 @@ public:
   virtual ~WithStats() {}
 };
 
+// reconnect backoff handling:
+class BackoffImp {
+public:
+  explicit BackoffImp(std::chrono::milliseconds initial_bo, std::chrono::milliseconds max_bo);
+  explicit BackoffImp(const char* initial_conf, const char* max_conf);
+  void cancel_backoff() {
+    backing_off = false;
+  }
+  void extend_backoff();
+  bool is_during_backoff();
+
+private:
+  bool backing_off{false};
+  std::chrono::milliseconds current_backoff;
+  std::chrono::milliseconds max_backoff;
+  std::chrono::milliseconds initial_backoff;
+  seastar::lowres_clock::time_point backingoff_till{seastar::lowres_clock::time_point::min()};
+};
+
 class Client : public ceph::net::Dispatcher {
 public:
   Client(ceph::net::Messenger& msgr,
@@ -44,6 +63,7 @@ private:
 				   Ref<MMgrMap> m);
   seastar::future<> handle_mgr_conf(ceph::net::Connection* conn,
 				    Ref<MMgrConfigure> m);
+  seastar::future<> reconnect_old();
   seastar::future<> reconnect();
   void report();
 
@@ -55,6 +75,8 @@ private:
   std::chrono::seconds report_period{0};
   seastar::timer<seastar::lowres_clock> report_timer;
   seastar::gate gate;
+  // reconnect backoff handling:
+  BackoffImp backer{3000ms, 200000ms};
 };
 
 }

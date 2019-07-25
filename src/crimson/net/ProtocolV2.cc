@@ -381,11 +381,20 @@ seastar::future<> ProtocolV2::fault()
 {
   logger().warn("{} fault during {}",
                 conn, get_state_name(state));
+  ceph_assert(0);
   // TODO: <fault logic here: e.g. backoff, policies, etc.>
   // TODO: <conditions to call execute_standby()>
   // TODO: <conditions to call execute_connecting()>
-  close();
-  return seastar::now();
+  return close().then([this](){
+      return dispatcher.ms_handle_reset(
+        seastar::static_pointer_cast<SocketConnection>(conn.shared_from_this()))
+        .handle_exception([this] (std::exception_ptr eptr) {
+          logger().error("{} ms_handle_reset caught exception: {}", conn, eptr);
+          ceph_abort("unexpected exception from ms_handle_reset()");
+        });});
+ 
+  // RRR remember to restore close();
+  //return seastar::now();
 }
 
 void ProtocolV2::dispatch_reset()
