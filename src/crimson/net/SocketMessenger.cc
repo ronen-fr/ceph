@@ -123,7 +123,7 @@ SocketMessenger::connect(const entity_addr_t& peer_addr, const entity_type_t& pe
       return msgr.do_connect(peer_addr, peer_type);
     }).then([](seastar::foreign_ptr<ConnectionRef>&& conn) {
       return seastar::make_lw_shared<seastar::foreign_ptr<ConnectionRef>>(std::move(conn));
-    }); // RRR dnm ask yinx to explain the back & forth of foreign/unlocked
+    });
 }
 
 seastar::future<ceph::net::XConnOrFault>

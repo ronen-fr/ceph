@@ -381,7 +381,6 @@ seastar::future<> ProtocolV2::fault()
 {
   logger().warn("{} fault during {}",
                 conn, get_state_name(state));
-  ceph_assert(0);
   // TODO: <fault logic here: e.g. backoff, policies, etc.>
   // TODO: <conditions to call execute_standby()>
   // TODO: <conditions to call execute_connecting()>
@@ -392,9 +391,6 @@ seastar::future<> ProtocolV2::fault()
           logger().error("{} ms_handle_reset caught exception: {}", conn, eptr);
           ceph_abort("unexpected exception from ms_handle_reset()");
         });});
- 
-  // RRR remember to restore close();
-  //return seastar::now();
 }
 
 void ProtocolV2::dispatch_reset()

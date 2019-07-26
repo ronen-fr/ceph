@@ -63,7 +63,7 @@ private:
 				   Ref<MMgrMap> m);
   seastar::future<> handle_mgr_conf(ceph::net::Connection* conn,
 				    Ref<MMgrConfigure> m);
-  seastar::future<> reconnect_old();
+  //seastar::future<> reconnect_old();
   seastar::future<> reconnect();
   void report();
 
@@ -76,7 +76,7 @@ private:
   seastar::timer<seastar::lowres_clock> report_timer;
   seastar::gate gate;
   // reconnect backoff handling:
-  BackoffImp backer{3000ms, 200000ms};
+  BackoffImp backer{30000ms, 200000ms};
 };
 
 }
