@@ -62,6 +62,7 @@ public:
     return seastar::now();
   }
 
+
   /// bind to the given address
   virtual seastar::future<> bind(const entity_addrvec_t& addr) = 0;
 
@@ -80,9 +81,9 @@ public:
 
   /// either return an existing connection to the peer,
   /// or a new pending connection
-  virtual seastar::future<XConnOrFault>
-  connect_wcatch(const entity_addr_t& peer_addr,
-          const entity_type_t& peer_type) = 0;
+  //virtual seastar::future<XConnOrFault>
+  //connect_wcatch(const entity_addr_t& peer_addr,
+  //        const entity_type_t& peer_type) = 0;
 
   // wait for messenger shutdown
   virtual seastar::future<> wait() = 0;

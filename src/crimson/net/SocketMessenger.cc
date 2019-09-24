@@ -41,16 +41,17 @@ SocketMessenger::SocketMessenger(const entity_name_t& myname,
     nonce{nonce}
 {}
 
-// RRR dnm if we are going to copy addrs as our 1st step, why not just pass it by value?
 seastar::future<> SocketMessenger::set_myaddrs(const entity_addrvec_t& addrs)
 {
   //  RRR dnm make the updating of the nonce into an operation of entity_addrvec_t
-  auto my_addrs = addrs;
-  for (auto& addr : my_addrs.v) {
-    addr.nonce = nonce;
-  }
-  return container().invoke_on_all([my_addrs](auto& msgr) {
-      return msgr.Messenger::set_myaddrs(my_addrs);
+  //for (auto& addr : my_addrs.v) {
+  //  addr.nonce = nonce;
+  // }
+  auto temp_addrs = addrs;
+  temp_addrs.set_nonce(nonce);
+
+  return container().invoke_on_all([temp_addrs](auto& msgr) {
+      return msgr.Messenger::set_myaddrs(temp_addrs);
     });
 }
 
@@ -126,24 +127,6 @@ SocketMessenger::connect(const entity_addr_t& peer_addr, const entity_type_t& pe
     });
 }
 
-seastar::future<ceph::net::XConnOrFault>
-SocketMessenger::connect_wcatch(const entity_addr_t& peer_addr, const entity_type_t& peer_type)
-{
-  // make sure we connect to a valid peer_addr
-  ceph_assert(peer_addr.is_legacy() || peer_addr.is_msgr2());
-  ceph_assert(peer_addr.get_port() > 0);
-
-  auto shard = locate_shard(peer_addr);
-  return container().invoke_on(shard, [peer_addr, peer_type](auto& msgr) {
-      return msgr.do_connect_wcatch(peer_addr, peer_type);
-    }).then([](ForeignConnOrFault&& conn) {
-
-      if (conn.has_failure()) {
-        return outcome::outcome<ConnectionXRef>{outcome::in_place_type<std::error_code>, std::make_error_code(std::errc::bad_address)};
-      }
-      return  outcome::outcome<ConnectionXRef>{seastar::make_lw_shared<seastar::foreign_ptr<ConnectionRef>>(std::move(conn.value()))};
-    });    
-}
 
 seastar::future<> SocketMessenger::stop()
 {
@@ -229,6 +212,7 @@ SocketMessenger::do_connect(const entity_addr_t& peer_addr, const entity_type_t&
   return seastar::make_foreign(conn->shared_from_this());
 }
 
+#if 0
 ForeignConnOrFault SocketMessenger::do_connect_wcatch(const entity_addr_t& peer_addr,
                                 const entity_type_t& peer_type)
 {
@@ -245,6 +229,7 @@ ForeignConnOrFault SocketMessenger::do_connect_wcatch(const entity_addr_t& peer_
     return ForeignConnOrFault{std::make_error_code(std::errc::connection_refused)}; // fix to pass the exception
   }
 }
+#endif
 
 
 seastar::future<> SocketMessenger::do_shutdown()

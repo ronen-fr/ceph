@@ -26,7 +26,7 @@
 #include "Messenger.h"
 #include "SocketConnection.h"
 
-
+#if 0
 template <typename S, typename T>
 struct FST
 {
@@ -66,7 +66,7 @@ auto FutureSplit(F happy_days, F on_error, S s) -> seastar::future<T>
                 return on_error(s);
         }
 }
-
+#endif
 
 namespace ceph::net {
 
@@ -99,8 +99,8 @@ class SocketMessenger final : public Messenger, public seastar::peering_sharded_
   seastar::foreign_ptr<ConnectionRef> do_connect(const entity_addr_t& peer_addr,
                                                  const entity_type_t& peer_type);
   
-  ForeignConnOrFault do_connect_wcatch(const entity_addr_t& peer_addr,
-                                const entity_type_t& peer_type);
+  //ForeignConnOrFault do_connect_wcatch(const entity_addr_t& peer_addr,
+  //                              const entity_type_t& peer_type);
   
   seastar::future<> do_shutdown();
   // conn sharding options:
@@ -130,8 +130,8 @@ class SocketMessenger final : public Messenger, public seastar::peering_sharded_
   seastar::future<ConnectionXRef> connect(const entity_addr_t& peer_addr,
                                           const entity_type_t& peer_type) override;
 
-  seastar::future<XConnOrFault> connect_wcatch(const entity_addr_t& peer_addr,
-                                          const entity_type_t& peer_type) override;
+  //seastar::future<XConnOrFault> connect_wcatch(const entity_addr_t& peer_addr,
+  //                                        const entity_type_t& peer_type) override;
 
   // can only wait once
   seastar::future<> wait() override {

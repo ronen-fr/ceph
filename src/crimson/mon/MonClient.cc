@@ -593,15 +593,6 @@ AuthAuthorizeHandler* Client::get_auth_authorize_handler(int peer_type,
   return auth_registry.get_handler(peer_type, auth_method);
 }
 
-// RRR dnm
-//inline static bool is_in_range_ge_le(int x, int v0, int vsize)
-inline static bool is_outside_range(int x, int r0, int rsize)
-{
-  return ((uint)(x-r0) < rsize);
-}
-
-
-
 int Client::handle_auth_request(ceph::net::ConnectionRef con,
                                 AuthConnectionMetaRef auth_meta,
                                 bool more,

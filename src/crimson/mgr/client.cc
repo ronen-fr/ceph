@@ -55,15 +55,13 @@ void BackoffImp::extend_backoff()
     current_backoff = std::min(initial_backoff, max_backoff);
   }
 
-  // make sure backoff is not disabled with a '0' max
+  // make sure backoff was not disabled with a '0' max
   if (current_backoff.count()) {
     backing_off = true;
     backingoff_till = seastar::lowres_clock::now() + current_backoff;
   } else {
-    // disabled by 0 max in the configuration
     backing_off = false;
   }
-
   logger().info("Mgr conn. backoff duration: {}", current_backoff.count());
 }
 
@@ -116,38 +114,6 @@ seastar::future<> Client::ms_handle_reset(ceph::net::ConnectionRef c)
   }
 }
 
-#if 0
-/* RRR dnm
-  Assuming we will implement the pull-back reconnect strategy here. How will we handle a
-  "not enough time has passed since last try" response?
-
-  - the internal timer that caused us to request that connection should be reset/canceled.
-  - anything else?
-
-  How is it handled in the original code?
-
- */
-seastar::future<> Client::reconnect_old()
-{
-  return (conn ? conn->close() : seastar::now()).then([this] {
-    if (!mgrmap.get_available()) {
-      logger().warn("No active mgr available yet");
-      return seastar::now();
-    }
-    auto peer = mgrmap.get_active_addrs().front();
-    return msgr.connect(peer, CEPH_ENTITY_TYPE_MGR).then(
-      [this](auto xconn) {
-        conn = xconn->release();
-        // ask for the mgrconfigure message
-        auto m = make_message<MMgrOpen>();
-        m->daemon_name = local_conf()->name.get_id();
-        return conn->send(std::move(m));
-      });
-  });
-}
-#endif
-
-#if 1
 seastar::future<> Client::reconnect()
 {
   logger().info("Mgr client reconnecting (prev-conn:{} bo:{} mgrmap:{})",
@@ -184,52 +150,6 @@ seastar::future<> Client::reconnect()
       });
   });
 }
-#endif
-
-#if 0
-seastar::future<> Client::reconnect_1()
-{
-  logger().info("Mgr client reconnecting (prev-conn:{} bo:{} mgrmap:{})",
-                 (conn?'+':'-'),
-                 (backer.is_during_backoff()?'+':'-'),
-                 (mgrmap.get_available()?"available":"none"));
-
-  return (conn ? conn->close() : seastar::now()).then([this] {
-    if (!mgrmap.get_available()) {
-      if (!backer.is_during_backoff()) {
-        // prevent multiple log entries
-        logger().warn("No active mgr available yet");
-      }
-      //  no need for a backoff to be set here. The problem is not with the MGR. And -
-      //  no penalty for rechecking for the map.
-      return seastar::now();
-    }
-    if (backer.is_during_backoff()) {
-      return seastar::now();
-    }
-    auto peer = mgrmap.get_active_addrs().front();
-
-    return msgr.connect(peer, CEPH_ENTITY_TYPE_MGR)
-      .handle_exception([&backoff=backer](auto ep) mutable {
-        // done below backoff.extend_backoff();
-        return seastar::make_ready_future<ceph::net::XConnOrFault>(std::make_error_code(std::errc::connection_refused));
-      }) // RRR or should we re-throw?
-      .then([this](auto maybe_conn) {
-        if (maybe_conn.has_error()) {
-          backer.extend_backoff();
-          return seastar::now();
-        }
-
-        conn = maybe_conn.value()->release();
-        backer.cancel_backoff();
-        // ask for the mgrconfigure message
-        auto m = make_message<MMgrOpen>();
-        m->daemon_name = local_conf()->name.get_id();
-        return conn->send(std::move(m));
-      });
-  });
-}
-#endif
 
 seastar::future<> Client::handle_mgr_map(ceph::net::Connection*,
                                          Ref<MMgrMap> m)

@@ -644,6 +644,12 @@ struct entity_addrvec_t {
     return r;
   }
 
+  void set_nonce(uint32_t n) {
+    for (auto& addr : v) {
+      addr.nonce = n;
+    }
+  }
+
   void encode(ceph::buffer::list& bl, uint64_t features) const;
   void decode(ceph::buffer::list::const_iterator& bl);
   void dump(ceph::Formatter *f) const;

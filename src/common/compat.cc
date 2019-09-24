@@ -130,6 +130,7 @@ int socket_cloexec(int domain, int type, int protocol)
   if (fd == -1)
     return -1;
 
+  // RRR dnm note https://www.gnu.org/software/libc/manual/html_node/Descriptor-Flags.html
   if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
     goto fail;
 
