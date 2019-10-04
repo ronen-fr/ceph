@@ -15,6 +15,7 @@
 
 #include "crimson/common/type_helpers.h"
 #include "crimson/common/auth_handler.h"
+#include "crimson/admin/admin_socket.h"
 #include "crimson/common/simple_lru.h"
 #include "crimson/common/shared_lru.h"
 #include "crimson/mgr/client.h"
@@ -112,6 +113,8 @@ class OSD final : public ceph::net::Dispatcher,
 
   std::unique_ptr<Heartbeat> heartbeat;
   seastar::timer<seastar::lowres_clock> heartbeat_timer;
+
+  std::unique_ptr<AdminSocket> asok{make_unique<AdminSocket>(nullptr)};
 
 public:
   OSD(int id, uint32_t nonce,

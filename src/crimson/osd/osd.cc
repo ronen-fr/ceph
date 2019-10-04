@@ -274,6 +274,10 @@ seastar::future<> OSD::start()
     return heartbeat->start(public_msgr.get_myaddrs(),
                             cluster_msgr.get_myaddrs());
   }).then([this] {
+    //AdminSocket *admin_socket = cct->get_admin_socket();
+    return asok->init("/tmp/asok");
+    //return seastar::now();
+  }).then([this] {
     return start_boot();
   });
 }
