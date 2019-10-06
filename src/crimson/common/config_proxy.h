@@ -28,10 +28,10 @@ class ConfigProxy : public seastar::peering_sharded_service<ConfigProxy>
   ObserverMgr<ConfigObserver> obs_mgr;
 
   const md_config_t& get_config() const {
-    return remote_config ? *remote_config : * local_config;
+    return remote_config ? *remote_config : *local_config;
   }
   md_config_t& get_config() {
-    return remote_config ? *remote_config : * local_config;
+    return remote_config ? *remote_config : *local_config;
   }
 
   // apply changes to all shards

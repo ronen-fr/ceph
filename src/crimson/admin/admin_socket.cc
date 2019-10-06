@@ -784,7 +784,6 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
 }
 
 
-// returns 'true' if we should stop
 seastar::future<seastar::stop_iteration> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
 {
   //  extract the op-code (null or \n-terminated)
@@ -799,6 +798,10 @@ seastar::future<seastar::stop_iteration> AdminSocket::execute_line(std::string c
   bufferlist out_buf;
 
   parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf);
+  return out.write(out_buf.to_str()).
+    then([&out](){
+            return seastar::make_ready_future<seastar::stop_iteration>(seastar::stop_iteration::yes);
+    });
 
   #endif
   // dev
@@ -817,7 +820,7 @@ seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, 
   //  RRR \todo safe read
   //  RRR \todo handle old protocol (see original code)
   
-  return seastar::repeat([&out, &inp, this]() mutable {
+  return seastar::repeat([&out, &inp, this]() mutable { //  seems that no repeat is needed to mimic existing functionality
 
     return inp.read()
     .then( [&out, this](auto full_cmd) {

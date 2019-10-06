@@ -275,7 +275,9 @@ seastar::future<> OSD::start()
                             cluster_msgr.get_myaddrs());
   }).then([this] {
     //AdminSocket *admin_socket = cct->get_admin_socket();
-    return asok->init("/tmp/asok");
+    //if (_conf->admin_socket.length())
+    //_admin_socket->init(_conf->admin_socket);
+    return shard_services.get_cct()->get_admin_socket()->init("/tmp/asok");
     //return seastar::now();
   }).then([this] {
     return start_boot();

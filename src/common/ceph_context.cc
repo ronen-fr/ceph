@@ -54,15 +54,165 @@ using ceph::HeartbeatMap;
 #include <pthread.h>
 
 #ifdef WITH_SEASTAR
+
+using ceph::common::local_conf;
+
+/// the hooks and states needed to handle configuration requests
+class ContextConfigAdmin {
+
+  CephContext* m_cct;
+  ceph::common::ConfigProxy& m_conf;
+  friend class CephContextHookBase;
+  friend class ConfigGetHook;
+
+  ///
+  ///  common code for all CephContext admin hooks
+  ///
+  class CephContextHookBase : public AdminSocketHook {
+  protected:
+    ContextConfigAdmin& m_config_admin;
+
+    /// the specific command implementation (would have used template specification, but can't yet use
+    /// the command string as the template parameter).
+    virtual seastar::future<> exec_command(Formatter* formatter, std::string_view command, const cmdmap_t& cmdmap,
+	                      std::string_view format, bufferlist& out) = 0;
+
+  public:
+    explicit CephContextHookBase(ContextConfigAdmin& master) : m_config_admin{master} {}
+
+    bool call(std::string_view command, const cmdmap_t& cmdmap,
+	      std::string_view format, bufferlist& out) override {
+      try {
+        //
+        //  some preliminary parsing, then:
+        //
+
+        // RRR to do check that creating a formatter does not block
+        unique_ptr<Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)}; // RRR consider destrucing in 'catch'
+        std::string section(command);
+        boost::replace_all(section, " ", "_");
+        f->open_object_section("mempools");
+        f->open_object_section(section.c_str());
+
+        //return 
+
+        try {
+          exec_command(f.get(), command, cmdmap, format, out).then_wrapped([](auto p) {
+            try {
+              (void)p.get();
+            } catch (std::exception& ex) {
+              std::cout << "request error: " << ex.what() << std::endl;
+            }
+          });
+        } catch ( ... ) {
+          std::cout << "\n\nexecution throwed\n\n";
+        }
+        f->close_section();
+        f->flush(out);
+      } catch (const bad_cmd_get& e) {
+        return false;
+      } catch ( ... ) {
+        return false;
+      }
+
+      return true;
+    }
+  };
+
+  ///
+  ///  A CephContext admin hook: listing the configuration values
+  ///
+  class ConfigShowHook : public CephContextHookBase {
+  public:
+    explicit ConfigShowHook(ContextConfigAdmin& master) : CephContextHookBase(master) {};
+    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                      std::string_view format, bufferlist& out) final {
+      std::vector<std::string> listing;
+      m_config_admin.m_conf.get_all_sections(listing);
+      for (const auto& s : listing)
+        f->dump_string("section", s);
+      return seastar::now();
+    }
+  };
+
+  ///
+  ///  A CephContext admin hook: fetching the value of a specific configuration item
+  ///
+  class ConfigGetHook : public CephContextHookBase {
+  public:
+    explicit ConfigGetHook(ContextConfigAdmin& master) : CephContextHookBase(master) {};
+    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                      std::string_view format, bufferlist& out) final {
+      std::string var;
+      if (!cmd_getval<std::string>(nullptr, cmdmap, "var", var)) {
+	f->dump_string("error", "syntax error: 'config get <var>'");
+
+      } else {
+
+        std::string conf_val = m_config_admin.m_conf.get_val<std::string>(var.c_str());
+        //std::string conf_val = local_conf()->get_val<std::string>(var.c_str());
+	//char buf[4096];
+	//memset(buf, 0, sizeof(buf));
+	//char *tmp = buf;
+	//int r = _conf.get_val(var.c_str(), &tmp, sizeof(buf));
+	//if (r < 0) {
+	//    f->dump_stream("error") << "error getting '" << var << "': " << cpp_strerror(r);
+        //  _conf.get_val(var.c_str(), &tmp, sizeof(buf));
+	//} else {
+	    f->dump_string(var.c_str(), conf_val.c_str());
+	//}
+      }
+      return seastar::now();
+        //local_conf().
+        //m_config_admin.m_conf.show_config(f); // RRR must replace ConfigProxy with a non-blocking alternative
+      //}                                      
+    }
+  };
+
+  ConfigShowHook config_show_hook;
+  ConfigGetHook  config_get_hook;
+
+
+public:
+
+  ContextConfigAdmin(CephContext* cct, ceph::common::ConfigProxy& conf)
+    : m_cct{cct}
+    , m_conf{conf}
+    , config_show_hook{*this}
+    , config_get_hook{*this}
+  {
+    register_admin_commands();
+  }
+
+  ~ContextConfigAdmin() {}
+
+  void register_admin_commands() {  // should probably be a future<void>
+    auto admin_if = m_cct->get_admin_socket();
+
+    admin_if->register_command("config show",    "config show",  &config_show_hook,      "list all conf items");
+    admin_if->register_command("config get",     "config get",   &config_get_hook,       "fetches a conf value");
+  }
+
+  void unregister_admin_commands();
+};
+
+
 CephContext::CephContext()
   : _conf{ceph::common::local_conf()},
     _perf_counters_collection{ceph::common::local_perf_coll()},
     _crypto_random{std::make_unique<CryptoRandom>()}
-{}
+{
+  asok = make_unique<AdminSocket>(this);
+  asok_config_admin = make_unique<ContextConfigAdmin>(this, _conf);
+  asok_config_admin->register_admin_commands();
+}
 
 // define the dtor in .cc as CryptoRandom is an incomplete type in the header
 CephContext::~CephContext()
 {}
+
+CephContext::CephContext(CephContext&&) = default;
+  
 
 uint32_t CephContext::get_module_type() const
 {

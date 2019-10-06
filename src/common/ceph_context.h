@@ -57,6 +57,11 @@ namespace ceph {
 }
 
 #ifdef WITH_SEASTAR
+
+
+class ContextConfigAdmin;
+
+
 class CephContext {
 public:
   CephContext();
@@ -65,7 +70,7 @@ public:
 	      int = 0)
     : CephContext{}
   {}
-  CephContext(CephContext&&) = default;
+  CephContext(CephContext&&); // = default;
   ~CephContext();
 
   uint32_t get_module_type() const;
@@ -79,11 +84,26 @@ public:
   ceph::common::PerfCountersCollection& _perf_counters_collection;
   CephContext* get();
   void put();
+
+  /**
+   * Get the admin socket associated with this CephContext.
+   *
+   * Currently there is always an admin socket object,
+   * so this will never return NULL.
+   *
+   * @return the admin socket
+   */
+  AdminSocket* get_admin_socket() { return asok.get(); }
+
 private:
   std::unique_ptr<CryptoRandom> _crypto_random;
   unsigned nref;
+  std::unique_ptr<AdminSocket> asok;
+  std::unique_ptr<ContextConfigAdmin> asok_config_admin;
 };
+
 #else
+
 /* A CephContext represents the context held by a single library user.
  * There can be multiple CephContexts in the same process.
  *
