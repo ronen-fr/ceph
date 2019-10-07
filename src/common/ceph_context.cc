@@ -91,21 +91,22 @@ class ContextConfigAdmin {
         unique_ptr<Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)}; // RRR consider destrucing in 'catch'
         std::string section(command);
         boost::replace_all(section, " ", "_");
-        f->open_object_section("mempools");
         f->open_object_section(section.c_str());
 
         //return 
 
         try {
-          exec_command(f.get(), command, cmdmap, format, out).then_wrapped([](auto p) {
+          (void)exec_command(f.get(), command, cmdmap, format, out).then_wrapped([&f](auto p) {
             try {
               (void)p.get();
             } catch (std::exception& ex) {
-              std::cout << "request error: " << ex.what() << std::endl;
+              f->dump_string("error", ex.what());
+              //std::cout << "request error: " << ex.what() << std::endl;
             }
           });
         } catch ( ... ) {
-          std::cout << "\n\nexecution throwed\n\n";
+          f->dump_string("error", std::string(command) + " failed");
+          //std::cout << "\n\nexecution throwed\n\n";
         }
         f->close_section();
         f->flush(out);
@@ -131,6 +132,8 @@ class ContextConfigAdmin {
       m_config_admin.m_conf.get_all_sections(listing);
       for (const auto& s : listing)
         f->dump_string("section", s);
+
+      // does not exist: m_config_admin.m_conf.get_config().show_config(f);
       return seastar::now();
     }
   };
@@ -149,7 +152,12 @@ class ContextConfigAdmin {
 
       } else {
 
-        std::string conf_val = m_config_admin.m_conf.get_val<std::string>(var.c_str());
+        try {
+          std::string conf_val = m_config_admin.m_conf.get_val<std::string>(var.c_str());
+          f->dump_string(var.c_str(), conf_val.c_str());
+        } catch ( ... ) {
+          f->dump_string("error", "unrecognized configuration item " + std::string(command));
+        }
         //std::string conf_val = local_conf()->get_val<std::string>(var.c_str());
 	//char buf[4096];
 	//memset(buf, 0, sizeof(buf));
@@ -159,7 +167,7 @@ class ContextConfigAdmin {
 	//    f->dump_stream("error") << "error getting '" << var << "': " << cpp_strerror(r);
         //  _conf.get_val(var.c_str(), &tmp, sizeof(buf));
 	//} else {
-	    f->dump_string(var.c_str(), conf_val.c_str());
+	//   f->dump_string(var.c_str(), conf_val.c_str());
 	//}
       }
       return seastar::now();
@@ -169,8 +177,43 @@ class ContextConfigAdmin {
     }
   };
 
+  ///
+  ///  A CephContext admin hook: setting the value of a specific configuration item
+  ///  (a real example: {"prefix": "config set", "var":"debug_osd", "val": ["30/20"]} )
+  ///
+  class ConfigSetHook : public CephContextHookBase {
+  public:
+    explicit ConfigSetHook(ContextConfigAdmin& master) : CephContextHookBase(master) {};
+    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                      std::string_view format, bufferlist& out) final {
+      std::string var;
+      std::vector<std::string> new_val;
+      if (!cmd_getval<std::string>(nullptr, cmdmap, "var", var) ||
+          !cmd_getval(nullptr, cmdmap, "val", new_val)) {
+
+	f->dump_string("error", "syntax error: 'config set <var> <value>'");
+        return seastar::now();
+
+      } else {
+        // val may be multiple words
+	string valstr = str_join(new_val, " ");
+
+        return m_config_admin.m_conf.set_val(var, valstr).then_wrapped([&f, &command](auto p) {
+          try {
+              (void)p.get();
+              f->dump_string("success", "command");
+            } catch (std::exception& ex) {
+              f->dump_string("error", ex.what());
+            }
+            return seastar::now();
+        });
+      }
+    }
+  };
+
   ConfigShowHook config_show_hook;
   ConfigGetHook  config_get_hook;
+  ConfigSetHook  config_set_hook;
 
 
 public:
@@ -180,6 +223,7 @@ public:
     , m_conf{conf}
     , config_show_hook{*this}
     , config_get_hook{*this}
+    , config_set_hook{*this}
   {
     register_admin_commands();
   }
@@ -189,8 +233,9 @@ public:
   void register_admin_commands() {  // should probably be a future<void>
     auto admin_if = m_cct->get_admin_socket();
 
-    admin_if->register_command("config show",    "config show",  &config_show_hook,      "list all conf items");
+    admin_if->register_command("config show",    "config show",  &config_show_hook,      "lists all conf items");
     admin_if->register_command("config get",     "config get",   &config_get_hook,       "fetches a conf value");
+    admin_if->register_command("config set",     "config set",   &config_set_hook,       "sets a conf value");
   }
 
   void unregister_admin_commands();
