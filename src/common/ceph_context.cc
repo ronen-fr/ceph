@@ -55,10 +55,31 @@ using ceph::HeartbeatMap;
 
 #ifdef WITH_SEASTAR
 
+#include "crimson/admin/context_admin.h"
+#if 0
+
+class ContextConfigAdminImp;
+
+/*
+  \brief implementation of the 'admin_socket' API of (Crimson) Ceph Context
+
+  Main functionality:
+  - manipulating Context-level configuraion
+  - process-wide commands ('abort', 'assert')
+  - ...
+ */
+class ContextConfigAdmin {
+  std::unique_ptr<ContextConfigAdminImp> m_imp;
+public:
+  ContextConfigAdmin(CephContext* cct, ceph::common::ConfigProxy& conf);
+  ~ContextConfigAdmin();
+  void unregister_admin_commands();
+};
+
 using ceph::common::local_conf;
 
 /// the hooks and states needed to handle configuration requests
-class ContextConfigAdmin {
+class ContextConfigAdminImp {
 
   CephContext* m_cct;
   ceph::common::ConfigProxy& m_conf;
@@ -88,12 +109,10 @@ class ContextConfigAdmin {
         //
 
         // RRR to do check that creating a formatter does not block
-        unique_ptr<Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)}; // RRR consider destrucing in 'catch'
+        unique_ptr<Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)}; // RRR consider destructing in 'catch'
         std::string section(command);
         boost::replace_all(section, " ", "_");
         f->open_object_section(section.c_str());
-
-        //return 
 
         try {
           (void)exec_command(f.get(), command, cmdmap, format, out).then_wrapped([&f](auto p) {
@@ -236,10 +255,23 @@ public:
     admin_if->register_command("config show",    "config show",  &config_show_hook,      "lists all conf items");
     admin_if->register_command("config get",     "config get",   &config_get_hook,       "fetches a conf value");
     admin_if->register_command("config set",     "config set",   &config_set_hook,       "sets a conf value");
+    //admin_socket->register_command("config unset", "config unset name=var,type=CephString",  _admin_hook, "config unset <field>: unset a config variable");
+
   }
 
   void unregister_admin_commands();
 };
+
+
+class ContextConfigAdminImp;
+
+class ContextConfigAdmin {
+std::unique_ptr<ContextConfigAdminImp> m_imp;
+public:
+  ContextConfigAdmin(CephContext* cct, ceph::common::ConfigProxy& conf);
+  ~ContextConfigAdmin();
+};
+#endif
 
 
 CephContext::CephContext()
@@ -249,7 +281,7 @@ CephContext::CephContext()
 {
   asok = make_unique<AdminSocket>(this);
   asok_config_admin = make_unique<ContextConfigAdmin>(this, _conf);
-  asok_config_admin->register_admin_commands();
+  //asok_config_admin->register_admin_commands();
 }
 
 // define the dtor in .cc as CryptoRandom is an incomplete type in the header

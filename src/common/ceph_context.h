@@ -32,6 +32,7 @@
 #ifdef WITH_SEASTAR
 #include "crimson/common/config_proxy.h"
 #include "crimson/common/perf_counters_collection.h"
+#include "crimson/admin/context_admin.h"
 #else
 #include "common/config_proxy.h"
 #include "include/spinlock.h"
@@ -58,8 +59,27 @@ namespace ceph {
 
 #ifdef WITH_SEASTAR
 
+#if 0
+class ContextConfigAdminImp;
 
-class ContextConfigAdmin;
+/*
+  \brief implementation of the 'admin_socket' API of (Crimson) Ceph Context
+
+  Main functionality:
+  - manipulating Context-level configuraion
+  - process-wide commands ('abort', 'assert')
+  - ...
+ */
+class ContextConfigAdmin {
+  std::unique_ptr<ContextConfigAdminImp> m_imp;
+public:
+  ContextConfigAdmin(CephContext* cct, ceph::common::ConfigProxy& conf);
+  ~ContextConfigAdmin();
+  void unregister_admin_commands();
+};
+#endif
+
+//class ContextConfigAdmin;
 
 
 class CephContext {

@@ -125,10 +125,10 @@ public:
 
 private:
 
-int handle_registeration(std::string_view command,
-			  std::string_view cmddesc,
-		          AdminSocketHook* hook,
-			  std::string_view help);
+  int handle_registeration(std::string_view command,
+			   std::string_view cmddesc,
+		           AdminSocketHook* hook,
+			   std::string_view help);
 
 
   seastar::future<int> delayed_unregistration(std::string command);
