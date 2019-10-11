@@ -21,15 +21,9 @@
  */
 #include "common/ceph_context.h"
 
-//#include <mutex>
 #include <iostream>
 #include <atomic>
-
-//#include <pthread.h>
-
 #include <boost/algorithm/string.hpp>
-
-//#include "include/mempool.h"
 #include "common/admin_socket.h"
 //#include "common/code_environment.h"
 //#include "common/ceph_mutex.h"

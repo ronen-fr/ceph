@@ -319,7 +319,7 @@ PerfCountersCollectionImpl* CephContext::get_perfcounters_collection()
   return _perf_counters_collection.get_perf_collection();
 }
 
-#else  // WITH_SEASTAR
+#else  // (not) WITH_SEASTAR
 namespace {
 
 class LockdepObs : public md_config_obs_t {
