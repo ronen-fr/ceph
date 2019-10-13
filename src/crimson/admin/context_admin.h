@@ -34,7 +34,7 @@ public:
   ~ContextConfigAdmin();
   void unregister_admin_commands();
 };
-
+#if 0
 class ContextMiscAdminImp;
 
 /*!
@@ -52,6 +52,7 @@ public:
   ~ContextConfigAdmin();
   void unregister_admin_commands();
 };
+#endif
 
 
 

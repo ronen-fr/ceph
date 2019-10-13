@@ -49,19 +49,14 @@ using namespace std::literals;
 
 inline constexpr auto CEPH_ADMIN_SOCK_VERSION = "2"sv;
 
-//using outstream_t = seastar::output_stream<char>;
-
 class AdminSocketHook {
 public:
-  virtual bool call(std::string_view command, const cmdmap_t& cmdmap,
-		    std::string_view format, ceph::buffer::list& out) = 0;
+  virtual seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
+		                     std::string_view format, ceph::buffer::list& out) = 0;
   virtual ~AdminSocketHook() {}
 };
 
-
-
-class AdminSocket
-{
+class AdminSocket {
 public:
   AdminSocket(CephContext *cct);
   ~AdminSocket();
@@ -70,6 +65,8 @@ public:
   AdminSocket& operator =(const AdminSocket&) = delete;
   AdminSocket(AdminSocket&&) = delete;
   AdminSocket& operator =(AdminSocket&&) = delete;
+
+  using hook_client_tag = const void*;
 
   seastar::future<> init(const std::string& path);
 
@@ -92,16 +89,22 @@ public:
    *
    * @return 0 for success, -EEXIST if command already registered.
    */
-  int register_command(std::string_view command,
+  int register_command(hook_client_tag  client_tag,
+                       std::string_view command,
 		       std::string_view cmddesc,
 		       AdminSocketHook *hook,
 		       std::string_view help);
 
   seastar::future<int> unregister_command(std::string_view command);
 
+  // unregister all hooks registered by this client
+  seastar::future<int> unregister_command(hook_client_tag  client_tag);
+
+
 private:
 
-  int handle_registeration(std::string_view command,
+  int handle_registration(hook_client_tag  client_tag,
+                           std::string_view command,
 			   std::string_view cmddesc,
 		           AdminSocketHook* hook,
 			   std::string_view help);
@@ -120,35 +123,21 @@ private:
   seastar::future<seastar::stop_iteration> execute_line(std::string cmdline, seastar::output_stream<char>& out);
 
 #if 0
-
-  void shutdown();
-
-  std::string create_shutdown_pipe(int *pipe_rd, int *pipe_wr);
-  std::string destroy_shutdown_pipe();
-  std::string bind_and_listen(const std::string &sock_path, int *fd);
-
-  std::thread th;
-  void entry() noexcept;
-  bool do_accept();
   bool validate(const std::string& command,
 		const cmdmap_t& cmdmap,
 		ceph::buffer::list& out) const;
 #endif
   
-  CephContext *m_cct;
+  CephContext* m_cct;
   bool do_die{false};
 
-#if 0
+  // seems like multiple Context objects are created when calling vstart, and that
+  // translates to multiple AdminSocket objects being created. But only the "real" one
+  // (the OSD's) is actually initialized by a call to 'init()'.
+  // Thus, we will try to discourage the "other" objects from registering hooks.
+  bool setup_done{false};
 
-  std::string m_path;
-  int m_sock_fd = -1;
-  int m_shutdown_rd_fd = -1;
-  int m_shutdown_wr_fd = -1;
 
-  bool in_hook = false;
-  std::condition_variable in_hook_cond;
-  std::mutex lock;  // protects `hooks`
-#endif
   std::unique_ptr<AdminSocketHook> version_hook;
   std::unique_ptr<AdminSocketHook> help_hook;
   std::unique_ptr<AdminSocketHook> getdescs_hook;
@@ -157,11 +146,12 @@ private:
     AdminSocketHook* hook;
     std::string desc;
     std::string help;
+    hook_client_tag client_tag; //!< for when we un-register all client's requests en bulk
     bool is_valid{true}; //!< cleared with 'unregister_command()'
 
-    hook_info(AdminSocketHook* hook, std::string_view desc,
+    hook_info(hook_client_tag tag, AdminSocketHook* hook, std::string_view desc,
 	      std::string_view help)
-      : hook(hook), desc(desc), help(help) {}
+      : hook{hook}, desc{desc}, help{help}, client_tag{tag} {}
   };
 
   struct parsed_command_t {

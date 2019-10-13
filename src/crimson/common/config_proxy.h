@@ -148,6 +148,20 @@ public:
     });
   }
 
+  // seems that Config.h has no Formatter awareness. return a 
+  seastar::future<>
+  show_config(/*ceph::Formatter* f*/ std::vector<std::string>& kout) {
+    std::vector<std::string> keys;
+    get_config().get_all_keys(&keys);
+
+    for (auto& k : keys) {
+      (void)k; //
+      //f->dump_string(k);
+      kout.push_back(k);
+    }
+    return seastar::now();
+  }
+
   seastar::future<> parse_argv(std::vector<const char*>& argv) {
     // we could pass whatever is unparsed to seastar, but seastar::app_template
     // is used for driving the seastar application, and
