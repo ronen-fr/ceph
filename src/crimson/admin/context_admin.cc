@@ -100,9 +100,7 @@ class ContextConfigAdminImp {
         //
         //  some preliminary (common) parsing:
         //
-
-        // RRR \todo check that creating a formatter does not block
-        unique_ptr<Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)}; // RRR consider destructing in 'catch'
+        unique_ptr<ceph::Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)}; // RRR consider destructing in 'catch'
         std::string section(command);
         boost::replace_all(section, " ", "_");
         f->open_object_section(section.c_str());
@@ -143,20 +141,14 @@ class ContextConfigAdminImp {
   class ConfigShowHook : public CephContextHookBase {
   public:
     explicit ConfigShowHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
-    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+    seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) final {
-      std::vector<std::string> listing;
-      //m_config_admin.m_conf.get_all_sections(listing);
-      //for (const auto& s : listing) {
-      //  f->dump_string("section", s);
-      //}
 
       std::vector<std::string> k_list;
       m_config_admin.m_conf.show_config(k_list);
       for (const auto& k : k_list) {
-        f->dump_string("section", k);
+        f->dump_string("conf-item", k);
       }
-      f->dump_string("done", "ss");
       return seastar::now();
     }
   };
@@ -167,7 +159,7 @@ class ContextConfigAdminImp {
   class ConfigGetHook : public CephContextHookBase {
   public:
     explicit ConfigGetHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
-    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+    seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) final {
       std::string var;
       if (!cmd_getval<std::string>(nullptr, cmdmap, "var", var)) {
@@ -193,7 +185,7 @@ class ContextConfigAdminImp {
   class ConfigSetHook : public CephContextHookBase {
   public:
     explicit ConfigSetHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
-    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+    seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) final {
       std::string var;
       std::vector<std::string> new_val;
@@ -210,7 +202,7 @@ class ContextConfigAdminImp {
         return m_config_admin.m_conf.set_val(var, valstr).then_wrapped([&f, &command](auto p) {
           try {
               (void)p.get();
-              f->dump_string("success", "command");
+              f->dump_string("success", command);
             } catch (std::exception& ex) {
               f->dump_string("error", ex.what());
             }
@@ -226,7 +218,7 @@ class ContextConfigAdminImp {
   class AssertAlwaysHook : public CephContextHookBase {
   public:
     explicit AssertAlwaysHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
-    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+    seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) final {
       bool assert_conf = m_config_admin.m_conf.get_val<bool>("debug_asok_assert_abort") || /*for now*/ true;
       if (!assert_conf) {
@@ -285,9 +277,7 @@ public:
     //  (probably the address of the registering object)
 
     auto admin_if = m_cct->get_admin_socket();
-    // admin_if->unregister(hook_client_tag{this});
-
-    // ... \todo
+    admin_if->unregister_client(AdminSocket::hook_client_tag{this});
   }
 };
 

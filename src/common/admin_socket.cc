@@ -452,11 +452,11 @@ int AdminSocket::register_command(std::string_view command,
   std::unique_lock l(lock);
   auto i = hooks.find(command);
   if (i != hooks.cend()) {
-    ldout(m_cct, 5) << "register_command " << command << " hook " << hook
+    ldout(m_cct, 1) << "register_command " << command << " hook " << hook
 		    << " EEXIST" << dendl;
     ret = -EEXIST;
   } else {
-    ldout(m_cct, 5) << "register_command " << command << " hook " << hook
+    ldout(m_cct, 1) << "register_command " << command << " hook " << hook
 		    << dendl;
     hooks.emplace_hint(i,
 		       std::piecewise_construct,

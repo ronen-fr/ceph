@@ -70,12 +70,12 @@ public:
 
   seastar::future<> init(const std::string& path);
 
-  /**
+  /*!
    * register an admin socket command
    *
-   * The command is registered under a command string.  Incoming
+   * The command is registered under a command string. Incoming
    * commands are split by space and matched against the longest
-   * registered command.  For example, if 'foo' and 'foo bar' are
+   * registered command. For example, if 'foo' and 'foo bar' are
    * registered, and an incoming command is 'foo bar baz', it is
    * matched with 'foo bar', while 'foo fud' will match 'foo'.
    *
@@ -89,30 +89,33 @@ public:
    *
    * @return 0 for success, -EEXIST if command already registered.
    */
-  int register_command(hook_client_tag  client_tag,
-                       std::string_view command,
-		       std::string_view cmddesc,
-		       AdminSocketHook *hook,
-		       std::string_view help);
+  seastar::future<bool> register_promise(hook_client_tag  client_tag,
+                                         std::string_view command,
+		                         std::string_view cmddesc,
+		                         AdminSocketHook *hook,
+		                         std::string_view help);
 
-  seastar::future<int> unregister_command(std::string_view command);
+  bool register_command(hook_client_tag  client_tag,
+                        std::string_view command,
+                        std::string_view cmddesc,
+                        AdminSocketHook* hook,
+                        std::string_view help);
 
-  // unregister all hooks registered by this client
-  seastar::future<int> unregister_command(hook_client_tag  client_tag);
 
+  seastar::future<> unregister_command(std::string_view command);
+
+  /// unregister all hooks registered by this client
+  seastar::future<> unregister_client(hook_client_tag  client_tag);
 
 private:
 
-  int handle_registration(hook_client_tag  client_tag,
-                           std::string_view command,
-			   std::string_view cmddesc,
-		           AdminSocketHook* hook,
-			   std::string_view help);
+  seastar::future<bool> handle_registration(hook_client_tag  client_tag,
+                                            std::string_view command,
+			                    std::string_view cmddesc,
+		                            AdminSocketHook* hook,
+			                    std::string_view help);
 
-
-  seastar::future<int> delayed_unregistration(std::string command);
-
-
+  seastar::future<> delayed_unregistration(std::string command);
 
   void internal_hooks();
 
@@ -120,7 +123,7 @@ private:
 
   seastar::future<> handle_client(seastar::input_stream<char>&& inp, seastar::output_stream<char>&& out);
 
-  seastar::future<seastar::stop_iteration> execute_line(std::string cmdline, seastar::output_stream<char>& out);
+  seastar::future<> execute_line(std::string cmdline, seastar::output_stream<char>& out);
 
 #if 0
   bool validate(const std::string& command,
@@ -129,14 +132,13 @@ private:
 #endif
   
   CephContext* m_cct;
-  bool do_die{false};
+  bool do_die{false};  // RRR check if needed
 
   // seems like multiple Context objects are created when calling vstart, and that
   // translates to multiple AdminSocket objects being created. But only the "real" one
   // (the OSD's) is actually initialized by a call to 'init()'.
   // Thus, we will try to discourage the "other" objects from registering hooks.
-  bool setup_done{false};
-
+  bool setup_done{false}; // RRR check if needed
 
   std::unique_ptr<AdminSocketHook> version_hook;
   std::unique_ptr<AdminSocketHook> help_hook;

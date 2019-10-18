@@ -12,16 +12,6 @@
  *
  */
 
-// temp include, to solve a compilation problem
-//#include <seastar/core/future.hh>
-//#include "messages/MOSDOp.h"
-////ude "crimson/osd/pg.h"
-////ude "crimson/osd/osd.h"
-////ude "common/Formatter.h"
-//ude "crimson/osd/osd_operations/client_request.h"
-//ude "crimson/osd/osd_connection_priv.h"
-
-
 //#include "common/version.h"
 #include "crimson/net/Socket.h"
 #include "crimson/admin/admin_socket.h"
@@ -58,29 +48,27 @@ AdminSocket::~AdminSocket()
 
 //  the internal handling of a registration request, after that request
 //  was forwarded from the requesting core.
-int AdminSocket::handle_registration(hook_client_tag  client_tag,
+seastar::future<bool> AdminSocket::handle_registration(hook_client_tag  client_tag,
                                       std::string_view command,
 				      std::string_view cmddesc,
 				      AdminSocketHook* hook,
 				      std::string_view help)
 {
-  int ret;
   auto i = hooks.find(command);
   if (i != hooks.cend()) {
     logger().warn("{}: command {} already registered", __func__, command); 
-    ret = -EEXIST;
-  } else {
-    logger().info("{}: command {} registered", __func__, command); 
-    hooks.emplace_hint(i,
-		       std::piecewise_construct,
-		       std::forward_as_tuple(command),
-		       std::forward_as_tuple(client_tag, hook, cmddesc, help));
-    ret = 0;
+    return seastar::make_ready_future<bool>(false);
   }
-  return ret;
+
+  hooks.emplace_hint(i,
+		     std::piecewise_construct,
+		     std::forward_as_tuple(command),
+		     std::forward_as_tuple(client_tag, hook, cmddesc, help));
+  logger().info("{}: command {} registered", __func__, command); 
+  return seastar::make_ready_future<bool>(true);
 }
 
-int AdminSocket::register_command(hook_client_tag  client_tag,
+seastar::future<bool> AdminSocket::register_promise(hook_client_tag  client_tag,
                                   std::string_view command,
 				  std::string_view cmddesc,
 				  AdminSocketHook *hook,
@@ -90,133 +78,75 @@ int AdminSocket::register_command(hook_client_tag  client_tag,
   //  Not handled for now, as only one core is used for Crimson at this point.
   //  if (core != admin_core) submit_to()...
 
+  // \todo missing multi-core code
   return handle_registration(client_tag, command, cmddesc, hook, help);
 }
 
-#if 0
-
-int AdminSocket::register_command__(std::string_view command,
+bool AdminSocket::register_command(hook_client_tag  client_tag,
+                                  std::string_view command,
 				  std::string_view cmddesc,
 				  AdminSocketHook *hook,
 				  std::string_view help)
 {
-  int ret;
-  std::unique_lock l(lock);
-  auto i = hooks.find(command);
-  if (i != hooks.cend()) {
-    ldout(m_cct, 5) << "register_command " << command << " hook " << hook
-		    << " EEXIST" << dendl;
-    ret = -EEXIST;
-  } else {
-    ldout(m_cct, 5) << "register_command " << command << " hook " << hook
-		    << dendl;
-    hooks.emplace_hint(i,
-		       std::piecewise_construct,
-		       std::forward_as_tuple(command),
-		       std::forward_as_tuple(hook, cmddesc, help));
-    ret = 0;
-  }
-  return ret;
+  //  are we on the admin-specific core? if not - send to that core.
+  //  Not handled for now, as only one core is used for Crimson at this point.
+  //  if (core != admin_core) submit_to()...
+
+  // \todo missing multi-core code
+  //return handle_registration(client_tag, command, cmddesc, hook, help).then(
+  //  [](auto f){ return seastar::make_ready_future<bool>(f.get0()); }
+  //);
+  return handle_registration(client_tag, command, cmddesc, hook, help).finally([this](){
+    return seastar::make_ready_future<bool>(true);
+    //[](auto f){ return seastar::make_ready_future<bool>(f.get0()); }
+  }).get0();//.then([](auto x){return false;});
 }
-
-int AdminSocket::unregister_command__(std::string_view command)
-{
-  int ret;
-  std::unique_lock l(lock);
-  auto i = hooks.find(command);
-  if (i != hooks.cend()) {
-    ldout(m_cct, 5) << "unregister_command " << command << dendl;
-
-    // If we are currently processing a command, wait for it to
-    // complete in case it referenced the hook that we are
-    // unregistering.
-    in_hook_cond.wait(l, [this]() { return !in_hook; });
-
-    hooks.erase(i);
-
-
-    ret = 0;
-  } else {
-    ldout(m_cct, 5) << "unregister_command " << command << " ENOENT" << dendl;
-    ret = -ENOENT;
-  }
-  return ret;
-}
-#endif
 
 ///  called when we know that we are not executing any hook
-seastar::future<int> AdminSocket::delayed_unregistration(std::string command)
+seastar::future<> AdminSocket::delayed_unregistration(std::string command)
 {
-  auto i = hooks.find(command);
-  if (i == hooks.cend()) {
-    // shouldn't happen, but not an issue
-    return seastar::make_ready_future<int>(-ENOENT);
-  }
-  hooks.erase(i);
-  return seastar::make_ready_future<int>(0);
+  auto h = hooks.find(command);
+  if (h != hooks.cend()) {
+    hooks.erase(h);
+  } // the 'else' should not happen, but is not an issue
+
+  return seastar::now();
 }
 
 
-seastar::future<int> AdminSocket::unregister_command(std::string_view command)
+seastar::future<> AdminSocket::unregister_command(std::string_view command)
 {
-  auto i = hooks.find(command);
-  if (i == hooks.cend()) {
+  auto h = hooks.find(command);
+  if (h == hooks.cend()) {
     logger().warn("{}: {} is not a registered command", __func__, command);
-    return seastar::make_ready_future<int>(-ENOENT);
+  } else {
+
+    h->second.is_valid = false;
+
+    //  \todo:
+    //  Create an unregistration promise, but do not schedule it yet.
+    //  Add it to a queue of waiting deletions.
+    //  (When can we schedule it?)
   }
 
-  i->second.is_valid = false;
-  
+  return seastar::now();
+}
+
+seastar::future<> AdminSocket::unregister_client(hook_client_tag client_tag)
+{
+  std::for_each(hooks.begin(), hooks.end(), [client_tag](auto& h) {
+    if (h.second.client_tag == client_tag) {
+      h.second.is_valid = false;
+    }
+  });
+
+  //  \todo:
   //  Create an unregistration promise, but do not schedule it yet.
   //  Add it to a queue of waiting deletions.
   //  (When can we schedule it?)
-  
-  
-  return seastar::make_ready_future<int>(0);
-  #if 0
-  int ret;
-  std::unique_lock l(lock);
-  auto i = hooks.find(command);
-  if (i != hooks.cend()) {
-    ldout(m_cct, 5) << "unregister_command " << command << dendl;
 
-    // If we are currently processing a command, wait for it to
-    // complete in case it referenced the hook that we are
-    // unregistering.
-    in_hook_cond.wait(l, [this]() { return !in_hook; });
-
-    hooks.erase(i);
-
-
-    ret = 0;
-  } else {
-    ldout(m_cct, 5) << "unregister_command " << command << " ENOENT" << dendl;
-    ret = -ENOENT;
-  }
-  return ret;
-  #endif
+  return seastar::now();
 }
-
-#if 0
-void AdminSocket::unregister_commands(const AdminSocketHook *hook)
-{
-  std::unique_lock l(lock);
-  auto i = hooks.begin();
-  while (i != hooks.end()) {
-    if (i->second.hook == hook) {
-      ldout(m_cct, 5) << __func__ << " " << i->first << dendl;
-
-      // If we are currently processing a command, wait for it to
-      // complete in case it referenced the hook that we are
-      // unregistering.
-      in_hook_cond.wait(l, [this]() { return !in_hook; });
-      hooks.erase(i++);
-    } else {
-      i++;
-    }
-  }
-}
-#endif
 
 class VersionHook : public AdminSocketHook {
 public:
@@ -357,37 +287,23 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   return parsed_command_t{match, cmdmap, format, p->second.hook};
 }
 
-
-seastar::future<seastar::stop_iteration> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
+seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
 {
   //  extract the op-code (null or \n-terminated)
-
-  #if 1
-
   auto parsed = parse_cmd(cmdline);
   if (!parsed) {
-    return seastar::make_ready_future<seastar::stop_iteration>(seastar::stop_iteration::yes);
+    return seastar::now();
   }
 
   bufferlist out_buf;
 
-  parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf);
-  return out.write(out_buf.to_str()).
-    then([&out](){
-            return seastar::make_ready_future<seastar::stop_iteration>(seastar::stop_iteration::yes);
-    });
-
-  #endif
-  // dev
-  string ans = "+"s + cmdline;
-
-  return out.write(ans).
-    then([](){
-            return seastar::make_ready_future<seastar::stop_iteration>(seastar::stop_iteration::yes);
+  return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
+    then([&out, &out_buf](auto call_res) {
+      return out.write(out_buf.to_str()); // RRR check for the correct 'formatter' API
     });
 }
 
-
+#if 0
 // will handle the closing of the fds
 seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, seastar::output_stream<char>&& out)
 {
@@ -417,7 +333,23 @@ seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, 
     return inp.close(); }).
       discard_result();
 }
+#endif
 
+seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, seastar::output_stream<char>&& out)
+{
+  //  RRR \todo safe read
+  //  RRR \todo handle old protocol (see original code)
+
+  return inp.read().
+    then( [&out, this](auto full_cmd) {
+
+      return execute_line(full_cmd.share().get(), out);
+
+    }).then([&out]() { return out.flush(); }).
+    then([&out]() { return out.close(); }).
+    then([&inp]() { return inp.close(); }).
+    discard_result();
+}
 
 seastar::future<> AdminSocket::init(const std::string& path)
 {
