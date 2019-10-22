@@ -90,16 +90,16 @@ public:
    * @return 0 for success, -EEXIST if command already registered.
    */
   seastar::future<bool> register_promise(hook_client_tag  client_tag,
-                                         std::string_view command,
-		                         std::string_view cmddesc,
+                                         std::string command,
+		                         std::string cmddesc,
 		                         AdminSocketHook *hook,
-		                         std::string_view help);
+		                         std::string help);
 
   bool register_command(hook_client_tag  client_tag,
-                        std::string_view command,
-                        std::string_view cmddesc,
+                        std::string command,
+                        std::string cmddesc,
                         AdminSocketHook* hook,
-                        std::string_view help);
+                        std::string help);
 
 
   seastar::future<> unregister_command(std::string_view command);
@@ -110,10 +110,10 @@ public:
 private:
 
   seastar::future<bool> handle_registration(hook_client_tag  client_tag,
-                                            std::string_view command,
-			                    std::string_view cmddesc,
+                                            std::string command,
+			                    std::string cmddesc,
 		                            AdminSocketHook* hook,
-			                    std::string_view help);
+			                    std::string help);
 
   seastar::future<> delayed_unregistration(std::string command);
 

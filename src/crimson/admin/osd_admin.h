@@ -16,8 +16,10 @@
 #include <memory>
 #include "common/ceph_context.h"
 
-class OsdAdminImp;
+//namespace ceph; 
+namespace ceph::osd {
 class OSD;
+class OsdAdminImp;
 
 /*!
   \brief implementation of the configuration-related 'admin_socket' API of
@@ -27,9 +29,11 @@ class OSD;
   - ...
  */
 class OsdAdmin {
-  std::unique_ptr<OsdAdminImp> m_imp;
+  std::unique_ptr<ceph::osd::OsdAdminImp> m_imp;
 public:
-  OsdAdmin(OSD* osd, CephContext* cct, ceph::common::ConfigProxy& conf);
+  OsdAdmin(ceph::osd::OSD* osd, CephContext* cct, ceph::common::ConfigProxy& conf);
   ~OsdAdmin();
   void unregister_admin_commands();
 };
+
+}

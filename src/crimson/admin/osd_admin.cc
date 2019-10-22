@@ -46,7 +46,10 @@ using ceph::bufferlist;
 #endif
 
 using ceph::common::local_conf;
+using ceph::osd::OSD;
 //using AdminSocket::hook_client_tag;
+
+namespace ceph::osd {
 
 /*!
   the hooks and states needed to handle OSD asok requests
@@ -167,6 +170,7 @@ public:
     auto admin_if = m_cct->get_admin_socket();
 
     admin_if->register_command(AdminSocket::hook_client_tag{this}, "status",    "status",  &osd_status_hook,      "OSD status");
+    admin_if->register_command(AdminSocket::hook_client_tag{this}, "ZZ_ZZ_ZZ_ZZ",    "ZZ_ZZ_ZZ_ZZ",  &osd_status_hook,      "OSD status");
   }
 
   void unregister_admin_commands() {
@@ -186,7 +190,7 @@ public:
 //  some Pimpl details:
 //
 OsdAdmin::OsdAdmin(OSD* osd, CephContext* cct, ceph::common::ConfigProxy& conf)
-  : m_imp{ std::make_unique<OsdAdminImp>(osd, cct, conf) }
+  : m_imp{ std::make_unique<ceph::osd::OsdAdminImp>(osd, cct, conf) }
 {}
 
 void OsdAdmin::unregister_admin_commands()
@@ -195,3 +199,5 @@ void OsdAdmin::unregister_admin_commands()
 }
 
 OsdAdmin::~OsdAdmin() = default;
+
+} // namespace
