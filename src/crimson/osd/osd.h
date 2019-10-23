@@ -211,6 +211,7 @@ public:
   seastar::future<> update_heartbeat_peers();
 
   friend class PGAdvanceMap;
+  friend class OsdAdminImp;
 };
 
 }

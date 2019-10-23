@@ -24,6 +24,7 @@
 #include <boost/algorithm/string.hpp>
 #include "crimson/admin/admin_socket.h"
 #include "crimson/admin/osd_admin.h"
+#include "crimson/osd/osd.h"
 #include "common/config.h"
 //#include "common/errno.h"
 //#include "common/Graylog.h"
@@ -78,7 +79,7 @@ class OsdAdminImp {
       m_osd_admin{master}
     {}
 
-    // the high-lelev section is an array (affects the formatting)
+    // the high-level section is an array (affects the formatting)
     virtual bool format_as_array() const {
       return false;
     }
@@ -89,6 +90,7 @@ class OsdAdminImp {
      */
     seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
 	                       std::string_view format, bufferlist& out) override {
+      std::cerr << "OSDADH call  1" << std::endl;
       try {
         //
         //  some preliminary (common) parsing:
@@ -111,6 +113,7 @@ class OsdAdminImp {
           (void)exec_command(f.get(), command, cmdmap, format, out).then_wrapped([&f](auto p) {
             try {
               (void)p.get();
+              //auto resp = p.get();
             } catch (std::exception& ex) {
               f->dump_string("error", ex.what());
               //std::cout << "request error: " << ex.what() << std::endl;
@@ -127,6 +130,7 @@ class OsdAdminImp {
       } catch ( ... ) {
         return seastar::make_ready_future<bool>(false);
       }
+      std::cerr << "OSDADH call  111" << std::endl;
 
       return seastar::make_ready_future<bool>(true);
     }
@@ -142,9 +146,27 @@ class OsdAdminImp {
     seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) final {
 
+      //---// std::cerr << "OsdStatusHook 1" << std::endl;
+      //---// f->open_object_section("status");
+      //---// f->dump_stream("cluster_fsid") << m_osd_admin.osd_superblock().cluster_fsid;
+      //---// f->dump_stream("osd_fsid") << m_osd_admin.osd_superblock().osd_fsid;
+      //---// f->dump_unsigned("whoami", m_osd_admin.osd_superblock().whoami);
+      //---// // \todo f->dump_string("state", get_state_name(get_state()));
+      //---// std::cerr << "OsdStatusHook 11" << std::endl;
+      //---// f->dump_unsigned("oldest_map", m_osd_admin.osd_superblock().oldest_map);
+      //---// f->dump_unsigned("newest_map", m_osd_admin.osd_superblock().newest_map);
+      // \todo f->dump_unsigned("num_pgs", num_pgs);
+      std::cerr << "OsdStatusHook 111" << std::endl;
       return seastar::now();
-     }
+    }
   };
+
+  ///
+  ///  provide the hooks with access to OSD internals 
+  ///
+  const OSDSuperblock& osd_superblock() {
+    return m_osd->superblock;
+  }
 
   OsdStatusHook   osd_status_hook;
 
@@ -170,7 +192,7 @@ public:
     auto admin_if = m_cct->get_admin_socket();
 
     admin_if->register_command(AdminSocket::hook_client_tag{this}, "status",    "status",  &osd_status_hook,      "OSD status");
-    admin_if->register_command(AdminSocket::hook_client_tag{this}, "ZZ_ZZ_ZZ_ZZ",    "ZZ_ZZ_ZZ_ZZ",  &osd_status_hook,      "OSD status");
+    //admin_if->register_command(AdminSocket::hook_client_tag{this}, "ZZ_ZZ_ZZ_ZZ",    "ZZ_ZZ_ZZ_ZZ",  &osd_status_hook,      "OSD status");
   }
 
   void unregister_admin_commands() {
@@ -182,7 +204,14 @@ public:
     //  (probably the address of the registering object)
 
     auto admin_if = m_cct->get_admin_socket();
-    admin_if->unregister_client(AdminSocket::hook_client_tag{this});
+    if (admin_if) {
+      // guarding against possible (?) destruction order problems
+      try {
+        (void)admin_if->unregister_client(AdminSocket::hook_client_tag{this}).finally([]{}).discard_result();
+      } catch (...) {
+        std::cerr << " failed unregistering" << std::endl;
+      }
+    }
   }
 };
 

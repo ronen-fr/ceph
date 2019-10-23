@@ -145,15 +145,19 @@ private:
   std::unique_ptr<AdminSocketHook> getdescs_hook;
 
   struct hook_info {
+    std::string cmd;
+    bool is_valid{true}; //!< cleared with 'unregister_command()'
     AdminSocketHook* hook;
     std::string desc;
     std::string help;
     hook_client_tag client_tag; //!< for when we un-register all client's requests en bulk
-    bool is_valid{true}; //!< cleared with 'unregister_command()'
 
-    hook_info(hook_client_tag tag, AdminSocketHook* hook, std::string_view desc,
-	      std::string_view help)
-      : hook{hook}, desc{desc}, help{help}, client_tag{tag} {}
+    //hook_info(hook_client_tag tag, AdminSocketHook* hook, std::string_view desc,
+    //      std::string_view help)
+    //  : hook{hook}, desc{desc}, help{help}, client_tag{tag} {}
+    hook_info(std::string cmd, hook_client_tag tag, AdminSocketHook* hook, std::string_view desc,
+          std::string_view help)
+      : cmd{cmd}, hook{hook}, desc{desc}, help{help}, client_tag{tag} {}
   };
 
   struct parsed_command_t {
@@ -164,7 +168,13 @@ private:
   };
   std::optional<parsed_command_t> parse_cmd(const std::string& command_text);
 
-  std::map<std::string, hook_info, std::less<>> hooks;
+  //
+  //  the original code uses std::map. As we wish to discard entries without erasing
+  //  them, I'd rather use a container that supports key modifications. And as the number
+  //  of entries is in the tens, not the thousands, I expect std::vector to perform
+  //  better.
+  //std::map<std::string, hook_info, std::less<>> hooks;
+  std::vector<hook_info> hooks;
 
   friend class AdminSocketTest;
   friend class HelpHook;

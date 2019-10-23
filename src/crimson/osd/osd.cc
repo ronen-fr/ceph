@@ -281,7 +281,10 @@ seastar::future<> OSD::start()
     //if (_conf->admin_socket.length())
     //_admin_socket->init(_conf->admin_socket);
     osd_admin = std::make_unique<OsdAdmin>(this, shard_services.get_cct(), ceph::common::local_conf());
-    return shard_services.get_cct()->get_admin_socket()->init("/tmp/asok");
+    auto x = local_conf().get_val<std::string>("admin_socket");
+    std::cerr << "^^^^^^^^^^^^^^^^^^^^^^^^^^" << x << std::endl;
+
+    return shard_services.get_cct()->get_admin_socket()->init(x.length() ? x : "/tmp/asok");
     //return seastar::now();
   }).then([this] {
     return start_boot();

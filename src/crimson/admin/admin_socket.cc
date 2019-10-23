@@ -34,6 +34,7 @@ namespace {
 AdminSocket::AdminSocket(CephContext *cct)
   : m_cct(cct)
 {
+  hooks.reserve(32); // to be made into a constant
   std::cout << "######### a new AdminSocket " << (uint64_t)(this) <<
         " -> " << (uint64_t)(m_cct) << std::endl;
 }
@@ -54,16 +55,25 @@ seastar::future<bool> AdminSocket::handle_registration(hook_client_tag  client_t
 				      AdminSocketHook* hook,
 				      std::string help)
 {
-  auto i = hooks.find(command);
-  if (i != hooks.cend()) {
+  std::string_view cmd{command};
+  std::cerr << "fut_hr " << cmd << std::endl;
+  auto h = std::find_if(hooks.begin(), hooks.end(), [this, cmd](const auto& h){
+          return h.is_valid && h.cmd == cmd;
+  });
+
+  if (h != hooks.cend()) {
+    std::cerr << "hri failed ###################" << std::endl;
     logger().warn("{}: command {} already registered", __func__, command); 
     return seastar::make_ready_future<bool>(false);
   }
 
-  hooks.emplace_hint(i,
-		     std::piecewise_construct,
-		     std::forward_as_tuple(command),
-		     std::forward_as_tuple(client_tag, hook, cmddesc, help));
+  std::cerr << "fut_hr to add " << cmd << std::endl;
+  hooks.emplace_back(command, client_tag, hook, cmddesc, help);
+//hooks.emplace_back(i,
+//		     std::piecewise_construct,
+//		     std::forward_as_tuple(command),
+//		     std::forward_as_tuple(client_tag, hook, cmddesc, help));
+  std::cerr << "fut_hr done " << cmd << std::endl;
   logger().info("{}: command {} registered", __func__, command); 
   return seastar::make_ready_future<bool>(true);
 }
@@ -96,20 +106,93 @@ bool AdminSocket::register_command(hook_client_tag  client_tag,
   //return handle_registration(client_tag, command, cmddesc, hook, help).then(
   //  [](auto f){ return seastar::make_ready_future<bool>(f.get0()); }
   //);
-  return handle_registration(client_tag, command, cmddesc, hook, help).finally([this, command](){
-    std::cerr << "in hr:" << command <<  std::endl;
-    return seastar::make_ready_future<bool>(true);
+  //  return handle_registration(client_tag, command, cmddesc, hook, help).
+  //    handle_exception([](auto x) {
+  //      std::cerr << "===== FAILURE" << std::endl; 
+  //      return seastar::make_ready_future<bool>(false);
+  //    }).
+  //    then_wrapped([this, command](auto&& res){
+  //      std::cerr << "in hr 0" << std::endl;
+  //      try { // just for a second
+  //        std::cerr << "in hr:" << command <<
+  //          (res.failed() ? "<failed>" : "<ok>") << std::endl;
+  //      } catch ( ... ) {
+  //        std::cerr << "===== FAILURE in hr" << std::endl;
+  //        return seastar::make_ready_future<bool>(false);
+  //      }
+  //      return std::move(res);
+  //      //return /*res.failed() ? false : */seastar::make_ready_future<bool>(true);;
+  //    //[](auto f){ return seastar::make_ready_future<bool>(f.get0()); }
+  //    }).finally([this]{
+  //       std::cerr << "in hr 9" << std::endl;
+  //    }).get0();
+
+  auto res = handle_registration(client_tag, command, cmddesc, hook, help).
+    finally([this]{
+       std::cerr << "in hr 9" << std::endl;
+    });
+
+  try {
+    std::cerr << "in hr 19" << (res.available() ? "ava" : "Nav") << std::endl;
+    bool t = (res.available() && !res.failed()) ? res.get0() : false;
+    std::cerr << "in hr 29" << std::endl;
+    return t;
+  } catch (...) {
+    return false;
+  }
+
+    
+
+  //std::cerr << "===== AFTER in hr?" << std::endl;
+  //if (res.available() && !res.failed())
+  //  return res.get0();
+  //else
+  //  return false;
+
+  //return handle_registration(client_tag, command, cmddesc, hook, help).finally([this, command](){
+  //  std::cerr << "in hr:" << command <<  std::endl;
+  //  return seastar::make_ready_future<bool>(true);
+  //  //[](auto f){ return seastar::make_ready_future<bool>(f.get0()); }
+  //}).get0();//.then([](auto x){return false;});
+
+  /*
+  auto res = handle_registration(client_tag, command, cmddesc, hook, help).
+    handle_exception([](auto x){
+      std::cerr << "===== FAILURE\n"; 
+      return seastar::make_ready_future<bool>(false);
+    }).
+    then_wrapped([this, command](auto res){
+      try { // just for a second
+      std::cerr << "in hr:" << command <<
+        (res.failed() ? "<failed>" : "<ok>") << std::endl;
+      } catch ( ... ) {
+        std::cerr << "===== FAILURE in hr" << std::endl;
+        return seastar::make_ready_future<bool>(false);
+      }
+      return / *res.failed() ? false : * /seastar::make_ready_future<bool>(true);;
     //[](auto f){ return seastar::make_ready_future<bool>(f.get0()); }
-  }).get0();//.then([](auto x){return false;});
+    }).handle_exception([](auto x){
+      return seastar::make_ready_future<bool>(false);
+    });//.then([](auto x){return false;});
+
+  std::cerr << "===== AFTER in hr?" << std::endl;
+  if (res.available() && !res.failed())
+    return res.get0();
+  else
+    return false;
+
+
+
+  */
 }
 
 ///  called when we know that we are not executing any hook
 seastar::future<> AdminSocket::delayed_unregistration(std::string command)
 {
-  auto h = hooks.find(command);
-  if (h != hooks.cend()) {
-    hooks.erase(h);
-  } // the 'else' should not happen, but is not an issue
+  //auto h = hooks.find(command);
+  //if (h != hooks.cend()) {
+  //  hooks.erase(h);
+  //} // the 'else' should not happen, but is not an issue
 
   return seastar::now();
 }
@@ -117,27 +200,30 @@ seastar::future<> AdminSocket::delayed_unregistration(std::string command)
 
 seastar::future<> AdminSocket::unregister_command(std::string_view command)
 {
-  auto h = hooks.find(command);
+  std::string_view cmd{command};
+  auto h = std::find_if(hooks.begin(), hooks.end(), [this, cmd](const auto& h){
+          return h.is_valid && h.cmd == cmd;
+  });
+
   if (h == hooks.cend()) {
     logger().warn("{}: {} is not a registered command", __func__, command);
   } else {
 
-    h->second.is_valid = false;
+    h->is_valid = false;
 
     //  \todo:
     //  Create an unregistration promise, but do not schedule it yet.
     //  Add it to a queue of waiting deletions.
     //  (When can we schedule it?)
   }
-
   return seastar::now();
 }
 
 seastar::future<> AdminSocket::unregister_client(hook_client_tag client_tag)
 {
   std::for_each(hooks.begin(), hooks.end(), [client_tag](auto& h) {
-    if (h.second.client_tag == client_tag) {
-      h.second.is_valid = false;
+    if (h.client_tag == client_tag) {
+      h.is_valid = false;
     }
   });
 
@@ -185,9 +271,9 @@ public:
     std::unique_ptr<Formatter> f(Formatter::create(format, "json-pretty"sv,
 						   "json-pretty"sv));
     f->open_object_section("help");
-    for (const auto& [command, info] : m_as->hooks) {
-      if (info.help.length())
-	f->dump_string(command.c_str(), info.help);
+    for (const auto& hk_info : m_as->hooks) {
+      if (hk_info.help.length())
+	f->dump_string(hk_info.cmd.c_str(), hk_info.help);
     }
     f->close_section();
     ostringstream ss;
@@ -206,17 +292,14 @@ public:
     int cmdnum = 0;
     JSONFormatter jf;
     jf.open_object_section("command_descriptions");
-    for (const auto& [command, info] : m_as->hooks) {
-      // GCC 8 actually has [[maybe_unused]] on a structured binding
-      // do what you'd expect. GCC 7 does not.
-      (void)command;
+    for (const auto& hk_info : m_as->hooks) {
       ostringstream secname;
       secname << "cmd" << setfill('0') << std::setw(3) << cmdnum;
       dump_cmd_and_help_to_json(&jf,
                                 CEPH_FEATURES_ALL,
 				secname.str().c_str(),
-				info.desc,
-				info.help);
+				hk_info.desc,
+				hk_info.help);
       cmdnum++;
     }
     jf.close_section(); // command_descriptions
@@ -259,8 +342,11 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   // try to match the longest set of strings. Failing - remove the tail part and retry
   decltype(hooks)::iterator p;
   while (match.size()) {
-    p = hooks.find(match);
-    if (p != hooks.cend() && p->second.is_valid)
+    p = std::find_if(hooks.begin(), hooks.end(), [/*this,*/ match](const auto& h){
+          return h.is_valid && h.cmd == match;
+    });
+
+    if (p != hooks.cend())
       break;
 
     // drop right-most word
@@ -286,7 +372,7 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   // TODO call validate()
   #endif
 
-  return parsed_command_t{match, cmdmap, format, p->second.hook};
+  return parsed_command_t{match, cmdmap, format, p->hook};
 }
 
 seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
@@ -302,7 +388,10 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
   return seastar::do_with(std::move(parsed), std::move(out_buf), [&out](auto&& parsed, auto&& out_buf){
     return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
       then([&out, &out_buf](auto call_res) {
-        return out.write(out_buf.to_str()); // RRR check for the correct 'formatter' API
+        uint32_t response_length = htonl(out_buf.length());
+        return out.write(response_length).then([&out, &out_buf](){
+          return out.write(out_buf.to_str()); // RRR check for the correct 'formatter' API
+        });
       });
     });
   //return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
