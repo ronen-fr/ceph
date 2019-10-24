@@ -45,8 +45,6 @@
 #include "common/valgrind.h"
 //#include "include/spinlock.h"
 
-using ceph::bufferlist;
-using ceph::HeartbeatMap;
 
 // for CINIT_FLAGS
 #include "common/common_init.h"
@@ -59,9 +57,9 @@ using ceph::HeartbeatMap;
 #endif
 
 
-
+using ceph::bufferlist;
+using ceph::HeartbeatMap;
 using ceph::common::local_conf;
-//using AdminSocket::hook_client_tag;
 
 /*!
   the hooks and states needed to handle configuration requests
@@ -226,7 +224,7 @@ class ContextConfigAdminImp {
 	return seastar::now();
       }
       ceph_assert_always(0);
-      ceph_assert_always(1);
+      //ceph_assert_always(1);
       return seastar::now();
      }
   };
@@ -260,11 +258,16 @@ public:
 
     auto admin_if = m_cct->get_admin_socket();
 
-    admin_if->register_command(AdminSocket::hook_client_tag{this}, "config show",    "config show",  &config_show_hook,      "lists all conf items");
-    admin_if->register_command(AdminSocket::hook_client_tag{this}, "config get",     "config get",   &config_get_hook,       "fetches a conf value");
-    admin_if->register_command(AdminSocket::hook_client_tag{this}, "config set",     "config set",   &config_set_hook,       "sets a conf value");
-    admin_if->register_command(AdminSocket::hook_client_tag{this}, "assert",         "assert",       &assert_hook,           "asserts");
-
+    (void)seastar::when_all_succeed(
+      admin_if->register_promise(AdminSocket::hook_client_tag{this},
+                "config show",    "config show",  &config_show_hook,      "lists all conf items"),
+      admin_if->register_promise(AdminSocket::hook_client_tag{this},
+                "config get",     "config get",   &config_get_hook,       "fetches a conf value"),
+      admin_if->register_promise(AdminSocket::hook_client_tag{this},
+                "config set",     "config set",   &config_set_hook,       "sets a conf value"),
+      admin_if->register_promise(AdminSocket::hook_client_tag{this},
+                "assert",         "assert",       &assert_hook,           "asserts")
+    );
     //admin_socket->register_command("config unset", "config unset name=var,type=CephString",  _admin_hook, "config unset <field>: unset a config variable");
   }
 

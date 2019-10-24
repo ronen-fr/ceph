@@ -16,7 +16,6 @@
 #include <memory>
 #include "common/ceph_context.h"
 
-//namespace ceph; 
 namespace ceph::osd {
 class OSD;
 class OsdAdminImp;
@@ -36,4 +35,4 @@ public:
   void unregister_admin_commands();
 };
 
-}
+} // namespace ceph::osd

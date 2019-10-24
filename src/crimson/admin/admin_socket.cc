@@ -81,7 +81,7 @@ seastar::future<bool> AdminSocket::handle_registration(hook_client_tag  client_t
 seastar::future<bool> AdminSocket::register_promise(hook_client_tag  client_tag,
                                   std::string command,
 				  std::string cmddesc,
-				  AdminSocketHook *hook,
+				  AdminSocketHook* hook,
 				  std::string help)
 {
   //  are we on the admin-specific core? if not - send to that core.
@@ -95,7 +95,7 @@ seastar::future<bool> AdminSocket::register_promise(hook_client_tag  client_tag,
 bool AdminSocket::register_command(hook_client_tag  client_tag,
                                   std::string command,
 				  std::string cmddesc,
-				  AdminSocketHook *hook,
+				  AdminSocketHook* hook,
 				  std::string help)
 {
   //  are we on the admin-specific core? if not - send to that core.
@@ -140,50 +140,6 @@ bool AdminSocket::register_command(hook_client_tag  client_tag,
   } catch (...) {
     return false;
   }
-
-    
-
-  //std::cerr << "===== AFTER in hr?" << std::endl;
-  //if (res.available() && !res.failed())
-  //  return res.get0();
-  //else
-  //  return false;
-
-  //return handle_registration(client_tag, command, cmddesc, hook, help).finally([this, command](){
-  //  std::cerr << "in hr:" << command <<  std::endl;
-  //  return seastar::make_ready_future<bool>(true);
-  //  //[](auto f){ return seastar::make_ready_future<bool>(f.get0()); }
-  //}).get0();//.then([](auto x){return false;});
-
-  /*
-  auto res = handle_registration(client_tag, command, cmddesc, hook, help).
-    handle_exception([](auto x){
-      std::cerr << "===== FAILURE\n"; 
-      return seastar::make_ready_future<bool>(false);
-    }).
-    then_wrapped([this, command](auto res){
-      try { // just for a second
-      std::cerr << "in hr:" << command <<
-        (res.failed() ? "<failed>" : "<ok>") << std::endl;
-      } catch ( ... ) {
-        std::cerr << "===== FAILURE in hr" << std::endl;
-        return seastar::make_ready_future<bool>(false);
-      }
-      return / *res.failed() ? false : * /seastar::make_ready_future<bool>(true);;
-    //[](auto f){ return seastar::make_ready_future<bool>(f.get0()); }
-    }).handle_exception([](auto x){
-      return seastar::make_ready_future<bool>(false);
-    });//.then([](auto x){return false;});
-
-  std::cerr << "===== AFTER in hr?" << std::endl;
-  if (res.available() && !res.failed())
-    return res.get0();
-  else
-    return false;
-
-
-
-  */
 }
 
 ///  called when we know that we are not executing any hook
@@ -389,7 +345,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
     return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
       then([&out, &out_buf](auto call_res) {
         uint32_t response_length = htonl(out_buf.length());
-        std::cerr << "resp length: " << response_length << std::endl;
+        std::cerr << "resp length: " << out_buf.length() << std::endl;
         return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, &out_buf](){
           return out.write(out_buf.to_str()); // RRR check for the correct 'formatter' API
         });
@@ -433,18 +389,21 @@ seastar::future<> AdminSocket::init(const std::string& path)
 void AdminSocket::internal_hooks()
 {
   version_hook = std::make_unique<VersionHook>();
-  register_command(hook_client_tag{this}, "0", "0", version_hook.get(), "");
-  register_command(hook_client_tag{this}, "version", "version", version_hook.get(), "get ceph version");
-  register_command(hook_client_tag{this}, "git_version", "git_version", version_hook.get(),
-		   "get git sha1");
-
   help_hook = std::make_unique<HelpHook>(this);
-  register_command(hook_client_tag{this}, "help", "help", help_hook.get(),
-		   "list available commands");
-
   getdescs_hook = std::make_unique<GetdescsHook>(this);
-  register_command(hook_client_tag{this}, "get_command_descriptions", "get_command_descriptions",
-		   getdescs_hook.get(), "list available commands");
+
+  (void)seastar::when_all_succeed(
+    register_promise(AdminSocket::hook_client_tag{this},
+                "0",            "0",                    version_hook.get(),     ""),
+    register_promise(AdminSocket::hook_client_tag{this},
+                "version",      "version",              version_hook.get(),     "get ceph version"),
+    register_promise(AdminSocket::hook_client_tag{this},
+                "git_version",  "git_version",          version_hook.get(),     "get git sha1"),
+    register_promise(AdminSocket::hook_client_tag{this},
+                "help",         "help",                 help_hook.get(),        "list available commands"),
+    register_promise(AdminSocket::hook_client_tag{this},
+                "get_command_descriptions", "get_command_descriptions", getdescs_hook.get(), "list available commands")
+  );
 }
 
 

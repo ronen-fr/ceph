@@ -273,13 +273,8 @@ seastar::future<> OSD::start()
   }).then([this] {
     return heartbeat->start(public_msgr.get_myaddrs(),
                             cluster_msgr.get_myaddrs());
-  //}).then([this] {
-  //  // register OSD-specific admin-socket hooks
-  //  return shard_services.get_cct()->get_admin_socket()->init("/tmp/asok");
   }).then([this] {
-    //AdminSocket *admin_socket = cct->get_admin_socket();
-    //if (_conf->admin_socket.length())
-    //_admin_socket->init(_conf->admin_socket);
+    // register OSD-specific admin-socket hooks
     osd_admin = std::make_unique<OsdAdmin>(this, shard_services.get_cct(), ceph::common::local_conf());
     auto x = local_conf().get_val<std::string>("admin_socket");
     std::cerr << "^^^^^^^^^^^^^^^^^^^^^^^^^^" << x << std::endl;

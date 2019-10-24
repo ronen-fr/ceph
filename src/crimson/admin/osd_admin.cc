@@ -11,12 +11,6 @@
  * Foundation.  See file COPYING.
  *
  */
-/*!
-  \brief implementation of the 'admin_socket' API of (Crimson) OSD
-
-  Main functionality:
-  - ...
- */
 #include "common/ceph_context.h"
 
 #include <iostream>
@@ -33,7 +27,6 @@
 //#include "common/valgrind.h"
 //#include "include/spinlock.h"
 
-using ceph::bufferlist;
 //using ceph::HeartbeatMap;
 
 // for CINIT_FLAGS
@@ -46,6 +39,7 @@ using ceph::bufferlist;
 #error "this is a Crimson-specific implementation of some OSD APIs"
 #endif
 
+using ceph::bufferlist;
 using ceph::common::local_conf;
 using ceph::osd::OSD;
 //using AdminSocket::hook_client_tag;
@@ -57,11 +51,11 @@ namespace ceph::osd {
 */
 class OsdAdminImp {
   friend class OsdAdmin;
+  friend class OsdAdminHookBase;
 
   OSD* m_osd;
   CephContext* m_cct;
   ceph::common::ConfigProxy& m_conf;
-  friend class OsdAdminHookBase;
 
   ///
   ///  common code for all CephContext admin hooks
@@ -90,7 +84,7 @@ class OsdAdminImp {
      */
     seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
 	                       std::string_view format, bufferlist& out) override {
-      std::cerr << "OSDADH call  1" << std::endl;
+      //std::cerr << "OSDADH call  1" << std::endl;
       try {
         //
         //  some preliminary (common) parsing:
@@ -195,7 +189,11 @@ public:
 
     auto admin_if = m_cct->get_admin_socket();
 
-    admin_if->register_command(AdminSocket::hook_client_tag{this}, "status",    "status",  &osd_status_hook,      "OSD status");
+    (void)seastar::when_all_succeed(
+            [this, admin_if](){ return admin_if->register_promise(AdminSocket::hook_client_tag{this}, "status",   "status",  &osd_status_hook,      "OSD status"); },
+            [this, admin_if](){ return admin_if->register_promise(AdminSocket::hook_client_tag{this}, "status2",  "status 2",  &osd_status_hook,      "OSD status"); }
+          );
+    //admin_if->register_command(AdminSocket::hook_client_tag{this}, "status",    "status",  &osd_status_hook,      "OSD status");
     //admin_if->register_command(AdminSocket::hook_client_tag{this}, "ZZ_ZZ_ZZ_ZZ",    "ZZ_ZZ_ZZ_ZZ",  &osd_status_hook,      "OSD status");
   }
 
