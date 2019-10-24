@@ -389,7 +389,8 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
     return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
       then([&out, &out_buf](auto call_res) {
         uint32_t response_length = htonl(out_buf.length());
-        return out.write(response_length).then([&out, &out_buf](){
+        std::cerr << "resp length: " << response_length << std::endl;
+        return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, &out_buf](){
           return out.write(out_buf.to_str()); // RRR check for the correct 'formatter' API
         });
       });

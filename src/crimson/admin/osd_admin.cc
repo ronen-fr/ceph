@@ -146,17 +146,21 @@ class OsdAdminImp {
     seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) final {
 
-      //---// std::cerr << "OsdStatusHook 1" << std::endl;
-      //---// f->open_object_section("status");
-      //---// f->dump_stream("cluster_fsid") << m_osd_admin.osd_superblock().cluster_fsid;
-      //---// f->dump_stream("osd_fsid") << m_osd_admin.osd_superblock().osd_fsid;
-      //---// f->dump_unsigned("whoami", m_osd_admin.osd_superblock().whoami);
-      //---// // \todo f->dump_string("state", get_state_name(get_state()));
-      //---// std::cerr << "OsdStatusHook 11" << std::endl;
-      //---// f->dump_unsigned("oldest_map", m_osd_admin.osd_superblock().oldest_map);
-      //---// f->dump_unsigned("newest_map", m_osd_admin.osd_superblock().newest_map);
+      //std::cerr << "OsdStatusHook 1" << std::endl;
+      // wrong? f->open_object_section("status");
+      try {
+        f->dump_stream("cluster_fsid") << m_osd_admin.osd_superblock().cluster_fsid;
+      } catch (...) {
+
+      }
+      f->dump_stream("osd_fsid") << m_osd_admin.osd_superblock().osd_fsid;
+      f->dump_unsigned("whoami", m_osd_admin.osd_superblock().whoami);
+      // \todo f->dump_string("state", get_state_name(get_state()));
+      //std::cerr << "OsdStatusHook 11" << std::endl;
+      f->dump_unsigned("oldest_map", m_osd_admin.osd_superblock().oldest_map);
+      f->dump_unsigned("newest_map", m_osd_admin.osd_superblock().newest_map);
       // \todo f->dump_unsigned("num_pgs", num_pgs);
-      std::cerr << "OsdStatusHook 111" << std::endl;
+      //std::cerr << "OsdStatusHook 111" << std::endl;
       return seastar::now();
     }
   };

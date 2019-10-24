@@ -87,7 +87,7 @@ public:
    * @param hook implementation
    * @param help help text.  if empty, command will not be included in 'help' output.
    *
-   * @return 0 for success, -EEXIST if command already registered.
+   * @return 'true' for success, 'false' if command already registered.
    */
   seastar::future<bool> register_promise(hook_client_tag  client_tag,
                                          std::string command,
