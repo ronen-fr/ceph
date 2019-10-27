@@ -30,7 +30,6 @@ namespace {
   }
 }
 
-
 AdminSocket::AdminSocket(CephContext *cct)
   : m_cct(cct)
 {
@@ -39,13 +38,11 @@ AdminSocket::AdminSocket(CephContext *cct)
         " -> " << (uint64_t)(m_cct) << std::endl;
 }
 
-
 AdminSocket::~AdminSocket()
 {
   //shutdown();
   std::cout << "######### XXXXX AdminSocket " << (uint64_t)(this) << std::endl;
 }
-
 
 //  the internal handling of a registration request, after that request
 //  was forwarded from the requesting core.
@@ -78,7 +75,7 @@ seastar::future<bool> AdminSocket::handle_registration(hook_client_tag  client_t
   return seastar::make_ready_future<bool>(true);
 }
 
-seastar::future<bool> AdminSocket::register_promise(hook_client_tag  client_tag,
+seastar::future<bool> AdminSocket::register_command(hook_client_tag  client_tag,
                                   std::string command,
 				  std::string cmddesc,
 				  AdminSocketHook* hook,
@@ -92,7 +89,7 @@ seastar::future<bool> AdminSocket::register_promise(hook_client_tag  client_tag,
   return handle_registration(client_tag, command, cmddesc, hook, help);
 }
 
-bool AdminSocket::register_command(hook_client_tag  client_tag,
+bool AdminSocket::register_immediate(hook_client_tag  client_tag,
                                   std::string command,
 				  std::string cmddesc,
 				  AdminSocketHook* hook,
@@ -198,6 +195,7 @@ public:
     if (command == "0"sv) {
       out.append(CEPH_ADMIN_SOCK_VERSION);
     } else {
+      // always using a JSON formatter
       JSONFormatter jf;
       jf.open_object_section("version");
       if (command == "version") {
@@ -221,9 +219,9 @@ class HelpHook : public AdminSocketHook {
   AdminSocket* m_as;
 public:
   explicit HelpHook(AdminSocket* as) : m_as{as} {}
+
   seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
-	    std::string_view format,
-	    bufferlist& out) override {
+	    std::string_view format, bufferlist& out) final {
     std::unique_ptr<Formatter> f(Formatter::create(format, "json-pretty"sv,
 						   "json-pretty"sv));
     f->open_object_section("help");
@@ -232,6 +230,7 @@ public:
 	f->dump_string(hk_info.cmd.c_str(), hk_info.help);
     }
     f->close_section();
+    f->enable_line_break();
     ostringstream ss;
     f->flush(ss);
     out.append(ss.str());
@@ -243,8 +242,9 @@ class GetdescsHook : public AdminSocketHook {
   AdminSocket *m_as;
 public:
   explicit GetdescsHook(AdminSocket *as) : m_as{as} {}
+
   seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
-	    std::string_view format, bufferlist& out) override {
+	    std::string_view format, bufferlist& out) final {
     int cmdnum = 0;
     JSONFormatter jf;
     jf.open_object_section("command_descriptions");
@@ -341,20 +341,25 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
 
   bufferlist out_buf;
 
-  return seastar::do_with(std::move(parsed), std::move(out_buf), [&out](auto&& parsed, auto&& out_buf){
+  return seastar::do_with(std::move(parsed), std::move(out_buf), [&out](auto&& parsed, auto&& out_buf) {
     return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
+      then_wrapped([&out, &out_buf](auto fut) {
+        if (fut.failed()) {
+          // add 'failed' to the contents on out_buf
+
+          return seastar::make_ready_future<bool>(false);
+        } else {
+          return fut;
+        }
+      }).
       then([&out, &out_buf](auto call_res) {
         uint32_t response_length = htonl(out_buf.length());
         std::cerr << "resp length: " << out_buf.length() << std::endl;
         return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, &out_buf](){
-          return out.write(out_buf.to_str()); // RRR check for the correct 'formatter' API
+          return out.write(out_buf.to_str());
         });
       });
-    });
-  //return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
-  //  then([&out, &out_buf](auto call_res) {
-  //    return out.write(out_buf.to_str()); // RRR check for the correct 'formatter' API
-  //  });
+  });
 }
 
 seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, seastar::output_stream<char>&& out)
@@ -384,7 +389,6 @@ seastar::future<> AdminSocket::init(const std::string& path)
   }); 
 }
 
-
 /// the hooks that are served directly by the admin_socket server
 void AdminSocket::internal_hooks()
 {
@@ -393,19 +397,18 @@ void AdminSocket::internal_hooks()
   getdescs_hook = std::make_unique<GetdescsHook>(this);
 
   (void)seastar::when_all_succeed(
-    register_promise(AdminSocket::hook_client_tag{this},
+    register_command(AdminSocket::hook_client_tag{this},
                 "0",            "0",                    version_hook.get(),     ""),
-    register_promise(AdminSocket::hook_client_tag{this},
+    register_command(AdminSocket::hook_client_tag{this},
                 "version",      "version",              version_hook.get(),     "get ceph version"),
-    register_promise(AdminSocket::hook_client_tag{this},
+    register_command(AdminSocket::hook_client_tag{this},
                 "git_version",  "git_version",          version_hook.get(),     "get git sha1"),
-    register_promise(AdminSocket::hook_client_tag{this},
+    register_command(AdminSocket::hook_client_tag{this},
                 "help",         "help",                 help_hook.get(),        "list available commands"),
-    register_promise(AdminSocket::hook_client_tag{this},
+    register_command(AdminSocket::hook_client_tag{this},
                 "get_command_descriptions", "get_command_descriptions", getdescs_hook.get(), "list available commands")
   );
 }
-
 
 seastar::future<> AdminSocket::init_async(const std::string& path)
 {

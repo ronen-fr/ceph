@@ -19,6 +19,7 @@
 #include "crimson/admin/admin_socket.h"
 #include "crimson/admin/osd_admin.h"
 #include "crimson/osd/osd.h"
+#include "crimson/osd/exceptions.h"
 #include "common/config.h"
 //#include "common/errno.h"
 //#include "common/Graylog.h"
@@ -82,6 +83,61 @@ class OsdAdminImp {
     /*!
         \retval 'false' for hook execution errors
      */
+    #if 0
+    seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
+	                       std::string_view format, bufferlist& out) override {
+      //std::cerr << "OSDADH call  1" << std::endl;
+      //try {
+      //
+      //  some preliminary (common) parsing:
+      //
+      unique_ptr<Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)}; // RRR consider destructing in 'catch'
+      std::string section(command);
+      boost::replace_all(section, " ", "_");
+      if (format_as_array()) {
+        f->open_array_section(section.c_str());
+      } else {
+        f->open_object_section(section.c_str());
+      }
+      //  call the command-specific hook.
+      //  A note re error handling:
+      //	- will be modified to use the new 'erroretor'. For now:
+      //	- exec_command() may throw or return an exceptional future. We return a message starting
+      //	  with "error" on both failure scenarios.
+      return seastar::do_with(std::move(f), out, cmdmap, format, command, 
+      return exec_command(f.get(), command, cmdmap, format, out).
+        then_wrapped([&f](auto p) {
+          if (p.failed()) {
+          } else {
+          }
+        }).
+        handle_exception([
+      try {
+        (void)exec_command(f.get(), command, cmdmap, format, out).then_wrapped([&f](auto p) {
+          try {
+            (void)p.get();
+            //auto resp = p.get();
+          } catch (std::exception& ex) {
+            f->dump_string("error", ex.what());
+            //std::cout << "request error: " << ex.what() << std::endl;
+          }
+        });
+      } catch ( ... ) {
+        f->dump_string("error", std::string(command) + " failed");
+        //std::cout << "\n\nexecution throwed\n\n";
+      }
+      f->close_section();
+      f->flush(out);
+    } catch (const bad_cmd_get& e) {
+      return seastar::make_ready_future<bool>(false);
+    } catch ( ... ) {
+      return seastar::make_ready_future<bool>(false);
+    }
+    std::cerr << "OSDADH call  111" << std::endl;
+    return seastar::make_ready_future<bool>(true);
+    }
+  #endif
+#if 1
     seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
 	                       std::string_view format, bufferlist& out) override {
       //std::cerr << "OSDADH call  1" << std::endl;
@@ -104,12 +160,14 @@ class OsdAdminImp {
 	//	- exec_command() may throw or return an exceptional future. We return a message starting
 	//	  with "error" on both failure scenarios.
         try {
-          (void)exec_command(f.get(), command, cmdmap, format, out).then_wrapped([&f](auto p) {
+          (void)exec_command(f.get(), command, cmdmap, format, out).then_wrapped([&f,this](auto p) {
             try {
               (void)p.get();
               //auto resp = p.get();
-            } catch (std::exception& ex) {
-              f->dump_string("error", ex.what());
+              return seastar::make_ready_future<bool>(true);
+            } catch (...) {
+              f->dump_string("error", "99999"/*std::current_exception().what()*/);
+              return seastar::make_exception_future<bool>(std::current_exception());
               //std::cout << "request error: " << ex.what() << std::endl;
             }
           });
@@ -129,8 +187,7 @@ class OsdAdminImp {
       return seastar::make_ready_future<bool>(true);
     }
   };
-
-
+#endif
   ///
   ///  An Osd admin hook: OSD status
   ///
@@ -160,6 +217,21 @@ class OsdAdminImp {
   };
 
   ///
+  ///  A test hook that throws or returns an exceptional future
+  ///
+  class TestThrowHook : public OsdAdminHookBase {
+  public:
+    explicit TestThrowHook(OsdAdminImp& master) : OsdAdminHookBase(master) {};
+    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                      std::string_view format, bufferlist& out) final {
+
+      if (command == "fthrow")
+        return seastar::make_exception_future<>(ceph::osd::no_message_available{});
+      throw(std::invalid_argument("TestThrowHook"));
+    }
+  };
+
+  ///
   ///  provide the hooks with access to OSD internals 
   ///
   const OSDSuperblock& osd_superblock() {
@@ -167,6 +239,7 @@ class OsdAdminImp {
   }
 
   OsdStatusHook   osd_status_hook;
+  TestThrowHook   osd_test_throw_hook;
 
   std::atomic_flag  m_no_registrations{false}; // 'double negative' as that matches 'atomic_flag' "direction"
 
@@ -177,6 +250,7 @@ public:
     , m_cct{cct}
     , m_conf{conf}
     , osd_status_hook{*this}
+    , osd_test_throw_hook{*this}
   {
     register_admin_commands();
   }
@@ -190,8 +264,10 @@ public:
     auto admin_if = m_cct->get_admin_socket();
 
     (void)seastar::when_all_succeed(
-            [this, admin_if](){ return admin_if->register_promise(AdminSocket::hook_client_tag{this}, "status",   "status",  &osd_status_hook,      "OSD status"); },
-            [this, admin_if](){ return admin_if->register_promise(AdminSocket::hook_client_tag{this}, "status2",  "status 2",  &osd_status_hook,      "OSD status"); }
+              [this, admin_if](){ return admin_if->register_command(AdminSocket::hook_client_tag{this}, "status",   "status",  &osd_status_hook,      "OSD status"); }
+            , [this, admin_if](){ return admin_if->register_command(AdminSocket::hook_client_tag{this}, "status2",  "status 2",&osd_status_hook,      "OSD status"); }
+            , [this, admin_if](){ return admin_if->register_command(AdminSocket::hook_client_tag{this}, "throw",    "throw",   &osd_test_throw_hook,  "dev throw"); }
+            , [this, admin_if](){ return admin_if->register_command(AdminSocket::hook_client_tag{this}, "fthrow",   "fthrow",  &osd_test_throw_hook,  "dev throw"); }
           );
     //admin_if->register_command(AdminSocket::hook_client_tag{this}, "status",    "status",  &osd_status_hook,      "OSD status");
     //admin_if->register_command(AdminSocket::hook_client_tag{this}, "ZZ_ZZ_ZZ_ZZ",    "ZZ_ZZ_ZZ_ZZ",  &osd_status_hook,      "OSD status");

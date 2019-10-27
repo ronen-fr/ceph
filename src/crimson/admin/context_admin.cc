@@ -35,7 +35,7 @@
 #include "common/errno.h"
 #include "common/Graylog.h"
 
-#include "log/Log.h"
+#include "crimson/common/log.h"
 
 //#include "auth/Crypto.h"
 //#include "include/str_list.h"
@@ -60,6 +60,12 @@
 using ceph::bufferlist;
 using ceph::HeartbeatMap;
 using ceph::common::local_conf;
+
+namespace {
+  seastar::logger& logger() {
+    return ceph::get_logger(ceph_subsys_osd);
+  }
+}
 
 /*!
   the hooks and states needed to handle configuration requests
@@ -143,11 +149,15 @@ class ContextConfigAdminImp {
 	                      std::string_view format, bufferlist& out) final {
 
       std::vector<std::string> k_list;
-      m_config_admin.m_conf.show_config(k_list);
-      for (const auto& k : k_list) {
-        f->dump_string("conf-item", k);
-      }
-      return seastar::now();
+      return m_config_admin.m_conf.show_config(k_list).
+        then([&k_list, &f]() {
+          for (const auto& k : k_list) {
+            f->dump_string("conf-item", k);
+            logger().warn("---> {}\n", k);
+          }
+          return seastar::now();
+        }).
+        finally([&k_list,f](){return seastar::now();});
     }
   };
 
@@ -224,7 +234,6 @@ class ContextConfigAdminImp {
 	return seastar::now();
       }
       ceph_assert_always(0);
-      //ceph_assert_always(1);
       return seastar::now();
      }
   };
@@ -258,16 +267,18 @@ public:
 
     auto admin_if = m_cct->get_admin_socket();
 
+    std::cerr << "ContextConfigAdminImp registering\n";
+
     (void)seastar::when_all_succeed(
-      admin_if->register_promise(AdminSocket::hook_client_tag{this},
+      admin_if->register_command(AdminSocket::hook_client_tag{this},
                 "config show",    "config show",  &config_show_hook,      "lists all conf items"),
-      admin_if->register_promise(AdminSocket::hook_client_tag{this},
+      admin_if->register_command(AdminSocket::hook_client_tag{this},
                 "config get",     "config get",   &config_get_hook,       "fetches a conf value"),
-      admin_if->register_promise(AdminSocket::hook_client_tag{this},
+      admin_if->register_command(AdminSocket::hook_client_tag{this},
                 "config set",     "config set",   &config_set_hook,       "sets a conf value"),
-      admin_if->register_promise(AdminSocket::hook_client_tag{this},
+      admin_if->register_command(AdminSocket::hook_client_tag{this},
                 "assert",         "assert",       &assert_hook,           "asserts")
-    );
+    ); //.finally([admin_if](){});
     //admin_socket->register_command("config unset", "config unset name=var,type=CephString",  _admin_hook, "config unset <field>: unset a config variable");
   }
 
@@ -276,11 +287,9 @@ public:
       //  already un-registered
       return;
     }
-    //  unregister all our hooks. \todo add an API to AdminSocket hooks, to have a common identifying tag
-    //  (probably the address of the registering object)
 
     auto admin_if = m_cct->get_admin_socket();
-    admin_if->unregister_client(AdminSocket::hook_client_tag{this});
+    (void)admin_if->unregister_client(AdminSocket::hook_client_tag{this});
   }
 };
 

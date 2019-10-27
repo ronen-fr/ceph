@@ -63,7 +63,7 @@ CephContext::CephContext()
     _perf_counters_collection{ceph::common::local_perf_coll()},
     _crypto_random{std::make_unique<CryptoRandom>()}
 {
-  std::cout << "######### a new CephContext " << (uint64_t)(this) << std::endl;
+  //std::cout << "######### a new CephContext " << (uint64_t)(this) << std::endl;
   asok = make_unique<AdminSocket>(this);
   asok_config_admin = make_unique<ContextConfigAdmin>(this, _conf);
 }

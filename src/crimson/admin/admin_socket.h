@@ -89,13 +89,13 @@ public:
    *
    * @return 'true' for success, 'false' if command already registered.
    */
-  seastar::future<bool> register_promise(hook_client_tag  client_tag,
+  seastar::future<bool> register_command(hook_client_tag  client_tag,
                                          std::string command,
 		                         std::string cmddesc,
 		                         AdminSocketHook *hook,
 		                         std::string help);
 
-  bool register_command(hook_client_tag  client_tag,
+  bool register_immediate(hook_client_tag  client_tag,
                         std::string command,
                         std::string cmddesc,
                         AdminSocketHook* hook,
