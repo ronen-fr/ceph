@@ -238,10 +238,26 @@ class ContextConfigAdminImp {
      }
   };
 
+  ///
+  ///  A test hook that throws or returns an exceptional future
+  ///
+  class TestThrowHook : public CephContextHookBase {
+  public:
+    explicit TestThrowHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
+    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                      std::string_view format, bufferlist& out) final {
+
+      if (command == "fthrowCtx")
+        return seastar::make_exception_future<>(std::system_error{1, std::system_category()});
+      throw(std::invalid_argument("TestThrowHook"));
+    }
+  };
+
   ConfigShowHook   config_show_hook;
   ConfigGetHook    config_get_hook;
   ConfigSetHook    config_set_hook;
   AssertAlwaysHook assert_hook;
+  TestThrowHook    ctx_test_throw_hook;  // for development testing
 
   std::atomic_flag  m_no_registrations{false}; // 'double negative' as that matches 'atomic_flag' "direction"
 
@@ -255,6 +271,7 @@ public:
     , config_get_hook{*this}
     , config_set_hook{*this}
     , assert_hook{*this}
+    , ctx_test_throw_hook{*this}
   {
     register_admin_commands();
   }
@@ -277,7 +294,11 @@ public:
       admin_if->register_command(AdminSocket::hook_client_tag{this},
                 "config set",     "config set",   &config_set_hook,       "sets a conf value"),
       admin_if->register_command(AdminSocket::hook_client_tag{this},
-                "assert",         "assert",       &assert_hook,           "asserts")
+                "assert",         "assert",       &assert_hook,           "asserts"),
+      admin_if->register_command(AdminSocket::hook_client_tag{this},
+                "throwCtx",       "throwCtx",       &ctx_test_throw_hook, "dev throw"),
+      admin_if->register_command(AdminSocket::hook_client_tag{this},
+                "fthrowCtx",      "fthrowCtx",      &ctx_test_throw_hook, "dev throw")
     ); //.finally([admin_if](){});
     //admin_socket->register_command("config unset", "config unset name=var,type=CephString",  _admin_hook, "config unset <field>: unset a config variable");
   }

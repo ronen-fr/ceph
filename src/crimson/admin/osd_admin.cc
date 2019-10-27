@@ -16,6 +16,10 @@
 #include <iostream>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
+//#include "seastar/net/api.hh"
+#include "seastar/core/future.hh"
+
+
 #include "crimson/admin/admin_socket.h"
 #include "crimson/admin/osd_admin.h"
 #include "crimson/osd/osd.h"
@@ -24,7 +28,7 @@
 //#include "common/errno.h"
 //#include "common/Graylog.h"
 
-#include "log/Log.h"
+#include "crimson/common/log.h"
 //#include "common/valgrind.h"
 //#include "include/spinlock.h"
 
@@ -44,6 +48,13 @@ using ceph::bufferlist;
 using ceph::common::local_conf;
 using ceph::osd::OSD;
 //using AdminSocket::hook_client_tag;
+
+namespace {
+  seastar::logger& logger() {
+    return ceph::get_logger(ceph_subsys_osd);
+  }
+}
+
 
 namespace ceph::osd {
 
@@ -83,7 +94,7 @@ class OsdAdminImp {
     /*!
         \retval 'false' for hook execution errors
      */
-    #if 0
+    #if 1
     seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
 	                       std::string_view format, bufferlist& out) override {
       //std::cerr << "OSDADH call  1" << std::endl;
@@ -104,40 +115,80 @@ class OsdAdminImp {
       //	- will be modified to use the new 'erroretor'. For now:
       //	- exec_command() may throw or return an exceptional future. We return a message starting
       //	  with "error" on both failure scenarios.
-      return seastar::do_with(std::move(f), out, cmdmap, format, command, 
+      return seastar::do_with(std::move(f), /*out, cmdmap, format, command,*/ [this, &command, &cmdmap, &format, &out](unique_ptr<Formatter>& f) {
+
+      //seastar::future<> fut;
+      return ([this, &command, &cmdmap, &format, &out, &f](){
+        try {
+          return exec_command(f.get(), command, cmdmap, format, out).
+            handle_exception([this,&f,&out](auto eptr) {
+              f->dump_string("error", " in handle exception ");
+              std::cerr << "osd_admin::exec:inhex" << std::endl;
+              return seastar::now();
+            }).finally([this](){return seastar::now();});
+          } catch ( ... ) {
+            std::cerr << "osd_admin::exec:immediate exc" << std::endl;
+            return seastar::now();
+          }
+        })().
+
+      //return fut.
+        then([this, &f, &out] {
+          f->close_section();
+          f->flush(out);
+          return seastar::make_ready_future<bool>(true);
+        });
+      });
+    }
+  };
+
+
+#if 0
       return exec_command(f.get(), command, cmdmap, format, out).
-        then_wrapped([&f](auto p) {
-          if (p.failed()) {
+        handle_exception([this,&f,&out](auto eptr) {
+          f->dump_string("error", " in handle exception ");
+          std::cerr << "osd_admin::exec:inhex" << std::endl;
+          return seastar::make_ready_future<>();
+        }).
+        then([this, &f, &out] {
+          f->close_section();
+          f->flush(out);
+          return seastar::make_ready_future<bool>(true);
+        });
+      });
+    }
+  };
+
+  #endif
+        //then_wrapped([this,&f](auto p) ->seastar::future<bool> {
+          //if (p.failed()) {
+           // return handle_exception([this,&f](auto eptr) {
+             // logger().error("{} exception from fut {}",__func__, "eptr");
+             // f->dump_string("error", " OSDADM fut failed+excp");
+             // return seastar::make_ready_future<bool>(false);
+           // });
+           /*
+            f->dump_string("error", " OSDADM fut failed ");
+            return seastar::make_ready_future<bool>(false);
           } else {
+            try {
+              (void)p.get();
+            } catch (...) {
+              std::cerr << "osd_admin::exec: get0 failed" << std::endl;
+            }
+            return seastar::make_ready_future<bool>(true);
           }
         }).
-        handle_exception([
-      try {
-        (void)exec_command(f.get(), command, cmdmap, format, out).then_wrapped([&f](auto p) {
-          try {
-            (void)p.get();
-            //auto resp = p.get();
-          } catch (std::exception& ex) {
-            f->dump_string("error", ex.what());
-            //std::cout << "request error: " << ex.what() << std::endl;
-          }
+        then([this, &f, &out](auto r) {
+          f->close_section();
+          f->flush(out);
+          return seastar::make_ready_future<bool>(true);
         });
-      } catch ( ... ) {
-        f->dump_string("error", std::string(command) + " failed");
-        //std::cout << "\n\nexecution throwed\n\n";
-      }
-      f->close_section();
-      f->flush(out);
-    } catch (const bad_cmd_get& e) {
-      return seastar::make_ready_future<bool>(false);
-    } catch ( ... ) {
-      return seastar::make_ready_future<bool>(false);
+      });
     }
-    std::cerr << "OSDADH call  111" << std::endl;
-    return seastar::make_ready_future<bool>(true);
-    }
+  };*/
   #endif
-#if 1
+#if 0
     seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
 	                       std::string_view format, bufferlist& out) override {
       //std::cerr << "OSDADH call  1" << std::endl;
