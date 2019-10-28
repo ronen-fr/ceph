@@ -89,8 +89,8 @@ class ContextConfigAdminImp {
 
     /// the specific command implementation (would have used template specification, but can't yet use
     /// the command string as the template parameter).
-    virtual seastar::future<> exec_command(Formatter* formatter, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) = 0;
+    seastar::future<> exec_command(Formatter* formatter, std::string_view command, const cmdmap_t& cmdmap,
+	                      std::string_view format, bufferlist& out) override = 0;
 
     explicit CephContextHookBase(ContextConfigAdminImp& master) : m_config_admin{master} {}
 
@@ -98,6 +98,7 @@ class ContextConfigAdminImp {
     /*!
         \retval 'false' for hook execution errors
      */
+    #if 0
     seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
 	                       std::string_view format, bufferlist& out) override {
       try {
@@ -137,6 +138,7 @@ class ContextConfigAdminImp {
 
       return seastar::make_ready_future<bool>(true);
     }
+    #endif
   };
 
   ///

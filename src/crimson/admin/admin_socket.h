@@ -155,6 +155,7 @@ private:
   std::unique_ptr<AdminSocketHook> version_hook;
   std::unique_ptr<AdminSocketHook> help_hook;
   std::unique_ptr<AdminSocketHook> getdescs_hook;
+  std::unique_ptr<AdminSocketHook> test_throw_hook;  // for dev unit-tests
 
   struct hook_info {
     std::string cmd;
