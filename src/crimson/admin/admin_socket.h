@@ -26,20 +26,8 @@
 #include <string>
 #include <string_view>
 #include <map>
-
-
-
-
-#if 0
-#include <condition_variable>
-#include <mutex>
-
-#include "include/buffer.h"
-#endif
-
 #include "seastar/core/future.hh"
 #include "seastar/core/iostream.hh"
-
 #include "common/cmdparse.h"
 
 class AdminSocket;
@@ -49,11 +37,35 @@ using namespace std::literals;
 
 inline constexpr auto CEPH_ADMIN_SOCK_VERSION = "2"sv;
 
+/*!
+  A specific hook must implement exactly one of the two interfaces:
+  (1) call(command, cmdmap, format, out) 
+  or
+  (2) exec_command(formatter, command, cmdmap, format, out)
+
+  The default implementation of (1) above calls exec_command() after handling most
+  of the boiler-plate choirs:
+  - setting up the formmater, with an appropiate 'section' already opened;
+  - handling possible failures (exceptions or future_exceptions) returned by (2)
+  - flushing the output to the outgoing bufferlist.
+*/
 class AdminSocketHook {
 public:
   virtual seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
-		                     std::string_view format, ceph::buffer::list& out) = 0;
+		                     std::string_view format, ceph::buffer::list& out);
+
   virtual ~AdminSocketHook() {}
+
+protected:
+  virtual seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                                 std::string_view format, bufferlist& out) {
+    return seastar::now();
+  }
+
+  // the high-level section is an array (affects the formatting)
+  virtual bool format_as_array() const {
+    return false;
+  }
 };
 
 class AdminSocket {

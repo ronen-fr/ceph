@@ -115,7 +115,7 @@ class OsdAdminImp {
       //	- will be modified to use the new 'erroretor'. For now:
       //	- exec_command() may throw or return an exceptional future. We return a message starting
       //	  with "error" on both failure scenarios.
-      return seastar::do_with(std::move(f), /*out, cmdmap, format, command,*/ [this, &command, &cmdmap, &format, &out](unique_ptr<Formatter>& f) {
+      return seastar::do_with(std::move(f), [this, &command, &cmdmap, &format, &out](unique_ptr<Formatter>& f) {
 
       //seastar::future<> fut;
       return ([this, &command, &cmdmap, &format, &out, &f](){
