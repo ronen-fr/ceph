@@ -25,25 +25,13 @@
 #include <atomic>
 #include <boost/algorithm/string.hpp>
 #include "crimson/admin/admin_socket.h"
-//#include "common/code_environment.h"
-//#include "common/ceph_mutex.h"
-//#include "common/debug.h"
 #include "common/config.h"
-//#include "common/ceph_crypto.h"
-//#include "common/lockdep.h"
-//#include "common/HeartbeatMap.h"
 #include "common/errno.h"
 #include "common/Graylog.h"
 
 #include "crimson/common/log.h"
-
-//#include "auth/Crypto.h"
-//#include "include/str_list.h"
-//#include "common/config.h"
-//#include "common/config_obs.h"
-//#include "common/PluginRegistry.h"
 #include "common/valgrind.h"
-//#include "include/spinlock.h"
+
 
 
 // for CINIT_FLAGS
@@ -81,64 +69,19 @@ class ContextConfigAdminImp {
   friend class ConfigGetHook;
 
   ///
-  ///  common code for all CephContext admin hooks
+  ///  common code for all CephContext admin hooks.
+  ///  Adds access to the configuration object and to the
+  //   parent Context.
   ///
   class CephContextHookBase : public AdminSocketHook {
   protected:
     ContextConfigAdminImp& m_config_admin;
 
-    /// the specific command implementation (would have used template specification, but can't yet use
-    /// the command string as the template parameter).
+    /// the specific command implementation
     seastar::future<> exec_command(Formatter* formatter, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) override = 0;
 
     explicit CephContextHookBase(ContextConfigAdminImp& master) : m_config_admin{master} {}
-
-  public:
-    /*!
-        \retval 'false' for hook execution errors
-     */
-    #if 0
-    seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
-	                       std::string_view format, bufferlist& out) override {
-      try {
-        //
-        //  some preliminary (common) parsing:
-        //
-        unique_ptr<ceph::Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)}; // RRR consider destructing in 'catch'
-        std::string section(command);
-        boost::replace_all(section, " ", "_");
-        f->open_object_section(section.c_str());
-
-	//  call the command-specific hook.
-	//  A note re error handling:
-	//	- will be modified to use the new 'erroretor'. For now:
-	//	- exec_command() may throw or return an exceptional future. We return a message starting
-	//	  with "error" on both failure scenarios.
-        try {
-          (void)exec_command(f.get(), command, cmdmap, format, out).then_wrapped([&f](auto p) {
-            try {
-              (void)p.get();
-            } catch (std::exception& ex) {
-              f->dump_string("error", ex.what());
-              //std::cout << "request error: " << ex.what() << std::endl;
-            }
-          });
-        } catch ( ... ) {
-          f->dump_string("error", std::string(command) + " failed");
-          //std::cout << "\n\nexecution throwed\n\n";
-        }
-        f->close_section();
-        f->flush(out);
-      } catch (const bad_cmd_get& e) {
-        return seastar::make_ready_future<bool>(false);
-      } catch ( ... ) {
-        return seastar::make_ready_future<bool>(false);
-      }
-
-      return seastar::make_ready_future<bool>(true);
-    }
-    #endif
   };
 
   ///
@@ -286,20 +229,20 @@ public:
 
     auto admin_if = m_cct->get_admin_socket();
 
-    std::cerr << "ContextConfigAdminImp registering\n";
+    //std::cerr << "ContextConfigAdminImp registering\n";
 
-    (void)seastar::when_all_succeed(
-      admin_if->register_command(AdminSocket::hook_client_tag{this},
+    std::ignore = seastar::when_all_succeed(
+      admin_if->register_command(AdminSocket::hook_server_tag{this},
                 "config show",    "config show",  &config_show_hook,      "lists all conf items"),
-      admin_if->register_command(AdminSocket::hook_client_tag{this},
+      admin_if->register_command(AdminSocket::hook_server_tag{this},
                 "config get",     "config get",   &config_get_hook,       "fetches a conf value"),
-      admin_if->register_command(AdminSocket::hook_client_tag{this},
+      admin_if->register_command(AdminSocket::hook_server_tag{this},
                 "config set",     "config set",   &config_set_hook,       "sets a conf value"),
-      admin_if->register_command(AdminSocket::hook_client_tag{this},
+      admin_if->register_command(AdminSocket::hook_server_tag{this},
                 "assert",         "assert",       &assert_hook,           "asserts"),
-      admin_if->register_command(AdminSocket::hook_client_tag{this},
+      admin_if->register_command(AdminSocket::hook_server_tag{this},
                 "throwCtx",       "throwCtx",       &ctx_test_throw_hook, "dev throw"),
-      admin_if->register_command(AdminSocket::hook_client_tag{this},
+      admin_if->register_command(AdminSocket::hook_server_tag{this},
                 "fthrowCtx",      "fthrowCtx",      &ctx_test_throw_hook, "dev throw")
     ); //.finally([admin_if](){});
     //admin_socket->register_command("config unset", "config unset name=var,type=CephString",  _admin_hook, "config unset <field>: unset a config variable");
@@ -312,7 +255,7 @@ public:
     }
 
     auto admin_if = m_cct->get_admin_socket();
-    (void)admin_if->unregister_client(AdminSocket::hook_client_tag{this});
+    std::ignore = admin_if->unregister_server(AdminSocket::hook_server_tag{this});
   }
 };
 

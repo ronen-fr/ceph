@@ -16,9 +16,8 @@
 /*!
   A Crimson-wise version of the src/common/admin_socket.h
 
-  Keeping existing interfaces whenever possible.
   Running on a single core:
-  - the hooks database is only manipulated on that main core. Clients running on other cores
+  - the hooks database is only manipulated on that main core. Hook-servers running on other cores
     dispatch the register/unregister requests to that main core.
   - incoming requests arriving on the admin socket are only received on that specific core. The actual
     operation is delegated to the relevant core if needed.
@@ -51,6 +50,9 @@ inline constexpr auto CEPH_ADMIN_SOCK_VERSION = "2"sv;
 */
 class AdminSocketHook {
 public:
+  /*!
+      \retval 'false' for hook execution errors
+  */
   virtual seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
 		                     std::string_view format, ceph::buffer::list& out);
 
@@ -68,9 +70,15 @@ protected:
   }
 };
 
+class AsokServiceDefinition {
+public:
+
+
+};
+
 class AdminSocket {
 public:
-  AdminSocket(CephContext *cct);
+  AdminSocket(CephContext* cct);
   ~AdminSocket();
 
   AdminSocket(const AdminSocket&) = delete;
@@ -78,7 +86,7 @@ public:
   AdminSocket(AdminSocket&&) = delete;
   AdminSocket& operator =(AdminSocket&&) = delete;
 
-  using hook_client_tag = const void*;
+  using hook_server_tag = const void*;
 
   seastar::future<> init(const std::string& path);
 
@@ -94,6 +102,7 @@ public:
    * The entire incoming command string is passed to the registered
    * hook.
    *
+   * @server_tag a tag identifying the server registering the hook
    * @param command command string
    * @param cmddesc command syntax descriptor
    * @param hook implementation
@@ -101,31 +110,38 @@ public:
    *
    * @return 'true' for success, 'false' if command already registered.
    */
-  seastar::future<bool> register_command(hook_client_tag  client_tag,
+  seastar::future<bool> register_command(hook_server_tag  server_tag,
                                          std::string command,
-		                         std::string cmddesc,
-		                         AdminSocketHook *hook,
-		                         std::string help);
+                                         std::string cmddesc,
+                                         AdminSocketHook *hook,
+                                         std::string help);
 
-  bool register_immediate(hook_client_tag  client_tag,
+  seastar::future<bool> server_registration(hook_server_tag  server_tag,
+                                            const std::vector<hook_definition>& hv); 
+
+ /* bool register_immediate(hook_server_tag  server_tag,
                         std::string command,
                         std::string cmddesc,
                         AdminSocketHook* hook,
                         std::string help);
+*/
 
-
-  seastar::future<> unregister_command(std::string_view command);
+  // no single-command unregistration, as en-bulk per server unregistration is the pref method.
+  // I will consider adding specific API for those cases where the client needs to disable
+  // one specific service. It will be clearly named, to mark the fact that it would not replace
+  // deregistration. Something like disable_command() 
+  //seastar::future<> unregister_command(std::string_view command);
 
   /// unregister all hooks registered by this client
-  seastar::future<> unregister_client(hook_client_tag  client_tag);
+  seastar::future<> unregister_server(hook_server_tag  server_tag);
 
 private:
 
-  seastar::future<bool> handle_registration(hook_client_tag  client_tag,
+  seastar::future<bool> handle_registration(hook_server_tag  server_tag,
                                             std::string command,
-			                    std::string cmddesc,
-		                            AdminSocketHook* hook,
-			                    std::string help);
+                                            std::string cmddesc,
+                                            AdminSocketHook* hook,
+                                            std::string help);
 
   seastar::future<> delayed_unregistration(std::string command);
 
@@ -159,18 +175,18 @@ private:
 
   struct hook_info {
     std::string cmd;
-    bool is_valid{true}; //!< cleared with 'unregister_command()'
+    bool is_valid{true}; //!< cleared with 'disable_command()'
     AdminSocketHook* hook;
     std::string desc;
     std::string help;
-    hook_client_tag client_tag; //!< for when we un-register all client's requests en bulk
+    hook_server_tag server_tag; //!< for when we un-register all client's requests en bulk
 
-    //hook_info(hook_client_tag tag, AdminSocketHook* hook, std::string_view desc,
+    //hook_info(hook_server_tag tag, AdminSocketHook* hook, std::string_view desc,
     //      std::string_view help)
-    //  : hook{hook}, desc{desc}, help{help}, client_tag{tag} {}
-    hook_info(std::string cmd, hook_client_tag tag, AdminSocketHook* hook, std::string_view desc,
+    //  : hook{hook}, desc{desc}, help{help}, server_tag{tag} {}
+    hook_info(std::string cmd, hook_server_tag tag, AdminSocketHook* hook, std::string_view desc,
           std::string_view help)
-      : cmd{cmd}, hook{hook}, desc{desc}, help{help}, client_tag{tag} {}
+      : cmd{cmd}, hook{hook}, desc{desc}, help{help}, server_tag{tag} {}
   };
 
   struct parsed_command_t {
