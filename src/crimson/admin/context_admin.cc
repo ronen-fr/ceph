@@ -79,7 +79,7 @@ class ContextConfigAdminImp {
 
     /// the specific command implementation
     seastar::future<> exec_command(Formatter* formatter, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) override = 0;
+	                      std::string_view format, bufferlist& out) const override = 0;
 
     explicit CephContextHookBase(ContextConfigAdminImp& master) : m_config_admin{master} {}
   };
@@ -91,7 +91,7 @@ class ContextConfigAdminImp {
   public:
     explicit ConfigShowHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
     seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) final {
+	                      std::string_view format, bufferlist& out) const final {
 
       std::vector<std::string> k_list;
       return m_config_admin.m_conf.show_config(k_list).
@@ -113,7 +113,7 @@ class ContextConfigAdminImp {
   public:
     explicit ConfigGetHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
     seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) final {
+	                      std::string_view format, bufferlist& out) const final {
       std::string var;
       if (!cmd_getval<std::string>(nullptr, cmdmap, "var", var)) {
 	f->dump_string("error", "syntax error: 'config get <var>'");
@@ -139,7 +139,7 @@ class ContextConfigAdminImp {
   public:
     explicit ConfigSetHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
     seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) final {
+	                      std::string_view format, bufferlist& out) const final {
       std::string var;
       std::vector<std::string> new_val;
       if (!cmd_getval<std::string>(nullptr, cmdmap, "var", var) ||
@@ -172,7 +172,7 @@ class ContextConfigAdminImp {
   public:
     explicit AssertAlwaysHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
     seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) final {
+	                      std::string_view format, bufferlist& out) const final {
       bool assert_conf = m_config_admin.m_conf.get_val<bool>("debug_asok_assert_abort") || /*for now*/ true;
       if (!assert_conf) {
 	f->dump_string("error", "configuration set to disallow asok assert");
@@ -190,7 +190,7 @@ class ContextConfigAdminImp {
   public:
     explicit TestThrowHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
     seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) final {
+	                      std::string_view format, bufferlist& out) const final {
 
       if (command == "fthrowCtx")
         return seastar::make_exception_future<>(std::system_error{1, std::system_category()});

@@ -26,6 +26,7 @@
 #include <string_view>
 #include <map>
 #include "seastar/core/future.hh"
+#include "seastar/core/gate.hh"
 #include "seastar/core/iostream.hh"
 #include "common/cmdparse.h"
 
@@ -54,13 +55,13 @@ public:
       \retval 'false' for hook execution errors
   */
   virtual seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
-		                     std::string_view format, ceph::buffer::list& out);
+		                     std::string_view format, ceph::buffer::list& out) const;
 
   virtual ~AdminSocketHook() {}
 
 protected:
   virtual seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                                 std::string_view format, bufferlist& out) {
+	                                 std::string_view format, bufferlist& out) const {
     return seastar::now();
   }
 
@@ -70,11 +71,29 @@ protected:
   }
 };
 
-class AsokServiceDefinition {
-public:
-
-
+struct AsokServiceDef {
+  //AsokServiceDefinition(const std::string& command, //!< the sequence of words that should be used
+  //                      const std::string& desc,    //!< the syntax
+  //                      const AdminSocketHook* hook,
+  //                      const std::string help_message)
+  //  : command{command}
+  //  , cmddesc{desc}
+  //  , hook{hook}
+  //  , help{help_message}
+  //{}
+  const std::string command;
+  const std::string cmddesc;
+  const AdminSocketHook* hook;
+  const std::string help;
 };
+
+struct AsokRegistrationRes {
+  //seastar::gate* server_gate;         // a pointer &! a ref, as the registration might fail
+  bool           registration_ok;     // failure: if server ID already taken
+  bool           double_registration; //!< leaving it to the registering server to
+                                     //   decide whether this is a bug
+};
+
 
 class AdminSocket {
 public:
@@ -116,8 +135,10 @@ public:
                                          AdminSocketHook *hook,
                                          std::string help);
 
-  seastar::future<bool> server_registration(hook_server_tag  server_tag,
-                                            const std::vector<hook_definition>& hv); 
+  //seastar::future<AsokRegistrationRes>
+  AsokRegistrationRes
+  server_registration(hook_server_tag  server_tag,
+                      const std::vector<AsokServiceDef>& hv); 
 
  /* bool register_immediate(hook_server_tag  server_tag,
                         std::string command,
@@ -193,7 +214,10 @@ private:
     std::string            m_cmd;
     cmdmap_t               m_parameters;
     std::string            m_format;
-    AdminSocketHook*       m_hook;
+    const AdminSocketHook* m_hook;
+    //AsokServiceDef*        m_hook;
+    ::seastar::gate*       m_gate;
+
   };
   std::optional<parsed_command_t> parse_cmd(const std::string& command_text);
 
@@ -204,6 +228,44 @@ private:
   //  better.
   //std::map<std::string, hook_info, std::less<>> hooks;
   std::vector<hook_info> hooks;
+
+  struct server_block {
+    //server_block(hook_server_tag tag, const std::vector<AsokServiceDef>& hooks)
+    //  : m_server_id{tag}
+    //  , m_hooks{hooks}
+    //{}
+    //server_block(server_block&& f) = default;
+    //server_block(const server_block& f) = default;
+    //hook_server_tag m_server_id;
+
+    server_block(const std::vector<AsokServiceDef>& hooks)
+      : m_hooks{hooks}
+    {}
+    const std::vector<AsokServiceDef>& m_hooks;
+    ::seastar::gate m_gate;
+  };
+
+  // \todo cache all available commands, from all servers, in one vector.
+  //  Recreate the list every register/unreg request.
+
+  std::map<hook_server_tag, server_block> servers;
+
+  //using GateAndHook = std::pair<::seastar::gate*, const AsokServiceDef*>;
+  struct GateAndHook {
+    //GateAndHook& operator=(GateAndHook&& f) {
+    //  m_gate = std::move(f.m_gate);
+    //  api = f.api;
+    //  return *this;
+    //}
+    ::seastar::gate* m_gate;
+    const AsokServiceDef* api;
+  };
+
+  /*!
+    locate_command() will search all servers' control blocks. If found, the
+    relevant gate is entered. Returns the AsokServiceDef, and the "activated" gate.
+   */
+  GateAndHook locate_command(std::string_view cmd);
 
   friend class AdminSocketTest;
   friend class HelpHook;

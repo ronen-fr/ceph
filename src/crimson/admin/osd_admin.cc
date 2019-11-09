@@ -79,7 +79,7 @@ class OsdAdminImp {
 
     /// the specific command implementation
     virtual seastar::future<> exec_command(Formatter* formatter, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) = 0;
+	                      std::string_view format, bufferlist& out) const = 0;
 
     explicit OsdAdminHookBase(OsdAdminImp& master) : 
       m_osd_admin{master}
@@ -93,7 +93,7 @@ class OsdAdminImp {
   public:
     explicit OsdStatusHook(OsdAdminImp& master) : OsdAdminHookBase(master) {};
     seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) final {
+	                      std::string_view format, bufferlist& out) const final {
 
       f->dump_stream("cluster_fsid") << m_osd_admin.osd_superblock().cluster_fsid;
       f->dump_stream("osd_fsid") << m_osd_admin.osd_superblock().osd_fsid;
@@ -114,7 +114,7 @@ class OsdAdminImp {
   public:
     explicit TestThrowHook(OsdAdminImp& master) : OsdAdminHookBase(master) {};
     seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) final {
+	                      std::string_view format, bufferlist& out) const final {
 
       if (command == "fthrow")
         return seastar::make_exception_future<>(ceph::osd::no_message_available{});
