@@ -151,7 +151,16 @@ public:
   }
 
   void register_admin_commands() {  // should probably be a future<void>
+    static const std::vector<AsokServiceDef> hooks_tbl{
+        AsokServiceDef{"status",   "status",  &osd_status_hook,      "OSD status"}
+      , AsokServiceDef{"status2",  "status 2",&osd_status_hook,      "OSD status"}
+      , AsokServiceDef{"throw",    "throw",   &osd_test_throw_hook,  "dev throw"}
+      , AsokServiceDef{"fthrow",   "fthrow",  &osd_test_throw_hook,  "dev throw"}
+    };
 
+    std::ignore = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
+
+    #if 0
     auto admin_if = m_cct->get_admin_socket();
 
     (void)seastar::when_all_succeed(
@@ -162,6 +171,7 @@ public:
           );
     //admin_if->register_command(AdminSocket::hook_server_tag{this}, "status",    "status",  &osd_status_hook,      "OSD status");
     //admin_if->register_command(AdminSocket::hook_server_tag{this}, "ZZ_ZZ_ZZ_ZZ",    "ZZ_ZZ_ZZ_ZZ",  &osd_status_hook,      "OSD status");
+    #endif
   }
 
   void unregister_admin_commands() {
@@ -174,8 +184,9 @@ public:
     if (admin_if) {
       // guarding against possible (?) destruction order problems
       try {
-        (void)admin_if->unregister_server(AdminSocket::hook_server_tag{this}).finally([]{}).discard_result();
+        std::ignore = admin_if->unregister_server(AdminSocket::hook_server_tag{this}).finally([]{}).discard_result();
       } catch (...) {
+        // RRR is there a scenario that can lead us here?
         std::cerr << " failed unregistering" << std::endl;
       }
     }

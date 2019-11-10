@@ -144,6 +144,10 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
     return seastar::now();
   }
 
+  /*srv_itr->second.m_gate.close();
+  servers.erase(srv_itr);
+  return seastar::now();*/
+
   return (srv_itr->second.m_gate.close()).
     then([this, srv_itr, server_tag](){
       servers.erase(srv_itr);
@@ -151,7 +155,7 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
     });
 }
 
-
+#if 0
 //  the internal handling of a registration request, after that request
 //  was forwarded from the requesting core.
 seastar::future<bool> AdminSocket::handle_registration(hook_server_tag  server_tag,
@@ -208,6 +212,7 @@ seastar::future<> AdminSocket::delayed_unregistration(std::string command)
 
   return seastar::now();
 }
+#endif
 
 #if 0
 seastar::future<> AdminSocket::unregister_command(std::string_view cmd)
@@ -426,6 +431,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
   ::ceph::bufferlist out_buf;
 
   return seastar::do_with(std::move(parsed), std::move(out_buf), [&out, gatep=parsed->m_gate](auto&& parsed, auto&& out_buf) {
+    std::cerr << "gate-cnt " << parsed->m_gate->get_count() << std::endl;
     return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
       then_wrapped([&out, &out_buf](auto fut) {
         if (fut.failed()) {
@@ -437,6 +443,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
         }
       }).
       then([&out, &out_buf, gatep](auto call_res) {
+        std::cerr << "gate-leave "  << std::endl;
         gatep->leave();
         uint32_t response_length = htonl(out_buf.length());
         std::cerr << "resp length: " << out_buf.length() << std::endl;
@@ -474,6 +481,7 @@ seastar::future<> AdminSocket::init(const std::string& path)
   }); 
 }
 
+
 /// the hooks that are served directly by the admin_socket server
 void AdminSocket::internal_hooks()
 {
@@ -482,6 +490,21 @@ void AdminSocket::internal_hooks()
   getdescs_hook = std::make_unique<GetdescsHook>(this);
   test_throw_hook = std::make_unique<TestThrowHook>(this);
 
+  static const std::vector<AsokServiceDef> internal_hooks_tbl{
+      AsokServiceDef{"0",            "0",                    version_hook.get(),     ""}
+    , AsokServiceDef{"version",      "version",              version_hook.get(),     "get ceph version"}
+    , AsokServiceDef{"git_version",  "git_version",          version_hook.get(),     "get git sha1"}
+    , AsokServiceDef{"git_version",  "git_version",          version_hook.get(),     "get git sha1"}
+    , AsokServiceDef{"help",         "help",                 help_hook.get(),        "list available commands"}
+    , AsokServiceDef{"get_command_descriptions", "get_command_descriptions",
+                                                             getdescs_hook.get(), "list available commands"}
+    , AsokServiceDef{"throwAs",      "throwAs",              test_throw_hook.get(),  "dev throw"}
+    , AsokServiceDef{"fthrowAs",     "fthrowAs",             test_throw_hook.get(),  "dev throw"}
+  };
+
+  std::ignore = server_registration(AdminSocket::hook_server_tag{this}, internal_hooks_tbl);
+
+  #if 0
   std::ignore = seastar::when_all_succeed(
     register_command(AdminSocket::hook_server_tag{this},
                 "0",            "0",                    version_hook.get(),     ""),
@@ -498,6 +521,7 @@ void AdminSocket::internal_hooks()
     register_command(AdminSocket::hook_server_tag{this},
                 "fthrowAs",     "fthrowAs",      test_throw_hook.get(),         "dev throw")
   );
+  #endif
 }
 
 seastar::future<> AdminSocket::init_async(const std::string& path)

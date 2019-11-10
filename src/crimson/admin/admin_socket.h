@@ -129,11 +129,11 @@ public:
    *
    * @return 'true' for success, 'false' if command already registered.
    */
-  seastar::future<bool> register_command(hook_server_tag  server_tag,
-                                         std::string command,
-                                         std::string cmddesc,
-                                         AdminSocketHook *hook,
-                                         std::string help);
+  //seastar::future<bool> register_command(hook_server_tag  server_tag,
+  //                                       std::string command,
+  //                                       std::string cmddesc,
+  //                                       AdminSocketHook *hook,
+  //                                       std::string help);
 
   //seastar::future<AsokRegistrationRes>
   AsokRegistrationRes
@@ -158,13 +158,13 @@ public:
 
 private:
 
-  seastar::future<bool> handle_registration(hook_server_tag  server_tag,
-                                            std::string command,
-                                            std::string cmddesc,
-                                            AdminSocketHook* hook,
-                                            std::string help);
+  //seastar::future<bool> handle_registration(hook_server_tag  server_tag,
+  //                                          std::string command,
+  //                                          std::string cmddesc,
+  //                                          AdminSocketHook* hook,
+  //                                          std::string help);
 
-  seastar::future<> delayed_unregistration(std::string command);
+  //seastar::future<> delayed_unregistration(std::string command);
 
   void internal_hooks();
 
@@ -193,6 +193,11 @@ private:
   std::unique_ptr<AdminSocketHook> help_hook;
   std::unique_ptr<AdminSocketHook> getdescs_hook;
   std::unique_ptr<AdminSocketHook> test_throw_hook;  // for dev unit-tests
+
+  //inline static std::vector<AsokServiceDef> InternalHooks{
+  //AsokServiceDef{"0","0",version_hook.get(),     ""
+
+  //};
 
   struct hook_info {
     std::string cmd;
