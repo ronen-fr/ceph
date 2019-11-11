@@ -32,6 +32,22 @@ namespace {
   }
 }
 
+  /*!
+    iterator support
+   */
+  AdminHooksIter AdminSocket::begin() {
+    AdminHooksIter it{*this};
+    it.m_miter->second.m_gate.enter();
+    it.m_in_gate = true;
+    return it;
+  }
+
+  AdminHooksIter AdminSocket::end() {
+    AdminHooksIter it{*this, true};
+    return it;
+  }
+
+
 /*!
   the defaut implementation of the hook API
 
@@ -101,7 +117,7 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
 AdminSocket::AdminSocket(CephContext *cct)
   : m_cct(cct)
 {
-  hooks.reserve(32); // \todo to be made into a constant
+  //hooks.reserve(32); // \todo to be made into a constant
   std::cout << "######### a new AdminSocket " << (uint64_t)(this) <<
         " -> " << (uint64_t)(m_cct) << std::endl;
 }
@@ -273,9 +289,9 @@ public:
 
   seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                                 std::string_view format, bufferlist& out) const final {
-    for (const auto& hk_info : m_as->hooks) {
-      if (hk_info.help.length())
-	f->dump_string(hk_info.cmd.c_str(), hk_info.help);
+    for (const auto& hk_info : *m_as) {
+      if (hk_info->help.length())
+	f->dump_string(hk_info->command.c_str(), hk_info->help);
     }
     return seastar::now();
   }
@@ -291,6 +307,10 @@ public:
     int cmdnum = 0;
     JSONFormatter jf;
     jf.open_object_section("command_descriptions");
+
+#ifdef JUST_FOR_A_MINUTE
+
+
     for (const auto& hk_info : m_as->hooks) {
       ostringstream secname;
       secname << "cmd" << setfill('0') << std::setw(3) << cmdnum;
@@ -301,6 +321,10 @@ public:
 				hk_info.help);
       cmdnum++;
     }
+
+#endif
+
+
     jf.close_section(); // command_descriptions
     jf.enable_line_break();
     ostringstream ss;

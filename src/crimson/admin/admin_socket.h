@@ -94,6 +94,9 @@ struct AsokRegistrationRes {
                                      //   decide whether this is a bug
 };
 
+class AdminHooksIter;
+
+
 
 class AdminSocket {
 public:
@@ -199,6 +202,7 @@ private:
 
   //};
 
+  #if 0
   struct hook_info {
     std::string cmd;
     bool is_valid{true}; //!< cleared with 'disable_command()'
@@ -214,6 +218,7 @@ private:
           std::string_view help)
       : cmd{cmd}, hook{hook}, desc{desc}, help{help}, server_tag{tag} {}
   };
+  #endif
 
   struct parsed_command_t {
     std::string            m_cmd;
@@ -232,7 +237,7 @@ private:
   //  of entries is in the tens, not the thousands, I expect std::vector to perform
   //  better.
   //std::map<std::string, hook_info, std::less<>> hooks;
-  std::vector<hook_info> hooks;
+  //std::vector<hook_info> hooks;
 
   struct server_block {
     //server_block(hook_server_tag tag, const std::vector<AsokServiceDef>& hooks)
@@ -247,7 +252,7 @@ private:
       : m_hooks{hooks}
     {}
     const std::vector<AsokServiceDef>& m_hooks;
-    ::seastar::gate m_gate;
+    mutable ::seastar::gate m_gate;
   };
 
   // \todo cache all available commands, from all servers, in one vector.
@@ -272,9 +277,87 @@ private:
    */
   GateAndHook locate_command(std::string_view cmd);
 
+  /*!
+    iterator support
+   */
+  AdminHooksIter begin();
+  AdminHooksIter end();
+
+  using ServersListIt = std::map<hook_server_tag, server_block>::iterator;
+  using ServerApiIt =  std::vector<AsokServiceDef>::const_iterator;
+
   friend class AdminSocketTest;
   friend class HelpHook;
   friend class GetdescsHook;
+  friend class AdminHooksIter;
+};
+
+/*!
+  An iterator over all registered APIs. Each server-block is locked (via the gate) before
+  iterating over its entries.
+*/
+struct AdminHooksIter : public std::iterator<std::output_iterator_tag, AsokServiceDef> {
+public:
+  explicit AdminHooksIter(AdminSocket& master, bool end_flag=false)
+    : master_{master}
+  {
+    if (end_flag) {
+      // create the equivalent of servers.end();
+      m_miter = master_.servers.end();
+    } else {
+      m_miter = master_.servers.begin();
+      m_siter = m_miter->second.m_hooks.begin();
+    }
+  }
+
+  ~AdminHooksIter() {
+    if (m_in_gate)
+      m_miter->second.m_gate.leave();
+  }
+
+  const AsokServiceDef* operator*() const {
+    return &(*m_siter);
+  }
+
+  bool operator!=(const AdminHooksIter & other) const { return m_in_gate != other.m_in_gate; }
+
+
+  AdminHooksIter operator++() {
+    ++m_siter;
+    if (m_siter == m_miter->second.m_hooks.end()) {
+      // move to the next server-block
+      m_miter->second.m_gate.leave();
+      m_in_gate = false;
+      
+      while (true) {
+        m_miter++;
+        if (m_miter == master_.servers.end())
+          return *this;
+
+        try {
+          m_miter->second.m_gate.enter(); // will throw if gate was already closed
+          m_siter = m_miter->second.m_hooks.begin();
+          m_in_gate = true;
+          return *this;
+        } catch (...) {
+          // this server-block is being torn-down
+          continue;
+        }
+      }
+    }
+    return *this;
+  }
+
+
+
+private:
+  AdminSocket&                 master_;
+  bool                         m_in_gate{false};
+  AdminSocket::ServersListIt   m_miter;
+  AdminSocket::ServerApiIt     m_siter;
+
+  friend class AdminSocket;
+
 };
 
 

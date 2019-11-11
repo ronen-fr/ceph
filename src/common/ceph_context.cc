@@ -77,7 +77,7 @@ CephContext::~CephContext()
 
   // trying to locate all those instances of asok_config_admin not cleared before the destruction.
   // note that the unregistering is a non-immediate process (unregister_server() returns a future).
-  assert(!asok_config_admin);
+  //assert(!asok_config_admin);
 }
 
 CephContext::CephContext(CephContext&&) = default;
@@ -92,7 +92,7 @@ CryptoRandom* CephContext::random() const
   return _crypto_random.get();
 }
 
-CephContext* CephContext::get()
+CephContext* CephContext::get_who()
 {
   ++nref;
   return this;

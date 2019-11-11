@@ -79,7 +79,7 @@ public:
   PerfCountersCollectionImpl* get_perfcounters_collection();
   ceph::common::ConfigProxy& _conf;
   ceph::common::PerfCountersCollection& _perf_counters_collection;
-  CephContext* get();
+  CephContext* get_who();
   void put();
 
   /**
@@ -97,6 +97,8 @@ private:
   unsigned nref;
   std::unique_ptr<AdminSocket> asok;
   std::unique_ptr<ContextConfigAdmin> asok_config_admin;
+
+  friend class ContextConfigAdminImp;
 };
 
 #else

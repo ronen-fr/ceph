@@ -222,12 +222,21 @@ public:
   }
 
   ~ContextConfigAdminImp() {
-    unregister_admin_commands();
+    //std::unique_ptr<ContextConfigAdmin> moved_context_admin{std::move(m_cct->asok_config_admin)};
+    //m_cct->asok_config_admin = nullptr;
+    std::ignore = seastar::do_with(std::move(m_cct), std::move(m_cct->asok_config_admin),
+                                 [this] (auto& cct, auto& cxadmin) mutable {
+      cct->get_who();
+      return unregister_admin_commands().then([cct](){
+        cct->put();
+      }).then([](){
+        std::cerr << "~ContextConfigAdminImp()\n";
+
+      });
+    });
   }
 
   void register_admin_commands() {  // should probably be a future<void>
-
-    //auto admin_if = m_cct->get_admin_socket();
 
     //std::cerr << "ContextConfigAdminImp registering\n";
     static const std::vector<AsokServiceDef> hooks_tbl{
@@ -241,34 +250,18 @@ public:
 
     std::ignore = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
 
-    #if 0
-    std::ignore = seastar::when_all_succeed(
-      admin_if->register_command(AdminSocket::hook_server_tag{this},
-                "config show",    "config show",  &config_show_hook,      "lists all conf items"),
-      admin_if->register_command(AdminSocket::hook_server_tag{this},
-                "config get",     "config get",   &config_get_hook,       "fetches a conf value"),
-      admin_if->register_command(AdminSocket::hook_server_tag{this},
-                "config set",     "config set",   &config_set_hook,       "sets a conf value"),
-      admin_if->register_command(AdminSocket::hook_server_tag{this},
-                "assert",         "assert",       &assert_hook,           "asserts"),
-      admin_if->register_command(AdminSocket::hook_server_tag{this},
-                "throwCtx",       "throwCtx",       &ctx_test_throw_hook, "dev throw"),
-      admin_if->register_command(AdminSocket::hook_server_tag{this},
-                "fthrowCtx",      "fthrowCtx",      &ctx_test_throw_hook, "dev throw")
-    ); //.finally([admin_if](){});
-    #endif
     //admin_socket->register_command("config unset", "config unset name=var,type=CephString",  _admin_hook, "config unset <field>: unset a config variable");
   }
 
-  void unregister_admin_commands() {
+  seastar::future<> unregister_admin_commands() {
     if (m_no_registrations.test_and_set()) {
       //  already un-registered
-      return;
+      return seastar::now();
     }
 
     // note that unregister_server() closes a seastar::gate (i.e. - it blocks)
     auto admin_if = m_cct->get_admin_socket();
-    std::ignore = admin_if->unregister_server(AdminSocket::hook_server_tag{this});
+    return admin_if->unregister_server(AdminSocket::hook_server_tag{this});
   }
 };
 
@@ -279,9 +272,9 @@ ContextConfigAdmin::ContextConfigAdmin(CephContext* cct, ceph::common::ConfigPro
   : m_imp{ std::make_unique<ContextConfigAdminImp>(cct, conf) }
 {}
 
-void ContextConfigAdmin::unregister_admin_commands()
+seastar::future<>  ContextConfigAdmin::unregister_admin_commands()
 {
-  m_imp->unregister_admin_commands();
+  return m_imp->unregister_admin_commands();
 }
 
 ContextConfigAdmin::~ContextConfigAdmin() = default;

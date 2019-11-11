@@ -32,8 +32,10 @@ class ContextConfigAdmin {
 public:
   ContextConfigAdmin(CephContext* cct, ceph::common::ConfigProxy& conf);
   ~ContextConfigAdmin();
-  void unregister_admin_commands();
+  seastar::future<> unregister_admin_commands();
 };
+
+
 #if 0
 class ContextMiscAdminImp;
 
