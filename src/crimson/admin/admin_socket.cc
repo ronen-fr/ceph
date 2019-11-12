@@ -164,8 +164,11 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
   servers.erase(srv_itr);
   return seastar::now();*/
 
+  std::cerr << "\n~server (AS:" << (uint64_t)(this) <<") " << (uint64_t)(server_tag) << " to be deleted" <<  (uint64_t)(srv_itr->first)<< std::endl;
+
   return (srv_itr->second.m_gate.close()).
-    then([this, srv_itr, server_tag](){
+    then([this, srv_itr, server_tag]() {
+      std::cerr << "\n~server_2 " << (uint64_t)(srv_itr->first) << " erasure" << std::endl;
       servers.erase(srv_itr);
       return seastar::now();
     });

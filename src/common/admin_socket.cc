@@ -452,7 +452,7 @@ int AdminSocket::register_command(std::string_view command,
   std::unique_lock l(lock);
   auto i = hooks.find(command);
   if (i != hooks.cend()) {
-    ldout(m_cct, 1) << "register_command " << command << " hook " << hook
+    ldout(m_cct, 1) << "register_command R " << command << " hook " << hook
 		    << " EEXIST" << dendl;
     ret = -EEXIST;
   } else {
@@ -464,6 +464,13 @@ int AdminSocket::register_command(std::string_view command,
 		       std::forward_as_tuple(hook, cmddesc, help));
     ret = 0;
   }
+  {
+    const char proc_name[1024];
+    int fd = open("/proc/self/cmdline");
+    read(fd, proc_name, sizeof(proc_name));
+    ldout(m_cct, 1) << "register_command was from " << proc_name << dendl;
+    close fd;
+  }
   return ret;
 }
 
@@ -473,7 +480,7 @@ int AdminSocket::unregister_command(std::string_view command)
   std::unique_lock l(lock);
   auto i = hooks.find(command);
   if (i != hooks.cend()) {
-    ldout(m_cct, 5) << "unregister_command " << command << dendl;
+    ldout(m_cct, 5) << "unregister_command R " << command << dendl;
 
     // If we are currently processing a command, wait for it to
     // complete in case it referenced the hook that we are

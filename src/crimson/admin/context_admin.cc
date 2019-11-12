@@ -224,13 +224,13 @@ public:
   ~ContextConfigAdminImp() {
     //std::unique_ptr<ContextConfigAdmin> moved_context_admin{std::move(m_cct->asok_config_admin)};
     //m_cct->asok_config_admin = nullptr;
-    std::ignore = seastar::do_with(std::move(m_cct), std::move(m_cct->asok_config_admin),
-                                 [this] (auto& cct, auto& cxadmin) mutable {
+    std::ignore = seastar::do_with(std::move(m_cct)/*, std::move(m_cct->asok_config_admin)*/,
+                                 [this] (auto& cct/*, auto& cxadmin*/) mutable {
       cct->get_who();
       return unregister_admin_commands().then([cct](){
-        cct->put();
-      }).then([](){
-        std::cerr << "~ContextConfigAdminImp()\n";
+        //cct->put();
+      }).then([this](){
+        std::cerr << "~ContextConfigAdminImp() " << (uint64_t)(this) << std::endl;
 
       });
     });
