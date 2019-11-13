@@ -25,6 +25,13 @@
 #include "seastar/util/std-compat.hh"
 #include <boost/algorithm/string.hpp>
 
+/*!
+  A Crimson-wise version of the admin socket - implementation file
+
+  \todo handle the unlinking of the admin socket. Note that 'cleanup_files' at-exit functionality is not yet
+        implemented in Crimson
+*/
+
 
 namespace {
   seastar::logger& logger() {
@@ -32,20 +39,67 @@ namespace {
   }
 }
 
-  /*!
-    iterator support
-   */
-  AdminHooksIter AdminSocket::begin() {
-    AdminHooksIter it{*this};
-    it.m_miter->second.m_gate.enter();
-    it.m_in_gate = true;
-    return it;
-  }
+/*!
+  Hooks table - iterator support
 
-  AdminHooksIter AdminSocket::end() {
-    AdminHooksIter it{*this, true};
-    return it;
+  Note: Each server-block is locked (via its gate member) before
+        iterating over its entries.
+ */
+
+AdminHooksIter AdminSocket::begin() {
+  AdminHooksIter it{*this};
+  it.m_miter->second.m_gate.enter();
+  it.m_in_gate = true;
+  return it;
+}
+
+AdminHooksIter AdminSocket::end() {
+  AdminHooksIter it{*this, true};
+  return it;
+}
+
+/*!
+  note that 'end-flag' is an optional parameter, and is only used internally (to
+  signal the end() state).
+ */ 
+AdminHooksIter::AdminHooksIter(AdminSocket& master, bool end_flag)
+    : m_master{master}
+{
+  if (end_flag) {
+    // create the equivalent of servers.end();
+    m_miter = m_master.servers.end();
+  } else {
+    m_miter = m_master.servers.begin();
+    m_siter = m_miter->second.m_hooks.begin();
   }
+}
+
+AdminHooksIter AdminHooksIter::operator++() 
+{
+  ++m_siter;
+  if (m_siter == m_miter->second.m_hooks.end()) {
+    // move to the next server-block
+    m_miter->second.m_gate.leave();
+    m_in_gate = false;
+    
+    while (true) {
+      m_miter++;
+      if (m_miter == m_master.servers.end())
+        return *this;
+
+      try {
+        m_miter->second.m_gate.enter(); // will throw if gate was already closed
+        m_siter = m_miter->second.m_hooks.begin();
+        m_in_gate = true;
+        return *this;
+      } catch (...) {
+        // this server-block is being torn-down, and cannot be used
+        continue;
+      }
+    }
+  }
+  return *this;
+}
 
 
 /*!
@@ -57,22 +111,26 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
                                             std::string_view format, ceph::bufferlist& out) const
 {
   unique_ptr<Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)};
-  std::string section(command);
+
+  // customize the output section, as required by a couple of hook APIs:
+  std::string section{section_name(command)};
   boost::replace_all(section, " ", "_"); //!< \todo consider saving the '_' version of the command upon registration
   if (format_as_array()) {
     f->open_array_section(section.c_str());
   } else {
     f->open_object_section(section.c_str());
   }
+  logger().info("{} cmd={} out section={}", __func__, command, section); 
 
   /*!
       call the command-specific hook.
       A note re error handling:
-    	- will be modified to use the new 'erroretor'. For now:
-    	- exec_command() may throw or return an exceptional future. We return a message starting
-    	  with "error" on both failure scenarios.
+        - will be modified to use the new 'erroretor'. For now:
+        - exec_command() may throw or return an exceptional future. We return a message that starts
+          with "error" on both failure scenarios.
    */
   return seastar::do_with(std::move(f), [this, &command, &cmdmap, &format, &out](unique_ptr<Formatter>& ftr) {
+
     return seastar::futurize_apply([this, &command, &cmdmap, &format, &out, f=ftr.get()] {
       return exec_command(f, command, cmdmap, format, out);
     //}).handle_exception([this](auto eptr) {
@@ -124,28 +182,26 @@ AdminSocket::AdminSocket(CephContext *cct)
 
 AdminSocket::~AdminSocket()
 {
-  //shutdown();
   std::cout << "######### XXXXX AdminSocket " << (uint64_t)(this) << std::endl;
 }
 
 /*!
-  Note re context: running in asok core. No need to lock the table.
+  Note re context: running in the asok core. No need to lock the table. (RRR rethink this point)
+  And no futurization until required to support multiple cores.
 */
-//seastar::future<AsokRegistrationRes> // to futurize only if spanning cores
-AsokRegistrationRes
-AdminSocket::server_registration(AdminSocket::hook_server_tag  server_tag,
+bool AdminSocket::server_registration(AdminSocket::hook_server_tag  server_tag,
                                  const std::vector<AsokServiceDef>& hv)
 {
   auto ne = servers.try_emplace(
                                 server_tag,
                                 hv);
 
-  //  is this server ID already registered?
+  //  is this server tag already registered?
   if (!ne.second) {
-    return AsokRegistrationRes{false, false};
+    return false;
   }
 
-  return AsokRegistrationRes{true, false}; // not checking the 3rd value for now
+  return true;
 }
 
 /*!
@@ -160,10 +216,6 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
     return seastar::now();
   }
 
-  /*srv_itr->second.m_gate.close();
-  servers.erase(srv_itr);
-  return seastar::now();*/
-
   std::cerr << "\n~server (AS:" << (uint64_t)(this) <<") " << (uint64_t)(server_tag) << " to be deleted" <<  (uint64_t)(srv_itr->first)<< std::endl;
 
   return (srv_itr->second.m_gate.close()).
@@ -173,183 +225,6 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
       return seastar::now();
     });
 }
-
-#if 0
-//  the internal handling of a registration request, after that request
-//  was forwarded from the requesting core.
-seastar::future<bool> AdminSocket::handle_registration(hook_server_tag  server_tag,
-                                      std::string command,
-				      std::string cmddesc,
-				      AdminSocketHook* hook,
-				      std::string help)
-{
-  std::string_view cmd{command};
-  //std::cerr << "fut_hr " << cmd << std::endl;
-  auto h = std::find_if(hooks.begin(), hooks.end(), [this, cmd](const auto& h){
-          return h.is_valid && h.cmd == cmd;
-  });
-
-  if (h != hooks.end()) {
-    std::cerr << "hri failed ###################" << std::endl;
-    logger().warn("{}: command {} already registered", __func__, command); 
-    return seastar::make_ready_future<bool>(false);
-  }
-
-  //std::cerr << "fut_hr to add " << cmd << std::endl;
-  hooks.emplace_back(command, server_tag, hook, cmddesc, help);
-  //hooks.emplace_back(i,
-  //		     std::piecewise_construct,
-  //		     std::forward_as_tuple(command),
-  //		     std::forward_as_tuple(server_tag, hook, cmddesc, help));
-  //std::cerr << "fut_hr done " << cmd << std::endl;
-  logger().info("{}: command {} registered", __func__, command); 
-  return seastar::make_ready_future<bool>(true);
-}
-
-seastar::future<bool> AdminSocket::register_command(hook_server_tag  server_tag,
-                                  std::string command,
-				  std::string cmddesc,
-				  AdminSocketHook* hook,
-				  std::string help)
-{
-  //  are we on the admin-specific core? if not - send to that core.
-  //  Not handled for now, as only one core is used for Crimson at this point.
-  //  if (core != admin_core) submit_to()...
-
-  // \todo missing multi-core code
-  return handle_registration(server_tag, command, cmddesc, hook, help);
-}
-
-
-///  called when we know that we are not executing any hook
-seastar::future<> AdminSocket::delayed_unregistration(std::string command)
-{
-  //auto h = hooks.find(command);
-  //if (h != hooks.end()) {
-  //  hooks.erase(h);
-  //} // the 'else' should not happen, but is not an issue
-
-  return seastar::now();
-}
-#endif
-
-#if 0
-seastar::future<> AdminSocket::unregister_command(std::string_view cmd)
-{
-  auto valid_match = [cmd](const hook_info& h) -> bool {
-                            return h.is_valid && h.cmd == cmd;
-                          };
-
-  auto h = std::find_if(hooks.begin(), hooks.end(), valid_match);
-
-  if (h == hooks.end()) {
-    logger().warn("{}: {} is not a registered command", __func__, cmd);
-  } else {
-
-    h->is_valid = false;
-
-    //  \todo:
-    //  Create an unregistration promise, but do not schedule it yet.
-    //  Add it to a queue of waiting deletions.
-    //  (When can we schedule it?)
-  }
-  return seastar::now();
-}
-#endif
-
-
-class VersionHook : public AdminSocketHook {
-public:
-  seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
-	    std::string_view format, bufferlist& out) const override {
-    if (command == "0"sv) {
-      out.append(CEPH_ADMIN_SOCK_VERSION);
-    } else {
-      // always using a JSON formatter
-      JSONFormatter jf;
-      jf.open_object_section("version");
-      if (command == "version") {
-	jf.dump_string("version", ceph_version_to_str());
-	jf.dump_string("release", ceph_release_to_str());
-	jf.dump_string("release_type", ceph_release_type());
-      } else if (command == "git_version") {
-	jf.dump_string("git_version", "x" /*git_version_to_str()*/);
-      }
-      std::ostringstream ss;
-      jf.close_section();
-      jf.enable_line_break();
-      jf.flush(ss);
-      out.append(ss.str());
-    }
-    return seastar::make_ready_future<bool>(true);
-  }
-};
-
-class HelpHook : public AdminSocketHook {
-  AdminSocket* m_as;
-public:
-  explicit HelpHook(AdminSocket* as) : m_as{as} {}
-
-  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                                 std::string_view format, bufferlist& out) const final {
-    for (const auto& hk_info : *m_as) {
-      if (hk_info->help.length())
-	f->dump_string(hk_info->command.c_str(), hk_info->help);
-    }
-    return seastar::now();
-  }
-};
-
-class GetdescsHook : public AdminSocketHook {
-  AdminSocket *m_as;
-public:
-  explicit GetdescsHook(AdminSocket *as) : m_as{as} {}
-
-  seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
-	    std::string_view format, bufferlist& out) const final {
-    int cmdnum = 0;
-    JSONFormatter jf;
-    jf.open_object_section("command_descriptions");
-
-#ifdef JUST_FOR_A_MINUTE
-
-
-    for (const auto& hk_info : m_as->hooks) {
-      ostringstream secname;
-      secname << "cmd" << setfill('0') << std::setw(3) << cmdnum;
-      dump_cmd_and_help_to_json(&jf,
-                                CEPH_FEATURES_ALL,
-				secname.str().c_str(),
-				hk_info.desc,
-				hk_info.help);
-      cmdnum++;
-    }
-
-#endif
-
-
-    jf.close_section(); // command_descriptions
-    jf.enable_line_break();
-    ostringstream ss;
-    jf.flush(ss);
-    out.append(ss.str());
-    return seastar::make_ready_future<bool>(true);
-  }
-};
-
-
-class TestThrowHook : public AdminSocketHook {
-  AdminSocket* m_as;
-public:
-  explicit TestThrowHook(AdminSocket* as) : m_as{as} {}
-
-  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                                 std::string_view format, bufferlist& out) const final {
-    if (command == "fthrowAs")
-      return seastar::make_exception_future<>(std::system_error{1, std::system_category()});
-    throw(std::invalid_argument("As::TestThrowHook"));
-  }
-};
 
 AdminSocket::GateAndHook AdminSocket::locate_command(const std::string_view cmd)
 {
@@ -366,7 +241,7 @@ AdminSocket::GateAndHook AdminSocket::locate_command(const std::string_view cmd)
     for (auto& api : srv.m_hooks) {
       if (api.command == cmd) {
         logger().info("{}: located {} w/ server {}", __func__, cmd, tag);
-        // note that the gate was entered! to fix RRR
+        // note that the gate was entered!
         return AdminSocket::GateAndHook{&srv.m_gate, &api};
       }
     }
@@ -378,9 +253,11 @@ AdminSocket::GateAndHook AdminSocket::locate_command(const std::string_view cmd)
   return AdminSocket::GateAndHook{nullptr, nullptr};
 }
 
-/// the incoming command text, which is in JSON or XML, is parsed down
-/// to its separate op-codes and arguments. The hook registered to handle the
-/// specific command is located.
+/*!
+    the incoming command text, which is in JSON or XML, is parsed down
+    to its separate op-codes and arguments. The hook registered to handle the
+    specific command is located.
+  */
 std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::string& command_text)
 {
   cmdmap_t cmdmap;
@@ -407,12 +284,11 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   } catch (const bad_cmd_get& e) {
     return std::nullopt;
   }
-  if (format != "json" && format != "json-pretty" &&
-      format != "xml" && format != "xml-pretty")
-    format = "json-pretty";
+  if (format != "json"s && format != "json-pretty"s &&
+      format != "xml"s && format != "xml-pretty"s)
+    format = "json-pretty"s;
 
-  // try to match the longest set of strings. Failing - remove the tail part and retry
-  //decltype(hooks)::iterator p = hooks.end();
+  // try to match the longest set of strings. Failing - remove the tail part and retry.
   AdminSocket::GateAndHook gh{nullptr, nullptr};
   while (match.size()) {
     gh = std::move(locate_command(match));
@@ -458,7 +334,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
   ::ceph::bufferlist out_buf;
 
   return seastar::do_with(std::move(parsed), std::move(out_buf), [&out, gatep=parsed->m_gate](auto&& parsed, auto&& out_buf) {
-    std::cerr << "gate-cnt " << parsed->m_gate->get_count() << std::endl;
+    std::cerr << "gate-cnt " << parsed->m_gate->get_count() << std::endl; // RRR replace with assert on >0
     return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
       then_wrapped([&out, &out_buf](auto fut) {
         if (fut.failed()) {
@@ -509,48 +385,6 @@ seastar::future<> AdminSocket::init(const std::string& path)
 }
 
 
-/// the hooks that are served directly by the admin_socket server
-void AdminSocket::internal_hooks()
-{
-  version_hook = std::make_unique<VersionHook>();
-  help_hook = std::make_unique<HelpHook>(this);
-  getdescs_hook = std::make_unique<GetdescsHook>(this);
-  test_throw_hook = std::make_unique<TestThrowHook>(this);
-
-  static const std::vector<AsokServiceDef> internal_hooks_tbl{
-      AsokServiceDef{"0",            "0",                    version_hook.get(),     ""}
-    , AsokServiceDef{"version",      "version",              version_hook.get(),     "get ceph version"}
-    , AsokServiceDef{"git_version",  "git_version",          version_hook.get(),     "get git sha1"}
-    , AsokServiceDef{"git_version",  "git_version",          version_hook.get(),     "get git sha1"}
-    , AsokServiceDef{"help",         "help",                 help_hook.get(),        "list available commands"}
-    , AsokServiceDef{"get_command_descriptions", "get_command_descriptions",
-                                                             getdescs_hook.get(), "list available commands"}
-    , AsokServiceDef{"throwAs",      "throwAs",              test_throw_hook.get(),  "dev throw"}
-    , AsokServiceDef{"fthrowAs",     "fthrowAs",             test_throw_hook.get(),  "dev throw"}
-  };
-
-  std::ignore = server_registration(AdminSocket::hook_server_tag{this}, internal_hooks_tbl);
-
-  #if 0
-  std::ignore = seastar::when_all_succeed(
-    register_command(AdminSocket::hook_server_tag{this},
-                "0",            "0",                    version_hook.get(),     ""),
-    register_command(AdminSocket::hook_server_tag{this},
-                "version",      "version",              version_hook.get(),     "get ceph version"),
-    register_command(AdminSocket::hook_server_tag{this},
-                "git_version",  "git_version",          version_hook.get(),     "get git sha1"),
-    register_command(AdminSocket::hook_server_tag{this},
-                "help",         "help",                 help_hook.get(),        "list available commands"),
-    register_command(AdminSocket::hook_server_tag{this},
-                "get_command_descriptions", "get_command_descriptions", getdescs_hook.get(), "list available commands"),
-    register_command(AdminSocket::hook_server_tag{this},
-                "throwAs",      "throwAs",       test_throw_hook.get(),         "dev throw"),
-    register_command(AdminSocket::hook_server_tag{this},
-                "fthrowAs",     "fthrowAs",      test_throw_hook.get(),         "dev throw")
-  );
-  #endif
-}
-
 seastar::future<> AdminSocket::init_async(const std::string& path)
 {
   //  verify we are the only instance running now RRR
@@ -579,6 +413,135 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
     });
   });			
 }
+
+// ///////////////////////////////////////
+// the internal hooks
+// ///////////////////////////////////////
+
+/*!
+  VersionHook requires some non-standard handling:
+   - the format is fixed to JSON;
+   - the JSON section name is 'version' even if the command is 'git_version'.
+
+  As the default call() does not support these tweaks, we override 'call()' (and
+  handle 2 commands in one function)
+*/
+class VersionHook : public AdminSocketHook {
+public:
+  seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
+	    std::string_view format, bufferlist& out) const override {
+    // always using a JSON formatter
+    JSONFormatter jf;
+    jf.open_object_section("version");
+    if (command == "version"sv) {
+      jf.dump_string("version", ceph_version_to_str());
+      jf.dump_string("release", ceph_release_to_str());
+      jf.dump_string("release_type", ceph_release_type());
+    } else if (command == "git_version"sv) {
+      jf.dump_string("git_version", "x" /*git_version_to_str()*/);
+    }
+    std::ostringstream ss;
+    jf.close_section();
+    jf.enable_line_break();
+    jf.flush(ss);
+    out.append(ss.str());
+    return seastar::make_ready_future<bool>(true);
+  }
+}; // testing speller tessting
+
+/*!
+    The response to the '0' command is not formatted, neither JSON or otherwise.
+*/
+class The0Hook : public AdminSocketHook {
+public:
+  seastar::future<bool> call(std::string_view command, const cmdmap_t& ,
+	    std::string_view format, bufferlist& out) const override {
+    out.append(CEPH_ADMIN_SOCK_VERSION);
+    return seastar::make_ready_future<bool>(true);
+  }
+};
+
+class HelpHook : public AdminSocketHook {
+  AdminSocket* m_as;
+public:
+  explicit HelpHook(AdminSocket* as) : m_as{as} {}
+
+  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                                 std::string_view format, bufferlist& out) const final {
+    for (const auto& hk_info : *m_as) {
+      if (hk_info->help.length())
+	f->dump_string(hk_info->command.c_str(), hk_info->help);
+    }
+    return seastar::now();
+  }
+};
+
+class GetdescsHook : public AdminSocketHook {
+  AdminSocket *m_as;
+public:
+  explicit GetdescsHook(AdminSocket *as) : m_as{as}
+  {}
+
+  std::string section_name(std::string_view command) const final {
+    return "command_descriptions"s;
+  }
+
+  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+                                 std::string_view format, bufferlist& out) const final
+  {
+    int cmdnum = 0; 
+
+    for (const auto& hk_info : *m_as) {
+      ostringstream secname;
+      secname << "cmd" << setfill('0') << std::setw(3) << cmdnum;
+      dump_cmd_and_help_to_json(f,
+                                CEPH_FEATURES_ALL,
+                                secname.str().c_str(),
+                                hk_info->cmddesc,
+                                hk_info->help);
+      cmdnum++;
+    }
+    return seastar::now();
+  }
+};
+
+class TestThrowHook : public AdminSocketHook {
+  AdminSocket* m_as;
+public:
+  explicit TestThrowHook(AdminSocket* as) : m_as{as} {}
+
+  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                                 std::string_view format, bufferlist& out) const final {
+    if (command == "fthrowAs")
+      return seastar::make_exception_future<>(std::system_error{1, std::system_category()});
+    throw(std::invalid_argument("As::TestThrowHook"));
+  }
+};
+
+/// the hooks that are served directly by the admin_socket server
+void AdminSocket::internal_hooks()
+{
+  version_hook = std::make_unique<VersionHook>();
+  the0_hook = std::make_unique<The0Hook>();
+  help_hook = std::make_unique<HelpHook>(this);
+  getdescs_hook = std::make_unique<GetdescsHook>(this);
+  test_throw_hook = std::make_unique<TestThrowHook>(this);
+
+  static const std::vector<AsokServiceDef> internal_hooks_tbl{
+      AsokServiceDef{"0",            "0",                    the0_hook.get(),        ""}
+    , AsokServiceDef{"version",      "version",              version_hook.get(),     "get ceph version"}
+    , AsokServiceDef{"git_version",  "git_version",          version_hook.get(),     "get git sha1"}
+    , AsokServiceDef{"git_version",  "git_version",          version_hook.get(),     "get git sha1"}
+    , AsokServiceDef{"help",         "help",                 help_hook.get(),        "list available commands"}
+    , AsokServiceDef{"get_command_descriptions", "get_command_descriptions",
+                                                             getdescs_hook.get(),    "list available commands"}
+    , AsokServiceDef{"throwAs",      "throwAs",              test_throw_hook.get(),  ""}   // dev
+    , AsokServiceDef{"fthrowAs",     "fthrowAs",             test_throw_hook.get(),  ""}   // dev
+  };
+
+  std::ignore = server_registration(AdminSocket::hook_server_tag{this}, internal_hooks_tbl);
+}
+
 
 #if 0
 {

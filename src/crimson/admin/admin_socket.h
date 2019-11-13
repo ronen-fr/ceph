@@ -17,10 +17,13 @@
   A Crimson-wise version of the src/common/admin_socket.h
 
   Running on a single core:
-  - the hooks database is only manipulated on that main core. Hook-servers running on other cores
-    dispatch the register/unregister requests to that main core.
-  - incoming requests arriving on the admin socket are only received on that specific core. The actual
+  - the hooks database is only manipulated on that main core. SO do the hook-servers
+  
+  (was:
+    hook servers running on other cores dispatch the register/unregister requests to that main core).
+    Incoming requests arriving on the admin socket are only received on that specific core. The actual
     operation is delegated to the relevant core if needed.
+  )
  */
 #include <string>
 #include <string_view>
@@ -65,9 +68,18 @@ protected:
     return seastar::now();
   }
 
-  // the high-level section is an array (affects the formatting)
+  /*!
+    the high-level section is an array (affects the formatting)
+   */
   virtual bool format_as_array() const {
     return false;
+  }
+
+  /*!
+    customization point (as some commands expect non-standard response header)
+   */
+  virtual std::string section_name(std::string_view command) const {
+    return std::string{command};
   }
 };
 
@@ -87,16 +99,7 @@ struct AsokServiceDef {
   const std::string help;
 };
 
-struct AsokRegistrationRes {
-  //seastar::gate* server_gate;         // a pointer &! a ref, as the registration might fail
-  bool           registration_ok;     // failure: if server ID already taken
-  bool           double_registration; //!< leaving it to the registering server to
-                                     //   decide whether this is a bug
-};
-
-class AdminHooksIter;
-
-
+class AdminHooksIter; // gates-controlled iterator over all server blocks
 
 class AdminSocket {
 public:
@@ -113,7 +116,13 @@ public:
   seastar::future<> init(const std::string& path);
 
   /*!
-   * register an admin socket command
+   * register an admin socket hooks server
+   * 
+   * The server registers a set of APIs under a common hook_server_tag.
+   * 
+   * The commands block registered by a specific server have a common
+   * seastar::gate, used when the server wishes to remove its block's
+   * registration.
    *
    * The command is registered under a command string. Incoming
    * commands are split by space and matched against the longest
@@ -124,51 +133,33 @@ public:
    * The entire incoming command string is passed to the registered
    * hook.
    *
-   * @server_tag a tag identifying the server registering the hook
-   * @param command command string
-   * @param cmddesc command syntax descriptor
-   * @param hook implementation
-   * @param help help text.  if empty, command will not be included in 'help' output.
+   * \param server_tag a tag identifying the server registering the hook
+   * \param command command string
+   * \param cmddesc command syntax descriptor
+   * \param hook implementation
+   * \param help help text.  if empty, command will not be included in 'help' output.
    *
-   * @return 'true' for success, 'false' if command already registered.
+   * \retval 'true' for success, 'false' if a block with same tag is already registered.
    */
-  //seastar::future<bool> register_command(hook_server_tag  server_tag,
-  //                                       std::string command,
-  //                                       std::string cmddesc,
-  //                                       AdminSocketHook *hook,
-  //                                       std::string help);
+  bool server_registration(hook_server_tag  server_tag,
+                           const std::vector<AsokServiceDef>& hv); 
 
-  //seastar::future<AsokRegistrationRes>
-  AsokRegistrationRes
-  server_registration(hook_server_tag  server_tag,
-                      const std::vector<AsokServiceDef>& hv); 
-
- /* bool register_immediate(hook_server_tag  server_tag,
-                        std::string command,
-                        std::string cmddesc,
-                        AdminSocketHook* hook,
-                        std::string help);
-*/
 
   // no single-command unregistration, as en-bulk per server unregistration is the pref method.
   // I will consider adding specific API for those cases where the client needs to disable
   // one specific service. It will be clearly named, to mark the fact that it would not replace
-  // deregistration. Something like disable_command() 
-  //seastar::future<> unregister_command(std::string_view command);
+  // deregistration. Something like disable_command(). The point against adding it: will have to
+  // make the server-block objects mutable. 
 
-  /// unregister all hooks registered by this client
+  /*!
+     unregister all hooks registered by this hooks-server
+   */
   seastar::future<> unregister_server(hook_server_tag  server_tag);
 
 private:
-
-  //seastar::future<bool> handle_registration(hook_server_tag  server_tag,
-  //                                          std::string command,
-  //                                          std::string cmddesc,
-  //                                          AdminSocketHook* hook,
-  //                                          std::string help);
-
-  //seastar::future<> delayed_unregistration(std::string command);
-
+  /*!
+    Registering the APIs that are served directly by the admin_socket server.
+  */
   void internal_hooks();
 
   seastar::future<> init_async(const std::string& path);
@@ -178,6 +169,7 @@ private:
   seastar::future<> execute_line(std::string cmdline, seastar::output_stream<char>& out);
 
 #if 0
+  // exists in the original code. Still not sure if needed here. RRR
   bool validate(const std::string& command,
 		const cmdmap_t& cmdmap,
 		ceph::buffer::list& out) const;
@@ -190,64 +182,25 @@ private:
   // translates to multiple AdminSocket objects being created. But only the "real" one
   // (the OSD's) is actually initialized by a call to 'init()'.
   // Thus, we will try to discourage the "other" objects from registering hooks.
-  bool setup_done{false}; // RRR check if needed
+  //bool setup_done{false}; // RRR check if needed
 
   std::unique_ptr<AdminSocketHook> version_hook;
+  std::unique_ptr<AdminSocketHook> the0_hook;
   std::unique_ptr<AdminSocketHook> help_hook;
   std::unique_ptr<AdminSocketHook> getdescs_hook;
   std::unique_ptr<AdminSocketHook> test_throw_hook;  // for dev unit-tests
-
-  //inline static std::vector<AsokServiceDef> InternalHooks{
-  //AsokServiceDef{"0","0",version_hook.get(),     ""
-
-  //};
-
-  #if 0
-  struct hook_info {
-    std::string cmd;
-    bool is_valid{true}; //!< cleared with 'disable_command()'
-    AdminSocketHook* hook;
-    std::string desc;
-    std::string help;
-    hook_server_tag server_tag; //!< for when we un-register all client's requests en bulk
-
-    //hook_info(hook_server_tag tag, AdminSocketHook* hook, std::string_view desc,
-    //      std::string_view help)
-    //  : hook{hook}, desc{desc}, help{help}, server_tag{tag} {}
-    hook_info(std::string cmd, hook_server_tag tag, AdminSocketHook* hook, std::string_view desc,
-          std::string_view help)
-      : cmd{cmd}, hook{hook}, desc{desc}, help{help}, server_tag{tag} {}
-  };
-  #endif
 
   struct parsed_command_t {
     std::string            m_cmd;
     cmdmap_t               m_parameters;
     std::string            m_format;
     const AdminSocketHook* m_hook;
-    //AsokServiceDef*        m_hook;
     ::seastar::gate*       m_gate;
-
   };
+
   std::optional<parsed_command_t> parse_cmd(const std::string& command_text);
 
-  //
-  //  the original code uses std::map. As we wish to discard entries without erasing
-  //  them, I'd rather use a container that supports key modifications. And as the number
-  //  of entries is in the tens, not the thousands, I expect std::vector to perform
-  //  better.
-  //std::map<std::string, hook_info, std::less<>> hooks;
-  //std::vector<hook_info> hooks;
-
   struct server_block {
-    //server_block(hook_server_tag tag, const std::vector<AsokServiceDef>& hooks)
-    //  : m_server_id{tag}
-    //  , m_hooks{hooks}
-    //{}
-    //server_block(server_block&& f) = default;
-    //server_block(const server_block& f) = default;
-    //hook_server_tag m_server_id;
-
     server_block(const std::vector<AsokServiceDef>& hooks)
       : m_hooks{hooks}
     {}
@@ -260,13 +213,7 @@ private:
 
   std::map<hook_server_tag, server_block> servers;
 
-  //using GateAndHook = std::pair<::seastar::gate*, const AsokServiceDef*>;
   struct GateAndHook {
-    //GateAndHook& operator=(GateAndHook&& f) {
-    //  m_gate = std::move(f.m_gate);
-    //  api = f.api;
-    //  return *this;
-    //}
     ::seastar::gate* m_gate;
     const AsokServiceDef* api;
   };
@@ -292,23 +239,14 @@ private:
   friend class AdminHooksIter;
 };
 
+
 /*!
-  An iterator over all registered APIs. Each server-block is locked (via the gate) before
+  An iterator over all registered APIs. Each server-block is locked (via its own seastar::gate) before
   iterating over its entries.
 */
 struct AdminHooksIter : public std::iterator<std::output_iterator_tag, AsokServiceDef> {
 public:
-  explicit AdminHooksIter(AdminSocket& master, bool end_flag=false)
-    : master_{master}
-  {
-    if (end_flag) {
-      // create the equivalent of servers.end();
-      m_miter = master_.servers.end();
-    } else {
-      m_miter = master_.servers.begin();
-      m_siter = m_miter->second.m_hooks.begin();
-    }
-  }
+   explicit AdminHooksIter(AdminSocket& master, bool end_flag=false);
 
   ~AdminHooksIter() {
     if (m_in_gate)
@@ -319,47 +257,18 @@ public:
     return &(*m_siter);
   }
 
+  /*!
+    The (in)equality test is only used to compare to 'end'.
+   */
   bool operator!=(const AdminHooksIter & other) const { return m_in_gate != other.m_in_gate; }
 
-
-  AdminHooksIter operator++() {
-    ++m_siter;
-    if (m_siter == m_miter->second.m_hooks.end()) {
-      // move to the next server-block
-      m_miter->second.m_gate.leave();
-      m_in_gate = false;
-      
-      while (true) {
-        m_miter++;
-        if (m_miter == master_.servers.end())
-          return *this;
-
-        try {
-          m_miter->second.m_gate.enter(); // will throw if gate was already closed
-          m_siter = m_miter->second.m_hooks.begin();
-          m_in_gate = true;
-          return *this;
-        } catch (...) {
-          // this server-block is being torn-down
-          continue;
-        }
-      }
-    }
-    return *this;
-  }
-
-
+  AdminHooksIter operator++();
 
 private:
-  AdminSocket&                 master_;
+  AdminSocket&                 m_master;
   bool                         m_in_gate{false};
   AdminSocket::ServersListIt   m_miter;
   AdminSocket::ServerApiIt     m_siter;
 
   friend class AdminSocket;
-
 };
-
-
-
-

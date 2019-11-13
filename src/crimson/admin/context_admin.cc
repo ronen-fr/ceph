@@ -106,9 +106,9 @@ class ContextConfigAdminImp {
     }
   };
 
-  ///
-  ///  A CephContext admin hook: fetching the value of a specific configuration item
-  ///
+  /*!
+       A CephContext admin hook: fetching the value of a specific configuration item
+   */
   class ConfigGetHook : public CephContextHookBase {
   public:
     explicit ConfigGetHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
@@ -131,13 +131,14 @@ class ContextConfigAdminImp {
     }
   };
 
-  ///
-  ///  A CephContext admin hook: setting the value of a specific configuration item
-  ///  (a real example: {"prefix": "config set", "var":"debug_osd", "val": ["30/20"]} )
-  ///
+  /*!
+       A CephContext admin hook: setting the value of a specific configuration item
+       (a real example: {"prefix": "config set", "var":"debug_osd", "val": ["30/20"]} )
+   */
   class ConfigSetHook : public CephContextHookBase {
   public:
     explicit ConfigSetHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
+
     seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) const final {
       std::string var;
@@ -152,8 +153,17 @@ class ContextConfigAdminImp {
         // val may be multiple words
 	string valstr = str_join(new_val, " ");
 
-        return m_config_admin.m_conf.set_val(var, valstr).then_wrapped([&f, &command](auto p) {
-          try {
+        return m_config_admin.m_conf.set_val(var, valstr).then_wrapped([=](auto p) {
+          if (p.failed()) {
+            f->dump_string("error setting", var.c_str());
+          } else {
+            f->dump_string("success", command);
+          }
+          return seastar::now();
+        });
+      }
+      #if 0
+          try {({
               (void)p.get();
               f->dump_string("success", command);
             } catch (std::exception& ex) {
@@ -161,7 +171,7 @@ class ContextConfigAdminImp {
             }
             return seastar::now();
         });
-      }
+      #endif
     }
   };
 
@@ -190,7 +200,7 @@ class ContextConfigAdminImp {
   public:
     explicit TestThrowHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
     seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) const final {
+                              std::string_view format, bufferlist& out) const final {
 
       if (command == "fthrowCtx")
         return seastar::make_exception_future<>(std::system_error{1, std::system_category()});
@@ -205,7 +215,6 @@ class ContextConfigAdminImp {
   TestThrowHook    ctx_test_throw_hook;  // for development testing
 
   std::atomic_flag  m_no_registrations{false}; // 'double negative' as that matches 'atomic_flag' "direction"
-
 
 public:
 
@@ -226,7 +235,7 @@ public:
     //m_cct->asok_config_admin = nullptr;
     std::ignore = seastar::do_with(std::move(m_cct)/*, std::move(m_cct->asok_config_admin)*/,
                                  [this] (auto& cct/*, auto& cxadmin*/) mutable {
-      cct->get_who();
+      cct->get();
       return unregister_admin_commands().then([cct](){
         //cct->put();
       }).then([this](){

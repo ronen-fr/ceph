@@ -69,10 +69,10 @@ class OsdAdminImp {
   CephContext* m_cct;
   ceph::common::ConfigProxy& m_conf;
 
-  ///
-  ///  Common code for all OSD admin hooks.
-  ///  Adds access to the owning OSD.
-  ///
+  /*!
+       Common code for all OSD admin hooks.
+       Adds access to the owning OSD.
+   */
   class OsdAdminHookBase : public AdminSocketHook {
   protected:
     OsdAdminImp& m_osd_admin;
@@ -86,9 +86,9 @@ class OsdAdminImp {
     {}
   };
 
-  ///
-  ///  An Osd admin hook: OSD status
-  ///
+  /*!
+       An OSD admin hook: OSD status
+   */
   class OsdStatusHook : public OsdAdminHookBase {
   public:
     explicit OsdStatusHook(OsdAdminImp& master) : OsdAdminHookBase(master) {};
@@ -102,14 +102,29 @@ class OsdAdminImp {
       f->dump_unsigned("oldest_map", m_osd_admin.osd_superblock().oldest_map);
       f->dump_unsigned("newest_map", m_osd_admin.osd_superblock().newest_map);
       // \todo f->dump_unsigned("num_pgs", num_pgs);
-      //std::cerr << "OsdStatusHook 111" << std::endl;
       return seastar::now();
     }
   };
 
-  ///
-  ///  A test hook that throws or returns an exceptional future
-  ///
+  /*!
+       An OSD admin hook: send beacon
+   */
+  class SendBeaconHook : public OsdAdminHookBase {
+  public:
+    explicit SendBeaconHook(OsdAdminImp& master) : OsdAdminHookBase(master) {};
+    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                      std::string_view format, bufferlist& out) const final
+    {
+      // \todo if (!is_active())
+      // \todo   return seastar::now();
+
+      return m_osd_admin.m_osd->send_beacon();
+    }
+  };
+
+  /*!
+       A test hook that throws or returns an exceptional future
+   */
   class TestThrowHook : public OsdAdminHookBase {
   public:
     explicit TestThrowHook(OsdAdminImp& master) : OsdAdminHookBase(master) {};
@@ -130,6 +145,7 @@ class OsdAdminImp {
   }
 
   OsdStatusHook   osd_status_hook;
+  SendBeaconHook  send_beacon_hook;
   TestThrowHook   osd_test_throw_hook;
 
   std::atomic_flag  m_no_registrations{false}; // 'double negative' as that matches 'atomic_flag' "direction"
@@ -141,55 +157,40 @@ public:
     , m_cct{cct}
     , m_conf{conf}
     , osd_status_hook{*this}
+    , send_beacon_hook{*this}
     , osd_test_throw_hook{*this}
   {
     register_admin_commands();
   }
 
   ~OsdAdminImp() {
-    unregister_admin_commands();
+    // our registration with the admin_socket server was already removed by
+    // 'OsdAdmin' - our 'pimpl' owner
+
+    //unregister_admin_commands();
   }
 
   void register_admin_commands() {  // should probably be a future<void>
     static const std::vector<AsokServiceDef> hooks_tbl{
-        AsokServiceDef{"status",   "status",  &osd_status_hook,      "OSD status"}
-      , AsokServiceDef{"status2",  "status 2",&osd_status_hook,      "OSD status"}
-      , AsokServiceDef{"throw",    "throw",   &osd_test_throw_hook,  "dev throw"}
-      , AsokServiceDef{"fthrow",   "fthrow",  &osd_test_throw_hook,  "dev throw"}
+        AsokServiceDef{"status",      "status",        &osd_status_hook,      "OSD status"}
+      , AsokServiceDef{"status2",     "status 2",      &osd_status_hook,      "OSD status"}
+      , AsokServiceDef{"send_beacon", "send_beacon 2", &send_beacon_hook,     "send OSD beacon to mon immediately"}
+      , AsokServiceDef{"throw",       "throw",         &osd_test_throw_hook,  ""}  // dev tool
+      , AsokServiceDef{"fthrow",      "fthrow",        &osd_test_throw_hook,  ""}  // dev tool
     };
 
     std::ignore = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
-
-    #if 0
-    auto admin_if = m_cct->get_admin_socket();
-
-    (void)seastar::when_all_succeed(
-              [this, admin_if](){ return admin_if->register_command(AdminSocket::hook_server_tag{this}, "status",   "status",  &osd_status_hook,      "OSD status"); }
-            , [this, admin_if](){ return admin_if->register_command(AdminSocket::hook_server_tag{this}, "status2",  "status 2",&osd_status_hook,      "OSD status"); }
-            , [this, admin_if](){ return admin_if->register_command(AdminSocket::hook_server_tag{this}, "throw",    "throw",   &osd_test_throw_hook,  "dev throw"); }
-            , [this, admin_if](){ return admin_if->register_command(AdminSocket::hook_server_tag{this}, "fthrow",   "fthrow",  &osd_test_throw_hook,  "dev throw"); }
-          );
-    //admin_if->register_command(AdminSocket::hook_server_tag{this}, "status",    "status",  &osd_status_hook,      "OSD status");
-    //admin_if->register_command(AdminSocket::hook_server_tag{this}, "ZZ_ZZ_ZZ_ZZ",    "ZZ_ZZ_ZZ_ZZ",  &osd_status_hook,      "OSD status");
-    #endif
   }
 
-  void unregister_admin_commands() {
+  seastar::future<> unregister_admin_commands() {
     if (m_no_registrations.test_and_set()) {
       //  already un-registered
-      return;
+      return seastar::now();
     }
 
     auto admin_if = m_cct->get_admin_socket();
-    if (admin_if) {
-      // guarding against possible (?) destruction order problems
-      try {
-        std::ignore = admin_if->unregister_server(AdminSocket::hook_server_tag{this}).finally([]{}).discard_result();
-      } catch (...) {
-        // RRR is there a scenario that can lead us here?
-        std::cerr << " failed unregistering" << std::endl;
-      }
-    }
+    assert(admin_if);
+    return admin_if->unregister_server(AdminSocket::hook_server_tag{this});
   }
 };
 
@@ -200,11 +201,22 @@ OsdAdmin::OsdAdmin(OSD* osd, CephContext* cct, ceph::common::ConfigProxy& conf)
   : m_imp{ std::make_unique<ceph::osd::OsdAdminImp>(osd, cct, conf) }
 {}
 
-void OsdAdmin::unregister_admin_commands()
+seastar::future<> OsdAdmin::unregister_admin_commands()
 {
-  m_imp->unregister_admin_commands();
+  return m_imp->unregister_admin_commands();
 }
 
-OsdAdmin::~OsdAdmin() = default;
+OsdAdmin::~OsdAdmin()
+{
+  // relinquish control over the actual implementation object, as that one should only be
+  // destructed after the relevant seastar::gate closes
+  seastar::do_with(std::move(m_imp), [](auto& imp) {
+    // test using sleep()
+    return seastar::sleep(1s).
+    then([imp_ptr = imp.get()]() {
+       return imp_ptr->unregister_admin_commands();
+    }).discard_result();
+  });
+}
 
 } // namespace

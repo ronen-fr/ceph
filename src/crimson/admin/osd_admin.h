@@ -25,14 +25,14 @@ class OsdAdminImp;
          (Crimson) OSD
 
   Main functionality:
-  - ...
+  - ... TBD
  */
 class OsdAdmin {
   std::unique_ptr<ceph::osd::OsdAdminImp> m_imp;
 public:
   OsdAdmin(ceph::osd::OSD* osd, CephContext* cct, ceph::common::ConfigProxy& conf);
   ~OsdAdmin();
-  void unregister_admin_commands();
+  seastar::future<> unregister_admin_commands();
 };
 
 } // namespace ceph::osd

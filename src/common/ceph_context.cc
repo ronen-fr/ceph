@@ -92,7 +92,7 @@ CryptoRandom* CephContext::random() const
   return _crypto_random.get();
 }
 
-CephContext* CephContext::get_who()
+CephContext* CephContext::get()
 {
   ++nref;
   return this;
