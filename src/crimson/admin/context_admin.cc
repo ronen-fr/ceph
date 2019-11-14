@@ -19,12 +19,10 @@
   - process-wide commands ('abort', 'assert')
   - ...
  */
-#include "common/ceph_context.h"
 
 #include <iostream>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
-#include "crimson/admin/admin_socket.h"
 #include "common/config.h"
 #include "common/errno.h"
 #include "common/Graylog.h"
@@ -44,6 +42,9 @@
 #error "this is a Crimson-specific implementation of some CephContext APIs"
 #endif
 
+//#include "crimson/admin/admin_socket.h"
+#include "common/ceph_context.h"
+
 
 using ceph::bufferlist;
 using ceph::HeartbeatMap;
@@ -60,19 +61,24 @@ namespace {
 */
 class ContextConfigAdminImp {
   friend class ContextConfigAdmin;
-  ///
-  ///  ContextConfigAdminImp objects are held by CephContext objects. m_cct points back to our master.
-  ///
+  //
+  //  ContextConfigAdminImp objects are held by CephContext objects. m_cct points back to our master.
+  //
   CephContext* m_cct;
   ceph::common::ConfigProxy& m_conf;
+
+  //  shared-ownership of the socket server itself, to guarantee its existence until we have
+  //  a chance to remove our registration:
+  AsokRegistrationRes m_socket_server;
+
   friend class CephContextHookBase;
   friend class ConfigGetHook;
 
-  ///
-  ///  common code for all CephContext admin hooks.
-  ///  Adds access to the configuration object and to the
+  //
+  //  common code for all CephContext admin hooks.
+  //  Adds access to the configuration object and to the
   //   parent Context.
-  ///
+  //
   class CephContextHookBase : public AdminSocketHook {
   protected:
     ContextConfigAdminImp& m_config_admin;
@@ -257,20 +263,26 @@ public:
       , AsokServiceDef{"fthrowCtx",      "fthrowCtx",    &ctx_test_throw_hook,   "dev throw"}
     };
 
-    std::ignore = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
+    m_socket_server = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
 
     //admin_socket->register_command("config unset", "config unset name=var,type=CephString",  _admin_hook, "config unset <field>: unset a config variable");
   }
 
   seastar::future<> unregister_admin_commands() {
-    if (m_no_registrations.test_and_set()) {
-      //  already un-registered
+    //if (m_no_registrations.test_and_set()) {
+    //  //  already un-registered
+    //  return seastar::now();
+    //}
+
+    if (!m_socket_server) {
       return seastar::now();
     }
 
+    AdminSocketRef srv{std::move(*m_socket_server)};
+
     // note that unregister_server() closes a seastar::gate (i.e. - it blocks)
     auto admin_if = m_cct->get_admin_socket();
-    return admin_if->unregister_server(AdminSocket::hook_server_tag{this});
+    return admin_if->unregister_server(AdminSocket::hook_server_tag{this}, std::move(srv));
   }
 };
 

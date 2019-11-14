@@ -16,6 +16,8 @@
 #include <memory>
 #include "common/ceph_context.h"
 
+class CephContext;
+
 namespace ceph::osd {
 class OSD;
 class OsdAdminImp;

@@ -29,6 +29,7 @@
 #include <string_view>
 #include <map>
 #include "seastar/core/future.hh"
+#include "seastar/core/shared_ptr.hh"
 #include "seastar/core/gate.hh"
 #include "seastar/core/iostream.hh"
 #include "common/cmdparse.h"
@@ -101,7 +102,12 @@ struct AsokServiceDef {
 
 class AdminHooksIter; // gates-controlled iterator over all server blocks
 
-class AdminSocket {
+// a ref-count owner of the AdminSocket, used to guarantee its existence until all server-blocks are unregistered
+using AdminSocketRef = seastar::lw_shared_ptr<AdminSocket>;
+
+using AsokRegistrationRes = std::optional<AdminSocketRef>;  // holding the server alive until after our unregistration
+
+class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
 public:
   AdminSocket(CephContext* cct);
   ~AdminSocket();
@@ -139,10 +145,11 @@ public:
    * \param hook implementation
    * \param help help text.  if empty, command will not be included in 'help' output.
    *
-   * \retval 'true' for success, 'false' if a block with same tag is already registered.
+   * \retval a shared ptr to the asok server itself, or nullopt if
+   *         a block with same tag is already registered.
    */
-  bool server_registration(hook_server_tag  server_tag,
-                           const std::vector<AsokServiceDef>& hv); 
+  AsokRegistrationRes server_registration(hook_server_tag  server_tag,
+                                          const std::vector<AsokServiceDef>& hv); 
 
 
   // no single-command unregistration, as en-bulk per server unregistration is the pref method.
@@ -155,6 +162,13 @@ public:
      unregister all hooks registered by this hooks-server
    */
   seastar::future<> unregister_server(hook_server_tag  server_tag);
+
+  seastar::future<> unregister_server(hook_server_tag  server_tag, AdminSocketRef&& server_ref) {
+     // reducing the ref-count on us (the asok server) by discarding server_ref;
+     return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
+       return unregister_server(server_tag);
+     });
+  }
 
 private:
   /*!
@@ -185,6 +199,7 @@ private:
   //bool setup_done{false}; // RRR check if needed
 
   std::unique_ptr<AdminSocketHook> version_hook;
+  std::unique_ptr<AdminSocketHook> git_ver_hook;
   std::unique_ptr<AdminSocketHook> the0_hook;
   std::unique_ptr<AdminSocketHook> help_hook;
   std::unique_ptr<AdminSocketHook> getdescs_hook;

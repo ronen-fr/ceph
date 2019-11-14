@@ -32,6 +32,7 @@
 #ifdef WITH_SEASTAR
 #include "crimson/common/config_proxy.h"
 #include "crimson/common/perf_counters_collection.h"
+#include "crimson/admin/admin_socket.h"
 #include "crimson/admin/context_admin.h"
 #else
 #include "common/config_proxy.h"
@@ -42,7 +43,7 @@
 
 #include "crush/CrushLocation.h"
 
-class AdminSocket;
+//class AdminSocket;  // not enough for lw_shared_ptr
 class CephContextServiceThread;
 class CephContextHook;
 class CephContextObs;
@@ -95,13 +96,17 @@ public:
 private:
   std::unique_ptr<CryptoRandom> _crypto_random;
   unsigned nref;
-  std::unique_ptr<AdminSocket> asok;
+  //std::unique_ptr<AdminSocket> asok;
+  seastar::lw_shared_ptr<AdminSocket> asok;
   std::unique_ptr<ContextConfigAdmin> asok_config_admin;
 
   friend class ContextConfigAdminImp;
 };
 
 #else
+
+#warning why no WITH_SEASTAR
+class AdminSocket;
 
 /* A CephContext represents the context held by a single library user.
  * There can be multiple CephContexts in the same process.

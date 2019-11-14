@@ -55,6 +55,7 @@ using ceph::HeartbeatMap;
 
 #ifdef WITH_SEASTAR
 
+#include "seastar/core/shared_ptr.hh"
 #include "crimson/admin/context_admin.h"
 
 
@@ -63,7 +64,8 @@ CephContext::CephContext()
     _perf_counters_collection{ceph::common::local_perf_coll()},
     _crypto_random{std::make_unique<CryptoRandom>()}
 {
-  asok = make_unique<AdminSocket>(this);
+  //asok = make_unique<AdminSocket>(this);
+  asok = seastar::make_lw_shared<AdminSocket>(this);
   asok_config_admin = make_unique<ContextConfigAdmin>(this, _conf);
 }
 

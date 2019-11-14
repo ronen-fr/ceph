@@ -69,10 +69,14 @@ class OsdAdminImp {
   CephContext* m_cct;
   ceph::common::ConfigProxy& m_conf;
 
+  //  shared-ownership of the socket server itself, to guarantee its existence until we have
+  //  a chance to remove our registration:
+  AsokRegistrationRes m_socket_server;
+
   /*!
        Common code for all OSD admin hooks.
        Adds access to the owning OSD.
-   */
+  */
   class OsdAdminHookBase : public AdminSocketHook {
   protected:
     OsdAdminImp& m_osd_admin;
@@ -137,9 +141,9 @@ class OsdAdminImp {
     }
   };
 
-  ///
-  ///  provide the hooks with access to OSD internals 
-  ///
+  /*!
+       provide the hooks with access to OSD internals 
+  */
   const OSDSuperblock& osd_superblock() {
     return m_osd->superblock;
   }
@@ -148,7 +152,7 @@ class OsdAdminImp {
   SendBeaconHook  send_beacon_hook;
   TestThrowHook   osd_test_throw_hook;
 
-  std::atomic_flag  m_no_registrations{false}; // 'double negative' as that matches 'atomic_flag' "direction"
+  //std::atomic_flag  m_no_registrations{false}; // 'double negative' as that matches 'atomic_flag' "direction"
 
 public:
 
@@ -174,15 +178,28 @@ public:
     static const std::vector<AsokServiceDef> hooks_tbl{
         AsokServiceDef{"status",      "status",        &osd_status_hook,      "OSD status"}
       , AsokServiceDef{"status2",     "status 2",      &osd_status_hook,      "OSD status"}
-      , AsokServiceDef{"send_beacon", "send_beacon 2", &send_beacon_hook,     "send OSD beacon to mon immediately"}
+      , AsokServiceDef{"send_beacon", "send_beacon",   &send_beacon_hook,     "send OSD beacon to mon immediately"}
       , AsokServiceDef{"throw",       "throw",         &osd_test_throw_hook,  ""}  // dev tool
       , AsokServiceDef{"fthrow",      "fthrow",        &osd_test_throw_hook,  ""}  // dev tool
     };
 
-    std::ignore = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
+     m_socket_server = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
   }
 
-  seastar::future<> unregister_admin_commands() {
+  seastar::future<> unregister_admin_commands()
+  {
+    if (!m_socket_server) {
+      return seastar::now();
+    }
+
+    AdminSocketRef srv{std::move(m_socket_server.value())};
+
+    // note that unregister_server() closes a seastar::gate (i.e. - it blocks)
+    auto admin_if = m_cct->get_admin_socket();
+    assert(admin_if);
+    return admin_if->unregister_server(AdminSocket::hook_server_tag{this}, std::move(srv));
+
+#if 0
     if (m_no_registrations.test_and_set()) {
       //  already un-registered
       return seastar::now();
@@ -191,6 +208,7 @@ public:
     auto admin_if = m_cct->get_admin_socket();
     assert(admin_if);
     return admin_if->unregister_server(AdminSocket::hook_server_tag{this});
+#endif
   }
 };
 
@@ -210,7 +228,7 @@ OsdAdmin::~OsdAdmin()
 {
   // relinquish control over the actual implementation object, as that one should only be
   // destructed after the relevant seastar::gate closes
-  seastar::do_with(std::move(m_imp), [](auto& imp) {
+  std::ignore = seastar::do_with(std::move(m_imp), [](auto& imp) {
     // test using sleep()
     return seastar::sleep(1s).
     then([imp_ptr = imp.get()]() {

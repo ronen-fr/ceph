@@ -189,7 +189,7 @@ AdminSocket::~AdminSocket()
   Note re context: running in the asok core. No need to lock the table. (RRR rethink this point)
   And no futurization until required to support multiple cores.
 */
-bool AdminSocket::server_registration(AdminSocket::hook_server_tag  server_tag,
+AsokRegistrationRes AdminSocket::server_registration(AdminSocket::hook_server_tag  server_tag,
                                  const std::vector<AsokServiceDef>& hv)
 {
   auto ne = servers.try_emplace(
@@ -198,10 +198,10 @@ bool AdminSocket::server_registration(AdminSocket::hook_server_tag  server_tag,
 
   //  is this server tag already registered?
   if (!ne.second) {
-    return false;
+    return std::nullopt;
   }
 
-  return true;
+  return this->shared_from_this();
 }
 
 /*!
@@ -426,6 +426,7 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
   As the default call() does not support these tweaks, we override 'call()' (and
   handle 2 commands in one function)
 */
+#if 0
 class VersionHook : public AdminSocketHook {
 public:
   seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
@@ -447,7 +448,8 @@ public:
     out.append(ss.str());
     return seastar::make_ready_future<bool>(true);
   }
-}; // testing speller tessting
+};
+#endif
 
 /*!
     The response to the '0' command is not formatted, neither JSON or otherwise.
@@ -458,6 +460,38 @@ public:
 	    std::string_view format, bufferlist& out) const override {
     out.append(CEPH_ADMIN_SOCK_VERSION);
     return seastar::make_ready_future<bool>(true);
+  }
+};
+
+class VersionHook : public AdminSocketHook {
+  AdminSocket* m_as;
+public:
+  explicit VersionHook(AdminSocket* as) : m_as{as} {}
+
+  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                                 std::string_view format, bufferlist& out) const final
+  {
+    f->dump_string("version", ceph_version_to_str());
+    f->dump_string("release", ceph_release_to_str());
+    f->dump_string("release_type", ceph_release_type());
+    return seastar::now();
+  }
+};
+
+class GitVersionHook : public AdminSocketHook {
+  AdminSocket* m_as;
+public:
+  explicit GitVersionHook(AdminSocket* as) : m_as{as} {}
+
+  std::string section_name(std::string_view command) const final {
+    return "version"s;
+  }
+
+  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                                 std::string_view format, bufferlist& out) const final
+  {
+    f->dump_string("git_version", "x" /*git_version_to_str()*/);
+    return seastar::now();
   }
 };
 
@@ -521,7 +555,8 @@ public:
 /// the hooks that are served directly by the admin_socket server
 void AdminSocket::internal_hooks()
 {
-  version_hook = std::make_unique<VersionHook>();
+  version_hook = std::make_unique<VersionHook>(this);
+  git_ver_hook = std::make_unique<GitVersionHook>(this);
   the0_hook = std::make_unique<The0Hook>();
   help_hook = std::make_unique<HelpHook>(this);
   getdescs_hook = std::make_unique<GetdescsHook>(this);
@@ -530,8 +565,7 @@ void AdminSocket::internal_hooks()
   static const std::vector<AsokServiceDef> internal_hooks_tbl{
       AsokServiceDef{"0",            "0",                    the0_hook.get(),        ""}
     , AsokServiceDef{"version",      "version",              version_hook.get(),     "get ceph version"}
-    , AsokServiceDef{"git_version",  "git_version",          version_hook.get(),     "get git sha1"}
-    , AsokServiceDef{"git_version",  "git_version",          version_hook.get(),     "get git sha1"}
+    , AsokServiceDef{"git_version",  "git_version",          git_ver_hook.get(),     "get git sha1"}
     , AsokServiceDef{"help",         "help",                 help_hook.get(),        "list available commands"}
     , AsokServiceDef{"get_command_descriptions", "get_command_descriptions",
                                                              getdescs_hook.get(),    "list available commands"}
@@ -539,6 +573,8 @@ void AdminSocket::internal_hooks()
     , AsokServiceDef{"fthrowAs",     "fthrowAs",             test_throw_hook.get(),  ""}   // dev
   };
 
+  // server_registration() returns a shared pointer to the AdminSocket server, i.e. to us. As we
+  // already have shared ownership of this object, we do not need it. RRR verify
   std::ignore = server_registration(AdminSocket::hook_server_tag{this}, internal_hooks_tbl);
 }
 

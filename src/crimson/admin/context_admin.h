@@ -14,9 +14,10 @@
 #pragma once
 
 #include <memory>
-#include "common/ceph_context.h"
+//#include "common/ceph_context.h"
 
 class ContextConfigAdminImp;
+class CephContext;
 
 /*!
   \brief implementation of the configuration-related 'admin_socket' API of
@@ -34,27 +35,3 @@ public:
   ~ContextConfigAdmin();
   seastar::future<> unregister_admin_commands();
 };
-
-
-#if 0
-class ContextMiscAdminImp;
-
-/*!
-  \brief implementation of the 'admin_socket' API of (Crimson) Ceph Context
-
-  Main functionality:
-  - manipulating Context-level configuraion
-  - process-wide commands ('abort', 'assert')
-  - ...
- */
-class ContextConfigAdmin {
-  std::unique_ptr<ContextConfigAdminImp> m_imp;
-public:
-  ContextConfigAdmin(CephContext* cct, ceph::common::ConfigProxy& conf);
-  ~ContextConfigAdmin();
-  void unregister_admin_commands();
-};
-#endif
-
-
-
