@@ -99,16 +99,20 @@ class ContextConfigAdminImp {
     seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) const final {
 
-      std::vector<std::string> k_list;
-      return m_config_admin.m_conf.show_config(k_list).
-        then([&k_list, &f]() {
-          for (const auto& k : k_list) {
-            f->dump_string("conf-item", k);
-            logger().warn("---> {}\n", k);
-          }
-          return seastar::now();
-        }).
-        finally([&k_list,f](){return seastar::now();});
+      return seastar::do_with(std::vector<std::string>(), 
+        [this, f](std::vector<std::string>& k_list) {
+          return m_config_admin.m_conf.show_config(k_list).
+            then([&k_list, f]() {
+              for (const auto& k : k_list) {
+                f->dump_string("conf-item", k);
+                logger().warn("---> {}\n", k);
+              }
+              return seastar::now();
+            });
+          }).
+          finally([/*&k_list,f*/]() {
+            return seastar::now();
+          });
     }
   };
 
@@ -168,22 +172,12 @@ class ContextConfigAdminImp {
           return seastar::now();
         });
       }
-      #if 0
-          try {({
-              (void)p.get();
-              f->dump_string("success", command);
-            } catch (std::exception& ex) {
-              f->dump_string("error", ex.what());
-            }
-            return seastar::now();
-        });
-      #endif
     }
   };
 
-  ///
-  ///  A CephContext admin hook: calling assert (if allowed by 'debug_asok_assert_abort')
-  ///
+  /*!
+       A CephContext admin hook: calling assert (if allowed by 'debug_asok_assert_abort')
+   */
   class AssertAlwaysHook : public CephContextHookBase {
   public:
     explicit AssertAlwaysHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
@@ -199,9 +193,9 @@ class ContextConfigAdminImp {
      }
   };
 
-  ///
-  ///  A test hook that throws or returns an exceptional future
-  ///
+  /*!
+       A test hook that throws or returns an exceptional future
+   */
   class TestThrowHook : public CephContextHookBase {
   public:
     explicit TestThrowHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};

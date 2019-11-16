@@ -101,7 +101,6 @@ AdminHooksIter AdminHooksIter::operator++()
   return *this;
 }
 
-
 /*!
   the defaut implementation of the hook API
 
@@ -114,7 +113,104 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
 
   // customize the output section, as required by a couple of hook APIs:
   std::string section{section_name(command)};
-  boost::replace_all(section, " ", "_"); //!< \todo consider saving the '_' version of the command upon registration
+  boost::replace_all(section, " ", "_");
+  if (format_as_array()) {
+    f->open_array_section(section.c_str());
+  } else {
+    f->open_object_section(section.c_str());
+  }
+  logger().info("{} cmd={} out section={}", __func__, command, section); 
+
+  bool bres{false};
+  /*!
+      call the command-specific hook.
+      A note re error handling:
+        - will be modified to use the new 'erroretor'. For now:
+        - exec_command() may throw or return an exceptional future. We return a message that starts
+          with "error" on both failure scenarios.
+   */
+  return seastar::do_with(std::move(f), std::move(bres), [this, &command, &cmdmap, &format, &out](unique_ptr<Formatter>& ftr, bool& br) {
+
+    return seastar::futurize_apply([this, &command, &cmdmap, &format, &out, f=ftr.get()] {
+      return exec_command(f, command, cmdmap, format, out);
+    }).
+      // get us to a resolved state:
+      then_wrapped([&ftr,&command,&br](seastar::future<> res) -> seastar::future<bool> {
+      //
+      //  we have a ready future (or a failure)
+      //
+      if (res.failed()) {
+        br = false;
+      } else {
+        br = true;
+      }
+      res.ignore_ready_future();
+      return seastar::make_ready_future<bool>(br);
+    }).then([this, &ftr, &out](auto res) -> seastar::future<bool> {
+      ftr->close_section();
+      ftr->enable_line_break();
+      ftr->flush(out);
+      return seastar::make_ready_future<bool>(res); //seastar::make_ready_future<bool>(true);
+    });
+
+    //      }).then([](bool r) {
+    //         std::cerr << (r ? "+" : "-");
+    //      });
+    //    });
+    //  });
+  });
+}
+
+#if 0
+    //}).handle_exception([this](auto eptr) {
+    //  // if something failed
+    //  std::cerr << "osd_admin::exec:inhex1" << std::endl;
+    //  return seastar::make_ready_future<bool>(false);
+    }).then_wrapped([&ftr,&command](seastar::future<> res) -> seastar::future<bool> {
+      try {
+        if (res.failed()) {
+          std::cerr << "osd_admin::exec:res failed" << std::endl;
+          ftr->dump_string("res_failed", std::string(command) + " failed");
+          return res.handle_exception([](auto eptr) {
+            std::cerr << "osd_admin::exec:inhex1" << std::endl;
+            return seastar::now();
+          }).then_wrapped([](seastar::future<> ){ return seastar::make_ready_future<bool>(false); });
+        } else {
+          //(void)res.get();
+          return seastar::make_ready_future<bool>(true);
+        }
+      } catch ( std::exception& ex ) {
+        ftr->dump_string("error", std::string(command) + " failed with " + ex.what());
+        std::cerr << "osd_admin::exec:immediate exc8" << std::endl;
+        return seastar::make_ready_future<bool>(false);
+      } catch ( ... ) {
+        ftr->dump_string("error", std::string(command) + " failed with XX");
+        std::cerr << "osd_admin::exec:immediate exc2" << std::endl;
+        return seastar::make_ready_future<bool>(false);
+      }
+    }).handle_exception([this](auto eptr) {
+      // if something failed
+      std::cerr << "osd_admin::exec:inhexneeded???" << std::endl;
+      return seastar::make_ready_future<bool>(false);
+    }).then([this, &ftr, &out](auto res) -> seastar::future<bool> {
+      ftr->close_section();
+      ftr->enable_line_break();
+      ftr->flush(out);
+      return seastar::make_ready_future<bool>(res); //seastar::make_ready_future<bool>(true);
+    });
+  });
+  #endif
+
+
+#if 0
+seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdmap_t& cmdmap,
+                                            std::string_view format, ceph::bufferlist& out) const
+{
+  unique_ptr<Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)};
+
+  // customize the output section, as required by a couple of hook APIs:
+  std::string section{section_name(command)};
+  boost::replace_all(section, " ", "_");
   if (format_as_array()) {
     f->open_array_section(section.c_str());
   } else {
@@ -171,6 +267,7 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
     });
   });
 }
+#endif
 
 AdminSocket::AdminSocket(CephContext *cct)
   : m_cct(cct)
@@ -478,6 +575,9 @@ public:
   }
 };
 
+/*!
+  Note that the git_version command is expected to return a 'version' JSON segment.
+*/
 class GitVersionHook : public AdminSocketHook {
   AdminSocket* m_as;
 public:

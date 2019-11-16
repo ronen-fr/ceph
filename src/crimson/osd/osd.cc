@@ -18,6 +18,7 @@
 #include "messages/MOSDPGLog.h"
 #include "messages/MOSDRepOpReply.h"
 #include "messages/MPGStats.h"
+#include "messages/MCommand.h"
 
 #include "os/Transaction.h"
 #include "osd/ClassHandler.h"
@@ -521,6 +522,8 @@ seastar::future<> OSD::ms_dispatch(ceph::net::Connection* conn, MessageRef m)
     return handle_rep_op(conn, boost::static_pointer_cast<MOSDRepOp>(m));
   case MSG_OSD_REPOPREPLY:
     return handle_rep_op_reply(conn, boost::static_pointer_cast<MOSDRepOpReply>(m));
+  case MSG_COMMAND:
+    return handle_admin_cmd(conn, boost::static_pointer_cast<MCommand>(m));
   default:
     logger().info("{} unhandled message {}", __func__, *m);
     return seastar::now();
@@ -894,6 +897,12 @@ seastar::future<> OSD::handle_osd_op(ceph::net::Connection* conn,
     *this,
     conn->get_shared(),
     std::move(m));
+  return seastar::now();
+}
+
+seastar::future<> OSD::handle_admin_cmd(ceph::net::Connection* conn,
+                                     Ref<MCommand> m)
+{
   return seastar::now();
 }
 

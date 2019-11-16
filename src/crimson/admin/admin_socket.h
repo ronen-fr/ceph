@@ -17,7 +17,7 @@
   A Crimson-wise version of the src/common/admin_socket.h
 
   Running on a single core:
-  - the hooks database is only manipulated on that main core. SO do the hook-servers
+  - the hooks database is only manipulated on that main core. The same applies to the hook-servers.
   
   (was:
     hook servers running on other cores dispatch the register/unregister requests to that main core).
@@ -70,7 +70,8 @@ protected:
   }
 
   /*!
-    the high-level section is an array (affects the formatting)
+    (customization point) the high-level section of the output is an array
+    (affects the JSON formatting)
    */
   virtual bool format_as_array() const {
     return false;
@@ -161,10 +162,10 @@ public:
   /*!
      unregister all hooks registered by this hooks-server
    */
-  seastar::future<> unregister_server(hook_server_tag  server_tag);
+  seastar::future<> unregister_server(hook_server_tag server_tag);
 
-  seastar::future<> unregister_server(hook_server_tag  server_tag, AdminSocketRef&& server_ref) {
-     // reducing the ref-count on us (the asok server) by discarding server_ref;
+  seastar::future<> unregister_server(hook_server_tag server_tag, AdminSocketRef&& server_ref) {
+     // reducing the ref-count on us (the asok server) by discarding server_ref:
      return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
        return unregister_server(server_tag);
      });
