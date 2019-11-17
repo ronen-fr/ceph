@@ -136,9 +136,8 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
     }).
       // get us to a resolved state:
       then_wrapped([&ftr,&command,&br](seastar::future<> res) -> seastar::future<bool> {
-      //
-      //  we have a ready future (or a failure)
-      //
+
+      //  we now have a ready future (or a failure)
       if (res.failed()) {
         br = false;
       } else {
@@ -150,14 +149,8 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
       ftr->close_section();
       ftr->enable_line_break();
       ftr->flush(out);
-      return seastar::make_ready_future<bool>(res); //seastar::make_ready_future<bool>(true);
+      return seastar::make_ready_future<bool>(res);
     });
-
-    //      }).then([](bool r) {
-    //         std::cerr << (r ? "+" : "-");
-    //      });
-    //    });
-    //  });
   });
 }
 
@@ -272,7 +265,6 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
 AdminSocket::AdminSocket(CephContext *cct)
   : m_cct(cct)
 {
-  //hooks.reserve(32); // \todo to be made into a constant
   std::cout << "######### a new AdminSocket " << (uint64_t)(this) <<
         " -> " << (uint64_t)(m_cct) << std::endl;
 }
@@ -280,6 +272,7 @@ AdminSocket::AdminSocket(CephContext *cct)
 AdminSocket::~AdminSocket()
 {
   std::cout << "######### XXXXX AdminSocket " << (uint64_t)(this) << std::endl;
+  logger().warn("{}: {} {}", __func__, (int)getpid(), (uint64_t)(this));
 }
 
 /*!
@@ -287,17 +280,19 @@ AdminSocket::~AdminSocket()
   And no futurization until required to support multiple cores.
 */
 AsokRegistrationRes AdminSocket::server_registration(AdminSocket::hook_server_tag  server_tag,
-                                 const std::vector<AsokServiceDef>& hv)
+                                 const std::vector<AsokServiceDef>& apis_served)
 {
   auto ne = servers.try_emplace(
                                 server_tag,
-                                hv);
+                                apis_served);
 
   //  is this server tag already registered?
   if (!ne.second) {
     return std::nullopt;
   }
 
+  logger().warn("{}: {} server registration (tag: {})", __func__, (int)getpid(), (uint64_t)(server_tag));
+  logger().warn("{}: {} server registration (tbl size: {})", __func__, (int)getpid(), servers.size());
   return this->shared_from_this();
 }
 
@@ -307,13 +302,22 @@ AsokRegistrationRes AdminSocket::server_registration(AdminSocket::hook_server_ta
  */
 seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
 {
+  ceph_assert_always(this);
+  ceph_assert_always(servers.size() < 100);
+  logger().warn("{}: {} server un-reg (tag: {}) ({} prev cnt: {})",
+                __func__, (int)getpid(), (uint64_t)(server_tag), (uint64_t)(this), servers.size());
+
   //  locate the server registration
   auto srv_itr = servers.find(server_tag);
   if (srv_itr == servers.end()) {
+    logger().warn("{}: unregistering a non-existing registration (tag: {})", __func__, (uint64_t)(server_tag));
+    for (auto& [k, d] : servers) {
+       logger().warn("---> severs: {} {}", (uint64_t)(k), 17 /*d.m_hooks.front().command*/);
+    }
     return seastar::now();
   }
 
-  std::cerr << "\n~server (AS:" << (uint64_t)(this) <<") " << (uint64_t)(server_tag) << " to be deleted" <<  (uint64_t)(srv_itr->first)<< std::endl;
+  //std::cerr << "\n~server (AS:" << (uint64_t)(this) <<") " << (uint64_t)(server_tag) << " to be deleted" <<  (uint64_t)(srv_itr->first)<< std::endl;
 
   return (srv_itr->second.m_gate.close()).
     then([this, srv_itr, server_tag]() {
@@ -322,6 +326,26 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
       return seastar::now();
     });
 }
+
+seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag, AdminSocketRef&& server_ref)
+{
+   return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
+     return unregister_server(server_tag).finally([this,server_tag,&srv]() {
+       logger().warn("{} - {}", (uint64_t)(server_tag), srv->servers.size());
+       //return seastar::now();
+     });
+   });
+   #if 0
+   // reducing the ref-count on us (the asok server) by discarding server_ref:
+   return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
+     return unregister_server(server_tag).finally([this,server_tag,&srv]() {
+       logger().warn("{} - {}", (uint64_t)(server_tag), srv->servers.size());
+       //return seastar::now();
+     });
+   });
+   #endif
+}
+
 
 AdminSocket::GateAndHook AdminSocket::locate_command(const std::string_view cmd)
 {
@@ -424,18 +448,20 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
   //  find the longest word-sequence that we have a hook registered to handle
   auto parsed = parse_cmd(cmdline);
   if (!parsed) {
+    logger().error("{}: malformed incoming command ({})", __func__, cmdline);
     return out.write("command syntax error");
     //return seastar::now();
   }
 
-  ::ceph::bufferlist out_buf;
+  //::ceph::bufferlist out_buf; // RRR move the creation of the out_buf into the do_with
 
-  return seastar::do_with(std::move(parsed), std::move(out_buf), [&out, gatep=parsed->m_gate](auto&& parsed, auto&& out_buf) {
-    std::cerr << "gate-cnt " << parsed->m_gate->get_count() << std::endl; // RRR replace with assert on >0
+  return seastar::do_with(std::move(parsed), ::ceph::bufferlist() /*std::move(out_buf)*/, [&out, gatep=parsed->m_gate](auto&& parsed, auto&& out_buf) {
+
+    assert(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
     return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
       then_wrapped([&out, &out_buf](auto fut) {
         if (fut.failed()) {
-          // add 'failed' to the contents on out_buf
+          // add 'failed' to the contents on out_buf? not what happens in the old code
 
           return seastar::make_ready_future<bool>(false);
         } else {
@@ -443,10 +469,11 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
         }
       }).
       then([&out, &out_buf, gatep](auto call_res) {
-        std::cerr << "gate-leave "  << std::endl;
+        //std::cerr << "gate-leave "  << std::endl;
         gatep->leave();
         uint32_t response_length = htonl(out_buf.length());
-        std::cerr << "resp length: " << out_buf.length() << std::endl;
+        logger().info("asok response length: {}", out_buf.length());
+        //std::cerr << "resp length: " << out_buf.length() << std::endl;
         return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, &out_buf](){
           return out.write(out_buf.to_str());
         });
@@ -457,7 +484,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
 seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, seastar::output_stream<char>&& out)
 {
   //  RRR \todo safe read
-  //  RRR \todo handle old protocol (see original code)
+  //  RRR \todo handle old protocol (see original code) - is still needed?
 
   return inp.read().
     then( [&out, this](auto full_cmd) {
@@ -477,7 +504,6 @@ seastar::future<> AdminSocket::init(const std::string& path)
 
   return seastar::async([this, path] {
     auto serverfut = init_async(path);
-    //(void)serverfut.get();
   }); 
 }
 
@@ -590,7 +616,7 @@ public:
   seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                                 std::string_view format, bufferlist& out) const final
   {
-    f->dump_string("git_version", "x" /*git_version_to_str()*/);
+    f->dump_string("git_version", git_version_to_str());
     return seastar::now();
   }
 };

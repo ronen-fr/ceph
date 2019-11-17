@@ -55,7 +55,6 @@ namespace {
   }
 }
 
-
 namespace ceph::osd {
 
 /*!
@@ -105,7 +104,7 @@ class OsdAdminImp {
       // \todo f->dump_string("state", get_state_name(get_state()));
       f->dump_unsigned("oldest_map", m_osd_admin.osd_superblock().oldest_map);
       f->dump_unsigned("newest_map", m_osd_admin.osd_superblock().newest_map);
-      // \todo f->dump_unsigned("num_pgs", num_pgs);
+      // \todo f->dump_unsigned("num_pgs", num_pgs);  -> where to find the data?
       return seastar::now();
     }
   };
@@ -119,7 +118,7 @@ class OsdAdminImp {
     seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) const final
     {
-      // \todo if (!is_active())
+      // \todo if (!is_active()) -> where to find the data?
       // \todo   return seastar::now();
 
       return m_osd_admin.m_osd->send_beacon();
@@ -177,7 +176,6 @@ public:
   void register_admin_commands() {  // should probably be a future<void>
     static const std::vector<AsokServiceDef> hooks_tbl{
         AsokServiceDef{"status",      "status",        &osd_status_hook,      "OSD status"}
-      , AsokServiceDef{"status2",     "status 2",      &osd_status_hook,      "OSD status"}
       , AsokServiceDef{"send_beacon", "send_beacon",   &send_beacon_hook,     "send OSD beacon to mon immediately"}
       , AsokServiceDef{"throw",       "throw",         &osd_test_throw_hook,  ""}  // dev tool
       , AsokServiceDef{"fthrow",      "fthrow",        &osd_test_throw_hook,  ""}  // dev tool
@@ -198,17 +196,6 @@ public:
     auto admin_if = m_cct->get_admin_socket();
     assert(admin_if);
     return admin_if->unregister_server(AdminSocket::hook_server_tag{this}, std::move(srv));
-
-#if 0
-    if (m_no_registrations.test_and_set()) {
-      //  already un-registered
-      return seastar::now();
-    }
-
-    auto admin_if = m_cct->get_admin_socket();
-    assert(admin_if);
-    return admin_if->unregister_server(AdminSocket::hook_server_tag{this});
-#endif
   }
 };
 

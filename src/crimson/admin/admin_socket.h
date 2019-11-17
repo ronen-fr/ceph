@@ -131,8 +131,8 @@ public:
    * seastar::gate, used when the server wishes to remove its block's
    * registration.
    *
-   * The command is registered under a command string. Incoming
-   * commands are split by space and matched against the longest
+   * Commands (APIs) are registered under a command string. Incoming
+   * commands are split by spaces and matched against the longest
    * registered command. For example, if 'foo' and 'foo bar' are
    * registered, and an incoming command is 'foo bar baz', it is
    * matched with 'foo bar', while 'foo fud' will match 'foo'.
@@ -140,17 +140,17 @@ public:
    * The entire incoming command string is passed to the registered
    * hook.
    *
-   * \param server_tag a tag identifying the server registering the hook
-   * \param command command string
-   * \param cmddesc command syntax descriptor
-   * \param hook implementation
-   * \param help help text.  if empty, command will not be included in 'help' output.
+   * \param server_tag  a tag identifying the server registering the hook
+   * \param apis_served a vector of the commands served by this server. Each
+   *        command registration includes its identifying command string, the
+   *        expected call syntax, and some help text.
+   *        A note re the help text: if empty, command will not be included in 'help' output.
    *
    * \retval a shared ptr to the asok server itself, or nullopt if
    *         a block with same tag is already registered.
    */
   AsokRegistrationRes server_registration(hook_server_tag  server_tag,
-                                          const std::vector<AsokServiceDef>& hv); 
+                                          const std::vector<AsokServiceDef>& apis_served); 
 
 
   // no single-command unregistration, as en-bulk per server unregistration is the pref method.
@@ -164,12 +164,7 @@ public:
    */
   seastar::future<> unregister_server(hook_server_tag server_tag);
 
-  seastar::future<> unregister_server(hook_server_tag server_tag, AdminSocketRef&& server_ref) {
-     // reducing the ref-count on us (the asok server) by discarding server_ref:
-     return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
-       return unregister_server(server_tag);
-     });
-  }
+  seastar::future<> unregister_server(hook_server_tag server_tag, AdminSocketRef&& server_ref);
 
 private:
   /*!
@@ -196,8 +191,7 @@ private:
   // seems like multiple Context objects are created when calling vstart, and that
   // translates to multiple AdminSocket objects being created. But only the "real" one
   // (the OSD's) is actually initialized by a call to 'init()'.
-  // Thus, we will try to discourage the "other" objects from registering hooks.
-  //bool setup_done{false}; // RRR check if needed
+  // Thus, we should try to discourage the "other" objects from registering hooks.
 
   std::unique_ptr<AdminSocketHook> version_hook;
   std::unique_ptr<AdminSocketHook> git_ver_hook;

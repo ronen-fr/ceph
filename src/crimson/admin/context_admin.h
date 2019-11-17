@@ -14,7 +14,6 @@
 #pragma once
 
 #include <memory>
-//#include "common/ceph_context.h"
 
 class ContextConfigAdminImp;
 class CephContext;
@@ -30,6 +29,7 @@ class CephContext;
  */
 class ContextConfigAdmin {
   std::unique_ptr<ContextConfigAdminImp> m_imp;
+  CephContext* m_cct; //!< holding on to the owning CCT until our imp object is destructed
 public:
   ContextConfigAdmin(CephContext* cct, ceph::common::ConfigProxy& conf);
   ~ContextConfigAdmin();

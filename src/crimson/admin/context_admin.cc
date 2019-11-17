@@ -19,10 +19,14 @@
   - process-wide commands ('abort', 'assert')
   - ...
  */
+#ifndef WITH_SEASTAR
+#error "this is a Crimson-specific implementation of some CephContext APIs"
+#endif
 
 #include <iostream>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
+#include "seastar/core/sleep.hh"
 #include "common/config.h"
 #include "common/errno.h"
 #include "common/Graylog.h"
@@ -30,21 +34,11 @@
 #include "crimson/common/log.h"
 #include "common/valgrind.h"
 
-
-
 // for CINIT_FLAGS
 #include "common/common_init.h"
-
 #include <iostream>
-//#include <pthread.h>
 
-#ifndef WITH_SEASTAR
-#error "this is a Crimson-specific implementation of some CephContext APIs"
-#endif
-
-//#include "crimson/admin/admin_socket.h"
 #include "common/ceph_context.h"
-
 
 using ceph::bufferlist;
 using ceph::HeartbeatMap;
@@ -231,6 +225,9 @@ public:
   }
 
   ~ContextConfigAdminImp() {
+            logger().warn("{}: {} {}", __func__, (int)getpid(), (uint64_t)(this));
+
+          return;
     //std::unique_ptr<ContextConfigAdmin> moved_context_admin{std::move(m_cct->asok_config_admin)};
     //m_cct->asok_config_admin = nullptr;
     std::ignore = seastar::do_with(std::move(m_cct)/*, std::move(m_cct->asok_config_admin)*/,
@@ -246,36 +243,54 @@ public:
   }
 
   void register_admin_commands() {  // should probably be a future<void>
+    logger().warn("{}: {} {} (size:xx)", __func__, (int)getpid(), (uint64_t)(this));
 
     //std::cerr << "ContextConfigAdminImp registering\n";
     static const std::vector<AsokServiceDef> hooks_tbl{
-        AsokServiceDef{"config show",    "config show",  &config_show_hook,      "lists all conf items"}
-      , AsokServiceDef{"config get",     "config get",   &config_get_hook,       "fetches a conf value"}
-      , AsokServiceDef{"config set",     "config set",   &config_set_hook,       "sets a conf value"}
+        AsokServiceDef{"config show",    "config show",  &config_show_hook,      "dump current config settings"}
+      , AsokServiceDef{"config get",     "onfig get name=var,type=CephString",
+                                                         &config_get_hook,       "config get <field>: get the config value"}
+      , AsokServiceDef{"config set",     "config set name=var,type=CephString name=val,type=CephString,n=N",
+                                                         &config_set_hook,       "config set <field> <val> [<val> ...]: set a config variable"}
       , AsokServiceDef{"assert",         "assert",       &assert_hook,           "asserts"}
       , AsokServiceDef{"throwCtx",       "throwCtx",     &ctx_test_throw_hook,   "dev throw"}
       , AsokServiceDef{"fthrowCtx",      "fthrowCtx",    &ctx_test_throw_hook,   "dev throw"}
     };
 
     m_socket_server = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
+    //logger().warn("{}: {} {} (size:{})", __func__, (int)getpid(), (uint64_t)(this), servers.size());
 
     //admin_socket->register_command("config unset", "config unset name=var,type=CephString",  _admin_hook, "config unset <field>: unset a config variable");
   }
 
   seastar::future<> unregister_admin_commands() {
-    //if (m_no_registrations.test_and_set()) {
-    //  //  already un-registered
-    //  return seastar::now();
-    //}
+
+    logger().warn("{}:Z {} this:{} {} cct:{} adif:{}", __func__, (int)getpid(), (uint64_t)(this),
+                (m_socket_server?"+":"-"),
+                (uint64_t)(m_cct),
+                (uint64_t)(m_cct->get_admin_socket()));
 
     if (!m_socket_server) {
+       logger().warn("{} m_s", __func__);
       return seastar::now();
     }
 
-    AdminSocketRef srv{std::move(*m_socket_server)};
+    auto admin_if = m_cct->get_admin_socket();
+    if (!admin_if) {
+      logger().warn("{}:Z no admin_if", __func__);
+      return seastar::now();
+    }
+
+    logger().warn("{}:Z5 {}", __func__, (uint64_t)(& (*(*m_socket_server))));
+
+    //  we are holding a shared-ownership of the admin socket server, just so that we
+    //  can keep it alive until after our de-registration.
+    //AdminSocketRef srv{std::move(*m_socket_server)};
+    AdminSocketRef srv = *m_socket_server;
+    m_socket_server = std::nullopt; // should be redundant
 
     // note that unregister_server() closes a seastar::gate (i.e. - it blocks)
-    auto admin_if = m_cct->get_admin_socket();
+    logger().warn("cad imp unreg {}", (uint64_t)(&(*srv)));
     return admin_if->unregister_server(AdminSocket::hook_server_tag{this}, std::move(srv));
   }
 };
@@ -285,6 +300,7 @@ public:
 //
 ContextConfigAdmin::ContextConfigAdmin(CephContext* cct, ceph::common::ConfigProxy& conf)
   : m_imp{ std::make_unique<ContextConfigAdminImp>(cct, conf) }
+  , m_cct{cct}
 {}
 
 seastar::future<>  ContextConfigAdmin::unregister_admin_commands()
@@ -292,4 +308,25 @@ seastar::future<>  ContextConfigAdmin::unregister_admin_commands()
   return m_imp->unregister_admin_commands();
 }
 
-ContextConfigAdmin::~ContextConfigAdmin() = default;
+ContextConfigAdmin::~ContextConfigAdmin()
+{
+  logger().warn("{}: ~ContextConfigAdmin {} {} {}", __func__,
+                (int)getpid(), (uint64_t)(this), (m_imp ? "++" : "--"));
+
+  // relinquish control over the actual implementation object, as that one should only be
+  // destructed after the relevant seastar::gate closes
+  //std::ignore = seastar::do_with(std::move(m_imp), [](auto& imp) {
+    // test using sleep()
+    seastar::sleep(1s).
+    //then([imp_ptr = imp.get()]() {
+    then([imp_ptr = std::move(m_imp)]() {
+       logger().warn("{} step 2: {}", __func__, (int)getpid());
+       if (!imp_ptr) {// RRR
+         logger().warn("{} step s: {}", __func__, (int)getpid());
+         return seastar::now();
+       }
+       //assert(imp_ptr);
+       return imp_ptr->unregister_admin_commands();
+    }).discard_result();
+  //});
+}
