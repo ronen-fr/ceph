@@ -167,6 +167,9 @@ public:
   seastar::future<> unregister_server(hook_server_tag server_tag, AdminSocketRef&& server_ref);
 
 private:
+
+  class parsed_command_t;
+
   /*!
     Registering the APIs that are served directly by the admin_socket server.
   */
@@ -178,13 +181,15 @@ private:
 
   seastar::future<> execute_line(std::string cmdline, seastar::output_stream<char>& out);
 
-#if 0
-  // exists in the original code. Still not sure if needed here. RRR
+  bool validate_command(const parsed_command_t& parsed,
+                        const std::string& command_text,
+                        ceph::buffer::list& out
+                        /*seastar::output_stream<char>& out*/) const;
+
   bool validate(const std::string& command,
 		const cmdmap_t& cmdmap,
 		ceph::buffer::list& out) const;
-#endif
-  
+
   CephContext* m_cct;
   bool do_die{false};  // RRR check if needed
 
@@ -204,6 +209,7 @@ private:
     std::string            m_cmd;
     cmdmap_t               m_parameters;
     std::string            m_format;
+    const AsokServiceDef*  m_api;
     const AdminSocketHook* m_hook;
     ::seastar::gate*       m_gate;
   };

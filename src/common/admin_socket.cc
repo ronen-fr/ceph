@@ -464,13 +464,13 @@ int AdminSocket::register_command(std::string_view command,
 		       std::forward_as_tuple(hook, cmddesc, help));
     ret = 0;
   }
-  {
-    const char proc_name[1024];
-    int fd = open("/proc/self/cmdline");
-    read(fd, proc_name, sizeof(proc_name));
-    ldout(m_cct, 1) << "register_command was from " << proc_name << dendl;
-    close fd;
-  }
+  //{
+  //  const char proc_name[1024];
+  //  int fd = open("/proc/self/cmdline");
+  //  read(fd, proc_name, sizeof(proc_name));
+  //  ldout(m_cct, 1) << "register_command was from " << proc_name << dendl;
+  //  close fd;
+  //}
   return ret;
 }
 

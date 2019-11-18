@@ -431,16 +431,28 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
     return std::nullopt;
   }
 
+  return parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate};
+}
 
-  #ifdef until_used_in_a_call_to_validate
-  string args;
-  if (match != command_text) {
-    args = command_text.substr(match.length() + 1);
+bool AdminSocket::validate_command(const parsed_command_t& parsed,
+                                   const std::string& command_text,
+                                   ceph::buffer::list& out) const
+{
+  // did we receive any arguments apart from the command word?
+  if (parsed.m_cmd == command_text)
+    return true;
+
+  string args{command_text.substr(parsed.m_cmd.length() + 1)};
+  logger().info("{}: in:{} against:{}", __func__, args, parsed.m_api->cmddesc);
+
+  stringstream os;
+  if (validate_cmd(m_cct, parsed.m_api->cmddesc, parsed.m_parameters, os)) {
+    return true;
+  } else {
+    out.append(os);
+    logger().error("{}: {}", __func__, os.str());
+    return false;
   }
-  // TODO call validate()
-  #endif
-
-  return parsed_command_t{match, cmdmap, format, gh.api->hook, gh.m_gate};
 }
 
 seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
@@ -448,16 +460,44 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
   //  find the longest word-sequence that we have a hook registered to handle
   auto parsed = parse_cmd(cmdline);
   if (!parsed) {
-    logger().error("{}: malformed incoming command ({})", __func__, cmdline);
+    logger().error("{}: no command in ({})", __func__, cmdline);
     return out.write("command syntax error");
     //return seastar::now();
   }
 
-  //::ceph::bufferlist out_buf; // RRR move the creation of the out_buf into the do_with
+  return seastar::do_with(std::move(parsed), ::ceph::bufferlist(), [&out, cmdline, this, gatep=parsed->m_gate](auto&& parsed, auto&& out_buf) {
 
+    ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
+
+    return (validate_command(*parsed, cmdline, out_buf) ?
+                 parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf) :
+                 seastar::make_ready_future<bool>(false) /* failed args syntax validation */
+      ).
+      then_wrapped([&out, &out_buf](auto fut) {
+        if (fut.failed()) {
+          // add 'failed' to the contents on out_buf? not what happens in the old code
+
+          return seastar::make_ready_future<bool>(false);
+        } else {
+          return fut;
+        }
+      }).
+      then([&out, &out_buf, gatep](auto call_res) {
+        //std::cerr << "gate-leave "  << std::endl;
+        gatep->leave();
+        uint32_t response_length = htonl(out_buf.length());
+        logger().info("asok response length: {}", out_buf.length());
+
+        return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, &out_buf](){
+          return out.write(out_buf.to_str());
+        });
+      });
+  });
+
+#if 0
   return seastar::do_with(std::move(parsed), ::ceph::bufferlist() /*std::move(out_buf)*/, [&out, gatep=parsed->m_gate](auto&& parsed, auto&& out_buf) {
 
-    assert(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
+    ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
     return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
       then_wrapped([&out, &out_buf](auto fut) {
         if (fut.failed()) {
@@ -479,6 +519,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
         });
       });
   });
+  #endif
 }
 
 seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, seastar::output_stream<char>&& out)

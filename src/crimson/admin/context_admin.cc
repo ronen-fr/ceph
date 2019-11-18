@@ -99,7 +99,7 @@ class ContextConfigAdminImp {
             then([&k_list, f]() {
               for (const auto& k : k_list) {
                 f->dump_string("conf-item", k);
-                logger().warn("---> {}\n", k);
+                //logger().warn("---> {}\n", k);
               }
               return seastar::now();
             });
