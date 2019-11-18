@@ -448,11 +448,11 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
   stringstream os;
   if (validate_cmd(m_cct, parsed.m_api->cmddesc, parsed.m_parameters, os)) {
     return true;
-  } else {
-    out.append(os);
-    logger().error("{}: {}", __func__, os.str());
-    return false;
   }
+
+  out.append(os);
+  logger().error("{}: (incoming:{}) {}", __func__, args, os.str());
+  return false;
 }
 
 seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
@@ -470,8 +470,8 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
     ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
 
     return (validate_command(*parsed, cmdline, out_buf) ?
-                 parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf) :
-                 seastar::make_ready_future<bool>(false) /* failed args syntax validation */
+              parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf) :
+              seastar::make_ready_future<bool>(false) /* failed args syntax validation */
       ).
       then_wrapped([&out, &out_buf](auto fut) {
         if (fut.failed()) {
@@ -483,43 +483,15 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
         }
       }).
       then([&out, &out_buf, gatep](auto call_res) {
-        //std::cerr << "gate-leave "  << std::endl;
         gatep->leave();
         uint32_t response_length = htonl(out_buf.length());
         logger().info("asok response length: {}", out_buf.length());
 
-        return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, &out_buf](){
+        return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, &out_buf]() {
           return out.write(out_buf.to_str());
         });
       });
   });
-
-#if 0
-  return seastar::do_with(std::move(parsed), ::ceph::bufferlist() /*std::move(out_buf)*/, [&out, gatep=parsed->m_gate](auto&& parsed, auto&& out_buf) {
-
-    ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
-    return parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf).
-      then_wrapped([&out, &out_buf](auto fut) {
-        if (fut.failed()) {
-          // add 'failed' to the contents on out_buf? not what happens in the old code
-
-          return seastar::make_ready_future<bool>(false);
-        } else {
-          return fut;
-        }
-      }).
-      then([&out, &out_buf, gatep](auto call_res) {
-        //std::cerr << "gate-leave "  << std::endl;
-        gatep->leave();
-        uint32_t response_length = htonl(out_buf.length());
-        logger().info("asok response length: {}", out_buf.length());
-        //std::cerr << "resp length: " << out_buf.length() << std::endl;
-        return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, &out_buf](){
-          return out.write(out_buf.to_str());
-        });
-      });
-  });
-  #endif
 }
 
 seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, seastar::output_stream<char>&& out)
@@ -540,8 +512,8 @@ seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, 
 
 seastar::future<> AdminSocket::init(const std::string& path)
 {
-  std::cout << "AdminSocket::init() w " << path << " owner: " << (uint64_t)(this) <<
-        " -> " << (uint64_t)(m_cct) << std::endl;
+  //std::cout << "AdminSocket::init() w " << path << " owner: " << (uint64_t)(this) <<
+  //      " -> " << (uint64_t)(m_cct) << std::endl;
 
   return seastar::async([this, path] {
     auto serverfut = init_async(path);
@@ -581,39 +553,6 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
 // ///////////////////////////////////////
 // the internal hooks
 // ///////////////////////////////////////
-
-/*!
-  VersionHook requires some non-standard handling:
-   - the format is fixed to JSON;
-   - the JSON section name is 'version' even if the command is 'git_version'.
-
-  As the default call() does not support these tweaks, we override 'call()' (and
-  handle 2 commands in one function)
-*/
-#if 0
-class VersionHook : public AdminSocketHook {
-public:
-  seastar::future<bool> call(std::string_view command, const cmdmap_t& cmdmap,
-	    std::string_view format, bufferlist& out) const override {
-    // always using a JSON formatter
-    JSONFormatter jf;
-    jf.open_object_section("version");
-    if (command == "version"sv) {
-      jf.dump_string("version", ceph_version_to_str());
-      jf.dump_string("release", ceph_release_to_str());
-      jf.dump_string("release_type", ceph_release_type());
-    } else if (command == "git_version"sv) {
-      jf.dump_string("git_version", "x" /*git_version_to_str()*/);
-    }
-    std::ostringstream ss;
-    jf.close_section();
-    jf.enable_line_break();
-    jf.flush(ss);
-    out.append(ss.str());
-    return seastar::make_ready_future<bool>(true);
-  }
-};
-#endif
 
 /*!
     The response to the '0' command is not formatted, neither JSON or otherwise.
@@ -744,82 +683,3 @@ void AdminSocket::internal_hooks()
   // already have shared ownership of this object, we do not need it. RRR verify
   std::ignore = server_registration(AdminSocket::hook_server_tag{this}, internal_hooks_tbl);
 }
-
-
-#if 0
-{
-  ldout(m_cct, 5) << "init " << path << dendl;
-
-  /* Set up things for the new thread */
-  std::string err;
-  int pipe_rd = -1, pipe_wr = -1;
-  err = create_shutdown_pipe(&pipe_rd, &pipe_wr);
-  if (!err.empty()) {
-    lderr(m_cct) << "AdminSocketConfigObs::init: error: " << err << dendl;
-    return false;
-  }
-  int sock_fd;
-  err = bind_and_listen(path, &sock_fd);
-  if (!err.empty()) {
-    lderr(m_cct) << "AdminSocketConfigObs::init: failed: " << err << dendl;
-    close(pipe_rd);
-    close(pipe_wr);
-    return false;
-  }
-
-  /* Create new thread */
-  m_sock_fd = sock_fd;
-  m_shutdown_rd_fd = pipe_rd;
-  m_shutdown_wr_fd = pipe_wr;
-  m_path = path;
-
-  version_hook = std::make_unique<VersionHook>();
-  register_command("0", "0", version_hook.get(), "");
-  register_command("version", "version", version_hook.get(), "get ceph version");
-  register_command("git_version", "git_version", version_hook.get(),
-		   "get git sha1");
-  help_hook = std::make_unique<HelpHook>(this);
-  register_command("help", "help", help_hook.get(),
-		   "list available commands");
-  getdescs_hook = std::make_unique<GetdescsHook>(this);
-  register_command("get_command_descriptions", "get_command_descriptions",
-		   getdescs_hook.get(), "list available commands");
-
-  th = make_named_thread("admin_socket", &AdminSocket::entry, this);
-  add_cleanup_file(m_path.c_str());
-  return true;
-}
-
-
-void AdminSocket::shutdown()
-{
-  // Under normal operation this is unlikely to occur.  However for some unit
-  // tests, some object members are not initialized and so cannot be deleted
-  // without fault.
-  if (m_shutdown_wr_fd < 0)
-    return;
-
-  ldout(m_cct, 5) << "shutdown" << dendl;
-
-  auto err = destroy_shutdown_pipe();
-  if (!err.empty()) {
-    lderr(m_cct) << "AdminSocket::shutdown: error: " << err << dendl;
-  }
-
-  retry_sys_call(::close, m_sock_fd);
-
-  unregister_commands(version_hook.get());
-  version_hook.reset();
-
-  unregister_command("help");
-  help_hook.reset();
-
-  unregister_command("get_command_descriptions");
-  getdescs_hook.reset();
-
-  remove_cleanup_file(m_path);
-  m_path.clear();
-}
-
-#endif
-

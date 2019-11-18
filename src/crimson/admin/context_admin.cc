@@ -68,11 +68,11 @@ class ContextConfigAdminImp {
   friend class CephContextHookBase;
   friend class ConfigGetHook;
 
-  //
-  //  common code for all CephContext admin hooks.
-  //  Adds access to the configuration object and to the
-  //   parent Context.
-  //
+  /*!
+      Common code for all CephContext admin hooks.
+      Adds access to the configuration object and to the
+      parent Context.
+   */
   class CephContextHookBase : public AdminSocketHook {
   protected:
     ContextConfigAdminImp& m_config_admin;
@@ -84,29 +84,38 @@ class ContextConfigAdminImp {
     explicit CephContextHookBase(ContextConfigAdminImp& master) : m_config_admin{master} {}
   };
 
-  ///
-  ///  A CephContext admin hook: listing the configuration values
-  ///
+  /*!
+       A CephContext admin hook: listing the configuration values
+   */
   class ConfigShowHook : public CephContextHookBase {
   public:
     explicit ConfigShowHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
     seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) const final {
 
+      return seastar::do_with(std::ostringstream{}, [this, f](std::ostringstream& os) {
+        return m_config_admin.m_conf.show_config(f).
+        then([f,&os]() {
+          //f->append(os.str());
+          return seastar::now();
+        });
+      });
+      #if 0
       return seastar::do_with(std::vector<std::string>(), 
-        [this, f](std::vector<std::string>& k_list) {
-          return m_config_admin.m_conf.show_config(k_list).
-            then([&k_list, f]() {
-              for (const auto& k : k_list) {
-                f->dump_string("conf-item", k);
-                //logger().warn("---> {}\n", k);
-              }
-              return seastar::now();
-            });
-          }).
-          finally([/*&k_list,f*/]() {
+                             [this, f](std::vector<std::string>& k_list) {
+        return m_config_admin.m_conf.show_config(k_list).
+          then([&k_list, f]() {
+            for (const auto& k : k_list) {
+              f->dump_string("conf-item", k);
+              //logger().warn("---> {}\n", k);
+            }
             return seastar::now();
           });
+        }).
+        finally([/*&k_list,f*/]() {
+          return seastar::now();
+        });
+      #endif
     }
   };
 
@@ -242,10 +251,9 @@ public:
     });
   }
 
-  void register_admin_commands() {  // should probably be a future<void>
+  void register_admin_commands() {
     logger().warn("{}: {} {} (size:xx)", __func__, (int)getpid(), (uint64_t)(this));
 
-    //std::cerr << "ContextConfigAdminImp registering\n";
     static const std::vector<AsokServiceDef> hooks_tbl{
         AsokServiceDef{"config show",    "config show",  &config_show_hook,      "dump current config settings"}
       , AsokServiceDef{"config get",     "onfig get name=var,type=CephString",

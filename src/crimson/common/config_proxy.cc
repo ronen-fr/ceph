@@ -41,5 +41,29 @@ seastar::future<> ConfigProxy::start()
   });
 }
 
+seastar::future<>
+ConfigProxy::show_config(/*ceph::Formatter* f*/ std::vector<std::string>& kout) {
+  std::vector<std::string> keys;
+  get_config().get_all_keys(&keys);
+  for (auto& k : keys) {
+    //f->dump_string(k);
+    kout.push_back(k);
+  }
+  return seastar::now();
+}
+
+seastar::future<>
+ConfigProxy::show_config(std::ostream& os) {
+  get_config().show_config(*values, os);
+  return seastar::now();
+}
+
+
+seastar::future<>
+ConfigProxy::show_config(ceph::Formatter* f) {
+  get_config().show_config(*values, f);
+  return seastar::now();
+}
+
 ConfigProxy::ShardedConfig ConfigProxy::sharded_conf;
 }

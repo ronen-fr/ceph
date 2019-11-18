@@ -9,6 +9,10 @@
 #include "common/config_obs_mgr.h"
 #include "common/errno.h"
 
+namespace ceph {
+class Formatter;
+}
+
 namespace ceph::common {
 
 // a facade for managing config. each shard has its own copy of ConfigProxy.
@@ -150,7 +154,7 @@ public:
 
   // seems that Config.h has no Formatter awareness. return a 
   seastar::future<>
-  show_config(/*ceph::Formatter* f*/ std::vector<std::string>& kout) {
+  show_config(/*ceph::Formatter* f*/ std::vector<std::string>& kout);/* {
     std::vector<std::string> keys;
     get_config().get_all_keys(&keys);
 
@@ -160,7 +164,15 @@ public:
       kout.push_back(k);
     }
     return seastar::now();
-  }
+  }*/
+
+  seastar::future<>
+  show_config(std::ostream& os);
+
+
+  seastar::future<>
+  show_config(ceph::Formatter* os);
+
 
   seastar::future<> parse_argv(std::vector<const char*>& argv) {
     // we could pass whatever is unparsed to seastar, but seastar::app_template
