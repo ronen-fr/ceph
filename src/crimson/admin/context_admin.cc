@@ -261,8 +261,8 @@ public:
       , AsokServiceDef{"config set",     "config set name=var,type=CephString name=val,type=CephString,n=N",
                                                          &config_set_hook,       "config set <field> <val> [<val> ...]: set a config variable"}
       , AsokServiceDef{"assert",         "assert",       &assert_hook,           "asserts"}
-      , AsokServiceDef{"throwCtx",       "throwCtx",     &ctx_test_throw_hook,   "dev throw"}
-      , AsokServiceDef{"fthrowCtx",      "fthrowCtx",    &ctx_test_throw_hook,   "dev throw"}
+      , AsokServiceDef{"throwCtx",       "throwCtx",     &ctx_test_throw_hook,   ""}    // dev throw
+      , AsokServiceDef{"fthrowCtx",      "fthrowCtx",    &ctx_test_throw_hook,   ""}    // dev throw
     };
 
     m_socket_server = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);

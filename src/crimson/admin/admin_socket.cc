@@ -101,6 +101,12 @@ AdminHooksIter AdminHooksIter::operator++()
   return *this;
 }
 
+AdminHooksIter::~AdminHooksIter()
+{
+  if (m_in_gate)
+    m_miter->second.m_gate.leave();
+}
+
 /*!
   the defaut implementation of the hook API
 
@@ -296,46 +302,60 @@ AsokRegistrationRes AdminSocket::server_registration(AdminSocket::hook_server_ta
   return this->shared_from_this();
 }
 
+seastar::future<AsokRegistrationRes>
+AdminSocket::register_server(hook_server_tag  server_tag, const std::vector<AsokServiceDef>& apis_served)
+{
+  return seastar::with_lock(servers_tbl_rwlock, [this, server_tag, &apis_served]() {
+    return server_registration(server_tag, apis_served);
+  });
+}
+
+
 /*!
   Called by the server implementing the hook. The gate will be closed, and the function
   will block until all execution of commands within the gate are done.
  */
 seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
 {
-  ceph_assert_always(this);
-  ceph_assert_always(servers.size() < 100);
-  logger().warn("{}: {} server un-reg (tag: {}) ({} prev cnt: {})",
+  logger().debug("{}: {} server un-reg (tag: {}) ({} prev cnt: {})",
                 __func__, (int)getpid(), (uint64_t)(server_tag), (uint64_t)(this), servers.size());
 
   //  locate the server registration
-  auto srv_itr = servers.find(server_tag);
-  if (srv_itr == servers.end()) {
-    logger().warn("{}: unregistering a non-existing registration (tag: {})", __func__, (uint64_t)(server_tag));
-    for (auto& [k, d] : servers) {
-       logger().warn("---> severs: {} {}", (uint64_t)(k), 17 /*d.m_hooks.front().command*/);
-    }
-    return seastar::now();
-  }
+  return seastar::with_shared(servers_tbl_rwlock, [this, server_tag]() {
 
-  //std::cerr << "\n~server (AS:" << (uint64_t)(this) <<") " << (uint64_t)(server_tag) << " to be deleted" <<  (uint64_t)(srv_itr->first)<< std::endl;
+    auto srv_itr = servers.find(server_tag);
+    return srv_itr;
 
-  return (srv_itr->second.m_gate.close()).
-    then([this, srv_itr, server_tag]() {
-      std::cerr << "\n~server_2 " << (uint64_t)(srv_itr->first) << " erasure" << std::endl;
-      servers.erase(srv_itr);
+  }).then([this, server_tag](auto srv_itr) {
+
+    if (srv_itr == servers.end()) {
+      logger().warn("{}: unregistering a non-existing registration (tag: {})", __func__, (uint64_t)(server_tag));
+      // list what servers *are* there
+      for (auto& [k, d] : servers) {
+        logger().debug("---> server: {} {}", (uint64_t)(k), d.m_hooks.front().command);
+      }
       return seastar::now();
-    });
+
+    } else {
+
+      // note: usually we would have liked to maintain the shared lock, and just upgrade it here
+      // to an exclusive one. But there is no chance of anyone else removing our specific server-block
+      // before we re-aquire the lock
+
+      return (srv_itr->second.m_gate.close()).then([this, srv_itr]() {
+        return with_lock(servers_tbl_rwlock, [this, srv_itr]() {
+          servers.erase(srv_itr);
+          return seastar::now();
+        });
+      });
+    }
+  }).finally([server_tag]() {
+    logger().info("{}: done removing server block {}", __func__, (uint64_t)(server_tag));
+  });
 }
 
 seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag, AdminSocketRef&& server_ref)
 {
-   return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
-     return unregister_server(server_tag).finally([this,server_tag,&srv]() {
-       logger().warn("{} - {}", (uint64_t)(server_tag), srv->servers.size());
-       //return seastar::now();
-     });
-   });
-   #if 0
    // reducing the ref-count on us (the asok server) by discarding server_ref:
    return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
      return unregister_server(server_tag).finally([this,server_tag,&srv]() {
@@ -343,9 +363,7 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag, Adm
        //return seastar::now();
      });
    });
-   #endif
 }
-
 
 AdminSocket::GateAndHook AdminSocket::locate_command(const std::string_view cmd)
 {
@@ -355,7 +373,7 @@ AdminSocket::GateAndHook AdminSocket::locate_command(const std::string_view cmd)
     try {
       srv.m_gate.enter();
     } catch (...) {
-      // gate is already closed
+      // probable error: gate is already closed
       continue;
     }
 
@@ -527,8 +545,9 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
   
   logger().debug("{}: path={}", __func__, path);
 
-  internal_hooks();
+  internal_hooks().get(); //.discard_result();  // we are executing in an async thread, thus OK to wait()
 
+  logger().debug("{}: path={}", __func__, path);
   auto sock_path = seastar::socket_address{seastar::unix_domain_addr{path}};
 
   return seastar::do_with(seastar::engine().listen(sock_path), [this](seastar::server_socket& lstn) {
@@ -659,7 +678,7 @@ public:
 };
 
 /// the hooks that are served directly by the admin_socket server
-void AdminSocket::internal_hooks()
+seastar::future<AsokRegistrationRes> AdminSocket::internal_hooks()
 {
   version_hook = std::make_unique<VersionHook>(this);
   git_ver_hook = std::make_unique<GitVersionHook>(this);
@@ -681,5 +700,42 @@ void AdminSocket::internal_hooks()
 
   // server_registration() returns a shared pointer to the AdminSocket server, i.e. to us. As we
   // already have shared ownership of this object, we do not need it. RRR verify
-  std::ignore = server_registration(AdminSocket::hook_server_tag{this}, internal_hooks_tbl);
+  return register_server(AdminSocket::hook_server_tag{this}, internal_hooks_tbl);
+  //std::ignore = server_registration(AdminSocket::hook_server_tag{this}, internal_hooks_tbl);
+}
+
+
+// ///////////////////////////////////////////
+// unit-testing servers-block map manipulation
+// ///////////////////////////////////////////
+
+/*
+  run multiple seastar threads that register/remove/search server blocks, testing
+  the locks that protect them.
+*/
+
+using namespace std::chrono;
+using namespace std::chrono_literals;
+//using AdminSocket::hook_server_tag;
+
+namespace asok_unit_testing {
+
+static const std::vector<AsokServiceDef> test_hooks{
+      AsokServiceDef{"3",            "3",                    &test_hook,        "3"}
+    , AsokServiceDef{"4",            "4",                    &test_hook,        "4"}
+    , AsokServiceDef{"5",            "5",                    &test_hook,        "5"}
+    , AsokServiceDef{"6",            "6",                    &test_hook,        "6"}
+    , AsokServiceDef{"7",            "7",                    &test_hook,        "7"}
+};
+
+struct test_reg_st {
+
+  AdminSocket::hook_server_tag       tag;
+  milliseconds                       period;
+
+  test_reg_st(AdminSocket::hook_server_tag, ){}
+
+};
+
+
 }

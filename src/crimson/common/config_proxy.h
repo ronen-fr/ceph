@@ -152,6 +152,7 @@ public:
     });
   }
 
+#if 0
   // seems that Config.h has no Formatter awareness. return a 
   seastar::future<>
   show_config(/*ceph::Formatter* f*/ std::vector<std::string>& kout);/* {
@@ -168,11 +169,10 @@ public:
 
   seastar::future<>
   show_config(std::ostream& os);
-
+#endif
 
   seastar::future<>
-  show_config(ceph::Formatter* os);
-
+  show_config(ceph::Formatter* f);
 
   seastar::future<> parse_argv(std::vector<const char*>& argv) {
     // we could pass whatever is unparsed to seastar, but seastar::app_template

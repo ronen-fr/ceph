@@ -30,6 +30,7 @@
 #include <map>
 #include "seastar/core/future.hh"
 #include "seastar/core/shared_ptr.hh"
+#include "seastar/core/shared_mutex.hh"
 #include "seastar/core/gate.hh"
 #include "seastar/core/iostream.hh"
 #include "common/cmdparse.h"
@@ -152,6 +153,9 @@ public:
   AsokRegistrationRes server_registration(hook_server_tag  server_tag,
                                           const std::vector<AsokServiceDef>& apis_served); 
 
+  seastar::future<AsokRegistrationRes>
+  register_server(hook_server_tag  server_tag, const std::vector<AsokServiceDef>& apis_served); 
+
 
   // no single-command unregistration, as en-bulk per server unregistration is the pref method.
   // I will consider adding specific API for those cases where the client needs to disable
@@ -173,7 +177,7 @@ private:
   /*!
     Registering the APIs that are served directly by the admin_socket server.
   */
-  void internal_hooks();
+  seastar::future<AsokRegistrationRes> internal_hooks();
 
   seastar::future<> init_async(const std::string& path);
 
@@ -183,8 +187,7 @@ private:
 
   bool validate_command(const parsed_command_t& parsed,
                         const std::string& command_text,
-                        ceph::buffer::list& out
-                        /*seastar::output_stream<char>& out*/) const;
+                        ceph::buffer::list& out) const;
 
   bool validate(const std::string& command,
 		const cmdmap_t& cmdmap,
@@ -224,9 +227,19 @@ private:
     mutable ::seastar::gate m_gate;
   };
 
-  // \todo cache all available commands, from all servers, in one vector.
+  // \todo possible improvement: cache all available commands, from all servers, in one vector.
   //  Recreate the list every register/unreg request.
 
+  /*!
+    The servers table is protected by a rw-lock, to be aquired exclusively only
+    when registering or removing a server.
+    Note that the lock is *not* held when executing a specific hook. As the map
+    keeps stable item addresses, we do not worry about a specific API block
+    disappearing from under our feet (each individual block is protected from removal
+    by a seastar::gate). Still, we must guarantee the ability to safely perform
+    map lookups.
+   */
+  seastar::shared_mutex servers_tbl_rwlock;
   std::map<hook_server_tag, server_block> servers;
 
   struct GateAndHook {
@@ -264,10 +277,7 @@ struct AdminHooksIter : public std::iterator<std::output_iterator_tag, AsokServi
 public:
    explicit AdminHooksIter(AdminSocket& master, bool end_flag=false);
 
-  ~AdminHooksIter() {
-    if (m_in_gate)
-      m_miter->second.m_gate.leave();
-  }
+  ~AdminHooksIter();
 
   const AsokServiceDef* operator*() const {
     return &(*m_siter);
