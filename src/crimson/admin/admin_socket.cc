@@ -39,6 +39,12 @@ namespace {
   }
 }
 
+namespace asok_unit_testing {
+
+  seastar::future<> utest_run_1(AdminSocket* asok);
+
+}
+
 /*!
   Hooks table - iterator support
 
@@ -533,6 +539,10 @@ seastar::future<> AdminSocket::init(const std::string& path)
   //std::cout << "AdminSocket::init() w " << path << " owner: " << (uint64_t)(this) <<
   //      " -> " << (uint64_t)(m_cct) << std::endl;
 
+  std::ignore = seastar::async([this]() {
+     asok_unit_testing::utest_run_1(this).wait();
+  });
+
   return seastar::async([this, path] {
     auto serverfut = init_async(path);
   }); 
@@ -714,11 +724,26 @@ seastar::future<AsokRegistrationRes> AdminSocket::internal_hooks()
   the locks that protect them.
 */
 
+#include <random>
 using namespace std::chrono;
 using namespace std::chrono_literals;
+using namespace seastar;
 //using AdminSocket::hook_server_tag;
 
 namespace asok_unit_testing {
+
+class UTestHook : public AdminSocketHook {
+public:
+  explicit UTestHook() {}
+
+  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                                 std::string_view format, bufferlist& out) const final
+  {
+    return seastar::now();
+  }
+};
+
+static const UTestHook test_hook;
 
 static const std::vector<AsokServiceDef> test_hooks{
       AsokServiceDef{"3",            "3",                    &test_hook,        "3"}
@@ -728,14 +753,155 @@ static const std::vector<AsokServiceDef> test_hooks{
     , AsokServiceDef{"7",            "7",                    &test_hook,        "7"}
 };
 
+
+static const std::vector<AsokServiceDef> test_hooks10{
+      AsokServiceDef{"13",            "13",                    &test_hook,        "13"}
+    , AsokServiceDef{"14",            "14",                    &test_hook,        "14"}
+    , AsokServiceDef{"15",            "15",                    &test_hook,        "15"}
+    , AsokServiceDef{"16",            "16",                    &test_hook,        "16"}
+    , AsokServiceDef{"17",            "17",                    &test_hook,        "17"}
+};
+
+
 struct test_reg_st {
 
+  AdminSocket*                       asok;
   AdminSocket::hook_server_tag       tag;
   milliseconds                       period;
+  gate&                              g;
+  const std::vector<AsokServiceDef>& hks;
+  std::random_device                 rd;
+  std::default_random_engine         generator{rd()};
+  AdminSocketRef                     current_reg; // holds the shared ownership
 
-  test_reg_st(AdminSocket::hook_server_tag, ){}
+  test_reg_st(AdminSocket* ask, AdminSocket::hook_server_tag tag, milliseconds period, gate& gt, const std::vector<AsokServiceDef>& hks) :
+    asok{ask},
+    tag{tag},
+    period{period},
+    g{gt},
+    hks{hks}
+  {
+    // start an async thread to reg/unreg
+    std::ignore = seastar::async([this, hks] {
+      auto loop_fut = loop(hks);
+    });
+  }
+
+  // sleep, register, or fail w/ exception
+  seastar::future<> delayed_reg(milliseconds dly) {
+    return seastar::sleep(dly).
+      then([this, dly]() {
+
+        return with_gate(g, [this, dly]() {
+          return asok->register_server(tag, hks);
+        }).then([this](AsokRegistrationRes r) {
+          current_reg = *r;
+          return seastar::now();
+        });
+      });
+      /*then([this]() {
+        ;
+      });*/
+  }
+
+  // sleep, un-register, or fail w/ exception
+  seastar::future<> delayed_unreg(milliseconds dly) {
+    return seastar::sleep(dly).
+      then([this, dly]() {
+
+        return with_gate(g, [this, dly]() {
+          return asok->unregister_server(tag, std::move(current_reg));
+        });
+      });
+      /*then([this]() {
+        ;
+      });*/
+  }
+
+  seastar::future<> loop(const std::vector<AsokServiceDef>& hks) {
+    std::uniform_int_distribution<int> dist(80, 120);
+    auto act_period = milliseconds{period.count() * dist(generator) / 100};
+
+    ceph::get_logger(ceph_subsys_osd).warn("{} starting", (uint64_t)(tag));
+    return seastar::keep_doing([this, act_period, hks]() {
+
+      return delayed_reg(act_period).then([this, act_period]() {
+        return delayed_unreg(act_period);
+      });
+    }).handle_exception([this](std::exception_ptr eptr) {
+      return seastar::now();
+    }).finally([this]() {
+      ceph::get_logger(ceph_subsys_osd).warn("{} done", (uint64_t)(tag));
+      return seastar::now();
+    });
+  }
+};
+
+struct test_lookup_st {
+
+  AdminSocket*                       asok;
+  string                             cmd;
+  milliseconds                       period;
+  gate&                              g;
+  std::random_device                 rd;
+  std::default_random_engine         generator{rd()};
+
+  test_lookup_st(AdminSocket* ask, string cmd, milliseconds period, gate& gt) :
+    asok{ask},
+    cmd{cmd},
+    period{period},
+    g{gt}
+  {
+    // start an async thread to reg/unreg
+    std::ignore = seastar::async([this] {
+      auto loop_fut = loop();
+    });
+  }
+
+  seastar::future<> loop() {
+    std::uniform_int_distribution<int> dist(80, 120);
+    auto act_period = milliseconds{period.count() * dist(generator) / 100};
+
+    return seastar::repeat([this, act_period]() {
+
+      return with_gate(g, [this, act_period]() -> seastar::stop_iteration {
+
+        //
+        //  look for the command, waste some time, then free the server-block
+        //
+
+        for (const auto& hk : *asok) {
+
+          if (hk->command == cmd) {
+            //logger().info("{}: utest located {}", __func__, cmd);
+            seastar::sleep(act_period).get0();
+            break;
+          }
+        }
+        seastar::sleep(act_period).get0();
+	return seastar::stop_iteration::no;
+      });
+    });
+    return seastar::now();
+  }
 
 };
 
+seastar::future<> utest_run_1(AdminSocket* asok)
+{
+  const seconds run_time{1};
+  seastar::gate gt;
+
+  return seastar::do_with(std::move(gt), [run_time, asok](auto& gt) {
+
+    test_reg_st* ta1 = new test_reg_st{asok, AdminSocket::hook_server_tag{(void*)(0x17)}, 200ms, gt, test_hooks  };
+    //test_reg_st ta2{asok, AdminSocket::hook_server_tag{(void*)(0x27)}, 150ms, gt, test_hooks10};
+
+    return seastar::sleep(run_time).
+     then([&gt]() { return gt.close();}).
+     then([&gt](){ return seastar::sleep(5000ms); });
+  });  
+
+}
 
 }

@@ -253,6 +253,7 @@ private:
    */
   GateAndHook locate_command(std::string_view cmd);
 
+public:
   /*!
     iterator support
    */
