@@ -109,6 +109,7 @@ AdminHooksIter AdminHooksIter::operator++()
 
 AdminHooksIter::~AdminHooksIter()
 {
+  logger().info("{} ", __func__); 
   if (m_in_gate)
     m_miter->second.m_gate.leave();
 }
@@ -346,7 +347,7 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
 
       // note: usually we would have liked to maintain the shared lock, and just upgrade it here
       // to an exclusive one. But there is no chance of anyone else removing our specific server-block
-      // before we re-aquire the lock
+      // before we re-acquire the lock
 
       return (srv_itr->second.m_gate.close()).then([this, srv_itr]() {
         return with_lock(servers_tbl_rwlock, [this, srv_itr]() {
@@ -371,31 +372,64 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag, Adm
    });
 }
 
+#if 0
 AdminSocket::GateAndHook AdminSocket::locate_command(const std::string_view cmd)
 {
-  for (auto& [tag, srv] : servers) {
+  seastar::with_shared(servers_tbl_rwlock, [this, cmd]() {
+    for (auto& [tag, srv] : servers) {
 
-    // "lock" the server's control block before searching for the command string
-    try {
-      srv.m_gate.enter();
-    } catch (...) {
-      // probable error: gate is already closed
-      continue;
-    }
-
-    for (auto& api : srv.m_hooks) {
-      if (api.command == cmd) {
-        logger().info("{}: located {} w/ server {}", __func__, cmd, tag);
-        // note that the gate was entered!
-        return AdminSocket::GateAndHook{&srv.m_gate, &api};
+      // "lock" the server's control block before searching for the command string
+      try {
+        srv.m_gate.enter();
+      } catch (...) {
+        // probable error: gate is already closed
+        continue;
       }
+
+      for (auto& api : srv.m_hooks) {
+        if (api.command == cmd) {
+          logger().info("{}: located {} w/ server {}", __func__, cmd, tag);
+          // note that the gate was entered!
+          return AdminSocket::GateAndHook{&srv.m_gate, &api};
+        }
+      }
+
+      // not found. Close this server's gate.
+      srv.m_gate.leave();
     }
 
-    // not found. Close this server's gate.
-    srv.m_gate.leave();
-  }
+    return AdminSocket::GateAndHook{nullptr, nullptr};
+  });
+}
+#endif
 
-  return AdminSocket::GateAndHook{nullptr, nullptr};
+seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_command(const std::string_view cmd)
+{
+  return seastar::with_shared(servers_tbl_rwlock, [this, cmd]() {
+    for (auto& [tag, srv] : servers) {
+
+      // "lock" the server's control block before searching for the command string
+      try {
+        srv.m_gate.enter();
+      } catch (...) {
+        // probable error: gate is already closed
+        continue;
+      }
+
+      for (auto& api : srv.m_hooks) {
+        if (api.command == cmd) {
+          logger().info("{}: located {} w/ server {}", __func__, cmd, tag);
+          // note that the gate was entered!
+          return AdminSocket::GateAndHook{&srv.m_gate, &api};
+        }
+      }
+
+      // not found. Close this server's gate.
+      srv.m_gate.leave();
+    }
+
+    return AdminSocket::GateAndHook{nullptr, nullptr};
+  });
 }
 
 /*!
@@ -436,7 +470,7 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   // try to match the longest set of strings. Failing - remove the tail part and retry.
   AdminSocket::GateAndHook gh{nullptr, nullptr};
   while (match.size()) {
-    gh = std::move(locate_command(match));
+    gh = std::move(locate_command(match).get0());
     if (gh.api)
       break;
 
@@ -481,7 +515,7 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
 
 seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
 {
-  //  find the longest word-sequence that we have a hook registered to handle
+  //  find the longest word-sequence for which we have a registered hook to handle
   auto parsed = parse_cmd(cmdline);
   if (!parsed) {
     logger().error("{}: no command in ({})", __func__, cmdline);
@@ -799,23 +833,17 @@ struct test_reg_st {
           return seastar::now();
         });
       });
-      /*then([this]() {
-        ;
-      });*/
   }
 
   // sleep, un-register, or fail w/ exception
   seastar::future<> delayed_unreg(milliseconds dly) {
     return seastar::sleep(dly).
-      then([this, dly]() {
+      then([this]() {
 
-        return with_gate(g, [this, dly]() {
+        return with_gate(g, [this]() {
           return asok->unregister_server(tag, std::move(current_reg));
         });
       });
-      /*then([this]() {
-        ;
-      });*/
   }
 
   seastar::future<> loop(const std::vector<AsokServiceDef>& hks) {
@@ -842,14 +870,16 @@ struct test_lookup_st {
   AdminSocket*                       asok;
   string                             cmd;
   milliseconds                       period;
+  milliseconds                       delaying_inside;
   gate&                              g;
   std::random_device                 rd;
   std::default_random_engine         generator{rd()};
 
-  test_lookup_st(AdminSocket* ask, string cmd, milliseconds period, gate& gt) :
+  test_lookup_st(AdminSocket* ask, string cmd, milliseconds period, milliseconds delaying_inside, gate& gt) :
     asok{ask},
     cmd{cmd},
     period{period},
+    delaying_inside{delaying_inside},
     g{gt}
   {
     // start an async thread to reg/unreg
@@ -858,6 +888,117 @@ struct test_lookup_st {
     });
   }
 
+  seastar::future<> delayed_lookup_aux(milliseconds dly_inside) {
+    //
+    //  look for the command, waste some time, then free the server-block
+    //
+
+    bool fnd{false};
+
+    if (1) for (const auto& hk : *asok) {
+
+      if (hk->command == cmd) {
+        fnd = true;
+        ceph::get_logger(ceph_subsys_osd).info("{}: utest located {}", __func__, cmd);
+        seastar::sleep(dly_inside).get();
+        break;
+      }
+    }
+
+    if (!fnd)
+      ceph::get_logger(ceph_subsys_osd).info("{}: utest nf {}", __func__, cmd);
+
+    return seastar::sleep(500ms/*dly_inside*/).
+      then([this]() {
+        return seastar::now();
+      });
+  }
+
+  // sleep, then lookup (or fail when gate closes)
+  seastar::future<> delayed_lookup(milliseconds dly, milliseconds dly_inside) {
+    return seastar::sleep(dly).
+      then([this, dly_inside]() {
+
+        //if (g.is_closed())
+        //  return seastar::now();
+
+        return with_gate(g, [this, dly_inside]() {
+          return delayed_lookup_aux(dly_inside);
+        });
+      });
+  }
+
+  future<> delayed_lookup_2(milliseconds dly, milliseconds dly_inside) {
+    return seastar::sleep(dly).
+      then([this, dly_inside]() {
+        return with_gate(g, [this, dly_inside]() {
+          return delayed_lookup_aux(dly_inside);
+        });
+      }); //.get();
+  }
+
+  seastar::future<> loop() {
+    std::uniform_int_distribution<int> dist(80, 120);
+    auto act_period = period; //milliseconds{period.count() * dist(generator) / 100};
+    return seastar::make_ready_future();
+  }
+  #if 0
+    ceph::get_logger(ceph_subsys_osd).warn("lkup {} starting", period.count()/1000.0);
+
+    return seastar::keep_doing([this, act_period] {
+
+      return seastar::sleep(act_period).
+        then([this, act_period]() {
+          //return futurize_apply([this, act_period]() {
+             delayed_lookup_2(act_period, delaying_inside).get();
+             return seastar::make_ready_future();
+          //});
+        });
+    }).then_wrapped([this](auto &r) -> seastar::future<> {
+      return seastar::make_ready_future();
+    });
+
+  }
+  #endif
+
+#if 0
+  seastar::future<> loop() {
+    std::uniform_int_distribution<int> dist(80, 120);
+    auto act_period = period; //milliseconds{period.count() * dist(generator) / 100};
+
+    ceph::get_logger(ceph_subsys_osd).warn("lkup {} starting", period.count()/1000.0);
+
+    return seastar::keep_doing([this, act_period]() {
+
+      auto ft =  [this, act_period]() -> seastar::future<> {
+                   return seastar::sleep(act_period).
+                   then([this, act_period]() {
+                     return delayed_lookup(act_period, delaying_inside);
+                   })
+                 ;};
+      
+
+      //return ft().wait();
+      try {
+        ft().wait();
+        return seastar::now();
+      } catch( std::exception& e ) {
+        return seastar::make_exception_future<>(e);
+      }
+
+
+      //return seastar::now();
+
+    }).handle_exception([this](std::exception_ptr eptr) {
+      return seastar::now();
+    }).finally([this]() {
+      ceph::get_logger(ceph_subsys_osd).warn("lkup {} {} done", period.count()/100.0, cmd);
+      return seastar::now();
+    });
+  }
+  #endif
+
+#if 0
   seastar::future<> loop() {
     std::uniform_int_distribution<int> dist(80, 120);
     auto act_period = milliseconds{period.count() * dist(generator) / 100};
@@ -884,24 +1025,39 @@ struct test_lookup_st {
     });
     return seastar::now();
   }
+  #endif
 
 };
 
 seastar::future<> utest_run_1(AdminSocket* asok)
 {
-  const seconds run_time{1};
+  const seconds run_time{2};
   seastar::gate gt;
-
+ 
   return seastar::do_with(std::move(gt), [run_time, asok](auto& gt) {
 
     test_reg_st* ta1 = new test_reg_st{asok, AdminSocket::hook_server_tag{(void*)(0x17)}, 200ms, gt, test_hooks  };
-    //test_reg_st ta2{asok, AdminSocket::hook_server_tag{(void*)(0x27)}, 150ms, gt, test_hooks10};
+    test_reg_st ta2{asok, AdminSocket::hook_server_tag{(void*)(0x27)}, 150ms, gt, test_hooks10};
+
+    //test_lookup_st* tlk1 = new test_lookup_st{asok, "0",  255ms, 95ms, gt};
+    //test_lookup_st tlk2{asok, "16", 210ms, 90ms, gt};
 
     return seastar::sleep(run_time).
      then([&gt]() { return gt.close();}).
-     then([&gt](){ return seastar::sleep(5000ms); });
-  });  
-
+     then([&gt](){ return seastar::sleep(2000ms); }).
+     then([ta1, &ta2/*, &tlk1*/]() { 
+       delete ta1;
+       //delete tlk1;
+       return seastar::now();
+     });
+  }).then_wrapped([](auto&& x) {
+    try {
+      x.get();
+      return seastar::now();
+    } catch (... ) {
+      return seastar::now();
+    }
+  });
 }
 
 }

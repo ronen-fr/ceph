@@ -86,20 +86,14 @@ protected:
   }
 };
 
+/*!
+  The details of a single API in a server's hooks block
+*/
 struct AsokServiceDef {
-  //AsokServiceDefinition(const std::string& command, //!< the sequence of words that should be used
-  //                      const std::string& desc,    //!< the syntax
-  //                      const AdminSocketHook* hook,
-  //                      const std::string help_message)
-  //  : command{command}
-  //  , cmddesc{desc}
-  //  , hook{hook}
-  //  , help{help_message}
-  //{}
-  const std::string command;
-  const std::string cmddesc;
+  const std::string command;   //!< the sequence of words that should be used
+  const std::string cmddesc;   //!< the command syntax
   const AdminSocketHook* hook;
-  const std::string help;
+  const std::string help;      //!< help message
 };
 
 class AdminHooksIter; // gates-controlled iterator over all server blocks
@@ -189,14 +183,14 @@ private:
                         const std::string& command_text,
                         ceph::buffer::list& out) const;
 
-  bool validate(const std::string& command,
-		const cmdmap_t& cmdmap,
-		ceph::buffer::list& out) const;
+  //bool validate(const std::string& command,
+  //		const cmdmap_t& cmdmap,
+  //		ceph::buffer::list& out) const;
 
   CephContext* m_cct;
   bool do_die{false};  // RRR check if needed
 
-  // seems like multiple Context objects are created when calling vstart, and that
+  // Note: seems like multiple Context objects are created when calling vstart, and that
   // translates to multiple AdminSocket objects being created. But only the "real" one
   // (the OSD's) is actually initialized by a call to 'init()'.
   // Thus, we should try to discourage the "other" objects from registering hooks.
@@ -217,6 +211,11 @@ private:
     ::seastar::gate*       m_gate;
   };
 
+  /*!
+    parse the incoming command line into the sequence of words that identifies the API,
+    and into its arguments.
+    Locate the command string in the registered blocks.
+  */
   std::optional<parsed_command_t> parse_cmd(const std::string& command_text);
 
   struct server_block {
@@ -231,7 +230,7 @@ private:
   //  Recreate the list every register/unreg request.
 
   /*!
-    The servers table is protected by a rw-lock, to be aquired exclusively only
+    The servers table is protected by a rw-lock, to be acquired exclusively only
     when registering or removing a server.
     Note that the lock is *not* held when executing a specific hook. As the map
     keeps stable item addresses, we do not worry about a specific API block
@@ -251,7 +250,8 @@ private:
     locate_command() will search all servers' control blocks. If found, the
     relevant gate is entered. Returns the AsokServiceDef, and the "activated" gate.
    */
-  GateAndHook locate_command(std::string_view cmd);
+  //GateAndHook locate_command(std::string_view cmd);
+  seastar::future<AdminSocket::GateAndHook> locate_command(std::string_view cmd);
 
 public:
   /*!
