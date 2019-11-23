@@ -80,7 +80,7 @@ AdminHooksIter::AdminHooksIter(AdminSocket& master, bool end_flag)
   }
 }
 
-AdminHooksIter AdminHooksIter::operator++() 
+AdminHooksIter& AdminHooksIter::operator++() 
 {
   ++m_siter;
   if (m_siter == m_miter->second.m_hooks.end()) {
@@ -109,9 +109,11 @@ AdminHooksIter AdminHooksIter::operator++()
 
 AdminHooksIter::~AdminHooksIter()
 {
-  logger().info("{} ", __func__); 
-  if (m_in_gate)
+  //logger().info("{} {}", __func__, (m_in_gate?"+":"-")); 
+  if (m_in_gate) {
     m_miter->second.m_gate.leave();
+    logger().info("{}", __func__);
+  } 
 }
 
 /*!
@@ -167,113 +169,6 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
   });
 }
 
-#if 0
-    //}).handle_exception([this](auto eptr) {
-    //  // if something failed
-    //  std::cerr << "osd_admin::exec:inhex1" << std::endl;
-    //  return seastar::make_ready_future<bool>(false);
-    }).then_wrapped([&ftr,&command](seastar::future<> res) -> seastar::future<bool> {
-      try {
-        if (res.failed()) {
-          std::cerr << "osd_admin::exec:res failed" << std::endl;
-          ftr->dump_string("res_failed", std::string(command) + " failed");
-          return res.handle_exception([](auto eptr) {
-            std::cerr << "osd_admin::exec:inhex1" << std::endl;
-            return seastar::now();
-          }).then_wrapped([](seastar::future<> ){ return seastar::make_ready_future<bool>(false); });
-        } else {
-          //(void)res.get();
-          return seastar::make_ready_future<bool>(true);
-        }
-      } catch ( std::exception& ex ) {
-        ftr->dump_string("error", std::string(command) + " failed with " + ex.what());
-        std::cerr << "osd_admin::exec:immediate exc8" << std::endl;
-        return seastar::make_ready_future<bool>(false);
-      } catch ( ... ) {
-        ftr->dump_string("error", std::string(command) + " failed with XX");
-        std::cerr << "osd_admin::exec:immediate exc2" << std::endl;
-        return seastar::make_ready_future<bool>(false);
-      }
-    }).handle_exception([this](auto eptr) {
-      // if something failed
-      std::cerr << "osd_admin::exec:inhexneeded???" << std::endl;
-      return seastar::make_ready_future<bool>(false);
-    }).then([this, &ftr, &out](auto res) -> seastar::future<bool> {
-      ftr->close_section();
-      ftr->enable_line_break();
-      ftr->flush(out);
-      return seastar::make_ready_future<bool>(res); //seastar::make_ready_future<bool>(true);
-    });
-  });
-  #endif
-
-
-#if 0
-seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdmap_t& cmdmap,
-                                            std::string_view format, ceph::bufferlist& out) const
-{
-  unique_ptr<Formatter> f{Formatter::create(format, "json-pretty"sv, "json-pretty"s)};
-
-  // customize the output section, as required by a couple of hook APIs:
-  std::string section{section_name(command)};
-  boost::replace_all(section, " ", "_");
-  if (format_as_array()) {
-    f->open_array_section(section.c_str());
-  } else {
-    f->open_object_section(section.c_str());
-  }
-  logger().info("{} cmd={} out section={}", __func__, command, section); 
-
-  /*!
-      call the command-specific hook.
-      A note re error handling:
-        - will be modified to use the new 'erroretor'. For now:
-        - exec_command() may throw or return an exceptional future. We return a message that starts
-          with "error" on both failure scenarios.
-   */
-  return seastar::do_with(std::move(f), [this, &command, &cmdmap, &format, &out](unique_ptr<Formatter>& ftr) {
-
-    return seastar::futurize_apply([this, &command, &cmdmap, &format, &out, f=ftr.get()] {
-      return exec_command(f, command, cmdmap, format, out);
-    //}).handle_exception([this](auto eptr) {
-    //  // if something failed
-    //  std::cerr << "osd_admin::exec:inhex1" << std::endl;
-    //  return seastar::make_ready_future<bool>(false);
-    }).then_wrapped([&ftr,&command](seastar::future<> res) -> seastar::future<bool> {
-      try {
-        if (res.failed()) {
-          std::cerr << "osd_admin::exec:res failed" << std::endl;
-          ftr->dump_string("res_failed", std::string(command) + " failed");
-          return res.handle_exception([](auto eptr) {
-            std::cerr << "osd_admin::exec:inhex1" << std::endl;
-            return seastar::now();
-          }).then_wrapped([](seastar::future<> ){ return seastar::make_ready_future<bool>(false); });
-        } else {
-          //(void)res.get();
-          return seastar::make_ready_future<bool>(true);
-        }
-      } catch ( std::exception& ex ) {
-        ftr->dump_string("error", std::string(command) + " failed with " + ex.what());
-        std::cerr << "osd_admin::exec:immediate exc8" << std::endl;
-        return seastar::make_ready_future<bool>(false);
-      } catch ( ... ) {
-        ftr->dump_string("error", std::string(command) + " failed with XX");
-        std::cerr << "osd_admin::exec:immediate exc2" << std::endl;
-        return seastar::make_ready_future<bool>(false);
-      }
-    }).handle_exception([this](auto eptr) {
-      // if something failed
-      std::cerr << "osd_admin::exec:inhexneeded???" << std::endl;
-      return seastar::make_ready_future<bool>(false);
-    }).then([this, &ftr, &out](auto res) -> seastar::future<bool> {
-      ftr->close_section();
-      ftr->enable_line_break();
-      ftr->flush(out);
-      return seastar::make_ready_future<bool>(res); //seastar::make_ready_future<bool>(true);
-    });
-  });
-}
-#endif
 
 AdminSocket::AdminSocket(CephContext *cct)
   : m_cct(cct)
@@ -501,7 +396,7 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
     return true;
 
   string args{command_text.substr(parsed.m_cmd.length() + 1)};
-  logger().info("{}: in:{} against:{}", __func__, args, parsed.m_api->cmddesc);
+  logger().debug("{}: in:{} against:{}", __func__, args, parsed.m_api->cmddesc);
 
   stringstream os;
   if (validate_cmd(m_cct, parsed.m_api->cmddesc, parsed.m_parameters, os)) {
@@ -671,7 +566,9 @@ public:
 
   seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                                 std::string_view format, bufferlist& out) const final {
+
     for (const auto& hk_info : *m_as) {
+      //logger().warn("debug {} loop", __func__);
       if (hk_info->help.length())
 	f->dump_string(hk_info->command.c_str(), hk_info->help);
     }
@@ -840,9 +737,10 @@ struct test_reg_st {
     return seastar::sleep(dly).
       then([this]() {
 
-        return with_gate(g, [this]() {
+        //return with_gate(g, [this]() {
+          ceph::get_logger(ceph_subsys_osd).warn("{}", (uint64_t)(tag));
           return asok->unregister_server(tag, std::move(current_reg));
-        });
+        //});
       });
   }
 

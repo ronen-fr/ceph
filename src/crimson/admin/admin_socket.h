@@ -289,7 +289,7 @@ public:
    */
   bool operator!=(const AdminHooksIter & other) const { return m_in_gate != other.m_in_gate; }
 
-  AdminHooksIter operator++();
+  AdminHooksIter& operator++();
 
 private:
   AdminSocket&                 m_master;
