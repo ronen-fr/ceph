@@ -267,40 +267,10 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag, Adm
    });
 }
 
-#if 0
-AdminSocket::GateAndHook AdminSocket::locate_command(const std::string_view cmd)
-{
-  seastar::with_shared(servers_tbl_rwlock, [this, cmd]() {
-    for (auto& [tag, srv] : servers) {
-
-      // "lock" the server's control block before searching for the command string
-      try {
-        srv.m_gate.enter();
-      } catch (...) {
-        // probable error: gate is already closed
-        continue;
-      }
-
-      for (auto& api : srv.m_hooks) {
-        if (api.command == cmd) {
-          logger().info("{}: located {} w/ server {}", __func__, cmd, tag);
-          // note that the gate was entered!
-          return AdminSocket::GateAndHook{&srv.m_gate, &api};
-        }
-      }
-
-      // not found. Close this server's gate.
-      srv.m_gate.leave();
-    }
-
-    return AdminSocket::GateAndHook{nullptr, nullptr};
-  });
-}
-#endif
-
 seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_command(const std::string_view cmd)
 {
   return seastar::with_shared(servers_tbl_rwlock, [this, cmd]() {
+
     for (auto& [tag, srv] : servers) {
 
       // "lock" the server's control block before searching for the command string
@@ -319,7 +289,7 @@ seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_command(const std:
         }
       }
 
-      // not found. Close this server's gate.
+      // not registered by this server. Close this server's gate.
       srv.m_gate.leave();
     }
 
@@ -332,7 +302,7 @@ seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_command(const std:
     to its separate op-codes and arguments. The hook registered to handle the
     specific command is located.
   */
-std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::string& command_text)
+std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::string command_text)
 {
   cmdmap_t cmdmap;
   vector<string> cmdvec;
@@ -342,7 +312,7 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   cmdvec.push_back(command_text); // as cmdmap_from_json() likes the input in this format
   try {
     if (!cmdmap_from_json(cmdvec, &cmdmap, errss)) {
-      logger().error("{}: incoming command error: {}", __func__, errss.str());
+      logger().error("{}: incoming command error: {}", __func__, errss.str()); // RRR verify errrss
       return std::nullopt;
     }
   } catch ( ... ) {
@@ -352,9 +322,11 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
 
   string format;
   string match;
+  std::size_t full_command_seq;
   try {
     cmd_getval(m_cct, cmdmap, "format", format);
     cmd_getval(m_cct, cmdmap, "prefix", match);
+    full_command_seq = match.length(); // the full sequence, before we start chipping away the end
   } catch (const bad_cmd_get& e) {
     return std::nullopt;
   }
@@ -371,7 +343,7 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
       future_gh.wait();
       // future_gh is available, but maybe an exceptional one
       if (!future_gh.failed()) {
-        gh = std::move(future_gh.get0());
+        gh = future_gh.get0();
         if (gh.api)
           break;
       }
@@ -395,7 +367,7 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
     return std::nullopt;
   }
 
-  return parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate};
+  return parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq};
 }
 
 bool AdminSocket::validate_command(const parsed_command_t& parsed,
@@ -403,11 +375,12 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
                                    ceph::buffer::list& out) const
 {
   // did we receive any arguments apart from the command word?
-  if (parsed.m_cmd == command_text)
+  logger().warn("ct:{} {} origl:{} pmc:{} pmcl:{}", command_text, command_text.length(), parsed.m_cmd_seq_len, parsed.m_cmd, parsed.m_cmd.length());
+
+  if (parsed.m_cmd_seq_len == parsed.m_cmd.length())
     return true;
 
-  string args{command_text.substr(parsed.m_cmd.length() + 1)};
-  logger().debug("{}: in:{} against:{}", __func__, args, parsed.m_api->cmddesc);
+  logger().warn("{}: in:{} against:{}", __func__, command_text, parsed.m_api->cmddesc);
 
   stringstream os;
   try {
@@ -416,11 +389,11 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
       return true;
     }
   } catch( std::exception& e ) {
-    logger().error("{}: validation failure ({}) :{}) {}", __func__, command_text, args, e.what());
+    logger().error("{}: validation failure ({} : {}) {}", __func__, command_text, parsed.m_cmd, e.what());
   }
 
+  logger().error("{}: (incoming:{}) {}", __func__, command_text, os.str());
   out.append(os);
-  logger().error("{}: (incoming:{}) {}", __func__, args, os.str());
   return false;
 }
 
@@ -431,20 +404,25 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
   if (!parsed) {
     logger().error("{}: no command in ({})", __func__, cmdline);
     return out.write("command syntax error");
-    //return seastar::now();
   }
 
-  return seastar::do_with(std::move(parsed), ::ceph::bufferlist(), [&out, cmdline, this, gatep=parsed->m_gate](auto&& parsed, auto&& out_buf) {
+  //return seastar::do_with(std::move(parsed), ::ceph::bufferlist(), bool{false},
+  //                        [&out, cmdline, this, gatep = parsed->m_gate] (auto& parsed, auto&& out_buf, auto&& dbg_gate_exit) {}
+  return seastar::do_with(std::move(parsed), ::ceph::bufferlist(),
+                          [&out, cmdline, this, gatep = parsed->m_gate] (auto& parsed, auto&& out_buf) {
 
     ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
 
     return (validate_command(*parsed, cmdline, out_buf) ?
+              //  (dbg_gate_exit = true), // marking the fact that we must close this gate
               parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf) :
               seastar::make_ready_future<bool>(false) /* failed args syntax validation */
       ).
-      then_wrapped([&out, &out_buf](auto fut) {
+      then_wrapped([&out, &out_buf, &gatep](auto fut) {
+        gatep->leave();
+
         if (fut.failed()) {
-          // add 'failed' to the contents on out_buf? not what happens in the old code
+          // add 'failed' to the contents of out_buf? not what happens in the old code
 
           return seastar::make_ready_future<bool>(false);
         } else {
@@ -452,7 +430,6 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
         }
       }).
       then([&out, &out_buf, gatep](auto call_res) {
-        gatep->leave();
         uint32_t response_length = htonl(out_buf.length());
         logger().info("asok response length: {}", out_buf.length());
 
@@ -471,12 +448,16 @@ seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, 
   return inp.read().
     then( [&out, this](auto full_cmd) {
 
-      return execute_line(full_cmd.share().get(), out);
+      seastar::sstring cmd_line{full_cmd.begin(), full_cmd.end()};
+      logger().debug("{}: {}\n", __func__, cmd_line);
+      return execute_line(cmd_line, out);
 
     }).then([&out]() { return out.flush(); }).
     then([&out]() { return out.close(); }).
-    then([&inp]() { return inp.close(); }).
-    discard_result();
+    then([&inp]() { 
+            logger().debug("{}: cn--", __func__);
+            return inp.close();
+    }).discard_result();
 }
 
 seastar::future<> AdminSocket::init(const std::string& path)
@@ -497,10 +478,8 @@ seastar::future<> AdminSocket::init(const std::string& path)
 seastar::future<> AdminSocket::init_async(const std::string& path)
 {
   //  verify we are the only instance running now RRR
-  
-  logger().debug("{}: path={}", __func__, path);
 
-  internal_hooks().get(); //.discard_result();  // we are executing in an async thread, thus OK to wait()
+  internal_hooks().get(); // we are executing in an async thread, thus OK to wait()
 
   logger().debug("{}: path={}", __func__, path);
   auto sock_path = seastar::socket_address{seastar::unix_domain_addr{path}};
@@ -512,13 +491,16 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
         then([this](seastar::accept_result from_accept) {
 
           seastar::connected_socket cn    = std::move(from_accept.connection);
-          //seastar::socket_address cn_addr = std::move(from_accept.remote_address);
+          logger().debug("{}: cn++", __func__);
 
-          return do_with(std::move(cn.input()), std::move(cn.output()), [this](auto& inp, auto& out) {
+          // can't count on order of evaluting the move(), and need to keep both the 'cn' and its streams alive
+          //return do_with(std::move(cn), [this](auto& cn) { 
+            return do_with(std::move(cn.input()), std::move(cn.output()), [this](auto& inp, auto& out) {
 
-            return handle_client(std::move(inp), std::move(out)).
-	      then([]() { return seastar::make_ready_future<>(); });
-	  }).then([]() { return seastar::make_ready_future<>(); });
+              return handle_client(std::move(inp), std::move(out));
+	        //then([]() { return seastar::make_ready_future<>(); });
+	    }); //.then([]() { return seastar::make_ready_future<>(); });
+        //});
       });
     });
   });			
@@ -630,7 +612,11 @@ public:
 	                                 std::string_view format, bufferlist& out) const final {
     if (command == "fthrowAs")
       return seastar::make_exception_future<>(std::system_error{1, std::system_category()});
-    throw(std::invalid_argument("As::TestThrowHook"));
+
+    return seastar::sleep(3s).then([this]() {
+      throw(std::invalid_argument("As::TestThrowHook"));
+      return seastar::now();
+    });
   }
 };
 
@@ -800,6 +786,14 @@ struct test_lookup_st {
     std::ignore = seastar::async([this] {
       auto loop_fut = loop();
     });
+  }
+
+  void do_sleep(milliseconds m) {
+    seastar::future<> f = seastar::sleep(m);
+    f.wait();
+    if (!f.failed()) {
+      f.get();
+    }
   }
 
   seastar::future<> delayed_lookup_aux(milliseconds dly_inside) {

@@ -209,6 +209,10 @@ private:
     const AsokServiceDef*  m_api;
     const AdminSocketHook* m_hook;
     ::seastar::gate*       m_gate;
+    /*!
+        the length of the whole command sequence under the 'prefix' header
+     */
+    std::size_t            m_cmd_seq_len;
   };
 
   /*!
@@ -216,7 +220,7 @@ private:
     and into its arguments.
     Locate the command string in the registered blocks.
   */
-  std::optional<parsed_command_t> parse_cmd(const std::string& command_text);
+  std::optional<parsed_command_t> parse_cmd(const std::string command_text);
 
   struct server_block {
     server_block(const std::vector<AsokServiceDef>& hooks)
@@ -249,8 +253,10 @@ private:
   /*!
     locate_command() will search all servers' control blocks. If found, the
     relevant gate is entered. Returns the AsokServiceDef, and the "activated" gate.
+
+    Note that we return a future, as locate_command() may have to wait for the global
+    rw-lock on the servers table.
    */
-  //GateAndHook locate_command(std::string_view cmd);
   seastar::future<AdminSocket::GateAndHook> locate_command(std::string_view cmd);
 
 public:
