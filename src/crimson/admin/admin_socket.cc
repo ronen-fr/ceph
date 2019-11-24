@@ -365,9 +365,20 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   // try to match the longest set of strings. Failing - remove the tail part and retry.
   AdminSocket::GateAndHook gh{nullptr, nullptr};
   while (match.size()) {
-    gh = std::move(locate_command(match).get0());
-    if (gh.api)
-      break;
+    try {
+      //std::cerr << "before get0" << std::endl;
+      seastar::future<AdminSocket::GateAndHook> future_gh = locate_command(match);
+      future_gh.wait();
+      // future_gh is available, but maybe an exceptional one
+      if (!future_gh.failed()) {
+        gh = std::move(future_gh.get0());
+        if (gh.api)
+          break;
+      }
+
+    } catch ( ... ) {
+       // nothing to do
+    }
 
     // drop right-most word
     size_t pos = match.rfind(' ');
@@ -399,8 +410,13 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
   logger().debug("{}: in:{} against:{}", __func__, args, parsed.m_api->cmddesc);
 
   stringstream os;
-  if (validate_cmd(m_cct, parsed.m_api->cmddesc, parsed.m_parameters, os)) {
-    return true;
+  try {
+    // validate throws on some syntax errors
+    if (validate_cmd(m_cct, parsed.m_api->cmddesc, parsed.m_parameters, os)) {
+      return true;
+    }
+  } catch( std::exception& e ) {
+    logger().error("{}: validation failure ({}) :{}) {}", __func__, command_text, args, e.what());
   }
 
   out.append(os);
