@@ -154,6 +154,7 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
 
       //  we now have a ready future (or a failure)
       if (res.failed()) {
+        std::cerr << "exec throw" << std::endl;
         br = false;
       } else {
         br = true;
@@ -338,7 +339,7 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   AdminSocket::GateAndHook gh{nullptr, nullptr};
   while (match.size()) {
     try {
-      //std::cerr << "before get0" << std::endl;
+      std::cerr << "before get0" << std::endl;
       seastar::future<AdminSocket::GateAndHook> future_gh = locate_command(match);
       future_gh.wait();
       // future_gh is available, but maybe an exceptional one
@@ -349,6 +350,7 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
       }
 
     } catch ( ... ) {
+      std::cerr << "failed get0" << std::endl;
        // nothing to do
     }
 
@@ -397,6 +399,31 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
   return false;
 }
 
+bool AdminSocket::validate_command(const parsed_command_t& parsed,
+                                   const std::string& command_text,
+                                   std::stringstream& outs) const
+{
+  // did we receive any arguments apart from the command word?
+  logger().warn("ct:{} {} origl:{} pmc:{} pmcl:{}", command_text, command_text.length(), parsed.m_cmd_seq_len, parsed.m_cmd, parsed.m_cmd.length());
+
+  if (parsed.m_cmd_seq_len == parsed.m_cmd.length())
+    return true;
+
+  logger().warn("{}: in:{} against:{}", __func__, command_text, parsed.m_api->cmddesc);
+
+  try {
+    // validate throws on some syntax errors
+    if (validate_cmd(m_cct, parsed.m_api->cmddesc, parsed.m_parameters, outs)) {
+      return true;
+    }
+  } catch( std::exception& e ) {
+    logger().error("{}: validation failure ({} : {}) {}", __func__, command_text, parsed.m_cmd, e.what());
+  }
+
+  logger().error("{}: (incoming:{}) {}", __func__, command_text, outs.str());
+  return false;
+}
+
 seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
 {
   //  find the longest word-sequence for which we have a registered hook to handle
@@ -405,42 +432,55 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
     logger().error("{}: no command in ({})", __func__, cmdline);
     return out.write("command syntax error");
   }
+  std::cerr << "eline " << cmdline << std::endl;
 
   //return seastar::do_with(std::move(parsed), ::ceph::bufferlist(), bool{false},
   //                        [&out, cmdline, this, gatep = parsed->m_gate] (auto& parsed, auto&& out_buf, auto&& dbg_gate_exit) {}
-  return seastar::do_with(std::move(parsed), ::ceph::bufferlist(),
-                          [&out, cmdline, this, gatep = parsed->m_gate] (auto& parsed, auto&& out_buf) {
+  return seastar::do_with(std::move(parsed), ::ceph::bufferlist(), std::stringstream(),
+                          [&out, cmdline, this, gatep = parsed->m_gate] (auto& parsed, auto& out_buf, auto&& out_stream) {
 
     ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
 
-    return (validate_command(*parsed, cmdline, out_buf) ?
+    std::cerr << "eline2 " << cmdline << std::endl;
+    return (validate_command(*parsed, cmdline, out_stream) ?
               //  (dbg_gate_exit = true), // marking the fact that we must close this gate
               parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf) :
               seastar::make_ready_future<bool>(false) /* failed args syntax validation */
       ).
-      then_wrapped([&out, &out_buf, &gatep](auto fut) {
+      then_wrapped([&out, out_buf, gatep, &out_stream](auto fut) {
+        std::cerr << "b4 gate "  << std::endl;
+        std::cerr << "b4 gate g "  << gatep->get_count() << std::endl;
+        std::cerr << "b4 gate "  << out_stream.str() << std::endl;
         gatep->leave();
+        std::cerr << "af gate "  << out_stream.str() << std::endl;
 
         if (fut.failed()) {
           // add 'failed' to the contents of out_buf? not what happens in the old code
+          std::cerr << "elinef "  << out_stream.str() << std::endl;
 
           return seastar::make_ready_future<bool>(false);
         } else {
           return fut;
         }
       }).
-      then([&out, &out_buf, gatep](auto call_res) {
-        uint32_t response_length = htonl(out_buf.length());
-        logger().info("asok response length: {}", out_buf.length());
+      then([&out, out_buf, gatep, &out_stream](auto call_res) {
+        string outbuf_cont = out_buf.to_str();
+        uint32_t response_length = htonl(outbuf_cont.length());
+        logger().info("asok response length: {}", outbuf_cont.length());
+        std::cerr << "repln " <<  outbuf_cont.length() << std::endl;
 
-        return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, &out_buf]() {
-          return out.write(out_buf.to_str());
+        return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, outbuf_cont]() {
+          std::cerr << "fin " <<  outbuf_cont.length() << std::endl;
+          if (outbuf_cont.empty())
+            return out.write("xxxx");
+          else
+            return out.write(outbuf_cont.c_str());
         });
       });
   });
 }
 
-seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, seastar::output_stream<char>&& out)
+seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp, seastar::output_stream<char>& out)
 {
   //  RRR \todo safe read
   //  RRR \todo handle old protocol (see original code) - is still needed?
@@ -457,8 +497,36 @@ seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&& inp, 
     then([&inp]() { 
             logger().debug("{}: cn--", __func__);
             return inp.close();
+    }).handle_exception([](auto ep) {
+      logger().error("exception on {}: {}", __func__, ep);
+      return seastar::make_ready_future<>();
     }).discard_result();
 }
+
+#if 0
+seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp, seastar::output_stream<char>& out)
+{
+  //  RRR \todo safe read
+  //  RRR \todo handle old protocol (see original code) - is still needed?
+
+  seastar::future<> client_fut = inp.read().
+    then( [&out, this](auto full_cmd) {
+
+      seastar::sstring cmd_line{full_cmd.begin(), full_cmd.end()};
+      logger().debug("{}: {}\n", __func__, cmd_line);
+      return execute_line(cmd_line, out);
+
+    }).then([&out]() { return out.flush(); }).
+    then([&out]() { return out.close(); }).
+    then([&inp]() { 
+            logger().debug("{}: cn--", __func__);
+            return inp.close();
+    }).discard_result();
+
+  //client_fut.wait();
+  return client_fut;
+}
+#endif
 
 seastar::future<> AdminSocket::init(const std::string& path)
 {
@@ -495,15 +563,15 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
 
           // can't count on order of evaluting the move(), and need to keep both the 'cn' and its streams alive
           //return do_with(std::move(cn), [this](auto& cn) { 
-            return do_with(std::move(cn.input()), std::move(cn.output()), [this](auto& inp, auto& out) {
+            return do_with(std::move(cn.input()), std::move(cn.output()), std::move(cn), [this](auto& inp, auto& out, auto& cn) {
 
-              return handle_client(std::move(inp), std::move(out));
+              return handle_client(inp, out);
 	        //then([]() { return seastar::make_ready_future<>(); });
 	    }); //.then([]() { return seastar::make_ready_future<>(); });
         //});
       });
     });
-  });			
+  });
 }
 
 // ///////////////////////////////////////
@@ -549,11 +617,20 @@ public:
     return "version"s;
   }
 
-  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+  /*seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                                 std::string_view format, bufferlist& out) const final
   {
     f->dump_string("git_version", git_version_to_str());
     return seastar::now();
+  }*/
+
+  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
+	                                 std::string_view format, bufferlist& out) const final
+  {
+    return seastar::sleep(5s).then([this, f]() {
+      f->dump_string("git_version", git_version_to_str());
+      return seastar::now();
+    });
   }
 };
 

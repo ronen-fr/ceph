@@ -175,11 +175,15 @@ private:
 
   seastar::future<> init_async(const std::string& path);
 
-  seastar::future<> handle_client(seastar::input_stream<char>&& inp, seastar::output_stream<char>&& out);
+  seastar::future<> handle_client(seastar::input_stream<char>& inp, seastar::output_stream<char>& out);
 
   seastar::future<> execute_line(std::string cmdline, seastar::output_stream<char>& out);
 
-  bool validate_command(const parsed_command_t& parsed,
+bool validate_command(const parsed_command_t& parsed,
+                                   const std::string& command_text,
+                                   std::stringstream& outs) const;
+
+bool validate_command(const parsed_command_t& parsed,
                         const std::string& command_text,
                         ceph::buffer::list& out) const;
 
