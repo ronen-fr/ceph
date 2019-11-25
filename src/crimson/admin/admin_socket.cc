@@ -480,27 +480,32 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
   });
 }
 
-seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp, seastar::output_stream<char>& out)
+seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp, seastar::output_stream<char>& outa)
 {
   //  RRR \todo safe read
   //  RRR \todo handle old protocol (see original code) - is still needed?
 
-  return inp.read().
-    then( [&out, this](auto full_cmd) {
+  //return (outa.write("hello")).then([this,&outa,&inp]{ outa.flush(); }).then([this,&outa,&inp] {
 
-      seastar::sstring cmd_line{full_cmd.begin(), full_cmd.end()};
-      logger().debug("{}: {}\n", __func__, cmd_line);
-      return execute_line(cmd_line, out);
+  return seastar::do_with(std::move(outa), ([this, &inp](seastar::output_stream<char>& out) {
+        return inp.read().
+        then( [&out, this](auto full_cmd) {
 
-    }).then([&out]() { return out.flush(); }).
-    then([&out]() { return out.close(); }).
-    then([&inp]() { 
-            logger().debug("{}: cn--", __func__);
-            return inp.close();
-    }).handle_exception([](auto ep) {
-      logger().error("exception on {}: {}", __func__, ep);
-      return seastar::make_ready_future<>();
-    }).discard_result();
+        seastar::sstring cmd_line{full_cmd.begin(), full_cmd.end()};
+        logger().debug("{}: {}\n", __func__, cmd_line);
+        return execute_line(cmd_line, out);
+
+        }).then([&out]() { return out.flush(); }).
+        finally([&out]() { return out.close(); }).
+        then([&inp,&out]() { 
+                logger().warn("{}: cn--", __func__);
+                return inp.close();
+        }).handle_exception([](auto ep) {
+        logger().error("dddd exception on {}: {}", __func__, ep);
+        return seastar::make_ready_future<>();
+        }).discard_result();
+  }));
+  //});
 }
 
 #if 0
@@ -561,14 +566,13 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
           seastar::connected_socket cn    = std::move(from_accept.connection);
           logger().debug("{}: cn++", __func__);
 
-          // can't count on order of evaluting the move(), and need to keep both the 'cn' and its streams alive
-          //return do_with(std::move(cn), [this](auto& cn) { 
-            return do_with(std::move(cn.input()), std::move(cn.output()), std::move(cn), [this](auto& inp, auto& out, auto& cn) {
+          return do_with(std::move(cn.input()), std::move(cn.output()), std::move(cn),
+                        [this](auto& inp, auto& out, auto& cn) {
 
-              return handle_client(inp, out);
-	        //then([]() { return seastar::make_ready_future<>(); });
-	    }); //.then([]() { return seastar::make_ready_future<>(); });
-        //});
+            return handle_client(inp, out).finally([this, &inp, &out] {
+              std::cerr << "finally "  << std::endl;
+            });
+          });
       });
     });
   });
