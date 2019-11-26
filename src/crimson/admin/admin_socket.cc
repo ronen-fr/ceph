@@ -508,12 +508,12 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
               parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf) :
               seastar::make_ready_future<bool>(false) /* failed args syntax validation */
       ).
-      then_wrapped([&out, out_buf, gatep, &out_stream](auto fut) {
+      then_wrapped([&out, &out_buf, gatep, &out_stream](auto fut) {
         std::cerr << "b4 gate "  << std::endl;
         std::cerr << "b4 gate g "  << gatep->get_count() << std::endl;
         std::cerr << "b4 gate "  << out_stream.str() << std::endl;
         gatep->leave();
-        std::cerr << "af gate "  << out_stream.str() << std::endl;
+        std::cerr << "af gate LL "  << out_buf.length()  << std::endl;
 
         if (fut.failed()) {
           // add 'failed' to the contents of out_buf? not what happens in the old code
@@ -524,7 +524,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
           return fut;
         }
       }).
-      then([&out, out_buf, gatep, &out_stream](auto call_res) {
+      then([&out, &out_buf, gatep, &out_stream](auto call_res) {
         string outbuf_cont = out_buf.to_str();
         uint32_t response_length = htonl(outbuf_cont.length());
         logger().info("asok response length: {}", outbuf_cont.length());
@@ -540,42 +540,40 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
       });
   });
 }
-
+#if 0
 seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp, seastar::output_stream<char>& outa)
 {
   //  RRR \todo safe read
   //  RRR \todo handle old protocol (see original code) - is still needed?
 
-  //return (outa.write("hello")).then([this,&outa,&inp]{ outa.flush(); }).then([this,&outa,&inp] {
-
   return seastar::do_with(std::move(outa), ([this, &inp](seastar::output_stream<char>& out) {
-        return inp.read().
-        then( [&out, this](auto full_cmd) {
+    return inp.read().
+    then([&out, this](auto full_cmd) {
 
-        seastar::sstring cmd_line{full_cmd.begin(), full_cmd.end()};
-        logger().debug("{}: {}\n", __func__, cmd_line);
-        return execute_line(cmd_line, out);
+      seastar::sstring cmd_line{full_cmd.begin(), full_cmd.end()};
+      logger().debug("{}: {}\n", __func__, cmd_line);
+      return execute_line(cmd_line, out);
 
-        }).then([&out]() { return out.flush(); }).
-        finally([&out]() { return out.close(); }).
-        then([&inp,&out]() { 
-                logger().warn("{}: cn--", __func__);
-                return inp.close();
-        }).handle_exception([](auto ep) {
-        logger().error("dddd exception on {}: {}", __func__, ep);
-        return seastar::make_ready_future<>();
-        }).discard_result();
+    }).then([&out]() { return out.flush(); }).
+    finally([&out]() { return out.close(); }).
+    then([&inp,&out]() { 
+      logger().warn("{}: cn--", __func__);
+      return inp.close();
+    }).handle_exception([](auto ep) {
+      logger().error("dddd exception on {}: {}", __func__, ep);
+      return seastar::make_ready_future<>();
+    }).discard_result();
   }));
-  //});
 }
+#endif
 
-#if 0
+#if 1
 seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp, seastar::output_stream<char>& out)
 {
   //  RRR \todo safe read
   //  RRR \todo handle old protocol (see original code) - is still needed?
 
-  seastar::future<> client_fut = inp.read().
+  return inp.read().
     then( [&out, this](auto full_cmd) {
 
       seastar::sstring cmd_line{full_cmd.begin(), full_cmd.end()};
@@ -583,14 +581,14 @@ seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp, s
       return execute_line(cmd_line, out);
 
     }).then([&out]() { return out.flush(); }).
-    then([&out]() { return out.close(); }).
-    then([&inp]() { 
-            logger().debug("{}: cn--", __func__);
-            return inp.close();
+    finally([&out]() { return out.close(); }).
+    then([&inp,&out]() { 
+      logger().warn("{}: cn--", __func__);
+      return inp.close();
+    }).handle_exception([](auto ep) {
+      logger().error("dddd exception on {}: {}", __func__, ep);
+      return seastar::make_ready_future<>();
     }).discard_result();
-
-  //client_fut.wait();
-  return client_fut;
 }
 #endif
 
