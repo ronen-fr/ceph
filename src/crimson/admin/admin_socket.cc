@@ -268,6 +268,7 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag, Adm
    });
 }
 
+#if 0
 seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_command(const std::string_view cmd)
 {
   return seastar::with_shared(servers_tbl_rwlock, [this, cmd]() {
@@ -295,6 +296,65 @@ seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_command(const std:
     }
 
     return AdminSocket::GateAndHook{nullptr, nullptr};
+  });
+}
+#endif
+
+AdminSocket::GateAndHook AdminSocket::locate_command(std::string_view cmd)
+{
+  for (auto& [tag, srv] : servers) {
+    // "lock" the server's control block before searching for the command string
+    try {
+      srv.m_gate.enter();
+    } catch (...) {
+      // probable error: gate is already closed
+      continue;
+    }
+    for (auto& api : srv.m_hooks) {
+      if (api.command == cmd) {
+        logger().info("{}: located {} w/ server {}", __func__, cmd, tag);
+        // note that the gate was entered!
+        return AdminSocket::GateAndHook{&srv.m_gate, &api};
+      }
+    }
+    // not registered by this server. Close this server's gate.
+    srv.m_gate.leave();
+  }
+
+  return AdminSocket::GateAndHook{nullptr, nullptr};
+}
+
+seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_subcmd(std::string match)
+{
+  // catch the lock now!
+  return seastar::async([this, match]() mutable {
+
+    AdminSocket::GateAndHook gh;
+
+    servers_tbl_rwlock.lock_shared().get();
+
+    while (match.size()) {
+      gh = locate_command(match);
+
+      if (gh.api) {
+        // found a match
+        break;
+      }
+
+      // drop right-most word
+      size_t pos = match.rfind(' ');
+      if (pos == std::string::npos) {
+        match.clear();  // we fail
+        break;
+      } else {
+        match.resize(pos);
+      }
+    }
+
+    servers_tbl_rwlock.unlock_shared();
+
+    return gh;
+    //return seastar::make_ready_future<AdminSocket::GateAndHook>(std::move(gh));
   });
 }
 
@@ -332,37 +392,37 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
     return std::nullopt;
   }
   if (format != "json"s && format != "json-pretty"s &&
-      format != "xml"s && format != "xml-pretty"s)
+      format != "xml"s && format != "xml-pretty"s) {
     format = "json-pretty"s;
-
-  // try to match the longest set of strings. Failing - remove the tail part and retry.
-  AdminSocket::GateAndHook gh{nullptr, nullptr};
-  while (match.size()) {
-    try {
-      std::cerr << "before get0" << std::endl;
-      seastar::future<AdminSocket::GateAndHook> future_gh = locate_command(match);
-      future_gh.wait();
-      // future_gh is available, but maybe an exceptional one
-      if (!future_gh.failed()) {
-        gh = future_gh.get0();
-        if (gh.api)
-          break;
-      }
-
-    } catch ( ... ) {
-      std::cerr << "failed get0" << std::endl;
-       // nothing to do
-    }
-
-    // drop right-most word
-    size_t pos = match.rfind(' ');
-    if (pos == std::string::npos) {
-      match.clear();  // we fail
-      break;
-    } else {
-      match.resize(pos);
-    }
   }
+
+  seastar::future<AdminSocket::GateAndHook> fgh = locate_subcmd(match);
+
+  if (!fgh.available()) {
+    std::cerr << __func__ << " should have been ready" << std::endl;
+    return std::nullopt;
+  } else if (fgh.failed()) {
+    std::cerr << __func__ << " failure" << std::endl;
+    return std::nullopt;
+  } else {
+    std::cerr << "b4 locate get" << std::endl;
+    AdminSocket::GateAndHook gh;
+    try {
+      gh = fgh.get0();
+      std::cerr << "locate  get" << std::endl;
+    } catch (... ) {
+      return std::nullopt;
+    }
+    return parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq};
+  };
+}
+
+
+#if 0
+  // try to match the longest set of strings. Failing - remove the tail part and retry.
+  std::cerr << "b4 locate" << std::endl;
+  AdminSocket::GateAndHook gh = locate_subcmd(match); //.get0();
+  std::cerr << "af locate" << std::endl;
 
   if (!gh.api) {
     logger().error("{}: unknown command: {}", __func__, command_text);
@@ -370,7 +430,8 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   }
 
   return parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq};
-}
+
+#endif
 
 bool AdminSocket::validate_command(const parsed_command_t& parsed,
                                    const std::string& command_text,

@@ -257,11 +257,10 @@ bool validate_command(const parsed_command_t& parsed,
   /*!
     locate_command() will search all servers' control blocks. If found, the
     relevant gate is entered. Returns the AsokServiceDef, and the "activated" gate.
-
-    Note that we return a future, as locate_command() may have to wait for the global
-    rw-lock on the servers table.
    */
-  seastar::future<AdminSocket::GateAndHook> locate_command(std::string_view cmd);
+  AdminSocket::GateAndHook locate_command(std::string_view cmd);
+
+  seastar::future<AdminSocket::GateAndHook> locate_subcmd(std::string match);
 
 public:
   /*!
