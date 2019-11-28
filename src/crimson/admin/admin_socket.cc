@@ -353,95 +353,18 @@ seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_subcmd(std::string
 
     servers_tbl_rwlock.unlock_shared();
 
-    //return seastar::make_ready_future<AdminSocket::GateAndHook>(gh);
     return gh;
-    //return seastar::make_ready_future<AdminSocket::GateAndHook>(std::move(gh));
   });
 }
 
-/*!
-    the incoming command text, which is in JSON or XML, is parsed down
-    to its separate op-codes and arguments. The hook registered to handle the
-    specific command is located.
-  */
-std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::string command_text)
-{
-  cmdmap_t cmdmap;
-  vector<string> cmdvec;
-  stringstream errss;
-
-  //  note that cmdmap_from_json() may throw on syntax issues
-  cmdvec.push_back(command_text); // as cmdmap_from_json() likes the input in this format
-  try {
-    if (!cmdmap_from_json(cmdvec, &cmdmap, errss)) {
-      logger().error("{}: incoming command error: {}", __func__, errss.str()); // RRR verify errrss
-      return std::nullopt;
-    }
-  } catch ( ... ) {
-    logger().error("{}: incoming command syntax: {}", __func__, command_text);
-    return std::nullopt;
-  }
-
-  string format;
-  string match;
-  std::size_t full_command_seq;
-  try {
-    cmd_getval(m_cct, cmdmap, "format", format);
-    cmd_getval(m_cct, cmdmap, "prefix", match);
-    full_command_seq = match.length(); // the full sequence, before we start chipping away the end
-  } catch (const bad_cmd_get& e) {
-    return std::nullopt;
-  }
-
-  if (!match.length())
-    return std::nullopt;
-
-  if (format != "json"s && format != "json-pretty"s &&
-      format != "xml"s && format != "xml-pretty"s) {
-    format = "json-pretty"s;
-  }
-
-  seastar::future<AdminSocket::GateAndHook> fgh = locate_subcmd(match);
-  AdminSocket::GateAndHook gh;
-  if (!fgh.available()) {
-    // I do not understand how this happens, but it does (from time to time).
-    // will try to handle by redoing 
-    std::cerr << __func__ << " XXXXXXXXXXXXXXx should have been ready" << std::endl;
-
-    //fgh.wait(); // throws
-    fgh = locate_subcmd(match);
-  }
-
-  if (!fgh.available()) {
-    // I do not understand how this happens, but it does (from time to time).
-    // will try to handle by redoing 
-    std::cerr << __func__ << " XXXXXXXXXXXXXXXXXXXXX  should have been ready" << std::endl;
-    return std::nullopt;
-  } else if (fgh.failed()) {
-    std::cerr << __func__ << " failure" << std::endl;
-    return std::nullopt;
-  } else {
-    std::cerr << "b4 locate get" << std::endl;
-    try {
-      gh = fgh.get0();
-      std::cerr << "locate  get" << std::endl;
-    } catch (... ) {
-      return std::nullopt;
-    }
-
-    if (gh.api)
-      return parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq};
-    else
-      // no hook found for this command string
-      return std::nullopt;
-  };
-}
-
-//using Maybe_parsed =  std::optional<AdminSocket::parsed_command_t>;
-//using Future_parsed = seastar::future<Maybe_parsed>;
-
 seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse_cmd_fut(const std::string command_text)
 {
+  /*
+    preliminaries:
+      - create the formatter specified by the command_text parameters
+      - locate the "op-code" string (the 'prefix' segment)
+      - prepare for command parameters extraction vi cmdmap_t
+  */
   cmdmap_t cmdmap;
   vector<string> cmdvec;
   stringstream errss;
@@ -479,8 +402,11 @@ seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse
     format = "json-pretty"s;
   }
 
+  /*
+      match the incoming op-code to one of the registered APIs (and lock the block containing that API from
+          de-registration)
+  */
   return locate_subcmd(match).then_wrapped([this, &match, &cmdmap, format, full_command_seq](auto&& fgh) {
-
 
     if (fgh.failed()) {
       return seastar::make_ready_future<Maybe_parsed>(Maybe_parsed{std::nullopt});
@@ -505,7 +431,7 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
   if (parsed.m_cmd_seq_len == parsed.m_cmd.length())
     return true;
 
-  logger().warn("{}: in:{} against:{}", __func__, command_text, parsed.m_api->cmddesc);
+  logger().warn("{}: validating {} against:{}", __func__, command_text, parsed.m_api->cmddesc);
 
   stringstream os;
   try {
@@ -517,46 +443,22 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
     logger().error("{}: validation failure ({} : {}) {}", __func__, command_text, parsed.m_cmd, e.what());
   }
 
-  logger().error("{}: (incoming:{}) {}", __func__, command_text, os.str());
+  logger().error("{}: validation failure (incoming:{}) {}", __func__, command_text, os.str());
   out.append(os);
-  return false;
-}
-
-bool AdminSocket::validate_command(const parsed_command_t& parsed,
-                                   const std::string& command_text,
-                                   std::stringstream& outs) const
-{
-  // did we receive any arguments apart from the command word?
-  logger().warn("ct:{} {} origl:{} pmc:{} pmcl:{}", command_text, command_text.length(), parsed.m_cmd_seq_len, parsed.m_cmd, parsed.m_cmd.length());
-
-  if (parsed.m_cmd_seq_len == parsed.m_cmd.length())
-    return true;
-
-  logger().warn("{}: in:{} against:{}", __func__, command_text, parsed.m_api->cmddesc);
-
-  try {
-    // validate throws on some syntax errors
-    if (validate_cmd(m_cct, parsed.m_api->cmddesc, parsed.m_parameters, outs)) {
-      return true;
-    }
-  } catch( std::exception& e ) {
-    logger().error("{}: validation failure ({} : {}) {}", __func__, command_text, parsed.m_cmd, e.what());
-  }
-
-  logger().error("{}: (incoming:{}) {}", __func__, command_text, outs.str());
   return false;
 }
 
 seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
 {
   return parse_cmd_fut(cmdline).then([&out, cmdline, this](std::optional<AdminSocket::parsed_command_t> parsed) {
-  
+
     if (parsed.has_value()) {
+
       return seastar::do_with(std::move(parsed), ::ceph::bufferlist(),
                             [&out, cmdline, this, gatep = parsed->m_gate] (auto& parsed, auto& out_buf) {
-  
-      ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
-  
+
+      //ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
+
       return ((parsed->m_api && validate_command(*parsed, cmdline, out_buf)) ?
 
               parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf) :
@@ -634,6 +536,7 @@ seastar::future<> AdminSocket::init(const std::string& path)
   //std::cout << "AdminSocket::init() w " << path << " owner: " << (uint64_t)(this) <<
   //      " -> " << (uint64_t)(m_cct) << std::endl;
 
+  // in-line unit-testing:
   std::ignore = seastar::async([this]() {
      asok_unit_testing::utest_run_1(this).wait();
   });
@@ -914,10 +817,10 @@ struct test_reg_st {
     return seastar::sleep(dly).
       then([this]() {
 
-        //return with_gate(g, [this]() {
-          ceph::get_logger(ceph_subsys_osd).warn("{}", (uint64_t)(tag));
+        return with_gate(g, [this]() {
+          //ceph::get_logger(ceph_subsys_osd).warn("{}", (uint64_t)(tag));
           return asok->unregister_server(tag, std::move(current_reg));
-        //});
+        });
       });
   }
 
@@ -965,6 +868,7 @@ struct test_lookup_st {
     });
   }
 
+  #if 0
   void do_sleep(milliseconds m) {
     seastar::future<> f = seastar::sleep(m);
     f.wait();
@@ -980,7 +884,7 @@ struct test_lookup_st {
 
     bool fnd{false};
 
-    if (1) for (const auto& hk : *asok) {
+    for (const auto& hk : *asok) {
 
       if (hk->command == cmd) {
         fnd = true;
@@ -1021,6 +925,7 @@ struct test_lookup_st {
         });
       }); //.get();
   }
+  #endif
 
   seastar::future<> loop() {
     std::uniform_int_distribution<int> dist(80, 120);

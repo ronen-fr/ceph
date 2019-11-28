@@ -184,9 +184,9 @@ private:
 
   seastar::future<> execute_line(std::string cmdline, seastar::output_stream<char>& out);
 
-  bool validate_command(const parsed_command_t& parsed,
-                        const std::string& command_text,
-                        std::stringstream& outs) const;
+  //bool validate_command(const parsed_command_t& parsed,
+  //                      const std::string& command_text,
+  //                      std::stringstream& outs) const;
 
   bool validate_command(const parsed_command_t& parsed,
                         const std::string& command_text,
@@ -227,7 +227,7 @@ private:
     and into its arguments.
     Locate the command string in the registered blocks.
   */
-  std::optional<parsed_command_t> parse_cmd(const std::string command_text);
+  //std::optional<parsed_command_t> parse_cmd(const std::string command_text);
   seastar::future<std::optional<AdminSocket::parsed_command_t>> parse_cmd_fut(const std::string command_text);
 
   struct server_block {

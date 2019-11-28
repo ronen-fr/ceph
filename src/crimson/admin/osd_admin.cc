@@ -17,6 +17,7 @@
 #include <atomic>
 #include <boost/algorithm/string.hpp>
 #include "seastar/core/future.hh"
+#include "seastar/core/thread.hh"
 #include "crimson/admin/admin_socket.h"
 #include "crimson/admin/osd_admin.h"
 #include "crimson/osd/osd.h"
@@ -36,7 +37,6 @@
 using ceph::bufferlist;
 using ceph::common::local_conf;
 using ceph::osd::OSD;
-//using AdminSocket::hook_server_tag;
 
 namespace {
   seastar::logger& logger() {
@@ -90,7 +90,7 @@ class OsdAdminImp {
       f->dump_stream("cluster_fsid") << m_osd_admin.osd_superblock().cluster_fsid;
       f->dump_stream("osd_fsid") << m_osd_admin.osd_superblock().osd_fsid;
       f->dump_unsigned("whoami", m_osd_admin.osd_superblock().whoami);
-      // \todo f->dump_string("state", get_state_name(get_state()));
+      // \todo f->dump_string("state", get_state_name(get_state()));       // RRR where should I look for the data?
       f->dump_unsigned("oldest_map", m_osd_admin.osd_superblock().oldest_map);
       f->dump_unsigned("newest_map", m_osd_admin.osd_superblock().newest_map);
       // \todo f->dump_unsigned("num_pgs", num_pgs);  -> where to find the data?
@@ -157,9 +157,8 @@ public:
 
   ~OsdAdminImp() {
     // our registration with the admin_socket server was already removed by
-    // 'OsdAdmin' - our 'pimpl' owner
-
-    //unregister_admin_commands();
+    // 'OsdAdmin' - our 'pimpl' owner. Thus no need for:
+    //   unregister_admin_commands();
   }
 
   void register_admin_commands() {  // should probably be a future<void>
@@ -170,7 +169,11 @@ public:
       , AsokServiceDef{"fthrow",      "fthrow",        &osd_test_throw_hook,  ""}  // dev tool
     };
 
-     m_socket_server = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
+    const std::vector<AsokServiceDef>* const my_apis = &hooks_tbl;
+
+    std::ignore = seastar::async([this, my_apis]() {
+                                   m_socket_server =  m_cct->get_admin_socket()->register_server(AdminSocket::hook_server_tag{this}, *my_apis).get0();
+                                 });
   }
 
   seastar::future<> unregister_admin_commands()
@@ -204,12 +207,12 @@ OsdAdmin::~OsdAdmin()
 {
   // relinquish control over the actual implementation object, as that one should only be
   // destructed after the relevant seastar::gate closes
-  std::ignore = seastar::do_with(std::move(m_imp), [](auto& imp) {
-    // test using sleep()
-    return seastar::sleep(1s).
+  std::ignore = seastar::do_with(std::move(m_imp), [](auto&& imp) {
+    // test using sleep(). Change from 1ms to 1s:
+    return seastar::sleep(1ms).
     then([imp_ptr = imp.get()]() {
        return imp_ptr->unregister_admin_commands();
-    }).discard_result();
+    });
   });
 }
 
