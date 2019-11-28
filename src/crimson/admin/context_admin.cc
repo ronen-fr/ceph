@@ -27,6 +27,7 @@
 #include <atomic>
 #include <boost/algorithm/string.hpp>
 #include "seastar/core/sleep.hh"
+#include "seastar/core/thread.hh"
 #include "common/config.h"
 #include "common/errno.h"
 #include "common/Graylog.h"
@@ -252,7 +253,7 @@ public:
   }
 
   void register_admin_commands() {
-    logger().warn("{}: {} {} (size:xx)", __func__, (int)getpid(), (uint64_t)(this));
+    logger().warn("{}: {} {} {}", __func__, "context-admin", (int)getpid(), (uint64_t)(this));
 
     static const std::vector<AsokServiceDef> hooks_tbl{
         AsokServiceDef{"config show",    "config show",  &config_show_hook,      "dump current config settings"}
@@ -265,10 +266,11 @@ public:
       , AsokServiceDef{"fthrowCtx",      "fthrowCtx",    &ctx_test_throw_hook,   ""}    // dev throw
     };
 
-    m_socket_server = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
-    //logger().warn("{}: {} {} (size:{})", __func__, (int)getpid(), (uint64_t)(this), servers.size());
+    //m_socket_server = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
 
-    //admin_socket->register_command("config unset", "config unset name=var,type=CephString",  _admin_hook, "config unset <field>: unset a config variable");
+    std::ignore = seastar::async([this, hooks_tbl]() {
+                                   m_socket_server =  m_cct->get_admin_socket()->register_server(AdminSocket::hook_server_tag{this}, hooks_tbl).get0();
+                                 });
   }
 
   seastar::future<> unregister_admin_commands() {
@@ -279,13 +281,13 @@ public:
                 (uint64_t)(m_cct->get_admin_socket()));
 
     if (!m_socket_server) {
-       logger().warn("{} m_s", __func__);
+      logger().warn("{} no socket server", __func__);
       return seastar::now();
     }
 
     auto admin_if = m_cct->get_admin_socket();
     if (!admin_if) {
-      logger().warn("{}:Z no admin_if", __func__);
+      logger().warn("{}:no admin_if", __func__);
       return seastar::now();
     }
 
@@ -293,9 +295,9 @@ public:
 
     //  we are holding a shared-ownership of the admin socket server, just so that we
     //  can keep it alive until after our de-registration.
-    //AdminSocketRef srv{std::move(*m_socket_server)};
-    AdminSocketRef srv = *m_socket_server;
-    m_socket_server = std::nullopt; // should be redundant
+    AdminSocketRef srv{std::move(*m_socket_server)};
+    //AdminSocketRef srv = *m_socket_server;
+    //m_socket_server = std::nullopt; // should be redundant
 
     // note that unregister_server() closes a seastar::gate (i.e. - it blocks)
     logger().warn("cad imp unreg {}", (uint64_t)(&(*srv)));
@@ -323,18 +325,15 @@ ContextConfigAdmin::~ContextConfigAdmin()
 
   // relinquish control over the actual implementation object, as that one should only be
   // destructed after the relevant seastar::gate closes
-  //std::ignore = seastar::do_with(std::move(m_imp), [](auto& imp) {
-    // test using sleep()
-    seastar::sleep(1s).
-    //then([imp_ptr = imp.get()]() {
-    then([imp_ptr = std::move(m_imp)]() {
-       logger().warn("{} step 2: {}", __func__, (int)getpid());
-       if (!imp_ptr) {// RRR
-         logger().warn("{} step s: {}", __func__, (int)getpid());
-         return seastar::now();
-       }
-       //assert(imp_ptr);
-       return imp_ptr->unregister_admin_commands();
-    }).discard_result();
-  //});
+
+  logger().warn("{} step 2: {}", __func__, (int)getpid());
+
+  // test using sleep()
+  //std::ignore = seastar::sleep(1s).
+  std::ignore = ([imp_ptr = std::move(m_imp)]() {
+     if (!imp_ptr) {
+       return seastar::now();
+     }
+     return imp_ptr->unregister_admin_commands();
+  })();
 }

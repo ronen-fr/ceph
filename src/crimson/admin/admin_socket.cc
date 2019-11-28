@@ -137,7 +137,7 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
   logger().info("{} cmd={} out section={}", __func__, command, section); 
 
   bool bres{false};
-  /*!
+  /*
       call the command-specific hook.
       A note re error handling:
         - will be modified to use the new 'erroretor'. For now:
@@ -174,14 +174,14 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
 AdminSocket::AdminSocket(CephContext *cct)
   : m_cct(cct)
 {
-  std::cout << "######### a new AdminSocket " << (uint64_t)(this) <<
-        " -> " << (uint64_t)(m_cct) << std::endl;
+  //std::cout << "######### a new AdminSocket " << (uint64_t)(this) <<
+  //      " -> " << (uint64_t)(m_cct) << std::endl;
 }
 
 AdminSocket::~AdminSocket()
 {
-  std::cout << "######### XXXXX AdminSocket " << (uint64_t)(this) << std::endl;
-  logger().warn("{}: {} {}", __func__, (int)getpid(), (uint64_t)(this));
+  //std::cout << "######### XXXXX AdminSocket " << (uint64_t)(this) << std::endl;
+  //logger().warn("{}: {} {}", __func__, (int)getpid(), (uint64_t)(this));
 }
 
 /*!
@@ -437,8 +437,8 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   };
 }
 
-using Maybe_parsed =  std::optional<AdminSocket::parsed_command_t>;
-using Future_parsed = seastar::future<Maybe_parsed>;
+//using Maybe_parsed =  std::optional<AdminSocket::parsed_command_t>;
+//using Future_parsed = seastar::future<Maybe_parsed>;
 
 seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse_cmd_fut(const std::string command_text)
 {
@@ -509,7 +509,7 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
 
   stringstream os;
   try {
-    // validate throws on some syntax errors
+    // validate_cmd throws on some syntax errors
     if (validate_cmd(m_cct, parsed.m_api->cmddesc, parsed.m_parameters, os)) {
       return true;
     }
@@ -1024,134 +1024,52 @@ struct test_lookup_st {
 
   seastar::future<> loop() {
     std::uniform_int_distribution<int> dist(80, 120);
+    ceph::get_logger(ceph_subsys_osd).warn("utest-lookup {} starting", cmd);
 
     return seastar::keep_doing([this, dist]() mutable {
       milliseconds act_period = milliseconds{period.count() * dist(generator) / 100};
       milliseconds ins_period = milliseconds{delaying_inside.count() * dist(generator) / 100};
 
-      return with_gate(g, [this, act_period, ins_period]()  {
+      return seastar::futurize_apply( [this, act_period, ins_period]() {
+        return with_gate(g, [this, act_period, ins_period]()  {
 
-        //
-        //  look for the command, waste some time, then free the server-block
-        //
-        return seastar::async([this, act_period, ins_period]() mutable {
-
-          bool fnd{false};
-
-          for (const auto& hk : *asok) {
-
-            if (hk->command == cmd) {
-              fnd = true;
-              // wait here for a while, with the iterator still holding the gate
-              seastar::sleep(ins_period).get();
-              break;
+          //
+          //  look for the command, waste some time, then free the server-block
+          //
+          return seastar::async([this, act_period, ins_period]() mutable {
+  
+            bool fnd{false};
+  
+            for (const auto& hk : *asok) {
+  
+              if (hk->command == cmd) {
+                fnd = true;
+                // wait here for a while, with the iterator still holding the gate
+                seastar::sleep(ins_period).get();
+                break;
+              }
             }
-          }
-          if (!fnd) {
-            std::cerr << __func__ << "(): " << cmd << " not found\n";
-          }
-          seastar::sleep(act_period).get();
+            if (!fnd) {
+              std::cerr << __func__ << "(): " << cmd << " not found\n";
+            }
+            seastar::sleep(act_period).get();
+          });
         });
-      }).handle_exception([](auto e) {
-        return seastar::now();
       }).finally([this] {
-        std::cerr << __func__ << "(): " << cmd << " loop\n";
+        //std::cerr << __func__ << "(): " << cmd << " loop\n";
         return seastar::now();
       });
-    });
-  }
-
-
-  #if 0
-    ceph::get_logger(ceph_subsys_osd).warn("lkup {} starting", period.count()/1000.0);
-
-    return seastar::keep_doing([this, act_period] {
-
-      return seastar::sleep(act_period).
-        then([this, act_period]() {
-          //return futurize_apply([this, act_period]() {
-             delayed_lookup_2(act_period, delaying_inside).get();
-             return seastar::make_ready_future();
-          //});
-        });
-    }).then_wrapped([this](auto &r) -> seastar::future<> {
-      return seastar::make_ready_future();
-    });
-
-  }
-  #endif
-
-#if 0
-  seastar::future<> loop() {
-    std::uniform_int_distribution<int> dist(80, 120);
-    auto act_period = period; //milliseconds{period.count() * dist(generator) / 100};
-
-    ceph::get_logger(ceph_subsys_osd).warn("lkup {} starting", period.count()/1000.0);
-
-    return seastar::keep_doing([this, act_period]() {
-
-      auto ft =  [this, act_period]() -> seastar::future<> {
-                   return seastar::sleep(act_period).
-                   then([this, act_period]() {
-                     return delayed_lookup(act_period, delaying_inside);
-                   })
-                 ;};
-      
-
-      //return ft().wait();
-      try {
-        ft().wait();
-        return seastar::now();
-      } catch( std::exception& e ) {
-        return seastar::make_exception_future<>(e);
-      }
-
-
-      //return seastar::now();
-
-    }).handle_exception([this](std::exception_ptr eptr) {
-      return seastar::now();
-    }).finally([this]() {
-      ceph::get_logger(ceph_subsys_osd).warn("lkup {} {} done", period.count()/100.0, cmd);
+    }).handle_exception([this](auto e) {
+      // gate is closed
+      ceph::get_logger(ceph_subsys_osd).warn("utest-lookup {} done", cmd);
       return seastar::now();
     });
   }
-  #endif
-
-#if 0
-  seastar::future<> loop() {
-    std::uniform_int_distribution<int> dist(80, 120);
-    auto act_period = milliseconds{period.count() * dist(generator) / 100};
-
-    return seastar::repeat([this, act_period]() {
-
-      return with_gate(g, [this, act_period]() -> seastar::stop_iteration {
-
-        //
-        //  look for the command, waste some time, then free the server-block
-        //
-
-        for (const auto& hk : *asok) {
-
-          if (hk->command == cmd) {
-            //logger().info("{}: utest located {}", __func__, cmd);
-            seastar::sleep(act_period).get0();
-            break;
-          }
-        }
-        seastar::sleep(act_period).get0();
-	return seastar::stop_iteration::no;
-      });
-    });
-    return seastar::now();
-  }
-  #endif
-
 };
 
 seastar::future<> utest_run_1(AdminSocket* asok)
 {
-  const seconds run_time{2};
+  const seconds run_time{3};
   seastar::gate gt;
  
   return seastar::do_with(std::move(gt), [run_time, asok](auto& gt) {
@@ -1159,15 +1077,15 @@ seastar::future<> utest_run_1(AdminSocket* asok)
     test_reg_st* ta1 = new test_reg_st{asok, AdminSocket::hook_server_tag{(void*)(0x17)}, 200ms, gt, test_hooks  };
     test_reg_st ta2{asok, AdminSocket::hook_server_tag{(void*)(0x27)}, 150ms, gt, test_hooks10};
 
-    //test_lookup_st* tlk1 = new test_lookup_st{asok, "0",  255ms, 95ms, gt};
-    //test_lookup_st tlk2{asok, "16", 210ms, 90ms, gt};
+    test_lookup_st* tlk1 = new test_lookup_st{asok, "0",  55ms, 95ms, gt};
+    test_lookup_st tlk2{asok, "help", 210ms, 90ms, gt};
 
     return seastar::sleep(run_time).
      then([&gt]() { return gt.close();}).
      then([&gt](){ return seastar::sleep(2000ms); }).
-     then([ta1, &ta2/*, &tlk1*/]() { 
+     then([ta1, &ta2, tlk1, &tlk2]() { 
        delete ta1;
-       //delete tlk1;
+       delete tlk1;
        return seastar::now();
      });
   }).then_wrapped([](auto&& x) {

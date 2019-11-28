@@ -167,6 +167,10 @@ public:
 public: // just for todaye
 
   class parsed_command_t;
+  // and two shorthands:
+  using Maybe_parsed =  std::optional<AdminSocket::parsed_command_t>;
+  using Future_parsed = seastar::future<Maybe_parsed>;
+
 
 private:
   /*!

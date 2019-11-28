@@ -16,29 +16,18 @@
 #include <iostream>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
-//#include "seastar/net/api.hh"
 #include "seastar/core/future.hh"
-
-
 #include "crimson/admin/admin_socket.h"
 #include "crimson/admin/osd_admin.h"
 #include "crimson/osd/osd.h"
 #include "crimson/osd/exceptions.h"
 #include "common/config.h"
-//#include "common/errno.h"
-//#include "common/Graylog.h"
-
 #include "crimson/common/log.h"
-//#include "common/valgrind.h"
-//#include "include/spinlock.h"
-
-//using ceph::HeartbeatMap;
 
 // for CINIT_FLAGS
 //#include "common/common_init.h"
 
 #include <iostream>
-//#include <pthread.h>
 
 #ifndef WITH_SEASTAR
 #error "this is a Crimson-specific implementation of some OSD APIs"
