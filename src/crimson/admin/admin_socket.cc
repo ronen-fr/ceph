@@ -437,7 +437,8 @@ std::optional<AdminSocket::parsed_command_t> AdminSocket::parse_cmd(const std::s
   };
 }
 
-using Maybe_parsed = std::optional<AdminSocket::parsed_command_t>;
+using Maybe_parsed =  std::optional<AdminSocket::parsed_command_t>;
+using Future_parsed = seastar::future<Maybe_parsed>;
 
 seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse_cmd_fut(const std::string command_text)
 {
@@ -468,8 +469,10 @@ seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse
     return seastar::make_ready_future<Maybe_parsed>(Maybe_parsed{std::nullopt});
   }
 
-  if (!match.length())
+  if (!match.length()) {
+    // no command identified
     return seastar::make_ready_future<Maybe_parsed>(Maybe_parsed{std::nullopt});
+  }
 
   if (format != "json"s && format != "json-pretty"s &&
       format != "xml"s && format != "xml-pretty"s) {
@@ -491,57 +494,6 @@ seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse
     }
   });
 }
-#if 0
-  seastar::future<AdminSocket::GateAndHook> fgh = locate_subcmd(match);
-  AdminSocket::GateAndHook gh;
-  if (!fgh.available()) {
-    // I do not understand how this happens, but it does (from time to time).
-    // will try to handle by redoing 
-    std::cerr << __func__ << " XXXXXXXXXXXXXXx should have been ready" << std::endl;
-
-    //fgh.wait(); // throws
-    fgh = locate_subcmd(match);
-  }
-
-  if (!fgh.available()) {
-    // I do not understand how this happens, but it does (from time to time).
-    // will try to handle by redoing 
-    std::cerr << __func__ << " XXXXXXXXXXXXXXXXXXXXX  should have been ready" << std::endl;
-    return std::nullopt;
-  } else if (fgh.failed()) {
-    std::cerr << __func__ << " failure" << std::endl;
-    return std::nullopt;
-  } else {
-    std::cerr << "b4 locate get" << std::endl;
-    try {
-      gh = fgh.get0();
-      std::cerr << "locate  get" << std::endl;
-    } catch (... ) {
-      return std::nullopt;
-    }
-
-    if (gh.api)
-      return parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq};
-    else
-      // no hook found for this command string
-      return std::nullopt;
-  };
-}
-#endif
-#if 0
-  // try to match the longest set of strings. Failing - remove the tail part and retry.
-  std::cerr << "b4 locate" << std::endl;
-  AdminSocket::GateAndHook gh = locate_subcmd(match); //.get0();
-  std::cerr << "af locate" << std::endl;
-
-  if (!gh.api) {
-    logger().error("{}: unknown command: {}", __func__, command_text);
-    return std::nullopt;
-  }
-
-  return parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq};
-
-#endif
 
 bool AdminSocket::validate_command(const parsed_command_t& parsed,
                                    const std::string& command_text,
@@ -597,59 +549,59 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
 
 seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
 {
-  //  find the longest word-sequence for which we have a registered hook to handle
-  //auto parsed = parse_cmd(cmdline);
-  //if (!parsed.has_value()) {
-  //  logger().error("{}: no command in ({})", __func__, cmdline);
-  //  return out.write("command syntax error");
-  //}
-  //std::cerr << "eline " << cmdline << std::endl;
   return parse_cmd_fut(cmdline).then([&out, cmdline, this](std::optional<AdminSocket::parsed_command_t> parsed) {
   
     if (parsed.has_value()) {
-    return seastar::do_with(std::move(parsed), ::ceph::bufferlist(), std::stringstream(),
-                          [&out, cmdline, this, gatep = parsed->m_gate] (auto& parsed, auto& out_buf, auto&& out_stream) {
+      return seastar::do_with(std::move(parsed), ::ceph::bufferlist(),
+                            [&out, cmdline, this, gatep = parsed->m_gate] (auto& parsed, auto& out_buf) {
+  
+      ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
+  
+      return ((parsed->m_api && validate_command(*parsed, cmdline, out_buf)) ?
 
-    ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
-
-    return ((parsed->m_api && validate_command(*parsed, cmdline, out_stream)) ?
-              //  (dbg_gate_exit = true), // marking the fact that we must close this gate
               parsed->m_hook->call(parsed->m_cmd, parsed->m_parameters, (*parsed).m_format, out_buf) :
               seastar::make_ready_future<bool>(false) /* failed args syntax validation */
-      ).
-      then_wrapped([&out, &out_buf, gatep, &out_stream](auto&& fut) -> seastar::future<bool> {
-        //std::cerr << "b4 gate "  << std::endl;
-        //std::cerr << "b4 gate g "  << gatep->get_count() << std::endl;
-        //std::cerr << "b4 gate "  << out_stream.str() << std::endl;
-        gatep->leave();
-        //std::cerr << "af gate LL "  << out_buf.length()  << std::endl;
+        ).
+        then_wrapped([&out, &out_buf, gatep](auto&& fut) -> seastar::future<bool> {
 
-        if (fut.failed()) {
-          // add 'failed' to the contents of out_buf? not what happens in the old code
-          std::cerr << "elinef "  << out_stream.str() << std::endl;
+          gatep->leave();
+  
+          if (fut.failed()) {
+            // add 'failed' to the contents of out_buf? not what happens in the old code
+            return seastar::make_ready_future<bool>(false);
+          } else {
+            return std::move(fut);
+          }
+        }).then([&out, &out_buf, gatep](auto call_res) {
 
-          return seastar::make_ready_future<bool>(false);
-        } else {
-          return std::move(fut);
-        }
-      }).
-      then([&out, &out_buf, gatep, &out_stream](auto call_res) {
-        string outbuf_cont = out_buf.to_str();
-        uint32_t response_length = htonl(outbuf_cont.length());
-        logger().info("asok response length: {}", outbuf_cont.length());
-        std::cerr << "repln " <<  outbuf_cont.length() << std::endl;
+          string outbuf_cont = out_buf.to_str();
+          uint32_t response_length = htonl(outbuf_cont.length());
+          logger().info("asok response length: {}", outbuf_cont.length());
 
-        return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, outbuf_cont]() {
-          std::cerr << "fin " <<  outbuf_cont.length() << std::endl;
-          if (outbuf_cont.empty())
-            return out.write("xxxx");
-          else
-            return out.write(outbuf_cont.c_str());
+          return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, outbuf_cont]() {
+            std::cerr << "fin " <<  outbuf_cont.length() << std::endl;
+            if (outbuf_cont.empty())
+              return out.write("xxxx");
+            else
+              return out.write(outbuf_cont.c_str());
+          });
         });
       });
-    });
+
     } else {
-      return seastar::now();
+
+      // no command op-code identified
+      std::string no_opcode = "error: no command identified in incoming message ("s + cmdline + ")"s;
+      uint32_t response_length = htonl(no_opcode.length());
+      logger().info("asok f len: {}", no_opcode.length());
+
+      return out.write((char*)&response_length, sizeof(uint32_t)).
+        then([&out, no_opcode, response_length]() {
+          if (response_length)
+            return out.write(no_opcode.c_str());
+          else
+            return seastar::now();
+        });
     }
   });
 }
@@ -997,6 +949,8 @@ struct test_lookup_st {
   gate&                              g;
   std::random_device                 rd;
   std::default_random_engine         generator{rd()};
+  std::uniform_int_distribution<int> dist{80, 120};
+
 
   test_lookup_st(AdminSocket* ask, string cmd, milliseconds period, milliseconds delaying_inside, gate& gt) :
     asok{ask},
@@ -1070,9 +1024,44 @@ struct test_lookup_st {
 
   seastar::future<> loop() {
     std::uniform_int_distribution<int> dist(80, 120);
-    auto act_period = period; //milliseconds{period.count() * dist(generator) / 100};
-    return seastar::make_ready_future();
+
+    return seastar::keep_doing([this, dist]() mutable {
+      milliseconds act_period = milliseconds{period.count() * dist(generator) / 100};
+      milliseconds ins_period = milliseconds{delaying_inside.count() * dist(generator) / 100};
+
+      return with_gate(g, [this, act_period, ins_period]()  {
+
+        //
+        //  look for the command, waste some time, then free the server-block
+        //
+        return seastar::async([this, act_period, ins_period]() mutable {
+
+          bool fnd{false};
+
+          for (const auto& hk : *asok) {
+
+            if (hk->command == cmd) {
+              fnd = true;
+              // wait here for a while, with the iterator still holding the gate
+              seastar::sleep(ins_period).get();
+              break;
+            }
+          }
+          if (!fnd) {
+            std::cerr << __func__ << "(): " << cmd << " not found\n";
+          }
+          seastar::sleep(act_period).get();
+        });
+      }).handle_exception([](auto e) {
+        return seastar::now();
+      }).finally([this] {
+        std::cerr << __func__ << "(): " << cmd << " loop\n";
+        return seastar::now();
+      });
+    });
   }
+
+
   #if 0
     ceph::get_logger(ceph_subsys_osd).warn("lkup {} starting", period.count()/1000.0);
 
