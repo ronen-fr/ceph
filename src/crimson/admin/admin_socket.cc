@@ -327,6 +327,38 @@ AdminSocket::GateAndHook AdminSocket::locate_command(std::string_view cmd)
 seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_subcmd(std::string match)
 {
   // catch the lock now!
+  //return seastar::async([this, match]() mutable {
+
+  return seastar::with_shared(servers_tbl_rwlock, [this, match]() mutable {
+
+    AdminSocket::GateAndHook gh;
+
+    while (match.size()) {
+      gh = locate_command(match);
+
+      if (gh.api) {
+        // found a match
+        break;
+      }
+
+      // drop right-most word
+      size_t pos = match.rfind(' ');
+      if (pos == std::string::npos) {
+        match.clear();  // we fail
+        break;
+      } else {
+        match.resize(pos);
+      }
+    }
+
+    return gh;
+  });
+}
+
+#if 0
+seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_subcmd(std::string match)
+{
+  // catch the lock now!
   return seastar::async([this, match]() mutable {
 
     AdminSocket::GateAndHook gh;
@@ -356,6 +388,7 @@ seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_subcmd(std::string
     return gh;
   });
 }
+#endif
 
 seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse_cmd_fut(const std::string command_text)
 {
@@ -426,14 +459,13 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
                                    ceph::buffer::list& out) const
 {
   // did we receive any arguments apart from the command word?
-  logger().warn("ct:{} {} origl:{} pmc:{} pmcl:{}", command_text, command_text.length(), parsed.m_cmd_seq_len, parsed.m_cmd, parsed.m_cmd.length());
-
+  //logger().debug("ct:{} {} origl:{} pmc:{} pmcl:{}", command_text, command_text.length(), parsed.m_cmd_seq_len, parsed.m_cmd, parsed.m_cmd.length());
   if (parsed.m_cmd_seq_len == parsed.m_cmd.length())
     return true;
 
-  logger().warn("{}: validating {} against:{}", __func__, command_text, parsed.m_api->cmddesc);
+  logger().debug("{}: validating {} against:{}", __func__, command_text, parsed.m_api->cmddesc);
 
-  stringstream os;
+  stringstream os; // for possible validation error messages
   try {
     // validate_cmd throws on some syntax errors
     if (validate_cmd(m_cct, parsed.m_api->cmddesc, parsed.m_parameters, os)) {
@@ -817,10 +849,10 @@ struct test_reg_st {
     return seastar::sleep(dly).
       then([this]() {
 
-        return with_gate(g, [this]() {
+        // must not check gate here! return with_gate(g, [this]() {
           //ceph::get_logger(ceph_subsys_osd).warn("{}", (uint64_t)(tag));
           return asok->unregister_server(tag, std::move(current_reg));
-        });
+       // });
       });
   }
 
