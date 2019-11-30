@@ -266,10 +266,10 @@ public:
       , AsokServiceDef{"fthrowCtx",      "fthrowCtx",    &ctx_test_throw_hook,   ""}    // dev throw
     };
 
-    //m_socket_server = m_cct->get_admin_socket()->server_registration(AdminSocket::hook_server_tag{this}, hooks_tbl);
+    const std::vector<AsokServiceDef>* const my_apis = &hooks_tbl;
 
-    std::ignore = seastar::async([this, hooks_tbl]() {
-                                   m_socket_server =  m_cct->get_admin_socket()->register_server(AdminSocket::hook_server_tag{this}, hooks_tbl).get0();
+    std::ignore = seastar::async([this, my_apis]() {
+                                   m_socket_server =  m_cct->get_admin_socket()->register_server(AdminSocket::hook_server_tag{this}, *my_apis).get0();
                                  });
   }
 
@@ -296,8 +296,8 @@ public:
     //  we are holding a shared-ownership of the admin socket server, just so that we
     //  can keep it alive until after our de-registration.
     AdminSocketRef srv{std::move(*m_socket_server)};
-    //AdminSocketRef srv = *m_socket_server;
-    //m_socket_server = std::nullopt; // should be redundant
+   // // t2 // AdminSocketRef srv = *m_socket_server;
+   // // t2 // m_socket_server = std::nullopt; // should be redundant
 
     // note that unregister_server() closes a seastar::gate (i.e. - it blocks)
     logger().warn("cad imp unreg {}", (uint64_t)(&(*srv)));

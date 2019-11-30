@@ -164,15 +164,13 @@ public:
 
   seastar::future<> unregister_server(hook_server_tag server_tag, AdminSocketRef&& server_ref);
 
-public: // just for todaye
+private:
 
   class parsed_command_t;
   // and two shorthands:
   using Maybe_parsed =  std::optional<AdminSocket::parsed_command_t>;
   using Future_parsed = seastar::future<Maybe_parsed>;
 
-
-private:
   /*!
     Registering the APIs that are served directly by the admin_socket server.
   */
@@ -184,14 +182,9 @@ private:
 
   seastar::future<> execute_line(std::string cmdline, seastar::output_stream<char>& out);
 
-  //bool validate_command(const parsed_command_t& parsed,
-  //                      const std::string& command_text,
-  //                      std::stringstream& outs) const;
-
   bool validate_command(const parsed_command_t& parsed,
                         const std::string& command_text,
                         ceph::buffer::list& out) const;
-
 
   CephContext* m_cct;
   bool do_die{false};  // RRR check if needed
@@ -208,7 +201,7 @@ private:
   std::unique_ptr<AdminSocketHook> getdescs_hook;
   std::unique_ptr<AdminSocketHook> test_throw_hook;  // for dev unit-tests
 
-  public: // just for the dev
+  //public: // just for the dev
   struct parsed_command_t {
     std::string            m_cmd;
     cmdmap_t               m_parameters;
@@ -221,14 +214,13 @@ private:
      */
     std::size_t            m_cmd_seq_len;
   };
-  private:
+
   /*!
     parse the incoming command line into the sequence of words that identifies the API,
     and into its arguments.
     Locate the command string in the registered blocks.
   */
-  //std::optional<parsed_command_t> parse_cmd(const std::string command_text);
-  seastar::future<std::optional<AdminSocket::parsed_command_t>> parse_cmd_fut(const std::string command_text);
+  seastar::future<std::optional<AdminSocket::parsed_command_t>> parse_cmd(const std::string command_text);
 
   struct server_block {
     server_block(const std::vector<AsokServiceDef>& hooks)

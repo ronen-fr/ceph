@@ -326,9 +326,6 @@ AdminSocket::GateAndHook AdminSocket::locate_command(std::string_view cmd)
 
 seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_subcmd(std::string match)
 {
-  // catch the lock now!
-  //return seastar::async([this, match]() mutable {
-
   return seastar::with_shared(servers_tbl_rwlock, [this, match]() mutable {
 
     AdminSocket::GateAndHook gh;
@@ -355,48 +352,13 @@ seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_subcmd(std::string
   });
 }
 
-#if 0
-seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_subcmd(std::string match)
-{
-  // catch the lock now!
-  return seastar::async([this, match]() mutable {
-
-    AdminSocket::GateAndHook gh;
-
-    servers_tbl_rwlock.lock_shared().get();
-
-    while (match.size()) {
-      gh = locate_command(match);
-
-      if (gh.api) {
-        // found a match
-        break;
-      }
-
-      // drop right-most word
-      size_t pos = match.rfind(' ');
-      if (pos == std::string::npos) {
-        match.clear();  // we fail
-        break;
-      } else {
-        match.resize(pos);
-      }
-    }
-
-    servers_tbl_rwlock.unlock_shared();
-
-    return gh;
-  });
-}
-#endif
-
-seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse_cmd_fut(const std::string command_text)
+seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse_cmd(const std::string command_text)
 {
   /*
     preliminaries:
       - create the formatter specified by the command_text parameters
       - locate the "op-code" string (the 'prefix' segment)
-      - prepare for command parameters extraction vi cmdmap_t
+      - prepare for command parameters extraction via cmdmap_t
   */
   cmdmap_t cmdmap;
   vector<string> cmdvec;
@@ -406,7 +368,7 @@ seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse
   cmdvec.push_back(command_text); // as cmdmap_from_json() likes the input in this format
   try {
     if (!cmdmap_from_json(cmdvec, &cmdmap, errss)) {
-      logger().error("{}: incoming command error: {}", __func__, errss.str()); // RRR verify errrss
+      logger().error("{}: incoming command error: {}", __func__, errss.str()); // RRR verify errrss contents
       return seastar::make_ready_future<Maybe_parsed>(Maybe_parsed{std::nullopt});
     }
   } catch ( ... ) {
@@ -439,6 +401,8 @@ seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse
       match the incoming op-code to one of the registered APIs (and lock the block containing that API from
           de-registration)
   */
+  return seastar::do_with(std::move(cmdmap), std::move(format), std::move(match),
+                         [this, full_command_seq](auto&& cmdmap, auto&& format, auto&& match) { 
   return locate_subcmd(match).then_wrapped([this, &match, &cmdmap, format, full_command_seq](auto&& fgh) {
 
     if (fgh.failed()) {
@@ -451,6 +415,7 @@ seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse
         return seastar::make_ready_future<Maybe_parsed>(
                 parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq});
     }
+  });
   });
 }
 
@@ -482,7 +447,7 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
 
 seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output_stream<char>& out)
 {
-  return parse_cmd_fut(cmdline).then([&out, cmdline, this](std::optional<AdminSocket::parsed_command_t> parsed) {
+  return parse_cmd(cmdline).then([&out, cmdline, this](std::optional<AdminSocket::parsed_command_t> parsed) {
 
     if (parsed.has_value()) {
 
@@ -581,8 +546,6 @@ seastar::future<> AdminSocket::init(const std::string& path)
 
 seastar::future<> AdminSocket::init_async(const std::string& path)
 {
-  //  verify we are the only instance running now RRR
-
   internal_hooks().get(); // we are executing in an async thread, thus OK to wait()
 
   logger().debug("{}: path={}", __func__, path);
@@ -614,7 +577,7 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
 // ///////////////////////////////////////
 
 /*!
-    The response to the '0' command is not formatted, neither JSON or otherwise.
+    The response to the '0' command is not formatted, neither as JSON or otherwise.
 */
 class The0Hook : public AdminSocketHook {
 public:
@@ -721,7 +684,7 @@ public:
   explicit TestThrowHook(AdminSocket* as) : m_as{as} {}
 
   seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                                 std::string_view format, bufferlist& out) const final {
+                                 std::string_view format, bufferlist& out) const final {
     if (command == "fthrowAs")
       return seastar::make_exception_future<>(std::system_error{1, std::system_category()});
 
@@ -850,9 +813,8 @@ struct test_reg_st {
       then([this]() {
 
         // must not check gate here! return with_gate(g, [this]() {
-          //ceph::get_logger(ceph_subsys_osd).warn("{}", (uint64_t)(tag));
-          return asok->unregister_server(tag, std::move(current_reg));
-       // });
+        return asok->unregister_server(tag, std::move(current_reg));
+        // });
       });
   }
 
@@ -900,65 +862,6 @@ struct test_lookup_st {
     });
   }
 
-  #if 0
-  void do_sleep(milliseconds m) {
-    seastar::future<> f = seastar::sleep(m);
-    f.wait();
-    if (!f.failed()) {
-      f.get();
-    }
-  }
-
-  seastar::future<> delayed_lookup_aux(milliseconds dly_inside) {
-    //
-    //  look for the command, waste some time, then free the server-block
-    //
-
-    bool fnd{false};
-
-    for (const auto& hk : *asok) {
-
-      if (hk->command == cmd) {
-        fnd = true;
-        ceph::get_logger(ceph_subsys_osd).info("{}: utest located {}", __func__, cmd);
-        seastar::sleep(dly_inside).get();
-        break;
-      }
-    }
-
-    if (!fnd)
-      ceph::get_logger(ceph_subsys_osd).info("{}: utest nf {}", __func__, cmd);
-
-    return seastar::sleep(500ms/*dly_inside*/).
-      then([this]() {
-        return seastar::now();
-      });
-  }
-
-  // sleep, then lookup (or fail when gate closes)
-  seastar::future<> delayed_lookup(milliseconds dly, milliseconds dly_inside) {
-    return seastar::sleep(dly).
-      then([this, dly_inside]() {
-
-        //if (g.is_closed())
-        //  return seastar::now();
-
-        return with_gate(g, [this, dly_inside]() {
-          return delayed_lookup_aux(dly_inside);
-        });
-      });
-  }
-
-  future<> delayed_lookup_2(milliseconds dly, milliseconds dly_inside) {
-    return seastar::sleep(dly).
-      then([this, dly_inside]() {
-        return with_gate(g, [this, dly_inside]() {
-          return delayed_lookup_aux(dly_inside);
-        });
-      }); //.get();
-  }
-  #endif
-
   seastar::future<> loop() {
     std::uniform_int_distribution<int> dist(80, 120);
     ceph::get_logger(ceph_subsys_osd).warn("utest-lookup {} starting", cmd);
@@ -993,7 +896,6 @@ struct test_lookup_st {
           });
         });
       }).finally([this] {
-        //std::cerr << __func__ << "(): " << cmd << " loop\n";
         return seastar::now();
       });
     }).handle_exception([this](auto e) {
