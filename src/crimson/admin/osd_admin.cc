@@ -140,8 +140,6 @@ class OsdAdminImp {
   SendBeaconHook  send_beacon_hook;
   TestThrowHook   osd_test_throw_hook;
 
-  //std::atomic_flag  m_no_registrations{false}; // 'double negative' as that matches 'atomic_flag' "direction"
-
 public:
 
   OsdAdminImp(OSD* osd, CephContext* cct, ceph::common::ConfigProxy& conf)
@@ -179,6 +177,7 @@ public:
   seastar::future<> unregister_admin_commands()
   {
     if (!m_socket_server) {
+      logger().debug("{}: OSD asok APIs removed already", __func__);
       return seastar::now();
     }
 

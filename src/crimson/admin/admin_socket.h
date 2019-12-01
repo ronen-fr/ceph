@@ -144,8 +144,6 @@ public:
    * \retval a shared ptr to the asok server itself, or nullopt if
    *         a block with same tag is already registered.
    */
-  AsokRegistrationRes server_registration(hook_server_tag  server_tag,
-                                          const std::vector<AsokServiceDef>& apis_served); 
 
   seastar::future<AsokRegistrationRes>
   register_server(hook_server_tag  server_tag, const std::vector<AsokServiceDef>& apis_served); 
@@ -172,6 +170,13 @@ private:
   using Future_parsed = seastar::future<Maybe_parsed>;
 
   /*!
+    server_registration() is called by register_server() after acquiring the
+    table lock.
+  */
+  AsokRegistrationRes server_registration(hook_server_tag  server_tag,
+                                          const std::vector<AsokServiceDef>& apis_served); 
+
+  /*!
     Registering the APIs that are served directly by the admin_socket server.
   */
   seastar::future<AsokRegistrationRes> internal_hooks();
@@ -187,7 +192,7 @@ private:
                         ceph::buffer::list& out) const;
 
   CephContext* m_cct;
-  bool do_die{false};  // RRR check if needed
+  bool do_die{false};  // RRR when is the OSD expected to kill the asok interface?
 
   // Note: seems like multiple Context objects are created when calling vstart, and that
   // translates to multiple AdminSocket objects being created. But only the "real" one
@@ -201,14 +206,13 @@ private:
   std::unique_ptr<AdminSocketHook> getdescs_hook;
   std::unique_ptr<AdminSocketHook> test_throw_hook;  // for dev unit-tests
 
-  //public: // just for the dev
   struct parsed_command_t {
     std::string            m_cmd;
     cmdmap_t               m_parameters;
     std::string            m_format;
     const AsokServiceDef*  m_api;
     const AdminSocketHook* m_hook;
-    ::seastar::gate*       m_gate;
+    ::seastar::gate*       m_gate;      //!< the gate of the server-block where the command was located
     /*!
         the length of the whole command-sequence under the 'prefix' header
      */

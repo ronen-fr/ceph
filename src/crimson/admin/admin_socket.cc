@@ -14,6 +14,7 @@
 
 #include "common/version.h"
 #include "crimson/net/Socket.h"
+#define UNIT_TEST_OSD_ASOK
 #include "crimson/admin/admin_socket.h"
 #include "crimson/common/log.h"
 //#include "seastar/testing/test_case.hh"
@@ -32,18 +33,17 @@
         implemented in Crimson
 */
 
-
 namespace {
   seastar::logger& logger() {
     return ceph::get_logger(ceph_subsys_osd);
   }
 }
 
+#ifdef UNIT_TEST_OSD_ASOK
 namespace asok_unit_testing {
-
   seastar::future<> utest_run_1(AdminSocket* asok);
-
 }
+#endif
 
 /*!
   Hooks table - iterator support
@@ -109,11 +109,9 @@ AdminHooksIter& AdminHooksIter::operator++()
 
 AdminHooksIter::~AdminHooksIter()
 {
-  //logger().info("{} {}", __func__, (m_in_gate?"+":"-")); 
   if (m_in_gate) {
     m_miter->second.m_gate.leave();
-    logger().info("{}", __func__);
-  } 
+  }
 }
 
 /*!
@@ -134,9 +132,10 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
   } else {
     f->open_object_section(section.c_str());
   }
-  logger().info("{} cmd={} out section={}", __func__, command, section); 
+  //logger().info("{} cmd={} out section={}", __func__, command, section); 
 
   bool bres{false};
+  
   /*
       call the command-specific hook.
       A note re error handling:
@@ -153,10 +152,7 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
       then_wrapped([&ftr,&command,&br](seastar::future<> res) -> seastar::future<bool> {
 
       //  we now have a ready future (or a failure)
-      if (res.failed()) {
-        std::cerr << "exec throw" << std::endl;
-        br = false;
-      } else {
+      if (!res.failed()) {
         br = true;
       }
       res.ignore_ready_future();
@@ -173,19 +169,13 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
 
 AdminSocket::AdminSocket(CephContext *cct)
   : m_cct(cct)
-{
-  //std::cout << "######### a new AdminSocket " << (uint64_t)(this) <<
-  //      " -> " << (uint64_t)(m_cct) << std::endl;
-}
+{}
 
 AdminSocket::~AdminSocket()
-{
-  //std::cout << "######### XXXXX AdminSocket " << (uint64_t)(this) << std::endl;
-  //logger().warn("{}: {} {}", __func__, (int)getpid(), (uint64_t)(this));
-}
+{}
 
 /*!
-  Note re context: running in the asok core. No need to lock the table. (RRR rethink this point)
+  Note re context: running in the core running the asok.
   And no futurization until required to support multiple cores.
 */
 AsokRegistrationRes AdminSocket::server_registration(AdminSocket::hook_server_tag  server_tag,
@@ -233,7 +223,7 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
 
     if (srv_itr == servers.end()) {
       logger().warn("{}: unregistering a non-existing registration (tag: {})", __func__, (uint64_t)(server_tag));
-      // list what servers *are* there
+      // list what servers *are* there (for debugging)
       for (auto& [k, d] : servers) {
         logger().debug("---> server: {} {}", (uint64_t)(k), d.m_hooks.front().command);
       }
@@ -259,46 +249,13 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
 
 seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag, AdminSocketRef&& server_ref)
 {
-   // reducing the ref-count on us (the asok server) by discarding server_ref:
-   return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
-     return unregister_server(server_tag).finally([this,server_tag,&srv]() {
-       logger().warn("{} - {}", (uint64_t)(server_tag), srv->servers.size());
-       //return seastar::now();
-     });
-   });
-}
-
-#if 0
-seastar::future<AdminSocket::GateAndHook> AdminSocket::locate_command(const std::string_view cmd)
-{
-  return seastar::with_shared(servers_tbl_rwlock, [this, cmd]() {
-
-    for (auto& [tag, srv] : servers) {
-
-      // "lock" the server's control block before searching for the command string
-      try {
-        srv.m_gate.enter();
-      } catch (...) {
-        // probable error: gate is already closed
-        continue;
-      }
-
-      for (auto& api : srv.m_hooks) {
-        if (api.command == cmd) {
-          logger().info("{}: located {} w/ server {}", __func__, cmd, tag);
-          // note that the gate was entered!
-          return AdminSocket::GateAndHook{&srv.m_gate, &api};
-        }
-      }
-
-      // not registered by this server. Close this server's gate.
-      srv.m_gate.leave();
-    }
-
-    return AdminSocket::GateAndHook{nullptr, nullptr};
+  // reducing the ref-count on us (the asok server) by discarding server_ref:
+  return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
+    return unregister_server(server_tag).finally([this,server_tag,&srv]() {
+      logger().debug("{}: {} - {}", __func__, (uint64_t)(server_tag), srv->servers.size());
+    });
   });
 }
-#endif
 
 AdminSocket::GateAndHook AdminSocket::locate_command(std::string_view cmd)
 {
@@ -403,19 +360,19 @@ seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse
   */
   return seastar::do_with(std::move(cmdmap), std::move(format), std::move(match),
                          [this, full_command_seq](auto&& cmdmap, auto&& format, auto&& match) { 
-  return locate_subcmd(match).then_wrapped([this, &match, &cmdmap, format, full_command_seq](auto&& fgh) {
+    return locate_subcmd(match).then_wrapped([this, &match, &cmdmap, format, full_command_seq](auto&& fgh) {
 
-    if (fgh.failed()) {
-      return seastar::make_ready_future<Maybe_parsed>(Maybe_parsed{std::nullopt});
-    } else {
-      AdminSocket::GateAndHook gh = fgh.get0();
-      if (!gh.api)
-         return seastar::make_ready_future<Maybe_parsed>(Maybe_parsed{std::nullopt});
-      else 
-        return seastar::make_ready_future<Maybe_parsed>(
-                parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq});
-    }
-  });
+      if (fgh.failed()) {
+        return seastar::make_ready_future<Maybe_parsed>(Maybe_parsed{std::nullopt});
+      } else {
+        AdminSocket::GateAndHook gh = fgh.get0();
+        if (!gh.api)
+           return seastar::make_ready_future<Maybe_parsed>(Maybe_parsed{std::nullopt});
+        else 
+          return seastar::make_ready_future<Maybe_parsed>(
+                  parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq});
+      }
+    });
   });
 }
 
@@ -452,9 +409,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
     if (parsed.has_value()) {
 
       return seastar::do_with(std::move(parsed), ::ceph::bufferlist(),
-                            [&out, cmdline, this, gatep = parsed->m_gate] (auto& parsed, auto& out_buf) {
-
-      //ceph_assert_always(parsed->m_gate->get_count() > 0); // the server-block containing the identified command should have been locked
+                            [&out, cmdline, this, gatep = parsed->m_gate] (auto&& parsed, auto&& out_buf) {
 
       return ((parsed->m_api && validate_command(*parsed, cmdline, out_buf)) ?
 
@@ -478,9 +433,9 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
           logger().info("asok response length: {}", outbuf_cont.length());
 
           return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, outbuf_cont]() {
-            std::cerr << "fin " <<  outbuf_cont.length() << std::endl;
+            //std::cerr << "fin " <<  outbuf_cont.length() << std::endl;
             if (outbuf_cont.empty())
-              return out.write("xxxx");
+              return out.write("    ");
             else
               return out.write(outbuf_cont.c_str());
           });
@@ -530,13 +485,12 @@ seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp, s
 
 seastar::future<> AdminSocket::init(const std::string& path)
 {
-  //std::cout << "AdminSocket::init() w " << path << " owner: " << (uint64_t)(this) <<
-  //      " -> " << (uint64_t)(m_cct) << std::endl;
-
+#ifdef UNIT_TEST_OSD_ASOK
   // in-line unit-testing:
   std::ignore = seastar::async([this]() {
      asok_unit_testing::utest_run_1(this).wait();
   });
+#endif
 
   return seastar::async([this, path] {
     auto serverfut = init_async(path);
@@ -581,7 +535,7 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
 */
 class The0Hook : public AdminSocketHook {
 public:
-  seastar::future<bool> call(std::string_view command, const cmdmap_t& ,
+  seastar::future<bool> call(std::string_view command, const cmdmap_t&,
 	    std::string_view format, bufferlist& out) const override {
     out.append(CEPH_ADMIN_SOCK_VERSION);
     return seastar::make_ready_future<bool>(true);
@@ -593,8 +547,9 @@ class VersionHook : public AdminSocketHook {
 public:
   explicit VersionHook(AdminSocket* as) : m_as{as} {}
 
-  seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                                 std::string_view format, bufferlist& out) const final
+  seastar::future<> exec_command(ceph::Formatter* f, [[maybe_unused]] std::string_view command, 
+                                 [[maybe_unused]] const cmdmap_t& cmdmap,
+	                         [[maybe_unused]] std::string_view format, [[maybe_unused]] bufferlist& out) const final
   {
     f->dump_string("version", ceph_version_to_str());
     f->dump_string("release", ceph_release_to_str());
@@ -624,8 +579,7 @@ public:
 
   // slowing the response down for debugging.
   seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                                 std::string_view format, bufferlist& out) const final
-  {
+	                                 std::string_view format, bufferlist& out) const final {
     return seastar::sleep(1s).then([this, f]() {
       f->dump_string("git_version", git_version_to_str());
       return seastar::now();
@@ -641,11 +595,13 @@ public:
   seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
 	                                 std::string_view format, bufferlist& out) const final {
 
-    for (const auto& hk_info : *m_as) {
-      if (hk_info->help.length())
-	f->dump_string(hk_info->command.c_str(), hk_info->help);
-    }
-    return seastar::now();
+    return seastar::with_shared(m_as->servers_tbl_rwlock, [this,f]() {
+      for (const auto& hk_info : *m_as) {
+        if (hk_info->help.length())
+	  f->dump_string(hk_info->command.c_str(), hk_info->help);
+      }
+      return seastar::now();
+    });
   }
 };
 
@@ -721,7 +677,7 @@ seastar::future<AsokRegistrationRes> AdminSocket::internal_hooks()
   return register_server(AdminSocket::hook_server_tag{this}, internal_hooks_tbl);
 }
 
-
+#ifdef UNIT_TEST_OSD_ASOK
 // ///////////////////////////////////////////
 // unit-testing servers-block map manipulation
 // ///////////////////////////////////////////
@@ -938,3 +894,4 @@ seastar::future<> utest_run_1(AdminSocket* asok)
 }
 
 }
+#endif

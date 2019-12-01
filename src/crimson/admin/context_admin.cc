@@ -273,13 +273,8 @@ public:
                                  });
   }
 
-  seastar::future<> unregister_admin_commands() {
-
-    logger().warn("{}:Z {} this:{} {} cct:{} adif:{}", __func__, (int)getpid(), (uint64_t)(this),
-                (m_socket_server?"+":"-"),
-                (uint64_t)(m_cct),
-                (uint64_t)(m_cct->get_admin_socket()));
-
+  seastar::future<> unregister_admin_commands()
+  {
     if (!m_socket_server) {
       logger().warn("{} no socket server", __func__);
       return seastar::now();
@@ -290,8 +285,6 @@ public:
       logger().warn("{}:no admin_if", __func__);
       return seastar::now();
     }
-
-    logger().warn("{}:Z5 {}", __func__, (uint64_t)(& (*(*m_socket_server))));
 
     //  we are holding a shared-ownership of the admin socket server, just so that we
     //  can keep it alive until after our de-registration.
@@ -320,8 +313,8 @@ seastar::future<>  ContextConfigAdmin::unregister_admin_commands()
 
 ContextConfigAdmin::~ContextConfigAdmin()
 {
-  logger().warn("{}: ~ContextConfigAdmin {} {} {}", __func__,
-                (int)getpid(), (uint64_t)(this), (m_imp ? "++" : "--"));
+  // for dev: logger().warn("{}: ~ContextConfigAdmin {} {} {}", __func__,
+  // for dev:               (int)getpid(), (uint64_t)(this), (m_imp ? "++" : "--"));
 
   // relinquish control over the actual implementation object, as that one should only be
   // destructed after the relevant seastar::gate closes
