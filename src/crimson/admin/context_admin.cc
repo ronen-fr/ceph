@@ -101,22 +101,6 @@ class ContextConfigAdminImp {
           return seastar::now();
         });
       });
-      #if 0
-      return seastar::do_with(std::vector<std::string>(), 
-                             [this, f](std::vector<std::string>& k_list) {
-        return m_config_admin.m_conf.show_config(k_list).
-          then([&k_list, f]() {
-            for (const auto& k : k_list) {
-              f->dump_string("conf-item", k);
-              //logger().warn("---> {}\n", k);
-            }
-            return seastar::now();
-          });
-        }).
-        finally([/*&k_list,f*/]() {
-          return seastar::now();
-        });
-      #endif
     }
   };
 
@@ -130,6 +114,7 @@ class ContextConfigAdminImp {
 	                      std::string_view format, bufferlist& out) const final {
       std::string var;
       if (!cmd_getval<std::string>(nullptr, cmdmap, "var", var)) {
+        // should have been caught by 'validate()'
 	f->dump_string("error", "syntax error: 'config get <var>'");
 
       } else {
@@ -185,9 +170,10 @@ class ContextConfigAdminImp {
   class AssertAlwaysHook : public CephContextHookBase {
   public:
     explicit AssertAlwaysHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
-    seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) const final {
-      bool assert_conf = m_config_admin.m_conf.get_val<bool>("debug_asok_assert_abort") || /*for now*/ true;
+    seastar::future<> exec_command(ceph::Formatter* f, [[maybe_unused]] std::string_view command,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
+                                   std::string_view format, [[maybe_unused]] bufferlist& out) const final {
+      bool assert_conf = m_config_admin.m_conf.get_val<bool>("debug_asok_assert_abort");
       if (!assert_conf) {
 	f->dump_string("error", "configuration set to disallow asok assert");
 	return seastar::now();
