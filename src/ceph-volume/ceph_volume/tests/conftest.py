@@ -1,5 +1,6 @@
 import os
 import pytest
+from mock.mock import patch
 from ceph_volume.util import disk
 from ceph_volume.util.constants import ceph_disk_guids
 from ceph_volume.api import lvm as lvm_api
@@ -153,6 +154,10 @@ def volume_groups(monkeypatch):
     vgs._purge()
     return vgs
 
+def volume_groups_empty(monkeypatch):
+    monkeypatch.setattr('ceph_volume.process.call', lambda x, **kw: ('', '', 0))
+    vgs = lvm_api.VolumeGroups(populate=False)
+    return vgs
 
 @pytest.fixture
 def stub_vgs(monkeypatch, volume_groups):
@@ -167,6 +172,12 @@ def pvolumes(monkeypatch):
     pvolumes = lvm_api.PVolumes()
     pvolumes._purge()
     return pvolumes
+@pytest.fixture
+def pvolumes_empty(monkeypatch):
+    monkeypatch.setattr('ceph_volume.process.call', lambda x, **kw: ('', '', 0))
+    pvolumes = lvm_api.PVolumes(populate=False)
+    return pvolumes
+
 
 
 @pytest.fixture
@@ -253,6 +264,10 @@ def device_info_not_ceph_disk_member(monkeypatch, request):
     monkeypatch.setattr("ceph_volume.util.device.disk.blkid",
                         lambda path: {'PARTLABEL': request.param[1]})
 
+@pytest.fixture
+def patched_get_block_devs_lsblk():
+    with patch('ceph_volume.util.disk.get_block_devs_lsblk') as p:
+        yield p
 
 @pytest.fixture
 def device_info(monkeypatch):

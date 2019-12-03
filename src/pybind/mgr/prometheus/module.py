@@ -476,6 +476,7 @@ class Module(MgrModule):
 
         all_modules = {module.get('name'):module.get('can_run') for module in mgr_map['available_modules']}
 
+        ceph_release = None
         for mgr in all_mgrs:
             host_version = servers.get((mgr, 'mgr'), ('', ''))
             if mgr == active:
@@ -491,7 +492,7 @@ class Module(MgrModule):
             self.metrics['mgr_status'].set(_state, (
                 'mgr.{}'.format(mgr), 
             ))
-        always_on_modules = mgr_map['always_on_modules'][ceph_release]
+        always_on_modules = mgr_map['always_on_modules'].get(ceph_release, [])
         active_modules = list(always_on_modules)
         active_modules.extend(mgr_map['modules'])
 
@@ -619,6 +620,7 @@ class Module(MgrModule):
                     'osd.{}'.format(id_),
                 ))
 
+            osd_dev_node = None
             if obj_store == "filestore":
                 # collect filestore backend device
                 osd_dev_node = osd_metadata.get(
@@ -1086,7 +1088,7 @@ class Module(MgrModule):
         # Publish the URI that others may use to access the service we're
         # about to start serving
         self.set_uri('http://{0}:{1}/'.format(
-            socket.getfqdn() if server_addr == '::' else server_addr,
+            socket.getfqdn() if server_addr in ['::', '0.0.0.0'] else server_addr,
             server_port
         ))
 

@@ -397,7 +397,7 @@ public:
   /**
    * force a sync on next mon restart
    */
-  void sync_force(Formatter *f, ostream& ss);
+  void sync_force(Formatter *f);
 
 private:
   /**
@@ -684,10 +684,11 @@ public:
                         const cmdmap_t& cmdmap,
                         const map<string,string>& param_str_map,
                         const MonCommand *this_cmd);
-  void get_mon_status(Formatter *f, ostream& ss);
+  void get_mon_status(Formatter *f);
   void _quorum_status(Formatter *f, ostream& ss);
   bool _add_bootstrap_peer_hint(std::string_view cmd, const cmdmap_t& cmdmap,
 				std::ostream& ss);
+  void handle_tell_command(MonOpRequestRef op);
   void handle_command(MonOpRequestRef op);
   void handle_route(MonOpRequestRef op);
 
@@ -757,6 +758,9 @@ public:
 
   void reply_command(MonOpRequestRef op, int rc, const string &rs, version_t version);
   void reply_command(MonOpRequestRef op, int rc, const string &rs, bufferlist& rdata, version_t version);
+
+  void reply_tell_command(MonOpRequestRef op, int rc, const string &rs);
+
 
 
   void handle_probe(MonOpRequestRef op);
@@ -984,8 +988,10 @@ private:
   int write_fsid();
   int write_fsid(MonitorDBStore::TransactionRef t);
 
-  void do_admin_command(std::string_view command, const cmdmap_t& cmdmap,
-			std::string_view format, std::ostream& ss);
+  int do_admin_command(std::string_view command, const cmdmap_t& cmdmap,
+		       Formatter *f,
+		       std::ostream& err,
+		       std::ostream& out);
 
 private:
   // don't allow copying

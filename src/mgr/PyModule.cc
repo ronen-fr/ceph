@@ -145,16 +145,6 @@ void PyModuleConfig::set_config(
 {
   const std::string global_key = PyModule::config_prefix
                                    + module_name + "/" + key;
-  {
-    std::lock_guard l(lock);
-
-    if (val) {
-      config[global_key] = *val;
-    } else {
-      config.erase(global_key);
-    }
-  }
-
   Command set_cmd;
   {
     std::ostringstream cmd_json;
@@ -162,23 +152,33 @@ void PyModuleConfig::set_config(
     jf.open_object_section("cmd");
     if (val) {
       jf.dump_string("prefix", "config set");
-      jf.dump_string("who", "mgr");
-      jf.dump_string("name", global_key);
       jf.dump_string("value", *val);
     } else {
       jf.dump_string("prefix", "config rm");
-      jf.dump_string("name", "mgr");
-      jf.dump_string("key", global_key);
     }
+    jf.dump_string("who", "mgr");
+    jf.dump_string("name", global_key);
     jf.close_section();
     jf.flush(cmd_json);
     set_cmd.run(monc, cmd_json.str());
   }
   set_cmd.wait();
 
-  if (set_cmd.r != 0) {
-    dout(0) << "`config set mgr" << global_key << " " << val << "` failed: "
-      << cpp_strerror(set_cmd.r) << dendl;
+  if (set_cmd.r == 0) {
+    std::lock_guard l(lock);
+    if (val) {
+      config[global_key] = *val;
+    } else {
+      config.erase(global_key);
+    }
+  } else {
+    if (val) {
+      dout(0) << "`config set mgr " << global_key << " " << val << "` failed: "
+        << cpp_strerror(set_cmd.r) << dendl;
+    } else {
+      dout(0) << "`config rm mgr " << global_key << "` failed: "
+        << cpp_strerror(set_cmd.r) << dendl;
+    }
     dout(0) << "mon returned " << set_cmd.r << ": " << set_cmd.outs << dendl;
   }
 }
@@ -476,7 +476,8 @@ int PyModule::walk_dict_list(
 int PyModule::load_commands()
 {
   PyObject *pRegCmd = PyObject_CallMethod(pClass,
-  const_cast<char*>("_register_commands"), const_cast<char*>("()"));
+      const_cast<char*>("_register_commands"), const_cast<char*>("(s)"),
+      module_name.c_str());
   if (pRegCmd != nullptr) {
     Py_DECREF(pRegCmd);
   } else {

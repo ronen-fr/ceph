@@ -209,15 +209,15 @@ The OSD can be removed from the CRUSH hierarchy with::
 OSD_OUT_OF_ORDER_FULL
 _____________________
 
-The utilization thresholds for `backfillfull`, `nearfull`, `full`,
+The utilization thresholds for `nearfull`, `backfillfull`, `full`,
 and/or `failsafe_full` are not ascending.  In particular, we expect
-`backfillfull < nearfull`, `nearfull < full`, and `full <
+`nearfull < backfillfull`, `backfillfull < full`, and `full <
 failsafe_full`.
 
 The thresholds can be adjusted with::
 
-  ceph osd set-backfillfull-ratio <ratio>
   ceph osd set-nearfull-ratio <ratio>
+  ceph osd set-backfillfull-ratio <ratio>
   ceph osd set-full-ratio <ratio>
 
 
@@ -739,6 +739,23 @@ created.
 The PG count for existing pools can be increased or new pools can be created.
 Please refer to :ref:`choosing-number-of-placement-groups` for more
 information.
+
+POOL_PG_NUM_NOT_POWER_OF_TWO
+____________________________
+
+One or more pools has a ``pg_num`` value that is not a power of two.
+Although this is not strictly incorrect, it does lead to a less
+balanced distribution of data because some PGs have roughly twice as
+much data as others.
+
+This is easily corrected by setting the ``pg_num`` value for the
+affected pool(s) to a nearby power of two::
+
+  ceph osd pool set <pool-name> pg_num <value>
+
+This health warning can be disabled with::
+
+  ceph config set global mon_warn_on_pool_pg_num_not_power_of_two false
 
 POOL_TOO_FEW_PGS
 ________________

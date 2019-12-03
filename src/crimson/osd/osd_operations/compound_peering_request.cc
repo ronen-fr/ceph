@@ -16,21 +16,19 @@
 
 namespace {
   seastar::logger& logger() {
-    return ceph::get_logger(ceph_subsys_osd);
+    return crimson::get_logger(ceph_subsys_osd);
   }
 }
 
 namespace {
-using namespace ceph::osd;
+using namespace crimson::osd;
 
 struct compound_state {
   seastar::promise<BufferedRecoveryMessages> promise;
-  BufferedRecoveryMessages ctx;
-  compound_state()
-    // assuming crimson-osd won't need to be compatible with pre-octopus
-    // releases
-    : ctx{ceph_release_t::octopus}
-  {}
+  // assuming crimson-osd won't need to be compatible with pre-octopus
+  // releases
+  BufferedRecoveryMessages ctx{ceph_release_t::octopus};
+  compound_state() = default;
   ~compound_state() {
     promise.set_value(std::move(ctx));
   }
@@ -44,7 +42,7 @@ public:
   PeeringSubEvent(compound_state_ref state, Args &&... args) :
     RemotePeeringEvent(std::forward<Args>(args)...), state(state) {}
 
-  seastar::future<> complete_rctx(Ref<ceph::osd::PG> pg) final {
+  seastar::future<> complete_rctx(Ref<crimson::osd::PG> pg) final {
     logger().debug("{}: submitting ctx transaction", *this);
     state->ctx.accept_buffered_messages(ctx);
     state = {};
@@ -60,7 +58,7 @@ public:
 
 std::vector<OperationRef> handle_pg_create(
   OSD &osd,
-  ceph::net::ConnectionRef conn,
+  crimson::net::ConnectionRef conn,
   compound_state_ref state,
   Ref<MOSDPGCreate2> m)
 {
@@ -129,10 +127,10 @@ struct SubOpBlocker : BlockerT<SubOpBlocker> {
 
 } // namespace
 
-namespace ceph::osd {
+namespace crimson::osd {
 
 CompoundPeeringRequest::CompoundPeeringRequest(
-  OSD &osd, ceph::net::ConnectionRef conn, Ref<Message> m)
+  OSD &osd, crimson::net::ConnectionRef conn, Ref<Message> m)
   : osd(osd),
     conn(conn),
     m(m)
@@ -175,4 +173,4 @@ seastar::future<> CompoundPeeringRequest::start()
     });
 }
 
-} // namespace ceph::osd
+} // namespace crimson::osd

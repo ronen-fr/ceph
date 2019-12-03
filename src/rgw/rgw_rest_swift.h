@@ -1,8 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab ft=cpp
 
-#ifndef CEPH_RGW_REST_SWIFT_H
-#define CEPH_RGW_REST_SWIFT_H
+#pragma once
 #define TIME_BUF_SIZE 128
 
 #include <boost/optional.hpp>
@@ -39,7 +38,7 @@ class RGWListBuckets_ObjStore_SWIFT : public RGWListBuckets_ObjStore {
   bool need_stats;
   bool wants_reversed;
   std::string prefix;
-  std::vector<RGWUserBuckets> reverse_buffer;
+  std::vector<rgw::sal::RGWBucketList> reverse_buffer;
 
   uint64_t get_default_max() const override {
     return 0;
@@ -53,11 +52,11 @@ public:
   ~RGWListBuckets_ObjStore_SWIFT() override {}
 
   int get_params() override;
-  void handle_listing_chunk(RGWUserBuckets&& buckets) override;
+  void handle_listing_chunk(rgw::sal::RGWBucketList&& buckets) override;
   void send_response_begin(bool has_buckets) override;
-  void send_response_data(RGWUserBuckets& buckets) override;
-  void send_response_data_reversed(RGWUserBuckets& buckets);
-  void dump_bucket_entry(const RGWBucketEnt& obj);
+  void send_response_data(rgw::sal::RGWBucketList& buckets) override;
+  void send_response_data_reversed(rgw::sal::RGWBucketList& buckets);
+  void dump_bucket_entry(const rgw::sal::RGWBucket& obj);
   void send_response_end() override;
 
   bool should_get_stats() override { return need_stats; }
@@ -351,7 +350,7 @@ class RGWSwiftWebsiteHandler {
   bool is_web_mode() const;
   bool can_be_website_req() const;
   bool is_web_dir() const;
-  bool is_index_present(const std::string& index);
+  bool is_index_present(const std::string& index) const;
 
   int serve_errordoc(int http_ret, std::string error_doc);
 
@@ -380,7 +379,7 @@ class RGWHandler_REST_SWIFT : public RGWHandler_REST {
 protected:
   const rgw::auth::Strategy& auth_strategy;
 
-  virtual bool is_acl_op() {
+  virtual bool is_acl_op() const {
     return false;
   }
 
@@ -419,7 +418,7 @@ class RGWHandler_REST_Bucket_SWIFT : public RGWHandler_REST_SWIFT {
    * initialization (see the init() method). */
   boost::optional<RGWSwiftWebsiteHandler> website_handler;
 protected:
-  bool is_obj_update_op() override {
+  bool is_obj_update_op() const override {
     return s->op == OP_POST;
   }
 
@@ -455,7 +454,7 @@ class RGWHandler_REST_Obj_SWIFT : public RGWHandler_REST_SWIFT {
    * initialization (see the init() method). */
   boost::optional<RGWSwiftWebsiteHandler> website_handler;
 protected:
-  bool is_obj_update_op() override {
+  bool is_obj_update_op() const override {
     return s->op == OP_POST;
   }
 
@@ -677,5 +676,3 @@ public:
                                const rgw::auth::StrategyRegistry& auth_registry,
                                const std::string& frontend_prefix) override;
 };
-
-#endif

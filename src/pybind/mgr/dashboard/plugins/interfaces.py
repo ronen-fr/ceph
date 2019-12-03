@@ -1,17 +1,27 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
 
-from . import PLUGIN_MANAGER as PM, Interface  # pylint: disable=cyclic-import
+from . import PLUGIN_MANAGER as PM, Interface, Mixin  # pylint: disable=cyclic-import
 
 
-class CanMgr(Interface):
+class CanMgr(Mixin):
     from .. import mgr
     mgr = mgr
 
 
-class CanLog(Interface):
-    from .. import logger
-    log = logger
+class CanCherrypy(Mixin):
+    import cherrypy
+    request = cherrypy.request
+    response = cherrypy.response
+
+
+@PM.add_interface
+class Initializable(Interface):
+    @PM.add_abcspec
+    def init(self):
+        """
+        Placeholder for module scope initialization
+        """
 
 
 @PM.add_interface
@@ -20,7 +30,7 @@ class Setupable(Interface):
     def setup(self):
         """
         Placeholder for plugin setup, right after server start.
-        CanMgr.mgr and CanLog.log are initialized by then.
+        CanMgr.mgr is initialized by then.
         """
 
 
@@ -42,6 +52,13 @@ class HasCommands(Interface):
 class HasControllers(Interface):
     @PM.add_abcspec
     def get_controllers(self):
+        pass
+
+
+@PM.add_interface
+class ConfiguresCherryPy(Interface):
+    @PM.add_abcspec
+    def configure_cherrypy(self, config):
         pass
 
 

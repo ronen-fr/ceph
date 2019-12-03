@@ -257,7 +257,8 @@ bool ConfigMonitor::preprocess_command(MonOpRequestRef op)
     cmd_getval(g_ceph_context, cmdmap, "who", who);
 
     EntityName entity;
-    if (!entity.from_str(who)) {
+    if (!entity.from_str(who) &&
+	!entity.from_str(who + ".")) {
       ss << "unrecognized entity '" << who << "'";
       err = -EINVAL;
       goto reply;
@@ -575,7 +576,8 @@ bool ConfigMonitor::prepare_command(MonOpRequestRef op)
 	  o = mon->mgrmon()->find_module_option(key);
 	}
 	if (!o ||
-	    o->flags & Option::FLAG_NO_MON_UPDATE) {
+	    (o->flags & Option::FLAG_NO_MON_UPDATE) ||
+	    (o->flags & Option::FLAG_CLUSTER_CREATE)) {
 	  goto skip;
 	}
 	// normalize

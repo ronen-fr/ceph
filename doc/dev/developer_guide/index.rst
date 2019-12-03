@@ -790,6 +790,55 @@ the `cram task`_.
 .. _`cram`: https://bitheap.org/cram/
 .. _`cram task`: https://github.com/ceph/ceph/blob/master/qa/tasks/cram.py
 
+Tox based testing of python modules
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Most python modules can be found under ``./src/pybind/``.
+
+Many modules use **tox** to run their unit tests.
+**tox** itself is a generic virtualenv management and test command line tool.
+
+To find out quickly if tox can be run you can either just try to run ``tox`` or find out if a
+``tox.ini`` exists.
+
+Currently the following modules use tox:
+
+- Ansible (``./src/pybind/mgr/ansible``)
+- Insights (``./src/pybind/mgr/insights``)
+- Orchestrator cli (``./src/pybind/mgr/orchestrator_cli``)
+- Manager core (``./src/pybind/mgr``)
+- Dashboard (``./src/pybind/mgr/dashboard``)
+- Python common (``./src/python-common/tox.ini``)
+
+Most tox configuration support multiple environments and tasks. You can see which environments and
+tasks are supported by looking into the ``tox.ini`` file to see what ``envlist`` is assigned.
+To run **tox**, just execute ``tox`` in the directory where ``tox.ini`` lies.
+Without any specified environments ``-e $env1,$env2``, all environments will be run.
+Jenkins will run ``tox`` by executing ``run_tox.sh`` which lies under ``./src/script``.
+
+Here some examples from ceph dashboard on how to specify different environments and run options::
+
+  ## Run Python 2+3 tests+lint commands:
+  $ tox -e py27,py3,lint,check
+
+  ## Run Python 3 tests+lint commands:
+  $ tox -e py3,lint,check
+
+  ## To run it like Jenkins would do
+  $ ../../../script/run_tox.sh --tox-env py27,py3,lint,check
+  $ ../../../script/run_tox.sh --tox-env py3,lint,check
+
+Manager core unit tests
+"""""""""""""""""""""""
+
+Currently only doctests_ inside
+``mgr_util.py`` are run.
+
+To add more files that should be tested inside the core of the manager add them at the end
+of the line that includes ``mgr_util.py`` inside ``tox.ini``.
+
+.. _doctests: https://docs.python.org/3/library/doctest.html
+
 Unit test caveats
 -----------------
 
@@ -1630,12 +1679,26 @@ it would execute a single test.
           compatible with ``python2``. Therefore, use ``python2`` to run the
           tests locally.
 
-vstart_runner.py can take 3 options -
+vstart_runner.py can take the following options -
 
+--clear-old-log             deletes old log file before running the test
 --create                    create Ceph cluster before running a test
 --create-cluster-only       creates the cluster and quits; tests can be issued
                             later
 --interactive               drops a Python shell when a test fails
+--log-ps-output             logs ps output; might be useful while debugging
+--teardown                  tears Ceph cluster down after test(s) has finished
+                            runnng
+--kclient                   use the kernel cephfs client instead of FUSE
+
+.. note:: If using the FUSE client, ensure that the fuse package is installed
+          and enabled on the system and that ``user_allow_other`` is added
+          to ``/etc/fuse.conf``.
+
+.. note:: If using the kernel client, the user must have the ability to run
+          commands with passwordless sudo access. A failure on the kernel
+          client may crash the host, so it's recommended to use this
+          functionality within a virtual machine.
 
 Internal working of vstart_runner.py -
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1661,12 +1724,6 @@ vstart_runner.py primarily does three things -
     ``LocalCephManager`` provides methods to run Ceph cluster commands with
     and without admin socket and ``LocalCephCluster`` provides methods to set
     or clear ``ceph.conf``.
-
-.. note:: vstart_runner.py can mount CephFS only with FUSE. Therefore, make
-          sure that the package for FUSE is installed and enabled on your
-          system.
-
-.. note:: Make sure that ``use_allow_other`` is added to ``/etc/fuse.conf``.
 
 .. _vstart_runner.py: https://github.com/ceph/ceph/blob/master/qa/tasks/vstart_runner.py
 .. _test_reconnect_timeout: https://github.com/ceph/ceph/blob/master/qa/tasks/cephfs/test_client_recovery.py#L133

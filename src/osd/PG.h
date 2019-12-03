@@ -274,8 +274,8 @@ public:
   bool is_deleted() const {
     return recovery_state.is_deleted();
   }
-  bool is_replica() const {
-    return recovery_state.is_replica();
+  bool is_nonprimary() const {
+    return recovery_state.is_nonprimary();
   }
   bool is_primary() const {
     return recovery_state.is_primary();
@@ -480,6 +480,8 @@ public:
 
   ceph::signedspan get_mnow() override;
   HeartbeatStampsRef get_hb_stamps(int peer) override;
+  void schedule_renew_lease(epoch_t lpr, ceph::timespan delay) override;
+  void queue_check_readable(epoch_t lpr, ceph::timespan delay) override;
 
   void rebuild_missing_set_with_deletes(PGLog &pglog) override;
 
@@ -532,13 +534,11 @@ public:
   virtual int get_cache_obj_count() = 0;
 
   virtual void snap_trimmer(epoch_t epoch_queued) = 0;
-  virtual int do_command(
-    cmdmap_t cmdmap,
-    ostream& ss,
-    bufferlist& idata,
-    bufferlist& odata,
-    ConnectionRef conn,
-    ceph_tid_t tid) = 0;
+  virtual void do_command(
+    const string_view& prefix,
+    const cmdmap_t& cmdmap,
+    const bufferlist& idata,
+    std::function<void(int,const std::string&,bufferlist&)> on_finish) = 0;
 
   virtual bool agent_work(int max) = 0;
   virtual bool agent_work(int max, int agent_flush_quota) = 0;
@@ -910,6 +910,9 @@ protected:
    *  - waiting_for_active
    *    - !is_active()
    *    - only starts blocking on interval change; never restarts
+   *  - waiting_for_readable
+   *    - now > readable_until
+   *    - unblocks when we get fresh(er) osd_pings
    *  - waiting_for_scrub
    *    - starts and stops blocking for varying intervals during scrub
    *  - waiting_for_unreadable_object
@@ -947,6 +950,9 @@ protected:
   // ops waiting on peered
   list<OpRequestRef>            waiting_for_peered;
 
+  /// ops waiting on readble
+  list<OpRequestRef>            waiting_for_readable;
+
   // ops waiting on active (require peered as well)
   list<OpRequestRef>            waiting_for_active;
   list<OpRequestRef>            waiting_for_flush;
@@ -966,7 +972,9 @@ protected:
   map<hobject_t, list<Context*>> callbacks_for_degraded_object;
 
   map<eversion_t,
-      list<tuple<OpRequestRef, version_t, int> > > waiting_for_ondisk;
+      list<
+	tuple<OpRequestRef, version_t, int,
+	      vector<pg_log_op_return_item_t>>>> waiting_for_ondisk;
 
   void requeue_object_waiters(map<hobject_t, list<OpRequestRef>>& m);
   void requeue_op(OpRequestRef op);
@@ -1077,11 +1085,13 @@ protected:
     hobject_t end = info.pgid.pgid.get_hobj_end(pool.info.get_pg_num());
     add_backoff(s, begin, end);
   }
+public:
   void release_pg_backoffs() {
     hobject_t begin = info.pgid.pgid.get_hobj_start();
     hobject_t end = info.pgid.pgid.get_hobj_end(pool.info.get_pg_num());
     release_backoffs(begin, end);
   }
+protected:
 
   // -- scrub --
 public:
@@ -1402,6 +1412,8 @@ protected:
   bool is_recovering() const { return recovery_state.is_recovering(); }
   bool is_premerge() const { return recovery_state.is_premerge(); }
   bool is_repair() const { return recovery_state.is_repair(); }
+  bool is_laggy() const { return state_test(PG_STATE_LAGGY); }
+  bool is_wait() const { return state_test(PG_STATE_WAIT); }
 
   bool is_empty() const { return recovery_state.is_empty(); }
 
@@ -1432,7 +1444,8 @@ protected:
     const osd_reqid_t &r,
     eversion_t *version,
     version_t *user_version,
-    int *return_code) const;
+    int *return_code,
+    vector<pg_log_op_return_item_t> *op_returns) const;
   eversion_t projected_last_update;
   eversion_t get_next_version() const {
     eversion_t at_version(
@@ -1481,9 +1494,6 @@ protected:
   bool old_peering_msg(epoch_t reply_epoch, epoch_t query_epoch);
   bool old_peering_evt(PGPeeringEventRef evt) {
     return old_peering_msg(evt->get_epoch_sent(), evt->get_epoch_requested());
-  }
-  static bool have_same_or_newer_map(epoch_t cur_epoch, epoch_t e) {
-    return e <= cur_epoch;
   }
   bool have_same_or_newer_map(epoch_t e) {
     return e <= get_osdmap_epoch();

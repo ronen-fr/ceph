@@ -15,6 +15,7 @@ from teuthology import contextutil
 from teuthology.config import config as teuth_config
 from teuthology.orchestra import run
 from teuthology.orchestra.connection import split_user
+from teuthology.exceptions import ConfigError
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ def create_users(ctx, config):
         s3tests_conf = config['s3tests_conf'][client]
         s3tests_conf.setdefault('fixtures', {})
         s3tests_conf['fixtures'].setdefault('bucket prefix', 'test-' + client + '-{random}-')
-        for section, user in users.iteritems():
+        for section, user in users.items():
             _config_user(s3tests_conf, section, '{user}.{client}'.format(user=user, client=client))
             log.debug('Creating user {user} on {host}'.format(user=s3tests_conf[section]['user_id'], host=client))
             cluster_name, daemon_type, client_id = teuthology.split_role(client)
@@ -176,7 +177,7 @@ def configure(ctx, config):
     assert isinstance(config, dict)
     log.info('Configuring s3-tests...')
     testdir = teuthology.get_testdir(ctx)
-    for client, properties in config['clients'].iteritems():
+    for client, properties in config['clients'].items():
         properties = properties or {}
         s3tests_conf = config['s3tests_conf'][client]
         s3tests_conf['DEFAULT']['calling_format'] = properties.get('calling-format', 'ordinary')
@@ -198,16 +199,30 @@ def configure(ctx, config):
                     's3tests: no dns-s3website-name for rgw_website_server {}'.format(website_role)
             s3tests_conf['DEFAULT']['s3website_domain'] = website_endpoint.website_dns_name
 
-        kms_key = properties.get('kms_key')
-        if kms_key:
-            host = None
-            if not hasattr(ctx, 'barbican'):
-                raise ConfigError('s3tests must run after the barbican task')
-            if not ( kms_key in ctx.barbican.keys ):
-                raise ConfigError('Key '+kms_key+' not defined')
+        if hasattr(ctx, 'barbican'):
+            properties = properties['barbican']
+            if properties is not None and 'kms_key' in properties:
+                if not (properties['kms_key'] in ctx.barbican.keys):
+                    raise ConfigError('Key '+properties['kms_key']+' not defined')
 
-            key = ctx.barbican.keys[kms_key]
-            s3tests_conf['DEFAULT']['kms_keyid'] = key['id']
+                if not (properties['kms_key2'] in ctx.barbican.keys):
+                    raise ConfigError('Key '+properties['kms_key2']+' not defined')
+
+                key = ctx.barbican.keys[properties['kms_key']]
+                s3tests_conf['DEFAULT']['kms_keyid'] = key['id']
+
+                key = ctx.barbican.keys[properties['kms_key2']]
+                s3tests_conf['DEFAULT']['kms_keyid2'] = key['id']
+
+        elif hasattr(ctx, 'vault'):
+            properties = properties['vault_%s' % ctx.vault.engine]
+            s3tests_conf['DEFAULT']['kms_keyid'] = properties['key_path']
+            s3tests_conf['DEFAULT']['kms_keyid2'] = properties['key_path2']
+
+        else:
+            # Fallback scenario where it's the local (ceph.conf) kms being tested
+            s3tests_conf['DEFAULT']['kms_keyid'] = 'testkey-1'
+            s3tests_conf['DEFAULT']['kms_keyid2'] = 'testkey-2'
 
         slow_backend = properties.get('slow_backend')
         if slow_backend:
@@ -232,7 +247,7 @@ def configure(ctx, config):
 
     log.info('Configuring boto...')
     boto_src = os.path.join(os.path.dirname(__file__), 'boto.cfg.template')
-    for client, properties in config['clients'].iteritems():
+    for client, properties in config['clients'].items():
         with file(boto_src, 'rb') as f:
             (remote,) = ctx.cluster.only(client).remotes.keys()
             conf = f.read().format(
@@ -249,7 +264,7 @@ def configure(ctx, config):
 
     finally:
         log.info('Cleaning up boto...')
-        for client, properties in config['clients'].iteritems():
+        for client, properties in config['clients'].items():
             (remote,) = ctx.cluster.only(client).remotes.keys()
             remote.run(
                 args=[
@@ -268,7 +283,7 @@ def run_tests(ctx, config):
     """
     assert isinstance(config, dict)
     testdir = teuthology.get_testdir(ctx)
-    for client, client_config in config.iteritems():
+    for client, client_config in config.items():
         client_config = client_config or {}
         (remote,) = ctx.cluster.only(client).remotes.keys()
         args = [
@@ -321,7 +336,7 @@ def scan_for_leaked_encryption_keys(ctx, config):
 
         log.debug('Scanning radosgw logs for leaked encryption keys...')
         procs = list()
-        for client, client_config in config.iteritems():
+        for client, client_config in config.items():
             if not client_config.get('scan_for_encryption_keys', True):
                 continue
             cluster_name, daemon_type, client_id = teuthology.split_role(client)
@@ -400,7 +415,7 @@ def task(ctx, config):
 
     overrides = ctx.config.get('overrides', {})
     # merge each client section, not the top level.
-    for client in config.iterkeys():
+    for client in config.keys():
         if not config[client]:
             config[client] = {}
         teuthology.deep_merge(config[client], overrides.get('s3tests', {}))

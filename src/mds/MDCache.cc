@@ -135,11 +135,11 @@ public:
 
 MDCache::MDCache(MDSRank *m, PurgeQueue &purge_queue_) :
   mds(m),
+  open_file_table(m),
   filer(m->objecter, m->finisher),
-  recovery_queue(m),
   stray_manager(m, purge_queue_),
-  trim_counter(g_conf().get_val<double>("mds_cache_trim_decay_rate")),
-  open_file_table(m)
+  recovery_queue(m),
+  trim_counter(g_conf().get_val<double>("mds_cache_trim_decay_rate"))
 {
   migrator.reset(new Migrator(mds, this));
 
@@ -163,8 +163,8 @@ MDCache::MDCache(MDSRank *m, PurgeQueue &purge_queue_) :
     while (!upkeep_trim_shutdown.load()) {
       auto now = clock::now();
       auto since = now-upkeep_last_trim;
-      auto interval = clock::duration(g_conf().get_val<std::chrono::seconds>("mds_cache_trim_interval"));
-      if (since >= interval*.90) {
+      auto trim_interval = clock::duration(g_conf().get_val<std::chrono::seconds>("mds_cache_trim_interval"));
+      if (since >= trim_interval*.90) {
         lock.unlock(); /* mds_lock -> upkeep_mutex */
         std::scoped_lock mds_lock(mds->mds_lock);
         lock.lock();
@@ -177,13 +177,24 @@ MDCache::MDCache(MDSRank *m, PurgeQueue &purge_queue_) :
           check_memory_usage();
           auto flags = Server::RecallFlags::ENFORCE_MAX|Server::RecallFlags::ENFORCE_LIVENESS;
           mds->server->recall_client_state(nullptr, flags);
-          upkeep_last_trim = clock::now();
+          upkeep_last_trim = now = clock::now();
         } else {
           dout(10) << "cache not ready for trimming" << dendl;
         }
       } else {
-        interval -= since;
+        trim_interval -= since;
       }
+      since = now-upkeep_last_release;
+      auto release_interval = clock::duration(g_conf().get_val<std::chrono::seconds>("mds_cache_release_free_interval"));
+      if (since >= release_interval) {
+        /* XXX not necessary once MDCache uses PriorityCache */
+        dout(10) << "releasing free memory" << dendl;
+        ceph_heap_release_free_memory();
+        upkeep_last_release = clock::now();
+      } else {
+        release_interval -= since;
+      }
+      auto interval = std::min(release_interval, trim_interval);
       dout(20) << "upkeep thread waiting interval " << interval << dendl;
       upkeep_cvar.wait_for(lock, interval);
     }
@@ -229,6 +240,11 @@ void MDCache::log_stat()
   mds->logger->set(l_mds_inodes_pin_tail, lru.lru_get_pintail());
   mds->logger->set(l_mds_inodes_with_caps, num_inodes_with_caps);
   mds->logger->set(l_mds_caps, Capability::count());
+  if (root) {
+    mds->logger->set(l_mds_root_rfiles, root->inode.rstat.rfiles);
+    mds->logger->set(l_mds_root_rbytes, root->inode.rstat.rbytes);
+    mds->logger->set(l_mds_root_rsnaps, root->inode.rstat.rsnaps);
+  }
 }
 
 
@@ -377,6 +393,7 @@ void MDCache::create_unlinked_system_inode(CInode *in, inodeno_t ino,
   in->inode.change_attr = 0;
   in->inode.export_pin = MDS_RANK_NONE;
 
+  // FIPS zeroization audit 20191117: this memset is not security related.
   memset(&in->inode.dir_layout, 0, sizeof(in->inode.dir_layout));
   if (in->inode.is_dir()) {
     in->inode.dir_layout.dl_dir_hash = g_conf()->mds_default_dir_hash;
@@ -2204,12 +2221,10 @@ void MDCache::predirty_journal_parents(MutationRef mut, EMetaBlob *blob,
     }
 
     // can cast only because i'm passing nowait=true in the sole user
-    MDRequestRef mdmut = static_cast<MDRequestImpl*>(mut.get());
     if (!stop &&
 	!mut->is_wrlocked(&pin->nestlock) &&
 	(!pin->versionlock.can_wrlock() ||                   // make sure we can take versionlock, too
-	 //true
-	 !mds->locker->wrlock_start(&pin->nestlock, mdmut, true)
+	 !mds->locker->wrlock_try(&pin->nestlock, mut)
 	 )) {  // ** do not initiate.. see above comment **
       dout(10) << "predirty_journal_parents can't wrlock one of " << pin->versionlock << " or " << pin->nestlock
 	       << " on " << *pin << dendl;
@@ -3954,15 +3969,13 @@ void MDCache::rejoin_send_rejoins()
 
   // if i am rejoining, send a rejoin to everyone.
   // otherwise, just send to others who are rejoining.
-  for (set<mds_rank_t>::iterator p = recovery_set.begin();
-       p != recovery_set.end();
-       ++p) {
-    if (*p == mds->get_nodeid())  continue;  // nothing to myself!
-    if (rejoin_sent.count(*p)) continue;     // already sent a rejoin to this node!
+  for (const auto& rank : recovery_set) {
+    if (rank == mds->get_nodeid())  continue;  // nothing to myself!
+    if (rejoin_sent.count(rank)) continue;     // already sent a rejoin to this node!
     if (mds->is_rejoin())
-      rejoins[*p] = make_message<MMDSCacheRejoin>(MMDSCacheRejoin::OP_WEAK);
-    else if (mds->mdsmap->is_rejoin(*p))
-      rejoins[*p] = make_message<MMDSCacheRejoin>(MMDSCacheRejoin::OP_STRONG);
+      rejoins[rank] = make_message<MMDSCacheRejoin>(MMDSCacheRejoin::OP_WEAK);
+    else if (mds->mdsmap->is_rejoin(rank))
+      rejoins[rank] = make_message<MMDSCacheRejoin>(MMDSCacheRejoin::OP_STRONG);
   }
 
   if (mds->is_rejoin()) {
@@ -4083,11 +4096,14 @@ void MDCache::rejoin_send_rejoins()
       if (mdr->is_slave())
 	continue;
       // auth pins
-      for (const auto& q : mdr->remote_auth_pins) {
+      for (const auto& q : mdr->object_states) {
+	if (q.second.remote_auth_pinned == MDS_RANK_NONE)
+	  continue;
 	if (!q.first->is_auth()) {
-	  ceph_assert(q.second == q.first->authority().first);
-	  if (rejoins.count(q.second) == 0) continue;
-	  const ref_t<MMDSCacheRejoin> &rejoin = rejoins[q.second];
+	  mds_rank_t target = q.second.remote_auth_pinned;
+	  ceph_assert(target == q.first->authority().first);
+	  if (rejoins.count(target) == 0) continue;
+	  const auto& rejoin = rejoins[target];
 	  
 	  dout(15) << " " << *mdr << " authpin on " << *q.first << dendl;
 	  MDSCacheObjectInfo i;
@@ -4110,7 +4126,7 @@ void MDCache::rejoin_send_rejoins()
 	if (q.is_xlock() && !obj->is_auth()) {
 	  mds_rank_t who = obj->authority().first;
 	  if (rejoins.count(who) == 0) continue;
-	  const ref_t<MMDSCacheRejoin> &rejoin = rejoins[who];
+	  const auto& rejoin = rejoins[who];
 	  
 	  dout(15) << " " << *mdr << " xlock on " << *lock << " " << *obj << dendl;
 	  MDSCacheObjectInfo i;
@@ -4124,7 +4140,7 @@ void MDCache::rejoin_send_rejoins()
 	} else if (q.is_remote_wrlock()) {
 	  mds_rank_t who = q.wrlock_target;
 	  if (rejoins.count(who) == 0) continue;
-	  const ref_t<MMDSCacheRejoin> &rejoin = rejoins[who];
+	  const auto& rejoin = rejoins[who];
 
 	  dout(15) << " " << *mdr << " wrlock on " << *lock << " " << *obj << dendl;
 	  MDSCacheObjectInfo i;
@@ -4695,7 +4711,7 @@ void MDCache::handle_cache_rejoin_strong(const cref_t<MMDSCacheRejoin> &strong)
     
     const auto it = strong->strong_dentries.find(dirfrag);
     if (it != strong->strong_dentries.end()) {
-      const map<string_snap_t,MMDSCacheRejoin::dn_strong>& dmap = it->second;
+      const auto& dmap = it->second;
       for (const auto &q : dmap) {
         const string_snap_t& ss = q.first;
         const MMDSCacheRejoin::dn_strong& d = q.second;
@@ -8044,17 +8060,18 @@ void MDCache::dispatch(const cref_t<Message> &m)
   }
 }
 
-int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
-                           const filepath& path,                   // what
-                           vector<CDentry*> *pdnvec,         // result
-                           CInode **pin,
-                           int onfail)
+int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,
+                           const filepath& path, int flags,
+                           vector<CDentry*> *pdnvec, CInode **pin)
 {
-  bool discover = (onfail == MDS_TRAVERSE_DISCOVER);
-  bool null_okay = (onfail == MDS_TRAVERSE_DISCOVERXLOCK);
-  bool forward = (onfail == MDS_TRAVERSE_FORWARD);
+  bool discover = (flags & MDS_TRAVERSE_DISCOVER);
+  bool forward = !discover;
+  bool last_xlocked = (flags & MDS_TRAVERSE_LAST_XLOCKED);
+  bool want_dentry = (flags & MDS_TRAVERSE_WANT_DENTRY);
+  bool want_auth = (flags & MDS_TRAVERSE_WANT_AUTH);
 
-  ceph_assert(!forward || mdr);  // forward requires a request
+  if (forward)
+    ceph_assert(mdr);  // forward requires a request
 
   snapid_t snapid = CEPH_NOSNAP;
   if (mdr)
@@ -8103,7 +8120,7 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
     // walk into snapdir?
     if (path[depth].length() == 0) {
       dout(10) << "traverse: snapdir" << dendl;
-      if (!mdr)
+      if (!mdr || depth > 0) // snapdir must be the first component
 	return -EINVAL;
       snapid = CEPH_SNAPDIR;
       mdr->snapid = snapid;
@@ -8153,7 +8170,7 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
         // discover?
 	dout(10) << "traverse: need dirfrag " << fg << ", doing discover from " << *cur << dendl;
 	discover_path(cur, snapid, path.postfixpath(depth), cf.build(),
-		      null_okay);
+		      last_xlocked);
 	if (mds->logger) mds->logger->inc(l_mds_traverse_discover);
         return 1;
       }
@@ -8177,6 +8194,19 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
     }
     */
 
+    if (want_auth && want_dentry && depth == path.depth() - 1) {
+      if (curdir->is_ambiguous_auth()) {
+	dout(10) << "waiting for single auth on " << *curdir << dendl;
+	curdir->add_waiter(CInode::WAIT_SINGLEAUTH, cf.build());
+	return 1;
+      }
+      if (!curdir->is_auth()) {
+	dout(10) << "fw to auth for " << *curdir << dendl;
+	request_forward(mdr, curdir->authority().first);
+	return 2;
+      }
+    }
+
     // Before doing dirfrag->dn lookup, compare with DamageTable's
     // record of which dentries were unreadable
     if (mds->damage_table.is_dentry_damaged(curdir, path[depth], snapid)) {
@@ -8187,53 +8217,38 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
 
     // dentry
     CDentry *dn = curdir->lookup(path[depth], snapid);
-    CDentry::linkage_t *dnl = dn ? dn->get_projected_linkage() : 0;
+    if (dn) {
+      if (!dn->lock.can_read(client) &&
+	  !(last_xlocked && depth == path.depth() - 1) &&
+	  !(dn->lock.is_xlocked() && dn->lock.get_xlock_by() == mdr)) {
+	dout(10) << "traverse: non-readable dentry at " << *dn << dendl;
+	dn->lock.add_waiter(SimpleLock::WAIT_RD, cf.build());
+	if (mds->logger)
+	  mds->logger->inc(l_mds_traverse_lock);
+	if (dn->is_auth() && dn->lock.is_unstable_and_locked())
+	  mds->mdlog->flush();
+	return 1;
+      }
 
-    // null and last_bit and xlocked by me?
-    if (dnl && dnl->is_null() && null_okay) {
-      dout(10) << "traverse: hit null dentry at tail of traverse, succeeding" << dendl;
       if (pdnvec)
 	pdnvec->push_back(dn);
-      if (pin)
-	*pin = 0;
-      break; // done!
-    }
 
-    if (dnl &&
-	dn->lock.is_xlocked() &&
-	dn->lock.get_xlock_by() != mdr &&
-	!dn->lock.can_read(client) &&
-	(dnl->is_null() || forward)) {
-      dout(10) << "traverse: xlocked dentry at " << *dn << dendl;
-      dn->lock.add_waiter(SimpleLock::WAIT_RD, cf.build());
-      if (mds->logger) mds->logger->inc(l_mds_traverse_lock);
-      mds->mdlog->flush();
-      return 1;
-    }
-    
-    // can we conclude ENOENT?
-    if (dnl && dnl->is_null()) {
-      if (dn->lock.can_read(client) ||
-	  (dn->lock.is_xlocked() && dn->lock.get_xlock_by() == mdr)) {
-        dout(10) << "traverse: miss on null+readable dentry " << path[depth] << " " << *dn << dendl;
-	if (pdnvec) {
-	  if (depth == path.depth() - 1)
-	    pdnvec->push_back(dn);
-	  else
+      CDentry::linkage_t *dnl = dn->get_projected_linkage();
+      // can we conclude ENOENT?
+      if (dnl->is_null()) {
+	dout(10) << "traverse: null+readable dentry at " << *dn << dendl;
+	if (depth == path.depth() - 1) {
+	  if (want_dentry)
+	    break;
+	} else {
+	  if (pdnvec)
 	    pdnvec->clear();   // do not confuse likes of rdlock_path_pin_ref();
 	}
-        return -ENOENT;
-      } else {
-        dout(10) << "miss on dentry " << *dn << ", can't read due to lock" << dendl;
-        dn->lock.add_waiter(SimpleLock::WAIT_RD, cf.build());
-        return 1;
+	return -ENOENT;
       }
-    }
 
-    if (dnl && !dnl->is_null()) {
-      CInode *in = dnl->get_inode();
-      
       // do we have inode?
+      CInode *in = dnl->get_inode();
       if (!in) {
         ceph_assert(dnl->is_remote());
         // do i have it?
@@ -8250,10 +8265,10 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
             return -EIO;
           }
           open_remote_dentry(dn, true, cf.build(),
-			     (null_okay && depth == path.depth() - 1));
+			     (last_xlocked && depth == path.depth() - 1));
 	  if (mds->logger) mds->logger->inc(l_mds_traverse_remote_ino);
           return 1;
-        }        
+        }
       }
 
       cur = in;
@@ -8265,14 +8280,13 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
 
       // add to trace, continue.
       touch_inode(cur);
-      if (pdnvec)
-	pdnvec->push_back(dn);
       if (pin)
 	*pin = cur;
       depth++;
       continue;
     }
-    
+
+    ceph_assert(!dn);
 
     // MISS.  dentry doesn't exist.
     dout(12) << "traverse: miss on dentry " << path[depth] << " in " << *curdir << dendl;
@@ -8286,24 +8300,26 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
         // file not found
 	if (pdnvec) {
 	  // instantiate a null dn?
-	  if (depth < path.depth()-1){
+	  if (depth < path.depth() - 1) {
 	    dout(20) << " didn't traverse full path; not returning pdnvec" << dendl;
-	    dn = NULL;
-	  } else if (dn) {
-	    ceph_abort(); // should have fallen out in ->is_null() check above
-	  } else if (curdir->is_frozen()) {
-	    dout(20) << " not adding null to frozen dir " << dendl;
 	  } else if (snapid < CEPH_MAXSNAP) {
 	    dout(20) << " not adding null for snapid " << snapid << dendl;
+	  } else if (curdir->is_frozen()) {
+	    dout(7) << "traverse: " << *curdir << " is frozen, waiting" << dendl;
+	    curdir->add_waiter(CDir::WAIT_UNFREEZE, cf.build());
+	    return 1;
 	  } else {
 	    // create a null dentry
 	    dn = curdir->add_null_dentry(path[depth]);
 	    dout(20) << " added null " << *dn << dendl;
 	  }
-	  if (dn)
+	  if (dn) {
 	    pdnvec->push_back(dn);
-	  else
+	    if (want_dentry)
+	      break;
+	  } else {
 	    pdnvec->clear();   // do not confuse likes of rdlock_path_pin_ref();
+	  }
 	}
         return -ENOENT;
       } else {
@@ -8336,10 +8352,10 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
 	discover = true;
       }
 
-      if ((discover || null_okay)) {
+      if ((discover)) {
 	dout(7) << "traverse: discover from " << path[depth] << " from " << *curdir << dendl;
 	discover_path(curdir, snapid, path.postfixpath(depth), cf.build(),
-		      null_okay);
+		      last_xlocked);
 	if (mds->logger) mds->logger->inc(l_mds_traverse_discover);
         return 1;
       } 
@@ -8364,6 +8380,19 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,     // who
     }
 
     ceph_abort();  // i shouldn't get here
+  }
+
+  if (want_auth && !want_dentry) {
+    if (cur->is_ambiguous_auth()) {
+      dout(10) << "waiting for single auth on " << *cur << dendl;
+      cur->add_waiter(CInode::WAIT_SINGLEAUTH, cf.build());
+      return 1;
+    }
+    if (!cur->is_auth()) {
+      dout(10) << "fw to auth for " << *cur << dendl;
+      request_forward(mdr, cur->authority().first);
+      return 2;
+    }
   }
   
   // success.
@@ -9161,7 +9190,7 @@ void MDCache::handle_find_ino_reply(const cref_t<MMDSFindInoReply> &m)
       vector<CDentry*> trace;
       CF_MDS_RetryMessageFactory cf(mds, m);
       MDRequestRef null_ref;
-      int r = path_traverse(null_ref, cf, m->path, &trace, NULL, MDS_TRAVERSE_DISCOVER);
+      int r = path_traverse(null_ref, cf, m->path, MDS_TRAVERSE_DISCOVER, &trace);
       if (r > 0)
 	return; 
       dout(0) << "handle_find_ino_reply failed with " << r << " on " << m->path 
@@ -9362,12 +9391,12 @@ void MDCache::request_forward(MDRequestRef& mdr, mds_rank_t who, int port)
 	  }
 	case CEPH_MDS_OP_LOOKUP:
 	  {
-	    CDentry* dn = mdr->dn[0].back();
-	    if (dn) {
+	    if (mdr->dn[0].size()) {
+	      CDentry* dn = mdr->dn[0].back();
 	      auto it = dn->batch_ops.find(mask);
 	      if (it != dn->batch_ops.end()) {
-                it->second->forward(who);
-                dn->batch_ops.erase(it);
+		it->second->forward(who);
+		dn->batch_ops.erase(it);
 	      }
 	    }
 	    break;
@@ -10718,7 +10747,7 @@ void MDCache::handle_dir_update(const cref_t<MDirUpdate> &m)
       dout(5) << "trying discover on dir_update for " << path << dendl;
       CF_MDS_RetryMessageFactory cf(mds, m);
       MDRequestRef null_ref;
-      int r = path_traverse(null_ref, cf, path, &trace, &in, MDS_TRAVERSE_DISCOVER);
+      int r = path_traverse(null_ref, cf, path, MDS_TRAVERSE_DISCOVER, &trace, &in);
       if (r > 0)
         return;
       if (r == 0 &&
@@ -12671,7 +12700,7 @@ void MDCache::repair_dirfrag_stats_work(MDRequestRef& mdr)
 
     mds->locker->drop_locks(mdr.get());
     mdr->drop_local_auth_pins();
-    if (!mdr->remote_auth_pins.empty())
+    if (mdr->is_any_remote_auth_pin())
       mds->locker->notify_freeze_waiter(dir);
     return;
   }

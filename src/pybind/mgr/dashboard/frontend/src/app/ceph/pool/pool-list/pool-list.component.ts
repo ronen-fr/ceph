@@ -222,6 +222,7 @@ export class PoolListComponent implements OnInit {
     this.modalRef = this.modalService.show(CriticalConfirmationModalComponent, {
       initialState: {
         itemDescription: 'Pool',
+        itemNames: [name],
         submitActionObservable: () =>
           this.taskWrapper.wrapTaskAroundCall({
             task: new FinishedTask(`${BASE_URL}/${URLVerbs.DELETE}`, { pool_name: name }),
@@ -275,10 +276,6 @@ export class PoolListComponent implements OnInit {
     });
 
     return strings.join(', ');
-  }
-
-  getPoolDetails(pool: object) {
-    return _.omit(pool, ['cdExecuting', 'cdIsBinary']);
   }
 
   getSelectionTiers() {

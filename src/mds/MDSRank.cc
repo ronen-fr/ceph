@@ -484,22 +484,14 @@ MDSRank::MDSRank(
     MonClient *monc_,
     MgrClient *mgrc,
     Context *respawn_hook_,
-    Context *suicide_hook_)
-  :
-    whoami(whoami_), incarnation(0),
-    mds_lock(mds_lock_), cct(msgr->cct), clog(clog_), timer(timer_),
-    mdsmap(mdsmap_),
+    Context *suicide_hook_) :
+    cct(msgr->cct), mds_lock(mds_lock_), clog(clog_),
+    timer(timer_), mdsmap(mdsmap_),
     objecter(new Objecter(g_ceph_context, msgr, monc_, nullptr, 0, 0)),
-    server(NULL), mdcache(NULL), locker(NULL), mdlog(NULL),
-    balancer(NULL), scrubstack(NULL),
-    damage_table(whoami_),
-    inotable(NULL), snapserver(NULL), snapclient(NULL),
-    sessionmap(this), logger(NULL), mlogger(NULL),
+    damage_table(whoami_), sessionmap(this),
     op_tracker(g_ceph_context, g_conf()->mds_enable_op_tracker,
                g_conf()->osd_num_op_tracker_shard),
-    last_state(MDSMap::STATE_BOOT),
-    state(MDSMap::STATE_BOOT),
-    cluster_degraded(false), stopping(false),
+    progress_thread(this), whoami(whoami_),
     purge_queue(g_ceph_context, whoami_,
       mdsmap_->get_metadata_pool(), objecter,
       new LambdaContext([this](int r) {
@@ -508,21 +500,17 @@ MDSRank::MDSRank(
 	}
       )
     ),
-    progress_thread(this), dispatch_depth(0),
-    hb(NULL), last_tid(0), osd_epoch_barrier(0), beacon(beacon_),
-    mds_slow_req_count(0),
-    last_client_mdsmap_bcast(0),
+    beacon(beacon_),
     messenger(msgr), monc(monc_), mgrc(mgrc),
     respawn_hook(respawn_hook_),
     suicide_hook(suicide_hook_),
-    standby_replaying(false),
     starttime(mono_clock::now())
 {
   hb = g_ceph_context->get_heartbeat_map()->add_worker("MDSRank", pthread_self());
 
   purge_queue.update_op_limit(*mdsmap);
 
-  objecter->unset_honor_osdmap_full();
+  objecter->unset_honor_pool_full();
 
   finisher = new Finisher(cct, "MDSRank", "MR_Finisher");
 
@@ -543,13 +531,6 @@ MDSRank::MDSRank(
                                          cct->_conf->mds_op_log_threshold);
   op_tracker.set_history_size_and_duration(cct->_conf->mds_op_history_size,
                                            cct->_conf->mds_op_history_duration);
-
-  std::string rank_str = stringify(get_nodeid());
-  std::map<std::string, std::string> service_metadata = {{"rank", rank_str}};
-  int r = mgrc->service_daemon_register("mds", rank_str, service_metadata);
-  if (r < 0) {
-    derr << ": failed to register with manager for service status update" << dendl;
-  }
 
   schedule_update_timer_task();
 }
@@ -2433,13 +2414,13 @@ void MDSRank::handle_mds_failure(mds_rank_t who)
   snapclient->handle_mds_failure(who);
 }
 
-bool MDSRankDispatcher::handle_asok_command(std::string_view command,
-					    const cmdmap_t& cmdmap,
-					    Formatter *f,
-					    std::ostream& ss)
+int MDSRankDispatcher::handle_asok_command(std::string_view command,
+					   const cmdmap_t& cmdmap,
+					   Formatter *f,
+					   std::ostream& ss)
 {
   if (command == "dump_ops_in_flight" ||
-             command == "ops") {
+      command == "ops") {
     if (!op_tracker.dump_ops_in_flight(f)) {
       ss << "op_tracker tracking is not enabled now, so no ops are tracked currently, even those get stuck. \
 	  please enable \"mds_enable_op_tracker\", and the tracker will start to track new ops received afterwards.";
@@ -2465,7 +2446,7 @@ bool MDSRankDispatcher::handle_asok_command(std::string_view command,
 
     if (!got_val) {
       ss << "no target epoch given";
-      return true;
+      return -EINVAL;
     }
     {
       std::lock_guard l(mds_lock);
@@ -2488,7 +2469,7 @@ bool MDSRankDispatcher::handle_asok_command(std::string_view command,
     const bool got_arg = cmd_getval(g_ceph_context, cmdmap, "client_id", client_id);
     if(!got_arg) {
       ss << "Invalid client_id specified";
-      return true;
+      return -ENOENT;
     }
     std::lock_guard l(mds_lock);
     std::stringstream dss;
@@ -2536,12 +2517,12 @@ bool MDSRankDispatcher::handle_asok_command(std::string_view command,
     string path;
     if(!cmd_getval(g_ceph_context, cmdmap, "path", path)) {
       ss << "malformed path";
-      return true;
+      return -EINVAL;
     }
     int64_t rank;
     if(!cmd_getval(g_ceph_context, cmdmap, "rank", rank)) {
       ss << "malformed rank";
-      return true;
+      return -EINVAL;
     }
     command_export_dir(f, path, (mds_rank_t)rank);
   } else if (command == "dump cache") {
@@ -2601,10 +2582,10 @@ bool MDSRankDispatcher::handle_asok_command(std::string_view command,
   } else if (command == "dump inode") {
     command_dump_inode(f, cmdmap, ss);
   } else {
-    return false;
+    return -ENOSYS;
   }
 
-  return true;
+  return 0;
 }
 
 class C_MDS_Send_Command_Reply : public MDSInternalContext {
@@ -3189,6 +3170,9 @@ void MDSRank::create_logger()
 
     // useful dir/inode/subtree stats
     mds_plb.set_prio_default(PerfCountersBuilder::PRIO_USEFUL);
+    mds_plb.add_u64(l_mds_root_rfiles, "root_rfiles", "root inode rfiles");
+    mds_plb.add_u64(l_mds_root_rbytes, "root_rbytes", "root inode rbytes");
+    mds_plb.add_u64(l_mds_root_rsnaps, "root_rsnaps", "root inode rsnaps");
     mds_plb.add_u64_counter(l_mds_dir_fetch, "dir_fetch", "Directory fetch");
     mds_plb.add_u64_counter(l_mds_dir_commit, "dir_commit", "Directory commit");
     mds_plb.add_u64_counter(l_mds_dir_split, "dir_split", "Directory split");
@@ -3668,6 +3652,7 @@ const char** MDSRankDispatcher::get_tracked_conf_keys() const
     "mds_max_purge_files",
     "mds_max_purge_ops",
     "mds_max_purge_ops_per_pg",
+    "mds_max_snaps_per_dir",
     "mds_op_complaint_time",
     "mds_op_history_duration",
     "mds_op_history_size",

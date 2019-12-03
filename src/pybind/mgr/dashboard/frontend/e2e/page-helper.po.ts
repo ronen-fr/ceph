@@ -285,4 +285,17 @@ export abstract class PageHelper {
     // Waits for item to be removed from table
     return this.waitStaleness(this.getFirstTableCellWithText(name));
   }
+
+  getTableRows() {
+    return $$('datatable-row-wrapper');
+  }
+
+  /**
+   * Uncheck all checked table rows.
+   */
+  async uncheckAllTableRows() {
+    await $$('.datatable-body-cell-label .datatable-checkbox input[type=checkbox]:checked').each(
+      (e: ElementFinder) => e.click()
+    );
+  }
 }

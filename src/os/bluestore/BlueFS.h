@@ -14,6 +14,7 @@
 #include "global/global_context.h"
 
 #include "boost/intrusive/list.hpp"
+#include "boost/dynamic_bitset.hpp"
 
 class PerfCounters;
 
@@ -158,13 +159,13 @@ public:
     std::array<bool, MAX_BDEV> dirty_devs;
 
     FileWriter(FileRef f)
-      : file(f),
+      : file(std::move(f)),
 	buffer_appender(buffer.get_page_aligned_appender(
 			  g_conf()->bluefs_alloc_size / CEPH_PAGE_SIZE)) {
       ++file->num_writers;
       iocv.fill(nullptr);
       dirty_devs.fill(false);
-      if (f->fnode.ino == 1) {
+      if (file->fnode.ino == 1) {
 	write_hint = WRITE_LIFE_MEDIUM;
       }
     }
@@ -194,20 +195,18 @@ public:
   struct FileReaderBuffer {
     MEMPOOL_CLASS_HELPERS();
 
-    uint64_t bl_off;        ///< prefetch buffer logical offset
+    uint64_t bl_off = 0;    ///< prefetch buffer logical offset
     bufferlist bl;          ///< prefetch buffer
-    uint64_t pos;           ///< current logical offset
+    uint64_t pos = 0;       ///< current logical offset
     uint64_t max_prefetch;  ///< max allowed prefetch
 
     explicit FileReaderBuffer(uint64_t mpf)
-      : bl_off(0),
-	pos(0),
-	max_prefetch(mpf) {}
+      : max_prefetch(mpf) {}
 
-    uint64_t get_buf_end() {
+    uint64_t get_buf_end() const {
       return bl_off + bl.length();
     }
-    uint64_t get_buf_remaining(uint64_t p) {
+    uint64_t get_buf_remaining(uint64_t p) const {
       if (p >= bl_off && p < bl_off + bl.length())
 	return bl_off + bl.length() - p;
       return 0;
@@ -250,7 +249,7 @@ public:
     MEMPOOL_CLASS_HELPERS();
 
     FileRef file;
-    explicit FileLock(FileRef f) : file(f) {}
+    explicit FileLock(FileRef f) : file(std::move(f)) {}
   };
 
 private:
@@ -353,11 +352,12 @@ private:
   void _compact_log_sync();
   void _compact_log_async(std::unique_lock<ceph::mutex>& l);
 
-  void _rewrite_log_sync(bool allocate_with_fallback,
-			 int super_dev,
-			 int log_dev,
-			 int new_log_dev,
-			 int flags);
+  void _rewrite_log_and_layout_sync(bool allocate_with_fallback,
+				    int super_dev,
+				    int log_dev,
+				    int new_log_dev,
+				    int flags,
+				    std::optional<bluefs_layout_t> layout);
 
   //void _aio_finish(void *priv);
 
@@ -385,6 +385,10 @@ private:
 
   int _open_super();
   int _write_super(int dev);
+  int _check_new_allocations(const bluefs_fnode_t& fnode,
+    size_t dev_count,
+    boost::dynamic_bitset<uint64_t>* owned_blocks,
+    boost::dynamic_bitset<uint64_t>* used_blocks);
   int _replay(bool noop, bool to_stdout = false); ///< replay journal
 
   FileWriter *_create_writer(FileRef f);
@@ -410,7 +414,7 @@ public:
   int mount();
   int maybe_verify_layout(const bluefs_layout_t& layout) const;
   void umount();
-  int prepare_new_device(int id);
+  int prepare_new_device(int id, const bluefs_layout_t& layout);
   
   int log_dump();
 
@@ -424,11 +428,13 @@ public:
   int device_migrate_to_new(
     CephContext *cct,
     const set<int>& devs_source,
-    int dev_target);
+    int dev_target,
+    const bluefs_layout_t& layout);
   int device_migrate_to_existing(
     CephContext *cct,
     const set<int>& devs_source,
-    int dev_target);
+    int dev_target,
+    const bluefs_layout_t& layout);
 
   uint64_t get_used();
   uint64_t get_total(unsigned id);
@@ -543,6 +549,8 @@ public:
     return _truncate(h, offset);
   }
 
+  /// test purpose methods
+  void debug_inject_duplicate_gift(unsigned bdev, uint64_t offset, uint64_t len);
 };
 
 #endif

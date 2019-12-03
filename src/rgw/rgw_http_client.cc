@@ -53,6 +53,7 @@ struct rgw_http_req_data : public RefCountedObject {
   std::unique_ptr<Completion> completion;
 
   rgw_http_req_data() : id(-1) {
+    // FIPS zeroization audit 20191115: this memset is not security related.
     memset(error_buf, 0, sizeof(error_buf));
   }
 
@@ -1074,7 +1075,7 @@ int RGWHTTPManager::set_request_state(RGWHTTPClient *client, RGWHTTPRequestSetSt
 
 int RGWHTTPManager::start()
 {
-  if (pipe_cloexec(thread_pipe) < 0) {
+  if (pipe_cloexec(thread_pipe, 0) < 0) {
     int e = errno;
     ldout(cct, 0) << "ERROR: pipe(): " << cpp_strerror(e) << dendl;
     return -e;

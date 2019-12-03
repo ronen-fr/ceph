@@ -38,6 +38,7 @@ cmake_pop_check_state()
 
 check_function_exists(eventfd HAVE_EVENTFD)
 check_function_exists(getprogname HAVE_GETPROGNAME)
+check_function_exists(gettid HAVE_GETTID)
 
 CHECK_INCLUDE_FILES("linux/types.h" HAVE_LINUX_TYPES_H)
 CHECK_INCLUDE_FILES("linux/version.h" HAVE_LINUX_VERSION_H)
@@ -66,6 +67,13 @@ CHECK_TYPE_SIZE(__s64 __S64)
 unset(CMAKE_EXTRA_INCLUDE_FILES)
 
 include(CheckSymbolExists)
+cmake_push_check_state(RESET)
+set(CMAKE_REQUIRED_LIBRARIES rt)
+check_symbol_exists(_POSIX_TIMERS "unistd.h;time.h" HAVE_POSIX_TIMERS)
+cmake_pop_check_state()
+if(HAVE_POSIX_TIMERS)
+  find_library(RT_LIBRARY NAMES rt)
+endif()
 check_symbol_exists(res_nquery "resolv.h" HAVE_RES_NQUERY)
 check_symbol_exists(F_SETPIPE_SZ "linux/fcntl.h" CEPH_HAVE_SETPIPE_SZ)
 check_symbol_exists(__func__ "" HAVE_FUNC)
@@ -124,3 +132,14 @@ int main(int argc, char **argv)
 else(CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
   message(STATUS "Assuming unaligned access is supported")
 endif(CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
+
+# should use LINK_OPTIONS instead of LINK_LIBRARIES, if we can use cmake v3.14+
+try_compile(HAVE_LINK_VERSION_SCRIPT
+  ${CMAKE_CURRENT_BINARY_DIR}
+  SOURCES ${CMAKE_CURRENT_LIST_DIR}/CephCheck_link.c
+  LINK_LIBRARIES "-Wl,--version-script=${CMAKE_CURRENT_LIST_DIR}/CephCheck_link.map")
+
+try_compile(HAVE_LINK_EXCLUDE_LIBS
+  ${CMAKE_CURRENT_BINARY_DIR}
+  SOURCES ${CMAKE_CURRENT_LIST_DIR}/CephCheck_link.c
+  LINK_LIBRARIES "-Wl,--exclude-libs,ALL")

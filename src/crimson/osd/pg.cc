@@ -11,9 +11,9 @@
 #include <boost/range/algorithm/copy.hpp>
 #include <boost/range/algorithm/max_element.hpp>
 #include <boost/range/numeric.hpp>
-
 #include <fmt/format.h>
 #include <fmt/ostream.h>
+#include <seastar/core/sleep.hh>
 
 #include "messages/MOSDOp.h"
 #include "messages/MOSDOpReply.h"
@@ -30,10 +30,8 @@
 
 #include "crimson/net/Connection.h"
 #include "crimson/net/Messenger.h"
+#include "crimson/os/cyanstore/cyan_store.h"
 #include "crimson/os/futurized_collection.h"
-#include "os/Transaction.h"
-#include "crimson/os/cyan_store.h"
-
 #include "crimson/osd/exceptions.h"
 #include "crimson/osd/pg_meta.h"
 #include "crimson/osd/pg_backend.h"
@@ -42,13 +40,23 @@
 
 namespace {
   seastar::logger& logger() {
-    return ceph::get_logger(ceph_subsys_osd);
+    return crimson::get_logger(ceph_subsys_osd);
   }
 }
 
-namespace ceph::osd {
+namespace std::chrono {
+std::ostream& operator<<(std::ostream& out, const signedspan& d)
+{
+  auto s = std::chrono::duration_cast<std::chrono::seconds>(d).count();
+  auto ns = std::abs((d % 1s).count());
+  fmt::print(out, "{}{}s", s, ns ? fmt::format(".{:0>9}", ns) : "");
+  return out;
+}
+}
 
-using ceph::common::local_conf;
+namespace crimson::osd {
+
+using crimson::common::local_conf;
 
 class RecoverablePredicate : public IsPGRecoverablePredicate {
 public:
@@ -69,7 +77,7 @@ public:
 PG::PG(
   spg_t pgid,
   pg_shard_t pg_shard,
-  ceph::os::CollectionRef coll_ref,
+  crimson::os::CollectionRef coll_ref,
   pg_pool_t&& pool,
   std::string&& name,
   cached_map_t osdmap,
@@ -127,6 +135,62 @@ bool PG::try_flush_or_schedule_async() {
 	  PeeringState::IntervalFlush());
       });
   return false;
+}
+
+void PG::queue_check_readable(epoch_t last_peering_reset, ceph::timespan delay)
+{
+  // handle the peering event in the background
+  std::ignore = seastar::sleep(delay).then([last_peering_reset, this] {
+    shard_services.start_operation<LocalPeeringEvent>(
+      this,
+      shard_services,
+      pg_whoami,
+      pgid,
+      last_peering_reset,
+      last_peering_reset,
+      PeeringState::CheckReadable{});
+    });
+}
+
+void PG::recheck_readable()
+{
+  bool changed = false;
+  const auto mnow = shard_services.get_mnow();
+  if (peering_state.state_test(PG_STATE_WAIT)) {
+    auto prior_readable_until_ub = peering_state.get_prior_readable_until_ub();
+    if (mnow < prior_readable_until_ub) {
+      logger().info("{} will wait (mnow {} < prior_readable_until_ub {})",
+		    __func__, mnow, prior_readable_until_ub);
+    } else {
+      logger().info("{} no longer wait (mnow {} >= prior_readable_until_ub {})",
+		    __func__, mnow, prior_readable_until_ub);
+      peering_state.state_clear(PG_STATE_WAIT);
+      peering_state.clear_prior_readable_until_ub();
+      changed = true;
+    }
+  }
+  if (peering_state.state_test(PG_STATE_LAGGY)) {
+    auto readable_until = peering_state.get_readable_until();
+    if (readable_until == readable_until.zero()) {
+      logger().info("{} still laggy (mnow {}, readable_until zero)",
+		    __func__, mnow);
+    } else if (mnow >= readable_until) {
+      logger().info("{} still laggy (mnow {} >= readable_until {})",
+		    __func__, mnow, readable_until);
+    } else {
+      logger().info("{} no longer laggy (mnow {} < readable_until {})",
+		    __func__, mnow, readable_until);
+      peering_state.state_clear(PG_STATE_LAGGY);
+      changed = true;
+    }
+  }
+  if (changed) {
+    publish_stats_to_osd();
+    if (!peering_state.state_test(PG_STATE_WAIT) &&
+	!peering_state.state_test(PG_STATE_LAGGY)) {
+      // TODO: requeue ops waiting for readable
+    }
+  }
 }
 
 void PG::on_activate(interval_set<snapid_t>)
@@ -194,8 +258,24 @@ HeartbeatStampsRef PG::get_hb_stamps(int peer)
   return shard_services.get_hb_stamps(peer);
 }
 
+void PG::schedule_renew_lease(epoch_t last_peering_reset, ceph::timespan delay)
+{
+  // handle the peering event in the background
+  std::ignore = seastar::sleep(delay).then([last_peering_reset, this] {
+    shard_services.start_operation<LocalPeeringEvent>(
+      this,
+      shard_services,
+      pg_whoami,
+      pgid,
+      last_peering_reset,
+      last_peering_reset,
+      RenewLease{});
+    });
+}
+
+
 void PG::init(
-  ceph::os::CollectionRef coll,
+  crimson::os::CollectionRef coll,
   int role,
   const vector<int>& newup, int new_up_primary,
   const vector<int>& newacting, int new_acting_primary,
@@ -210,7 +290,7 @@ void PG::init(
     new_acting_primary, history, pi, backfill, t);
 }
 
-seastar::future<> PG::read_state(ceph::os::FuturizedStore* store)
+seastar::future<> PG::read_state(crimson::os::FuturizedStore* store)
 {
   return store->open_collection(coll_t(pgid)).then([this, store](auto ch) {
     coll_ref = ch;
@@ -355,33 +435,45 @@ seastar::future<> PG::submit_transaction(boost::local_shared_ptr<ObjectState>&& 
 
 seastar::future<Ref<MOSDOpReply>> PG::do_osd_ops(Ref<MOSDOp> m)
 {
+  using osd_op_errorator = OpsExecuter::osd_op_errorator;
   const auto oid = m->get_snapid() == CEPH_SNAPDIR ? m->get_hobj().get_head()
                                                    : m->get_hobj();
-  return backend->get_object_state(oid).then([this, m](auto os) mutable {
-    return seastar::do_with(OpsExecuter{std::move(os), *this/* as const& */, m},
-                            [this, m] (auto& ox) {
-      return seastar::do_for_each(m->ops, [this, &ox](OSDOp& osd_op) {
-        logger().debug("will be handling op {}", ceph_osd_op_name(osd_op.op.op));
-        return ox.execute_osd_op(osd_op);
-      }).then([this, m, &ox] {
-        logger().debug("all operations have been executed successfully");
-        return std::move(ox).submit_changes([this, m] (auto&& txn, auto&& os) {
-          // XXX: the entire lambda could be scheduled conditionally. ::if_then()?
-	  if (txn.empty()) {
-            logger().debug("txn is empty, bypassing mutate");
-	    return seastar::now();
-	  } else {
-	    return submit_transaction(std::move(os), std::move(txn), *m);
-	  }
-        });
+  return backend->get_object_state(oid).safe_then([this, m](auto os) mutable {
+    auto ox =
+      std::make_unique<OpsExecuter>(std::move(os), *this/* as const& */, m);
+    return crimson::do_for_each(m->ops, [this, ox = ox.get()](OSDOp& osd_op) {
+      logger().debug("will be handling op {}", ceph_osd_op_name(osd_op.op.op));
+      return ox->execute_osd_op(osd_op);
+    }).safe_then([this, m, ox = std::move(ox)] {
+      logger().debug("all operations have been executed successfully");
+      return std::move(*ox).submit_changes([this, m] (auto&& txn, auto&& os) -> osd_op_errorator::future<> {
+        // XXX: the entire lambda could be scheduled conditionally. ::if_then()?
+        if (txn.empty()) {
+          logger().debug("txn is empty, bypassing mutate");
+          return osd_op_errorator::now();
+        } else {
+          return submit_transaction(std::move(os), std::move(txn), *m);
+        }
       });
     });
-  }).then([m,this] {
+  }).safe_then([m,this] {
     auto reply = make_message<MOSDOpReply>(m.get(), 0, get_osdmap_epoch(),
                                            0, false);
     reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
     return seastar::make_ready_future<Ref<MOSDOpReply>>(std::move(reply));
-  }).handle_exception_type([=,&oid](const ceph::osd::error& e) {
+  }, OpsExecuter::osd_op_errorator::all_same_way([=,&oid] (const std::error_code& e) {
+    assert(e.value() > 0);
+    logger().debug("got statical error code while handling object {}: {} ({})",
+                   oid, e.value(), e.message());
+    return backend->evict_object_state(oid).then([=] {
+      auto reply = make_message<MOSDOpReply>(
+        m.get(), -e.value(), get_osdmap_epoch(), 0, false);
+      reply->set_enoent_reply_versions(peering_state.get_info().last_update,
+                                         peering_state.get_info().last_user_version);
+      return seastar::make_ready_future<Ref<MOSDOpReply>>(std::move(reply));
+    });
+  })).handle_exception_type([=,&oid](const crimson::osd::error& e) {
+    // we need this handler because throwing path which aren't errorated yet.
     logger().debug("got ceph::osd::error while handling object {}: {} ({})",
                    oid, e.code(), e.what());
     return backend->evict_object_state(oid).then([=] {
@@ -396,18 +488,16 @@ seastar::future<Ref<MOSDOpReply>> PG::do_osd_ops(Ref<MOSDOp> m)
 
 seastar::future<Ref<MOSDOpReply>> PG::do_pg_ops(Ref<MOSDOp> m)
 {
-  return seastar::do_with(OpsExecuter{*this/* as const& */, m},
-                          [this, m] (auto& ox) {
-    return seastar::do_for_each(m->ops, [this, &ox](OSDOp& osd_op) {
-      logger().debug("will be handling pg op {}", ceph_osd_op_name(osd_op.op.op));
-      return ox.execute_pg_op(osd_op);
-    });
-  }).then([m, this] {
+  auto ox = std::make_unique<OpsExecuter>(*this/* as const& */, m);
+  return seastar::do_for_each(m->ops, [this, ox = ox.get()](OSDOp& osd_op) {
+    logger().debug("will be handling pg op {}", ceph_osd_op_name(osd_op.op.op));
+    return ox->execute_pg_op(osd_op);
+  }).then([m, this, ox = std::move(ox)] {
     auto reply = make_message<MOSDOpReply>(m.get(), 0, get_osdmap_epoch(),
                                            CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK,
                                            false);
     return seastar::make_ready_future<Ref<MOSDOpReply>>(std::move(reply));
-  }).handle_exception_type([=](const ceph::osd::error& e) {
+  }).handle_exception_type([=](const crimson::osd::error& e) {
     auto reply = make_message<MOSDOpReply>(
       m.get(), -e.code().value(), get_osdmap_epoch(), 0, false);
     reply->set_enoent_reply_versions(peering_state.get_info().last_update,
@@ -416,7 +506,7 @@ seastar::future<Ref<MOSDOpReply>> PG::do_pg_ops(Ref<MOSDOp> m)
   });
 }
 
-seastar::future<> PG::handle_op(ceph::net::Connection* conn,
+seastar::future<> PG::handle_op(crimson::net::Connection* conn,
                                 Ref<MOSDOp> m)
 {
   return wait_for_active().then([conn, m, this] {
@@ -451,7 +541,7 @@ seastar::future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
     });
 }
 
-void PG::handle_rep_op_reply(ceph::net::Connection* conn,
+void PG::handle_rep_op_reply(crimson::net::Connection* conn,
 			     const MOSDRepOpReply& m)
 {
   backend->got_rep_op_reply(m);

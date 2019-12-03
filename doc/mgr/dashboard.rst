@@ -425,6 +425,12 @@ The format of url is : `<protocol>:<IP-address>:<port>`
   above, check your browser's documentation on how to unblock mixed content.
   Alternatively, consider enabling SSL/TLS support in Grafana.
 
+If you are using a self-signed certificate in your Grafana setup, then you should
+disable certificate verification in the dashboard to avoid refused connections,
+e.g. caused by certificates signed by unknown CA or not matching the host name::
+
+  $ ceph dashboard set-grafana-api-ssl-verify False
+
 You can directly access Grafana Instance as well to monitor your cluster.
 
 .. _dashboard-sso-support:
@@ -908,7 +914,6 @@ The dashboard manages NFS-Ganesha config files stored in RADOS objects on the Ce
 NFS-Ganesha must store part of their configuration in the Ceph cluster.
 
 These configuration files must follow some conventions.
-conventions.
 Each export block must be stored in its own RADOS object named
 ``export-<id>``, where ``<id>`` must match the ``Export_ID`` attribute of the
 export configuration. Then, for each NFS-Ganesha service daemon there should
@@ -968,7 +973,8 @@ Web UI will automatically allow to choose to which cluster an export belongs.
 Plug-ins
 --------
 
-Dashboard Plug-ins allow to extend the functionality of the dashboard in a modular
-and loosely coupled approach.
+Dashboard Plug-ins extend the functionality of the dashboard in a modular
+and loosely coupled fashion.
 
 .. include:: dashboard_plugins/feature_toggles.inc.rst
+.. include:: dashboard_plugins/debug.inc.rst

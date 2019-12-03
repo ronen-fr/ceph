@@ -18,20 +18,22 @@ import { CdTableSelection } from '../../../../shared/models/cd-table-selection';
 import { Permissions } from '../../../../shared/models/permissions';
 import { DimlessBinaryPipe } from '../../../../shared/pipes/dimless-binary.pipe';
 import { AuthStorageService } from '../../../../shared/services/auth-storage.service';
+import { URLBuilderService } from '../../../../shared/services/url-builder.service';
 import { OsdFlagsModalComponent } from '../osd-flags-modal/osd-flags-modal.component';
 import { OsdPgScrubModalComponent } from '../osd-pg-scrub-modal/osd-pg-scrub-modal.component';
 import { OsdRecvSpeedModalComponent } from '../osd-recv-speed-modal/osd-recv-speed-modal.component';
 import { OsdReweightModalComponent } from '../osd-reweight-modal/osd-reweight-modal.component';
 import { OsdScrubModalComponent } from '../osd-scrub-modal/osd-scrub-modal.component';
 
+const BASE_URL = 'osd';
+
 @Component({
   selector: 'cd-osd-list',
   templateUrl: './osd-list.component.html',
-  styleUrls: ['./osd-list.component.scss']
+  styleUrls: ['./osd-list.component.scss'],
+  providers: [{ provide: URLBuilderService, useValue: new URLBuilderService(BASE_URL) }]
 })
 export class OsdListComponent implements OnInit {
-  @ViewChild('statusColor', { static: true })
-  statusColor: TemplateRef<any>;
   @ViewChild('osdUsageTpl', { static: true })
   osdUsageTpl: TemplateRef<any>;
   @ViewChild('markOsdConfirmationTpl', { static: true })
@@ -73,16 +75,25 @@ export class OsdListComponent implements OnInit {
     private dimlessBinaryPipe: DimlessBinaryPipe,
     private modalService: BsModalService,
     private i18n: I18n,
+    private urlBuilder: URLBuilderService,
     public actionLabels: ActionLabelsI18n
   ) {
     this.permissions = this.authStorageService.getPermissions();
     this.tableActions = [
       {
+        name: this.actionLabels.CREATE,
+        permission: 'create',
+        icon: Icons.add,
+        routerLink: () => this.urlBuilder.getCreate(),
+        canBePrimary: (selection: CdTableSelection) => !selection.hasSelection
+      },
+      {
         name: this.actionLabels.SCRUB,
         permission: 'update',
         icon: Icons.analyse,
         click: () => this.scrubAction(false),
-        disable: () => !this.hasOsdSelected
+        disable: () => !this.hasOsdSelected,
+        canBePrimary: (selection: CdTableSelection) => selection.hasSelection
       },
       {
         name: this.actionLabels.DEEP_SCRUB,
@@ -194,7 +205,20 @@ export class OsdListComponent implements OnInit {
     this.columns = [
       { prop: 'host.name', name: this.i18n('Host') },
       { prop: 'id', name: this.i18n('ID'), cellTransformation: CellTemplate.bold },
-      { prop: 'collectedStates', name: this.i18n('Status'), cellTemplate: this.statusColor },
+      {
+        prop: 'collectedStates',
+        name: this.i18n('Status'),
+        cellTransformation: CellTemplate.badge,
+        customTemplateConfig: {
+          map: {
+            in: { class: 'badge-success' },
+            up: { class: 'badge-success' },
+            down: { class: 'badge-danger' },
+            out: { class: 'badge-danger' },
+            destroyed: { class: 'badge-danger' }
+          }
+        }
+      },
       { prop: 'stats.numpg', name: this.i18n('PGs') },
       { prop: 'stats.stat_bytes', name: this.i18n('Size'), pipe: this.dimlessBinaryPipe },
       { prop: 'stats.usage', name: this.i18n('Usage'), cellTemplate: this.osdUsageTpl },

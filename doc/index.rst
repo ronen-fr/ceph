@@ -92,6 +92,7 @@ about Ceph, see our `Architecture`_ section.
    :hidden:
 
    start/intro
+   bootstrap
    start/index
    install/index
    start/kube-helm
@@ -107,5 +108,6 @@ about Ceph, see our `Architecture`_ section.
    dev/internals
    governance
    ceph-volume/index
+   releases/general
    releases/index
    Glossary <glossary>

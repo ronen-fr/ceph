@@ -13,6 +13,7 @@ import time
 from mgr_module import MgrModule, CommandResult
 from threading import Event
 from mgr_module import CRUSHMap
+import datetime
 
 TIME_FORMAT = '%Y-%m-%d_%H:%M:%S'
 
@@ -294,20 +295,19 @@ class Module(MgrModule):
             'runtime': True,
         },
         {
-            'name': 'upmap_max_iterations',
+            'name': 'upmap_max_optimizations',
             'type': 'uint',
             'default': 10,
-            'desc': 'maximum upmap optimization iterations',
+            'desc': 'maximum upmap optimizations to make per attempt',
             'runtime': True,
         },
         {
             'name': 'upmap_max_deviation',
-            'type': 'float',
-            'default': .01,
-            'min': 0,
-            'max': 1,
+            'type': 'int',
+            'default': 1,
+            'min': 1,
             'desc': 'deviation below which no optimization is attempted',
-            'long_desc': 'If the ratio between the fullest and least-full OSD is below this value then we stop trying to optimize placement.',
+            'long_desc': 'If the number of PGs are within this count then no optimization is attempted',
             'runtime': True,
         },
         {
@@ -407,6 +407,12 @@ class Module(MgrModule):
     run = True
     plans = {}
     mode = ''
+    optimizing = False
+    last_optimize_started = ''
+    last_optimize_duration = ''
+    optimize_result = ''
+    success_string = 'Optimization plan created successfully'
+    in_progress_string = 'in progress'
 
     def __init__(self, *args, **kwargs):
         super(Module, self).__init__(*args, **kwargs)
@@ -418,6 +424,9 @@ class Module(MgrModule):
             s = {
                 'plans': list(self.plans.keys()),
                 'active': self.active,
+                'last_optimize_started': self.last_optimize_started,
+                'last_optimize_duration': self.last_optimize_duration,
+                'optimize_result': self.optimize_result,
                 'mode': self.get_module_option('mode'),
             }
             return (0, json.dumps(s, indent=4), '')
@@ -519,6 +528,11 @@ class Module(MgrModule):
                                   'current cluster')
             return (0, self.evaluate(ms, pools, verbose=verbose), '')
         elif command['prefix'] == 'balancer optimize':
+            # The GIL can be release by the active balancer, so disallow when active
+            if self.active:
+                return (-errno.EINVAL, '', 'Balancer enabled, disable to optimize manually')
+            if self.optimizing:
+                return (-errno.EINVAL, '', 'Balancer finishing up....try again')
             pools = []
             if 'pools' in command:
                 pools = command['pools']
@@ -531,11 +545,18 @@ class Module(MgrModule):
             if len(invalid_pool_names):
                 return (-errno.EINVAL, '', 'pools %s not found' % invalid_pool_names)
             plan = self.plan_create(command['plan'], osdmap, pools)
+            self.last_optimize_started = time.asctime(time.localtime())
+            self.optimize_result = self.in_progress_string
+            start = time.time()
             r, detail = self.optimize(plan)
-            # remove plan if we are currently unable to find an optimization
-            # or distribution is already perfect
-            if r:
-                self.plan_rm(command['plan'])
+            end = time.time()
+            self.last_optimize_duration = str(datetime.timedelta(seconds=(end - start)))
+            if r == 0:
+                # Add plan if an optimization was created
+                self.optimize_result = self.success_string
+                self.plans[command['plan']] = plan
+            else:
+                self.optimize_result = detail
             return (r, '', detail)
         elif command['prefix'] == 'balancer rm':
             self.plan_rm(command['plan'])
@@ -556,6 +577,11 @@ class Module(MgrModule):
                 return (-errno.ENOENT, '', 'plan %s not found' % command['plan'])
             return (0, plan.show(), '')
         elif command['prefix'] == 'balancer execute':
+            # The GIL can be release by the active balancer, so disallow when active
+            if self.active:
+                return (-errno.EINVAL, '', 'Balancer enabled, disable to execute a plan')
+            if self.optimizing:
+                return (-errno.EINVAL, '', 'Balancer finishing up....try again')
             plan = self.plans.get(command['plan'])
             if not plan:
                 return (-errno.ENOENT, '', 'plan %s not found' % command['plan'])
@@ -625,10 +651,19 @@ class Module(MgrModule):
                     final = [int(p) for p in final]
                     final = [pool_name_by_id[p] for p in final if p in pool_name_by_id]
                 plan = self.plan_create(name, osdmap, final)
+                self.optimizing = True
+                self.last_optimize_started = time.asctime(time.localtime())
+                self.optimize_result = self.in_progress_string
+                start = time.time()
                 r, detail = self.optimize(plan)
+                end = time.time()
+                self.last_optimize_duration = str(datetime.timedelta(seconds=(end - start)))
                 if r == 0:
+                    self.optimize_result = self.success_string
                     self.execute(plan)
-                self.plan_rm(name)
+                else:
+                    self.optimize_result = detail
+                self.optimizing = False
             self.log.debug('Sleeping for %d', sleep_interval)
             self.event.wait(sleep_interval)
             self.event.clear()
@@ -639,7 +674,6 @@ class Module(MgrModule):
                                  self.get("pg_dump"),
                                  'plan %s initial' % name),
                     pools)
-        self.plans[name] = plan
         return plan
 
     def plan_rm(self, name):
@@ -901,11 +935,10 @@ class Module(MgrModule):
                 detail = 'Unrecognized mode %s' % plan.mode
                 self.log.info(detail)
                 return -errno.EINVAL, detail
-        ##
 
     def do_upmap(self, plan):
         self.log.info('do_upmap')
-        max_iterations = self.get_module_option('upmap_max_iterations')
+        max_optimizations = self.get_module_option('upmap_max_optimizations')
         max_deviation = self.get_module_option('upmap_max_deviation')
 
         ms = plan.initial
@@ -920,7 +953,7 @@ class Module(MgrModule):
 
         inc = plan.inc
         total_did = 0
-        left = max_iterations
+        left = max_optimizations
         osdmap_dump = self.get_osdmap().dump()
         pools_with_pg_merge = [p['pool_name'] for p in osdmap_dump.get('pools', [])
                                if p['pg_num'] > p['pg_num_target']]
@@ -941,15 +974,32 @@ class Module(MgrModule):
         # shuffle so all pools get equal (in)attention
         random.shuffle(classified_pools)
         for it in classified_pools:
-            did = ms.osdmap.calc_pg_upmaps(inc, max_deviation, left, it)
+            pool_dump = osdmap_dump.get('pools', [])
+            num_pg = 0
+            for p in pool_dump:
+                if p['pool_name'] in it:
+                    num_pg += p['pg_num']
+
+            # note that here we deliberately exclude any scrubbing pgs too
+            # since scrubbing activities have significant impacts on performance
+            pool_ids = list(p['pool'] for p in pool_dump if p['pool_name'] in it)
+            num_pg_active_clean = 0
+            pg_dump = self.get('pg_dump')
+            for p in pg_dump['pg_stats']:
+                pg_pool = p['pgid'].split('.')[0]
+                if len(pool_ids) and int(pg_pool) not in pool_ids:
+                    continue
+                if p['state'] == 'active+clean':
+                    num_pg_active_clean += 1
+
+            available = max_optimizations - (num_pg - num_pg_active_clean)
+            did = ms.osdmap.calc_pg_upmaps(inc, max_deviation, available, it)
+            self.log.info('prepared %d changes for pool(s) %s' % (did, it))
             total_did += did
-            left -= did
-            if left <= 0:
-                break
-        self.log.info('prepared %d/%d changes' % (total_did, max_iterations))
+        self.log.info('prepared %d changes in total' % total_did)
         if total_did == 0:
             return -errno.EALREADY, 'Unable to find further optimization, ' \
-                                    'or pool(s)\' pg_num is decreasing, ' \
+                                    'or pool(s) pg_num is decreasing, ' \
                                     'or distribution is already perfect'
         return 0, ''
 
@@ -992,7 +1042,7 @@ class Module(MgrModule):
 
         # Make sure roots don't overlap their devices.  If so, we
         # can't proceed.
-        roots = pe.target_by_root.keys()
+        roots = list(pe.target_by_root.keys())
         self.log.debug('roots %s', roots)
         visited = {}
         overlap = {}
@@ -1250,11 +1300,23 @@ class Module(MgrModule):
 
         # upmap
         incdump = plan.inc.dump()
-        for pgid in incdump.get('old_pg_upmap_items', []):
-            self.log.info('ceph osd rm-pg-upmap-items %s', pgid)
+        for item in incdump.get('new_pg_upmap', []):
+            self.log.info('ceph osd pg-upmap %s mappings %s', item['pgid'],
+                          item['osds'])
             result = CommandResult('foo')
             self.send_command(result, 'mon', '', json.dumps({
-                'prefix': 'osd rm-pg-upmap-items',
+                'prefix': 'osd pg-upmap',
+                'format': 'json',
+                'pgid': item['pgid'],
+                'id': item['osds'],
+            }), 'foo')
+            commands.append(result)
+
+        for pgid in incdump.get('old_pg_upmap', []):
+            self.log.info('ceph osd rm-pg-upmap %s', pgid)
+            result = CommandResult('foo')
+            self.send_command(result, 'mon', '', json.dumps({
+                'prefix': 'osd rm-pg-upmap',
                 'format': 'json',
                 'pgid': pgid,
             }), 'foo')
@@ -1275,6 +1337,16 @@ class Module(MgrModule):
             }), 'foo')
             commands.append(result)
 
+        for pgid in incdump.get('old_pg_upmap_items', []):
+            self.log.info('ceph osd rm-pg-upmap-items %s', pgid)
+            result = CommandResult('foo')
+            self.send_command(result, 'mon', '', json.dumps({
+                'prefix': 'osd rm-pg-upmap-items',
+                'format': 'json',
+                'pgid': pgid,
+            }), 'foo')
+            commands.append(result)
+
         # wait for commands
         self.log.debug('commands %s' % commands)
         for result in commands:
@@ -1284,3 +1356,9 @@ class Module(MgrModule):
                 return r, outs
         self.log.debug('done')
         return 0, ''
+
+    def gather_telemetry(self):
+        return {
+            'active': self.active,
+            'mode': self.mode,
+        }

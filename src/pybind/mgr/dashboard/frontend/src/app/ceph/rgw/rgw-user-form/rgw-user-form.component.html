@@ -1,8 +1,9 @@
 <cd-loading-panel *ngIf="editing && loading && !error"
                   i18n>Loading user data...</cd-loading-panel>
-<cd-error-panel *ngIf="editing && error"
+<cd-alert-panel type="error"
+                *ngIf="editing && error"
                 (backAction)="goToListView()"
-                i18n>The user data could not be loaded.</cd-error-panel>
+                i18n>The user data could not be loaded.</cd-alert-panel>
 
 <div class="col-sm-12 col-lg-6"
      *ngIf="!loading && !error">
@@ -218,8 +219,7 @@
                          class="cd-form-control"
                          value="{{ subuser.id }}"
                          readonly>
-                  <div class="input-group-prepend"
-                       style="border-left: 0; border-right: 0;">
+                  <div class="input-group-prepend border-left-0 border-right-0">
                     <span class="input-group-text">
                       <i class="{{ icons.share }}"></i>
                     </span>

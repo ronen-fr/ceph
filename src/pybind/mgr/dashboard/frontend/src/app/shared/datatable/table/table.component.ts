@@ -53,6 +53,8 @@ export class TableComponent implements AfterContentChecked, OnInit, OnChanges, O
   executingTpl: TemplateRef<any>;
   @ViewChild('classAddingTpl', { static: true })
   classAddingTpl: TemplateRef<any>;
+  @ViewChild('badgeTpl', { static: true })
+  badgeTpl: TemplateRef<any>;
 
   // This is the array with the items to be shown.
   @Input()
@@ -69,6 +71,9 @@ export class TableComponent implements AfterContentChecked, OnInit, OnChanges, O
   // Display the tool header, including reload button, pagination and search fields?
   @Input()
   toolHeader? = true;
+  // Display search field inside tool header?
+  @Input()
+  searchField? = true;
   // Display the table header?
   @Input()
   header? = true;
@@ -105,6 +110,10 @@ export class TableComponent implements AfterContentChecked, OnInit, OnChanges, O
 
   @Input()
   autoSave = true;
+
+  // Enable this in order to search through the JSON of any used object.
+  @Input()
+  searchableObjects = false;
 
   // Only needed to set if the classAddingTpl is used
   @Input()
@@ -207,6 +216,8 @@ export class TableComponent implements AfterContentChecked, OnInit, OnChanges, O
         c.resizeable = false;
       }
     });
+
+    this.initCheckboxColumn();
     this.filterHiddenColumns();
     // Load the data table content every N ms or at least once.
     // Force showing the loading indicator if there are subscribers to the fetchData
@@ -303,6 +314,24 @@ export class TableComponent implements AfterContentChecked, OnInit, OnChanges, O
     }));
   }
 
+  /**
+   * Add a column containing a checkbox if selectionType is 'multiClick'.
+   */
+  initCheckboxColumn() {
+    if (this.selectionType === 'multiClick') {
+      this.columns.unshift({
+        prop: undefined,
+        resizeable: false,
+        sortable: false,
+        draggable: false,
+        checkboxable: true,
+        canAutoResize: false,
+        cellClass: 'cd-datatable-checkbox',
+        width: 30
+      });
+    }
+  }
+
   filterHiddenColumns() {
     this.tableColumns = this.columns.filter((c) => !c.isHidden);
   }
@@ -343,6 +372,7 @@ export class TableComponent implements AfterContentChecked, OnInit, OnChanges, O
     this.cellTemplates.perSecond = this.perSecondTpl;
     this.cellTemplates.executing = this.executingTpl;
     this.cellTemplates.classAdding = this.classAddingTpl;
+    this.cellTemplates.badge = this.badgeTpl;
   }
 
   useCustomClass(value: any): string {
@@ -474,7 +504,6 @@ export class TableComponent implements AfterContentChecked, OnInit, OnChanges, O
     const sortProp = this.userConfig.sorts[0].prop;
     if (!_.find(this.tableColumns, (c: CdTableColumn) => c.prop === sortProp)) {
       this.userConfig.sorts = this.createSortingDefinition(this.tableColumns[0].prop);
-      this.table.onColumnSort({ sorts: this.userConfig.sorts });
     }
     this.table.recalculate();
     this.cdRef.detectChanges();
@@ -542,6 +571,15 @@ export class TableComponent implements AfterContentChecked, OnInit, OnChanges, O
           } else if (_.isNumber(cellValue) || _.isBoolean(cellValue)) {
             cellValue = cellValue.toString();
           }
+
+          if (_.isObjectLike(cellValue)) {
+            if (this.searchableObjects) {
+              cellValue = JSON.stringify(cellValue);
+            } else {
+              return false;
+            }
+          }
+
           return cellValue.toLowerCase().indexOf(searchTerm) !== -1;
         }).length > 0
       );

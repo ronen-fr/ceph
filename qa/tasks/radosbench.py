@@ -56,7 +56,7 @@ def task(ctx, config):
         PREFIX = 'client.'
         assert role.startswith(PREFIX)
         id_ = role[len(PREFIX):]
-        (remote,) = ctx.cluster.only(role).remotes.iterkeys()
+        (remote,) = ctx.cluster.only(role).remotes.keys()
 
         if config.get('ec_pool', False):
             profile = config.get('erasure_code_profile', {})
@@ -84,7 +84,7 @@ def task(ctx, config):
         if osize is 0:
             objectsize = []
         else:
-            objectsize = ['-o', str(osize)]
+            objectsize = ['-O', str(osize)]
         size = ['-b', str(config.get('size', 65536))]
         # If doing a reading run then populate data
         if runtype != "write":

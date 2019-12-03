@@ -528,15 +528,14 @@ get_daemon_status(BaseMgrModule *self, PyObject *args)
 static PyObject*
 ceph_log(BaseMgrModule *self, PyObject *args)
 {
-  int level = 0;
   char *record = nullptr;
-  if (!PyArg_ParseTuple(args, "is:log", &level, &record)) {
+  if (!PyArg_ParseTuple(args, "s:log", &record)) {
     return nullptr;
   }
 
   ceph_assert(self->this_module);
 
-  self->this_module->log(level, record);
+  self->this_module->log(record);
 
   Py_RETURN_NONE;
 }
@@ -1015,6 +1014,42 @@ ceph_get_osd_perf_counters(BaseMgrModule *self, PyObject *args)
   return self->py_modules->get_osd_perf_counters(query_id);
 }
 
+static PyObject*
+ceph_is_authorized(BaseMgrModule *self, PyObject *args)
+{
+  PyObject *args_dict = NULL;
+  if (!PyArg_ParseTuple(args, "O:ceph_is_authorized", &args_dict)) {
+    return nullptr;
+  }
+
+  if (!PyDict_Check(args_dict)) {
+    derr << __func__ << " arg not a dict" << dendl;
+    Py_RETURN_FALSE;
+  }
+
+  std::map<std::string, std::string> arguments;
+
+  PyObject *args_list = PyDict_Items(args_dict);
+  for (int i = 0; i < PyList_Size(args_list); ++i) {
+    PyObject *kv = PyList_GET_ITEM(args_list, i);
+
+    char *arg_key = nullptr;
+    char *arg_value = nullptr;
+    if (!PyArg_ParseTuple(kv, "ss:pair", &arg_key, &arg_value)) {
+      derr << __func__ << " dict item " << i << " not a size 2 tuple" << dendl;
+      continue;
+    }
+
+    arguments[arg_key] = arg_value;
+  }
+
+  if (self->this_module->is_authorized(arguments)) {
+    Py_RETURN_TRUE;
+  }
+
+  Py_RETURN_FALSE;
+}
+
 PyMethodDef BaseMgrModule_methods[] = {
   {"_ceph_get", (PyCFunction)ceph_state_get, METH_VARARGS,
    "Get a cluster object"},
@@ -1107,6 +1142,9 @@ PyMethodDef BaseMgrModule_methods[] = {
 
   {"_ceph_get_osd_perf_counters", (PyCFunction)ceph_get_osd_perf_counters,
     METH_VARARGS, "Get osd perf counters"},
+
+  {"_ceph_is_authorized", (PyCFunction)ceph_is_authorized,
+    METH_VARARGS, "Verify the current session caps are valid"},
 
   {NULL, NULL, 0, NULL}
 };

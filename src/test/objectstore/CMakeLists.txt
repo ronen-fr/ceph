@@ -83,6 +83,10 @@ add_executable(unittest_rocksdb_option
 add_ceph_unittest(unittest_rocksdb_option)
 target_link_libraries(unittest_rocksdb_option global os ${BLKID_LIBRARIES})
 
+if(WITH_EVENTTRACE)
+  add_dependencies(os eventtrace_tp)
+endif()
+
 if(WITH_BLUESTORE)
 
   add_executable(unittest_alloc
@@ -143,8 +147,10 @@ add_executable(unittest_memstore_clone
 add_ceph_unittest(unittest_memstore_clone)
 target_link_libraries(unittest_memstore_clone os global)
 
-add_executable(ceph_test_bmap_alloc_replay
-  bmap_allocator_replay_test.cc)
-target_link_libraries(ceph_test_bmap_alloc_replay os global ${UNITTEST_LIBS})
-install(TARGETS ceph_test_bmap_alloc_replay
-  DESTINATION bin)
+if(WITH_BLUESTORE)
+  add_executable(ceph_test_bmap_alloc_replay
+    bmap_allocator_replay_test.cc)
+  target_link_libraries(ceph_test_bmap_alloc_replay os global ${UNITTEST_LIBS})
+  install(TARGETS ceph_test_bmap_alloc_replay
+    DESTINATION bin)
+endif()

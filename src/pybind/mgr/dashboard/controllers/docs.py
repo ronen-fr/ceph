@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
 
+import logging
 import cherrypy
 
 from . import Controller, BaseController, Endpoint, ENDPOINT_MAP
-from .. import logger, mgr
+from .. import mgr
 
 from ..tools import str_to_bool
+
+
+logger = logging.getLogger('controllers.docs')
 
 
 @Controller('/docs', secure=False)
@@ -314,7 +318,7 @@ class Docs(BaseController):
 
         host = cherrypy.request.base
         host = host[host.index(':')+3:]
-        logger.debug("DOCS: Host: %s", host)
+        logger.debug("Host: %s", host)
 
         paths = self._gen_paths(all_endpoints, base_url)
 
@@ -393,11 +397,8 @@ class Docs(BaseController):
         <head>
             <meta charset="UTF-8">
             <meta name="referrer" content="no-referrer" />
-            <link href="https://fonts.googleapis.com/css?family=Open+Sans:400, \
-                        700|Source+Code+Pro:300,600|Titillium+Web:400,600,700"
-                  rel="stylesheet">
             <link rel="stylesheet" type="text/css"
-                  href="//unpkg.com/swagger-ui-dist@3/swagger-ui.css" >
+                  href="/swagger-ui.css" >
             <style>
                 html
                 {{
@@ -419,7 +420,7 @@ class Docs(BaseController):
         </head>
         <body>
         <div id="swagger-ui"></div>
-        <script src="//unpkg.com/swagger-ui-dist@3/swagger-ui-bundle.js">
+        <script src="/swagger-ui-bundle.js">
         </script>
         <script>
             window.onload = function() {{

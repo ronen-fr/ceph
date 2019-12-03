@@ -53,12 +53,12 @@ public:
   bool is_leader() const;
   bool is_running() const;
 
-  void init();
+  void init(const std::string& site_name);
   void shut_down();
 
   void run();
 
-  void print_status(Formatter *f, stringstream *ss);
+  void print_status(Formatter *f);
   void start();
   void stop(bool manual);
   void restart();
@@ -190,6 +190,7 @@ private:
 
   mutable ceph::mutex m_lock;
   ceph::condition_variable m_cond;
+  std::string m_site_name;
   bool m_stopping = false;
   bool m_manual_stop = false;
   bool m_blacklisted = false;

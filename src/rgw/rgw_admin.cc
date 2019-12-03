@@ -25,6 +25,7 @@ extern "C" {
 
 #include "include/util.h"
 
+#include "cls/rgw/cls_rgw_types.h"
 #include "cls/rgw/cls_rgw_client.h"
 
 #include "global/global_init.h"
@@ -364,6 +365,7 @@ void usage()
   cout << "   --min-rewrite-stripe-size min stripe size for object rewrite (default 0)\n";
   cout << "   --trim-delay-ms           time interval in msec to limit the frequency of sync error log entries trimming operations,\n";
   cout << "                             the trimming process will sleep the specified msec for every 1000 entries trimmed\n";
+  cout << "   --max-concurrent-ios      maximum concurrent ios for bucket operations (default: 32)\n";
   cout << "\n";
   cout << "<date> := \"YYYY-MM-DD[ hh:mm:ss]\"\n";
   cout << "\nQuota options:\n";
@@ -374,7 +376,6 @@ void usage()
   cout << "   --num-shards              num of shards to use for keeping the temporary scan info\n";
   cout << "   --orphan-stale-secs       num of seconds to wait before declaring an object to be an orphan (default: 86400)\n";
   cout << "   --job-id                  set the job id (for orphans find)\n";
-  cout << "   --max-concurrent-ios      maximum concurrent ios for orphans find (default: 32)\n";
   cout << "   --detail                  detailed mode, log and stat head objects as well\n";
   cout << "\nOrphans list-jobs options:\n";
   cout << "   --extra-info              provide extra info in job list\n";
@@ -1207,7 +1208,7 @@ static int init_bucket(const string& tenant_name, const string& bucket_name, con
     auto obj_ctx = store->svc()->sysobj->init_obj_ctx();
     int r;
     if (bucket_id.empty()) {
-      r = store->getRados()->get_bucket_info(obj_ctx, tenant_name, bucket_name, bucket_info, nullptr, null_yield, pattrs);
+      r = store->getRados()->get_bucket_info(store->svc(), tenant_name, bucket_name, bucket_info, nullptr, null_yield, pattrs);
     } else {
       string bucket_instance_id = bucket_name + ":" + bucket_id;
       r = store->getRados()->get_bucket_instance_info(obj_ctx, bucket_instance_id, bucket_info, NULL, pattrs, null_yield);
@@ -1390,8 +1391,7 @@ int set_bucket_quota(rgw::sal::RGWRadosStore *store, int opt_cmd,
 {
   RGWBucketInfo bucket_info;
   map<string, bufferlist> attrs;
-  auto obj_ctx = store->svc()->sysobj->init_obj_ctx();
-  int r = store->getRados()->get_bucket_info(obj_ctx, tenant_name, bucket_name, bucket_info, NULL, null_yield, &attrs);
+  int r = store->getRados()->get_bucket_info(store->svc(), tenant_name, bucket_name, bucket_info, NULL, null_yield, &attrs);
   if (r < 0) {
     cerr << "could not get bucket info for bucket=" << bucket_name << ": " << cpp_strerror(-r) << std::endl;
     return -r;
@@ -2573,6 +2573,13 @@ int check_reshard_bucket_params(rgw::sal::RGWRadosStore *store,
   if (ret < 0) {
     cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
     return ret;
+  }
+
+  if (bucket_info.reshard_status != CLS_RGW_RESHARD_NOT_RESHARDING) {
+    // if in_progress or done then we have an old BucketInfo
+    cerr << "ERROR: the bucket is currently undergoing resharding and "
+      "cannot be added to the reshard list at this time" << std::endl;
+    return -EBUSY;
   }
 
   int num_source_shards = (bucket_info.num_shards > 0 ? bucket_info.num_shards : 1);
@@ -6418,26 +6425,39 @@ next:
     rgw_bucket bucket;
     RGWBucketInfo bucket_info;
     map<string, bufferlist> attrs;
-    ret = init_bucket(tenant, bucket_name, bucket_id, bucket_info, bucket, &attrs);
+    bool bucket_initable = true;
+    ret = init_bucket(tenant, bucket_name, bucket_id, bucket_info, bucket,
+                      &attrs);
     if (ret < 0) {
-      cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
-      return -ret;
+      if (yes_i_really_mean_it) {
+        bucket_initable = false;
+      } else {
+        cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) <<
+          "; if you want to cancel the reshard request nonetheless, please "
+          "use the --yes-i-really-mean-it option" << std::endl;
+        return -ret;
+      }
     }
 
-    RGWBucketReshard br(store, bucket_info, attrs, nullptr /* no callback */);
-    int ret = br.cancel();
-    if (ret < 0) {
-      if (ret == -EBUSY) {
-	cerr << "There is ongoing resharding, please retry after " <<
-	  store->ctx()->_conf.get_val<uint64_t>(
-	    "rgw_reshard_bucket_lock_duration") <<
-	  " seconds " << std::endl;
-      } else {
-	cerr << "Error canceling bucket " << bucket_name <<
-	  " resharding: " << cpp_strerror(-ret) << std::endl;
+    if (bucket_initable) {
+      // we did not encounter an error, so let's work with the bucket
+      RGWBucketReshard br(store, bucket_info, attrs,
+                          nullptr /* no callback */);
+      int ret = br.cancel();
+      if (ret < 0) {
+        if (ret == -EBUSY) {
+          cerr << "There is ongoing resharding, please retry after " <<
+            store->ctx()->_conf.get_val<uint64_t>(
+              "rgw_reshard_bucket_lock_duration") <<
+            " seconds " << std::endl;
+        } else {
+          cerr << "Error canceling bucket " << bucket_name <<
+            " resharding: " << cpp_strerror(-ret) << std::endl;
+        }
+        return ret;
       }
-      return ret;
     }
+
     RGWReshard reshard(store);
 
     cls_rgw_reshard_entry entry;
@@ -6447,10 +6467,11 @@ next:
 
     ret = reshard.remove(entry);
     if (ret < 0 && ret != -ENOENT) {
-      cerr << "Error in getting bucket " << bucket_name << ": " << cpp_strerror(-ret) << std::endl;
+      cerr << "Error in updating reshard log with bucket " <<
+        bucket_name << ": " << cpp_strerror(-ret) << std::endl;
       return ret;
     }
-  }
+  } // OPT_RESHARD_CANCEL
 
   if (opt_cmd == OPT_OBJECT_UNLINK) {
     RGWBucketInfo bucket_info;

@@ -14,6 +14,7 @@ import {
   i18nProviders,
   PermissionHelper
 } from '../../../../../testing/unit-test-helper';
+import { CoreModule } from '../../../../core/core.module';
 import { OsdService } from '../../../../shared/api/osd.service';
 import { ConfirmationModalComponent } from '../../../../shared/components/confirmation-modal/confirmation-modal.component';
 import { CriticalConfirmationModalComponent } from '../../../../shared/components/critical-confirmation-modal/critical-confirmation-modal.component';
@@ -22,12 +23,9 @@ import { CdTableAction } from '../../../../shared/models/cd-table-action';
 import { CdTableSelection } from '../../../../shared/models/cd-table-selection';
 import { Permissions } from '../../../../shared/models/permissions';
 import { AuthStorageService } from '../../../../shared/services/auth-storage.service';
-import { SharedModule } from '../../../../shared/shared.module';
+import { CephModule } from '../../../ceph.module';
 import { PerformanceCounterModule } from '../../../performance-counter/performance-counter.module';
-import { OsdDetailsComponent } from '../osd-details/osd-details.component';
-import { OsdPerformanceHistogramComponent } from '../osd-performance-histogram/osd-performance-histogram.component';
 import { OsdReweightModalComponent } from '../osd-reweight-modal/osd-reweight-modal.component';
-import { OsdSmartListComponent } from '../osd-smart-list/osd-smart-list.component';
 import { OsdListComponent } from './osd-list.component';
 
 describe('OsdListComponent', () => {
@@ -81,16 +79,12 @@ describe('OsdListComponent', () => {
       HttpClientTestingModule,
       PerformanceCounterModule,
       TabsModule.forRoot(),
-      SharedModule,
+      CephModule,
       ReactiveFormsModule,
-      RouterTestingModule
+      RouterTestingModule,
+      CoreModule
     ],
-    declarations: [
-      OsdListComponent,
-      OsdDetailsComponent,
-      OsdPerformanceHistogramComponent,
-      OsdSmartListComponent
-    ],
+    declarations: [],
     providers: [
       { provide: AuthStorageService, useValue: fakeAuthStorageService },
       TableActionsComponent,
@@ -113,7 +107,11 @@ describe('OsdListComponent', () => {
 
   it('should have columns that are sortable', () => {
     fixture.detectChanges();
-    expect(component.columns.every((column) => Boolean(column.prop))).toBeTruthy();
+    expect(
+      component.columns
+        .filter((column) => !column.checkboxable)
+        .every((column) => Boolean(column.prop))
+    ).toBeTruthy();
   });
 
   describe('getOsdList', () => {
@@ -241,6 +239,7 @@ describe('OsdListComponent', () => {
     expect(tableActions).toEqual({
       'create,update,delete': {
         actions: [
+          'Create',
           'Scrub',
           'Deep Scrub',
           'Reweight',
@@ -251,22 +250,25 @@ describe('OsdListComponent', () => {
           'Purge',
           'Destroy'
         ],
-        primary: { multiple: 'Scrub', executing: 'Scrub', single: 'Scrub', no: 'Scrub' }
+        primary: { multiple: 'Scrub', executing: 'Scrub', single: 'Scrub', no: 'Create' }
       },
       'create,update': {
-        actions: ['Scrub', 'Deep Scrub', 'Reweight', 'Mark Out', 'Mark In', 'Mark Down'],
-        primary: { multiple: 'Scrub', executing: 'Scrub', single: 'Scrub', no: 'Scrub' }
+        actions: ['Create', 'Scrub', 'Deep Scrub', 'Reweight', 'Mark Out', 'Mark In', 'Mark Down'],
+        primary: { multiple: 'Scrub', executing: 'Scrub', single: 'Scrub', no: 'Create' }
       },
       'create,delete': {
-        actions: ['Mark Lost', 'Purge', 'Destroy'],
+        actions: ['Create', 'Mark Lost', 'Purge', 'Destroy'],
         primary: {
-          multiple: 'Mark Lost',
+          multiple: 'Create',
           executing: 'Mark Lost',
           single: 'Mark Lost',
-          no: 'Mark Lost'
+          no: 'Create'
         }
       },
-      create: { actions: [], primary: { multiple: '', executing: '', single: '', no: '' } },
+      create: {
+        actions: ['Create'],
+        primary: { multiple: 'Create', executing: 'Create', single: 'Create', no: 'Create' }
+      },
       'update,delete': {
         actions: [
           'Scrub',
@@ -314,13 +316,16 @@ describe('OsdListComponent', () => {
       fixture.detectChanges();
     }));
 
-    it('has all menu entries disabled', () => {
+    it('has all menu entries disabled except create', () => {
       const tableActionElement = fixture.debugElement.query(By.directive(TableActionsComponent));
       const toClassName = TestBed.get(TableActionsComponent).toClassName;
       const getActionClasses = (action: CdTableAction) =>
         tableActionElement.query(By.css(`.${toClassName(action.name)} .dropdown-item`)).classes;
 
       component.tableActions.forEach((action) => {
+        if (action.name === 'Create') {
+          return;
+        }
         expect(getActionClasses(action).disabled).toBe(true);
       });
     });

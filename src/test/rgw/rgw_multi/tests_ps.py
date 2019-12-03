@@ -38,7 +38,7 @@ def set_contents_from_string(key, content):
     try:
         key.set_contents_from_string(content)
     except Exception as e:
-        print 'Error: ' + str(e) 
+        print('Error: ' + str(e))
 
 
 # HTTP endpoint functions
@@ -159,7 +159,8 @@ class AMQPReceiver(object):
                 break
             except Exception as error:
                 remaining_retries -= 1
-                print 'failed to connect to rabbitmq (remaining retries ' + str(remaining_retries) + '): ' + str(error)
+                print('failed to connect to rabbitmq (remaining retries '
+                    + str(remaining_retries) + '): ' + str(error))
 
         if remaining_retries == 0:
             raise Exception('failed to connect to rabbitmq - no retries left')
@@ -320,7 +321,7 @@ def init_rabbitmq():
         proc = subprocess.Popen('rabbitmq-server')
     except Exception as error:
         log.info('failed to execute rabbitmq-server: %s', str(error))
-        print 'failed to execute rabbitmq-server: %s' % str(error)
+        print('failed to execute rabbitmq-server: %s' % str(error))
         return None
     # TODO add rabbitmq checkpoint instead of sleep
     time.sleep(5)
@@ -341,6 +342,131 @@ def clean_rabbitmq(proc): #, data_dir, log_dir)
     #    os.rmdir(log_dir)
     #except:
     #    log.info('rabbitmq directories already removed')
+
+
+# Kafka endpoint functions
+
+kafka_server = 'localhost'
+
+class KafkaReceiver(object):
+    """class for receiving and storing messages on a topic from the kafka broker"""
+    def __init__(self, topic):
+        from kafka import KafkaConsumer
+        remaining_retries = 10
+        while remaining_retries > 0:
+            try:
+                self.consumer = KafkaConsumer(topic, bootstrap_servers = kafka_server)
+                print('Kafka consumer created on topic: '+topic)
+                break
+            except Exception as error:
+                remaining_retries -= 1
+                print('failed to connect to kafka (remaining retries '
+                    + str(remaining_retries) + '): ' + str(error))
+                time.sleep(1)
+
+        if remaining_retries == 0:
+            raise Exception('failed to connect to kafka - no retries left')
+
+        self.events = []
+        self.topic = topic
+        self.stop = False
+
+    def verify_s3_events(self, keys, exact_match=False, deletions=False):
+        """verify stored s3 records agains a list of keys"""
+        verify_s3_records_by_elements(self.events, keys, exact_match=exact_match, deletions=deletions)
+        self.events = []
+
+
+def kafka_receiver_thread_runner(receiver):
+    """main thread function for the kafka receiver"""
+    try:
+        log.info('Kafka receiver started')
+        print('Kafka receiver started')
+        for msg in receiver.consumer:
+            if receiver.stop:
+                break
+            receiver.events.append(json.loads(msg.value))
+        log.info('Kafka receiver ended')
+        print('Kafka receiver ended')
+    except Exception as error:
+        log.info('Kafka receiver ended unexpectedly: %s', str(error))
+        print('Kafka receiver ended unexpectedly: ' + str(error))
+
+
+def create_kafka_receiver_thread(topic):
+    """create kafka receiver and thread"""
+    receiver = KafkaReceiver(topic)
+    task = threading.Thread(target=kafka_receiver_thread_runner, args=(receiver,))
+    task.daemon = True
+    return task, receiver
+
+def stop_kafka_receiver(receiver, task):
+    """stop the receiver thread and wait for it to finis"""
+    receiver.stop = True
+    task.join(5)
+    try:
+        receiver.consumer.close()
+    except Exception as error:
+        log.info('failed to gracefuly stop Kafka receiver: %s', str(error))
+
+
+def init_kafka():
+    """ start kafka/zookeeper """
+    KAFKA_DIR = os.environ['KAFKA_DIR']
+    if KAFKA_DIR == '':
+        log.info('KAFKA_DIR must be set to where kafka is installed')
+        print('KAFKA_DIR must be set to where kafka is installed')
+        return None, None, None
+    
+    DEVNULL = open(os.devnull, 'wb')
+
+    print('\nStarting zookeeper...')
+    try:
+        zk_proc = subprocess.Popen([KAFKA_DIR+'bin/zookeeper-server-start.sh', KAFKA_DIR+'config/zookeeper.properties'], stdout=DEVNULL)
+    except Exception as error:
+        log.info('failed to execute zookeeper: %s', str(error))
+        print('failed to execute zookeeper: %s' % str(error))
+        return None, None, None
+
+    time.sleep(5)
+    if zk_proc.poll() is not None:
+        print('zookeeper failed to start')
+        return None, None, None
+    print('Zookeeper started')
+    print('Starting kafka...')
+    kafka_log = open('./kafka.log', 'w')
+    try:
+        kafka_proc = subprocess.Popen([
+            KAFKA_DIR+'bin/kafka-server-start.sh', 
+            KAFKA_DIR+'config/server.properties'], 
+            stdout=kafka_log)
+    except Exception as error:
+        log.info('failed to execute kafka: %s', str(error))
+        print('failed to execute kafka: %s' % str(error))
+        zk_proc.terminate()
+        kafka_log.close()
+        return None, None, None
+
+    # TODO add kafka checkpoint instead of sleep
+    time.sleep(15)
+    if kafka_proc.poll() is not None:
+        zk_proc.terminate()
+        print('kafka failed to start. details in: ./kafka.log')
+        kafka_log.close()
+        return None, None, None
+
+    print('Kafka started')
+    return kafka_proc, zk_proc, kafka_log
+
+
+def clean_kafka(kafka_proc, zk_proc, kafka_log):
+    """ stop kafka/zookeeper """
+    try:
+        kafka_log.close()
+        kafka_proc.terminate()
+        zk_proc.terminate()
+    except:
+        log.info('kafka/zookeeper already terminated')
 
 
 def init_env(require_ps=True):
@@ -405,14 +531,14 @@ def test_ps_info():
     for i in range(number_of_objects):
         key = bucket.new_key(str(i))
         key.set_contents_from_string('bar')
-    print 'Zonegroup: ' + zonegroup.name
-    print 'user: ' + get_user()
-    print 'tenant: ' + get_tenant()
-    print 'Master Zone'
+    print('Zonegroup: ' + zonegroup.name)
+    print('user: ' + get_user())
+    print('tenant: ' + get_tenant())
+    print('Master Zone')
     print_connection_info(zones[0].conn)
-    print 'PubSub Zone'
+    print('PubSub Zone')
     print_connection_info(ps_zones[0].conn)
-    print 'Bucket: ' + bucket_name
+    print('Bucket: ' + bucket_name)
 
 
 def test_ps_s3_notification_low_level():
@@ -830,10 +956,10 @@ def ps_s3_notification_filter(on_master):
             assert_equal(status/100, 2)
             skip_notif4 = False
         except Exception as error:
-            print 'note: metadata filter is not supported by boto3 - skipping test'
+            print('note: metadata filter is not supported by boto3 - skipping test')
             skip_notif4 = True
     else:
-        print 'filtering by attributes only supported on master zone'
+        print('filtering by attributes only supported on master zone')
         skip_notif4 = True
 
 
@@ -884,7 +1010,7 @@ def ps_s3_notification_filter(on_master):
         key.set_contents_from_string('bar')
 
     if on_master:
-        print 'wait for 5sec for the messages...'
+        print('wait for 5sec for the messages...')
         time.sleep(5)
     else:
         zone_bucket_checkpoint(ps_zone.zone, zones[0].zone, bucket_name)
@@ -960,7 +1086,7 @@ def test_ps_s3_notification_errors_on_master():
     try:
       result, status = s3_notification_conf.set_config()
     except Exception as error:
-      print str(error) + ' - is expected'
+      print(str(error) + ' - is expected')
     else:
       assert False, 'invalid event name is expected to fail'
 
@@ -973,7 +1099,7 @@ def test_ps_s3_notification_errors_on_master():
     try:
       _, _ = s3_notification_conf.set_config()
     except Exception as error:
-      print str(error) + ' - is expected'
+      print(str(error) + ' - is expected')
     else:
       assert False, 'missing notification name is expected to fail'
 
@@ -987,7 +1113,7 @@ def test_ps_s3_notification_errors_on_master():
     try:
       _, _ = s3_notification_conf.set_config()
     except Exception as error:
-      print str(error) + ' - is expected'
+      print(str(error) + ' - is expected')
     else:
       assert False, 'invalid ARN is expected to fail'
 
@@ -1001,7 +1127,7 @@ def test_ps_s3_notification_errors_on_master():
     try:
       _, _ = s3_notification_conf.set_config()
     except Exception as error:
-      print str(error) + ' - is expected'
+      print(str(error) + ' - is expected')
     else:
       assert False, 'unknown topic is expected to fail'
 
@@ -1014,7 +1140,7 @@ def test_ps_s3_notification_errors_on_master():
     try:
       _, _ = s3_notification_conf.set_config()
     except Exception as error:
-      print str(error) + ' - is expected'
+      print(str(error) + ' - is expected')
     else:
       assert False, 'unknown bucket is expected to fail'
 
@@ -1040,7 +1166,7 @@ def test_objcet_timing():
     bucket_name = gen_bucket_name()
     bucket = zones[0].create_bucket(bucket_name)
     # create objects in the bucket (async)
-    print 'creating objects...'
+    print('creating objects...')
     number_of_objects = 1000
     client_threads = []
     start_time = time.time()
@@ -1053,11 +1179,11 @@ def test_objcet_timing():
     [thr.join() for thr in client_threads] 
 
     time_diff = time.time() - start_time
-    print 'average time for object creation: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
+    print('average time for object creation: ' + str(time_diff*1000/number_of_objects) + ' milliseconds')
     
-    print 'total number of objects: ' + str(len(list(bucket.list())))
+    print('total number of objects: ' + str(len(list(bucket.list()))))
 
-    print 'deleting objects...'
+    print('deleting objects...')
     client_threads = []
     start_time = time.time()
     for key in bucket.list():
@@ -1067,7 +1193,7 @@ def test_objcet_timing():
     [thr.join() for thr in client_threads] 
     
     time_diff = time.time() - start_time
-    print 'average time for object deletion: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
+    print('average time for object deletion: ' + str(time_diff*1000/number_of_objects) + ' milliseconds')
     
     # cleanup
     zones[0].delete_bucket(bucket_name)
@@ -1134,14 +1260,14 @@ def test_ps_s3_notification_push_amqp_on_master():
     [thr.join() for thr in client_threads] 
 
     time_diff = time.time() - start_time
-    print 'average time for creation + qmqp notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
+    print('average time for creation + qmqp notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds')
 
-    print 'wait for 5sec for the messages...'
+    print('wait for 5sec for the messages...')
     time.sleep(5)
 
     # check amqp receiver
     keys = list(bucket.list())
-    print 'total number of objects: ' + str(len(keys))
+    print('total number of objects: ' + str(len(keys)))
     receiver1.verify_s3_events(keys, exact_match=True)
     receiver2.verify_s3_events(keys, exact_match=True)
     
@@ -1155,9 +1281,9 @@ def test_ps_s3_notification_push_amqp_on_master():
     [thr.join() for thr in client_threads] 
     
     time_diff = time.time() - start_time
-    print 'average time for creation + http notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
+    print 'average time for deletion + amqp notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
 
-    print 'wait for 5sec for the messages...'
+    print('wait for 5sec for the messages...')
     time.sleep(5)
     
     # check amqp receiver 1 for deletions
@@ -1171,7 +1297,6 @@ def test_ps_s3_notification_push_amqp_on_master():
         err = 'amqp receiver 2 should have no deletions'
         assert False, err
 
-
     # cleanup
     stop_amqp_receiver(receiver1, task1)
     stop_amqp_receiver(receiver2, task2)
@@ -1181,6 +1306,171 @@ def test_ps_s3_notification_push_amqp_on_master():
     # delete the bucket
     zones[0].delete_bucket(bucket_name)
     clean_rabbitmq(proc)
+
+
+def test_ps_s3_notification_push_kafka():
+    """ test pushing kafka s3 notification on master """
+    if skip_push_tests:
+        return SkipTest("PubSub push tests don't run in teuthology")
+    kafka_proc, zk_proc, kafka_log = init_kafka()
+    if kafka_proc is  None or zk_proc is None:
+        return SkipTest('end2end kafka tests require kafka/zookeeper installed')
+
+    zones, ps_zones  = init_env(require_ps=True)
+    realm = get_realm()
+    zonegroup = realm.master_zonegroup()
+    
+    # create bucket
+    bucket_name = gen_bucket_name()
+    bucket = zones[0].create_bucket(bucket_name)
+    # wait for sync
+    zone_meta_checkpoint(ps_zones[0].zone)
+    # name is constant for manual testing
+    topic_name = bucket_name+'_topic'
+    # create consumer on the topic
+    task, receiver = create_kafka_receiver_thread(topic_name)
+    task.start()
+
+    # create topic
+    topic_conf = PSTopic(ps_zones[0].conn, topic_name,
+                         endpoint='kafka://' + kafka_server,
+                         endpoint_args='kafka-ack-level=broker')
+    result, status = topic_conf.set_config()
+    assert_equal(status/100, 2)
+    parsed_result = json.loads(result)
+    topic_arn = parsed_result['arn']
+    # create s3 notification
+    notification_name = bucket_name + NOTIFICATION_SUFFIX
+    topic_conf_list = [{'Id': notification_name, 'TopicArn': topic_arn,
+                         'Events': []
+                       }]
+
+    s3_notification_conf = PSNotificationS3(ps_zones[0].conn, bucket_name, topic_conf_list)
+    response, status = s3_notification_conf.set_config()
+    assert_equal(status/100, 2)
+
+    # create objects in the bucket (async)
+    number_of_objects = 10
+    client_threads = []
+    for i in range(number_of_objects):
+        key = bucket.new_key(str(i))
+        content = str(os.urandom(1024*1024))
+        thr = threading.Thread(target = set_contents_from_string, args=(key, content,))
+        thr.start()
+        client_threads.append(thr)
+    [thr.join() for thr in client_threads] 
+
+    # wait for sync
+    zone_bucket_checkpoint(ps_zones[0].zone, zones[0].zone, bucket_name)
+    keys = list(bucket.list())
+    receiver.verify_s3_events(keys, exact_match=True)
+
+    # delete objects from the bucket
+    client_threads = []
+    for key in bucket.list():
+        thr = threading.Thread(target = key.delete, args=())
+        thr.start()
+        client_threads.append(thr)
+    [thr.join() for thr in client_threads] 
+    
+    zone_bucket_checkpoint(ps_zones[0].zone, zones[0].zone, bucket_name)
+    receiver.verify_s3_events(keys, exact_match=True, deletions=True)
+    
+    # cleanup
+    s3_notification_conf.del_config()
+    topic_conf.del_config()
+    # delete the bucket
+    zones[0].delete_bucket(bucket_name)
+    stop_kafka_receiver(receiver, task)
+    clean_kafka(kafka_proc, zk_proc, kafka_log)
+
+
+def test_ps_s3_notification_push_kafka_on_master():
+    """ test pushing kafka s3 notification on master """
+    if skip_push_tests:
+        return SkipTest("PubSub push tests don't run in teuthology")
+    kafka_proc, zk_proc, kafka_log = init_kafka()
+    if kafka_proc is None or zk_proc is None:
+        return SkipTest('end2end kafka tests require kafka/zookeeper installed')
+    zones, _  = init_env(require_ps=False)
+    realm = get_realm()
+    zonegroup = realm.master_zonegroup()
+    
+    # create bucket
+    bucket_name = gen_bucket_name()
+    bucket = zones[0].create_bucket(bucket_name)
+    # name is constant for manual testing
+    topic_name = bucket_name+'_topic'
+    # create consumer on the topic
+    task, receiver = create_kafka_receiver_thread(topic_name+'_1')
+    task.start()
+
+    # create s3 topic
+    endpoint_address = 'kafka://' + kafka_server
+    # without acks from broker
+    endpoint_args = 'push-endpoint='+endpoint_address+'&kafka-ack-level=broker'
+    topic_conf1 = PSTopicS3(zones[0].conn, topic_name+'_1', zonegroup.name, endpoint_args=endpoint_args)
+    topic_arn1 = topic_conf1.set_config()
+    endpoint_args = 'push-endpoint='+endpoint_address+'&kafka-ack-level=none'
+    topic_conf2 = PSTopicS3(zones[0].conn, topic_name+'_2', zonegroup.name, endpoint_args=endpoint_args)
+    topic_arn2 = topic_conf2.set_config()
+    # create s3 notification
+    notification_name = bucket_name + NOTIFICATION_SUFFIX
+    topic_conf_list = [{'Id': notification_name + '_1', 'TopicArn': topic_arn1,
+                         'Events': []
+                       },
+                       {'Id': notification_name + '_2', 'TopicArn': topic_arn2,
+                         'Events': []
+                       }]
+
+    s3_notification_conf = PSNotificationS3(zones[0].conn, bucket_name, topic_conf_list)
+    response, status = s3_notification_conf.set_config()
+    assert_equal(status/100, 2)
+
+    # create objects in the bucket (async)
+    number_of_objects = 10
+    client_threads = []
+    start_time = time.time()
+    for i in range(number_of_objects):
+        key = bucket.new_key(str(i))
+        content = str(os.urandom(1024*1024))
+        thr = threading.Thread(target = set_contents_from_string, args=(key, content,))
+        thr.start()
+        client_threads.append(thr)
+    [thr.join() for thr in client_threads] 
+
+    time_diff = time.time() - start_time
+    print 'average time for creation + kafka notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
+
+    print 'wait for 5sec for the messages...'
+    time.sleep(5)
+    keys = list(bucket.list())
+    receiver.verify_s3_events(keys, exact_match=True)
+
+    # delete objects from the bucket
+    client_threads = []
+    start_time = time.time()
+    for key in bucket.list():
+        thr = threading.Thread(target = key.delete, args=())
+        thr.start()
+        client_threads.append(thr)
+    [thr.join() for thr in client_threads] 
+    
+    time_diff = time.time() - start_time
+    print 'average time for deletion + kafka notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
+
+    print 'wait for 5sec for the messages...'
+    time.sleep(5)
+    receiver.verify_s3_events(keys, exact_match=True, deletions=True)
+    
+    # cleanup
+    s3_notification_conf.del_config()
+    topic_conf1.del_config()
+    topic_conf2.del_config()
+    # delete the bucket
+    zones[0].delete_bucket(bucket_name)
+    stop_kafka_receiver(receiver, task)
+    clean_kafka(kafka_proc, zk_proc, kafka_log)
 
 
 def test_ps_s3_notification_push_http_on_master():
@@ -1231,14 +1521,14 @@ def test_ps_s3_notification_push_http_on_master():
     [thr.join() for thr in client_threads] 
 
     time_diff = time.time() - start_time
-    print 'average time for creation + http notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
+    print('average time for creation + http notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds')
 
-    print 'wait for 5sec for the messages...'
+    print('wait for 5sec for the messages...')
     time.sleep(5)
     
     # check http receiver
     keys = list(bucket.list())
-    print 'total number of objects: ' + str(len(keys))
+    print('total number of objects: ' + str(len(keys)))
     http_server.verify_s3_events(keys, exact_match=True)
     
     # delete objects from the bucket
@@ -1251,9 +1541,9 @@ def test_ps_s3_notification_push_http_on_master():
     [thr.join() for thr in client_threads] 
     
     time_diff = time.time() - start_time
-    print 'average time for creation + http notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
+    print 'average time for deletion + http notification is: ' + str(time_diff*1000/number_of_objects) + ' milliseconds'
 
-    print 'wait for 5sec for the messages...'
+    print('wait for 5sec for the messages...')
     time.sleep(5)
     
     # check http receiver
@@ -1840,7 +2130,7 @@ def test_ps_s3_creation_triggers_on_master():
     uploader.complete_upload()
     fp.close()
 
-    print 'wait for 5sec for the messages...'
+    print('wait for 5sec for the messages...')
     time.sleep(5)
 
     # check amqp receiver
@@ -1920,7 +2210,7 @@ def test_ps_s3_multipart_on_master():
     uploader.complete_upload()
     fp.close()
 
-    print 'wait for 5sec for the messages...'
+    print('wait for 5sec for the messages...')
     time.sleep(5)
 
     # check amqp receiver
@@ -2092,7 +2382,7 @@ def test_ps_s3_metadata_on_master():
     key.set_metadata('meta1', 'This is my metadata value')
     key.set_contents_from_string('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
     keys = list(bucket.list())
-    print 'wait for 5sec for the messages...'
+    print('wait for 5sec for the messages...')
     time.sleep(5)
     # check amqp receiver
     receiver.verify_s3_events(keys, exact_match=True)
@@ -2168,7 +2458,7 @@ def test_ps_s3_versioned_deletion_on_master():
     bucket.delete_key(key.name, version_id=v1)
     delete_marker_key.delete()
 
-    print 'wait for 5sec for the messages...'
+    print('wait for 5sec for the messages...')
     time.sleep(5)
 
     # check amqp receiver

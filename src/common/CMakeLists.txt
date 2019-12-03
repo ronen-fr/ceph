@@ -84,6 +84,7 @@ set(common_srcs
   perf_histogram.cc
   pick_address.cc
   rabin.cc
+  random_string.cc
   reverse.c
   run_cmd.cc
   scrub_types.cc
@@ -120,9 +121,7 @@ elseif(AIX)
   list(APPEND common_srcs aix_errno.cc)
 endif()
 
-if(WITH_LTTNG AND WITH_EVENTTRACE)
-  message(STATUS " Using EventTrace class.")
-  add_definitions("-DWITH_EVENTTRACE")
+if(WITH_EVENTTRACE)
   list(APPEND common_srcs EventTrace.cc)
 endif()
 
@@ -179,7 +178,7 @@ target_link_libraries(crc32
 
 add_library(common_utf8 STATIC utf8.c)
 
-if(WITH_LIBCEPHFS OR WITH_KRBD)
+if(HAVE_KEYUTILS)
   set(parse_secret_srcs
     secret.c)
   add_library(parse_secret_objs OBJECT ${parse_secret_srcs})

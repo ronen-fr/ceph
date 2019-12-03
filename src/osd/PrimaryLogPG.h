@@ -527,11 +527,21 @@ public:
     return recovery_state.get_min_peer_features();
   }
   void send_message_osd_cluster(
-    int peer, Message *m, epoch_t from_epoch) override;
+    int peer, Message *m, epoch_t from_epoch) override {
+    osd->send_message_osd_cluster(peer, m, from_epoch);
+  }
   void send_message_osd_cluster(
-    Message *m, Connection *con) override;
+    std::vector<std::pair<int, Message*>>& messages, epoch_t from_epoch) override {
+    osd->send_message_osd_cluster(messages, from_epoch);
+  }
   void send_message_osd_cluster(
-    Message *m, const ConnectionRef& con) override;
+    Message *m, Connection *con) override {
+    osd->send_message_osd_cluster(m, con);
+  }
+  void send_message_osd_cluster(
+    Message *m, const ConnectionRef& con) override {
+    osd->send_message_osd_cluster(m, con);
+  }
   ConnectionRef get_con_osd_cluster(int peer, epoch_t from_epoch) override;
   entity_name_t get_cluster_msgr_name() override {
     return osd->get_cluster_msgr_name();
@@ -910,6 +920,15 @@ protected:
 	    p.second,
 	    p.second.begin(),
 	    p.second.end());
+	} else if (is_laggy()) {
+          for (auto& op : p.second) {
+            op->mark_delayed("waiting for readable");
+          }
+	  waiting_for_readable.splice(
+	    waiting_for_readable.begin(),
+	    p.second,
+	    p.second.begin(),
+	    p.second.end());
 	} else {
 	  requeue_ops(p.second);
 	}
@@ -1012,8 +1031,6 @@ protected:
 
   /// true if we can send an ondisk/commit for v
   bool already_complete(eversion_t v);
-  /// true if we can send an ack for v
-  bool already_ack(eversion_t v);
 
   // projected object info
   SharedLRU<hobject_t, ObjectContext> object_contexts;
@@ -1174,9 +1191,8 @@ protected:
     const hobject_t& head, const hobject_t& coid,
     object_info_t *poi);
   void execute_ctx(OpContext *ctx);
-  void finish_ctx(OpContext *ctx, int log_op_type);
+  void finish_ctx(OpContext *ctx, int log_op_type, int result=0);
   void reply_ctx(OpContext *ctx, int err);
-  void reply_ctx(OpContext *ctx, int err, eversion_t v, version_t uv);
   void make_writeable(OpContext *ctx);
   void log_op_stats(const OpRequest& op, uint64_t inb, uint64_t outb);
 
@@ -1485,13 +1501,11 @@ public:
 	       spg_t p);
   ~PrimaryLogPG() override {}
 
-  int do_command(
-    cmdmap_t cmdmap,
-    ostream& ss,
-    bufferlist& idata,
-    bufferlist& odata,
-    ConnectionRef conn,
-    ceph_tid_t tid) override;
+  void do_command(
+    const string_view& prefix,
+    const cmdmap_t& cmdmap,
+    const bufferlist& idata,
+    std::function<void(int,const std::string&,bufferlist&)> on_finish) override;
 
   void clear_cache();
   int get_cache_obj_count() {
@@ -1502,7 +1516,8 @@ public:
     ThreadPool::TPHandle &handle) override;
   void do_op(OpRequestRef& op);
   void record_write_error(OpRequestRef op, const hobject_t &soid,
-			  MOSDOpReply *orig_reply, int r);
+			  MOSDOpReply *orig_reply, int r,
+			  OpContext *ctx_for_op_returns=nullptr);
   void do_pg_op(OpRequestRef op);
   void do_scan(
     OpRequestRef op,
@@ -1526,7 +1541,7 @@ public:
 
   void do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn);
 private:
-  int do_scrub_ls(MOSDOp *op, OSDOp *osd_op);
+  int do_scrub_ls(const MOSDOp *op, OSDOp *osd_op);
   hobject_t earliest_backfill() const;
   bool check_src_targ(const hobject_t& soid, const hobject_t& toid) const;
 
@@ -1864,6 +1879,10 @@ public:
   void wait_for_unreadable_object(const hobject_t& oid, OpRequestRef op);
   void wait_for_all_missing(OpRequestRef op);
 
+  bool check_laggy(OpRequestRef& op);
+  bool check_laggy_requeue(OpRequestRef& op);
+  void recheck_readable() override;
+
   bool is_backfill_target(pg_shard_t osd) const {
     return recovery_state.is_backfill_target(osd);
   }
@@ -1896,8 +1915,7 @@ public:
 
   void mark_all_unfound_lost(
     int what,
-    ConnectionRef con,
-    ceph_tid_t tid);
+    std::function<void(int,const std::string&,bufferlist&)> on_finish);
   eversion_t pick_newest_available(const hobject_t& oid);
 
   void do_update_log_missing(

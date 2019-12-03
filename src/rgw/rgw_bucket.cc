@@ -55,8 +55,6 @@
 
 #define BUCKET_TAG_TIMEOUT 30
 
-using namespace rgw::sal;
-
 
 /*
  * The tenant_name is always returned on purpose. May be empty, of course.
@@ -147,19 +145,17 @@ void rgw_parse_url_bucket(const string &bucket, const string& auth_tenant,
  * Get all the buckets owned by a user and fill up an RGWUserBuckets with them.
  * Returns: 0 on success, -ERR# on failure.
  */
-int rgw_read_user_buckets(RGWRadosStore * store,
+int rgw_read_user_buckets(rgw::sal::RGWRadosStore * store,
                           const rgw_user& user_id,
-                          RGWUserBuckets& buckets,
+                          rgw::sal::RGWBucketList& buckets,
                           const string& marker,
                           const string& end_marker,
                           uint64_t max,
-                          bool need_stats,
-			  bool *is_truncated,
-			  uint64_t default_amount)
+                          bool need_stats)
 {
-  return store->ctl()->user->list_buckets(user_id, marker, end_marker,
-                                       max, need_stats, &buckets,
-                                       is_truncated, default_amount);
+  rgw::sal::RGWRadosUser user(store, user_id);
+
+  return user.list_buckets(marker, end_marker, max, need_stats, buckets);
 }
 
 int rgw_bucket_parse_bucket_instance(const string& bucket_instance, string *bucket_name, string *bucket_id, int *shard_id)
@@ -252,11 +248,11 @@ static void dump_mulipart_index_results(list<rgw_obj_index_key>& objs_to_unlink,
   }
 }
 
-void check_bad_user_bucket_mapping(RGWRadosStore *store, const rgw_user& user_id,
+void check_bad_user_bucket_mapping(rgw::sal::RGWRadosStore *store, const rgw_user& user_id,
 				   bool fix)
 {
-  RGWUserBuckets user_buckets;
-  bool is_truncated = false;
+  rgw::sal::RGWBucketList user_buckets;
+  rgw::sal::RGWRadosUser user(store, user_id);
   string marker;
 
   CephContext *cct = store->ctx();
@@ -264,28 +260,24 @@ void check_bad_user_bucket_mapping(RGWRadosStore *store, const rgw_user& user_id
   size_t max_entries = cct->_conf->rgw_list_buckets_max_chunk;
 
   do {
-    int ret = rgw_read_user_buckets(store, user_id, user_buckets, marker,
-				    string(), max_entries, false,
-				    &is_truncated);
+    int ret = user.list_buckets(marker, string(), max_entries, false, user_buckets);
     if (ret < 0) {
       ldout(store->ctx(), 0) << "failed to read user buckets: "
 			     << cpp_strerror(-ret) << dendl;
       return;
     }
 
-    map<string, RGWBucketEnt>& buckets = user_buckets.get_buckets();
-    for (map<string, RGWBucketEnt>::iterator i = buckets.begin();
+    map<string, rgw::sal::RGWBucket*>& buckets = user_buckets.get_buckets();
+    for (map<string, rgw::sal::RGWBucket*>::iterator i = buckets.begin();
          i != buckets.end();
          ++i) {
       marker = i->first;
 
-      RGWBucketEnt& bucket_ent = i->second;
-      rgw_bucket& bucket = bucket_ent.bucket;
+      rgw::sal::RGWBucket* bucket = i->second;
 
       RGWBucketInfo bucket_info;
       real_time mtime;
-      RGWSysObjectCtx obj_ctx = store->svc()->sysobj->init_obj_ctx();
-      int r = store->getRados()->get_bucket_info(obj_ctx, user_id.tenant, bucket.name, bucket_info, &mtime, null_yield);
+      int r = store->getRados()->get_bucket_info(store->svc(), user_id.tenant, bucket->get_name(), bucket_info, &mtime, null_yield);
       if (r < 0) {
         ldout(store->ctx(), 0) << "could not get bucket info for bucket=" << bucket << dendl;
         continue;
@@ -293,10 +285,10 @@ void check_bad_user_bucket_mapping(RGWRadosStore *store, const rgw_user& user_id
 
       rgw_bucket& actual_bucket = bucket_info.bucket;
 
-      if (actual_bucket.name.compare(bucket.name) != 0 ||
-          actual_bucket.tenant.compare(bucket.tenant) != 0 ||
-          actual_bucket.marker.compare(bucket.marker) != 0 ||
-          actual_bucket.bucket_id.compare(bucket.bucket_id) != 0) {
+      if (actual_bucket.name.compare(bucket->get_name()) != 0 ||
+          actual_bucket.tenant.compare(bucket->get_tenant()) != 0 ||
+          actual_bucket.marker.compare(bucket->get_marker()) != 0 ||
+          actual_bucket.bucket_id.compare(bucket->get_bucket_id()) != 0) {
         cout << "bucket info mismatch: expected " << actual_bucket << " got " << bucket << std::endl;
         if (fix) {
           cout << "fixing" << std::endl;
@@ -309,7 +301,7 @@ void check_bad_user_bucket_mapping(RGWRadosStore *store, const rgw_user& user_id
         }
       }
     }
-  } while (is_truncated);
+  } while (user_buckets.is_truncated());
 }
 
 static bool bucket_object_check_filter(const string& oid)
@@ -319,7 +311,7 @@ static bool bucket_object_check_filter(const string& oid)
   return rgw_obj_key::oid_to_key_in_ns(oid, &key, ns);
 }
 
-int rgw_remove_object(RGWRadosStore *store, const RGWBucketInfo& bucket_info, const rgw_bucket& bucket, rgw_obj_key& key)
+int rgw_remove_object(rgw::sal::RGWRadosStore *store, const RGWBucketInfo& bucket_info, const rgw_bucket& bucket, rgw_obj_key& key)
 {
   RGWObjectCtx rctx(store);
 
@@ -332,18 +324,18 @@ int rgw_remove_object(RGWRadosStore *store, const RGWBucketInfo& bucket_info, co
   return store->getRados()->delete_obj(rctx, bucket_info, obj, bucket_info.versioning_status());
 }
 
-int rgw_remove_bucket(RGWRadosStore *store, rgw_bucket& bucket, bool delete_children, optional_yield y)
+/* xxx dang */
+static int rgw_remove_bucket(rgw::sal::RGWRadosStore *store, rgw_bucket& bucket, bool delete_children, optional_yield y)
 {
   int ret;
   map<RGWObjCategory, RGWStorageStats> stats;
   std::vector<rgw_bucket_dir_entry> objs;
   map<string, bool> common_prefixes;
   RGWBucketInfo info;
-  RGWSysObjectCtx obj_ctx = store->svc()->sysobj->init_obj_ctx();
 
   string bucket_ver, master_ver;
 
-  ret = store->getRados()->get_bucket_info(obj_ctx, bucket.tenant, bucket.name, info, NULL, null_yield);
+  ret = store->getRados()->get_bucket_info(store->svc(), bucket.tenant, bucket.name, info, NULL, null_yield);
   if (ret < 0)
     return ret;
 
@@ -415,7 +407,7 @@ int rgw_remove_bucket(RGWRadosStore *store, rgw_bucket& bucket, bool delete_chil
 static int aio_wait(librados::AioCompletion *handle)
 {
   librados::AioCompletion *c = (librados::AioCompletion *)handle;
-  c->wait_for_safe();
+  c->wait_for_complete();
   int ret = c->get_return_value();
   c->release();
   return ret;
@@ -435,7 +427,7 @@ static int drain_handles(list<librados::AioCompletion *>& pending)
   return ret;
 }
 
-int rgw_remove_bucket_bypass_gc(RGWRadosStore *store, rgw_bucket& bucket,
+int rgw_remove_bucket_bypass_gc(rgw::sal::RGWRadosStore *store, rgw_bucket& bucket,
                                 int concurrent_max, bool keep_index_consistent,
                                 optional_yield y)
 {
@@ -445,12 +437,11 @@ int rgw_remove_bucket_bypass_gc(RGWRadosStore *store, rgw_bucket& bucket,
   map<string, bool> common_prefixes;
   RGWBucketInfo info;
   RGWObjectCtx obj_ctx(store);
-  RGWSysObjectCtx sysobj_ctx = store->svc()->sysobj->init_obj_ctx();
   CephContext *cct = store->ctx();
 
   string bucket_ver, master_ver;
 
-  ret = store->getRados()->get_bucket_info(sysobj_ctx, bucket.tenant, bucket.name, info, NULL, null_yield);
+  ret = store->getRados()->get_bucket_info(store->svc(), bucket.tenant, bucket.name, info, NULL, null_yield);
   if (ret < 0)
     return ret;
 
@@ -584,7 +575,7 @@ static void set_err_msg(std::string *sink, std::string msg)
     *sink = msg;
 }
 
-int RGWBucket::init(RGWRadosStore *storage, RGWBucketAdminOpState& op_state,
+int RGWBucket::init(rgw::sal::RGWRadosStore *storage, RGWBucketAdminOpState& op_state,
                     optional_yield y, std::string *err_msg,
                     map<string, bufferlist> *pattrs)
 {
@@ -598,7 +589,6 @@ int RGWBucket::init(RGWRadosStore *storage, RGWBucketAdminOpState& op_state,
   rgw_user user_id = op_state.get_user_id();
   bucket.tenant = user_id.tenant;
   bucket.name = op_state.get_bucket_name();
-  RGWUserBuckets user_buckets;
 
   if (bucket.name.empty() && user_id.empty())
     return -EINVAL;
@@ -611,7 +601,6 @@ int RGWBucket::init(RGWRadosStore *storage, RGWBucketAdminOpState& op_state,
   }
 
   if (!bucket.name.empty()) {
-    ceph::real_time mtime;
     int r = store->ctl()->bucket->read_bucket_info(
         bucket, &bucket_info, y,
         RGWBucketCtl::BucketInstance::GetParams().set_attrs(pattrs),
@@ -800,8 +789,7 @@ int RGWBucket::set_quota(RGWBucketAdminOpState& op_state, std::string *err_msg)
   rgw_bucket bucket = op_state.get_bucket();
   RGWBucketInfo bucket_info;
   map<string, bufferlist> attrs;
-  auto obj_ctx = store->svc()->sysobj->init_obj_ctx();
-  int r = store->getRados()->get_bucket_info(obj_ctx, bucket.tenant, bucket.name, bucket_info, NULL, null_yield, &attrs);
+  int r = store->getRados()->get_bucket_info(store->svc(), bucket.tenant, bucket.name, bucket_info, NULL, null_yield, &attrs);
   if (r < 0) {
     set_err_msg(err_msg, "could not get bucket info for bucket=" + bucket.name + ": " + cpp_strerror(-r));
     return r;
@@ -1147,11 +1135,10 @@ int RGWBucket::get_policy(RGWBucketAdminOpState& op_state, RGWAccessControlPolic
 {
   std::string object_name = op_state.get_object_name();
   rgw_bucket bucket = op_state.get_bucket();
-  auto sysobj_ctx = store->svc()->sysobj->init_obj_ctx();
 
   RGWBucketInfo bucket_info;
   map<string, bufferlist> attrs;
-  int ret = store->getRados()->get_bucket_info(sysobj_ctx, bucket.tenant, bucket.name, bucket_info, NULL, null_yield, &attrs);
+  int ret = store->getRados()->get_bucket_info(store->svc(), bucket.tenant, bucket.name, bucket_info, NULL, null_yield, &attrs);
   if (ret < 0) {
     return ret;
   }
@@ -1186,7 +1173,7 @@ int RGWBucket::get_policy(RGWBucketAdminOpState& op_state, RGWAccessControlPolic
 }
 
 
-int RGWBucketAdminOp::get_policy(RGWRadosStore *store, RGWBucketAdminOpState& op_state,
+int RGWBucketAdminOp::get_policy(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state,
                   RGWAccessControlPolicy& policy)
 {
   RGWBucket bucket;
@@ -1205,7 +1192,7 @@ int RGWBucketAdminOp::get_policy(RGWRadosStore *store, RGWBucketAdminOpState& op
 /* Wrappers to facilitate RESTful interface */
 
 
-int RGWBucketAdminOp::get_policy(RGWRadosStore *store, RGWBucketAdminOpState& op_state,
+int RGWBucketAdminOp::get_policy(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state,
                   RGWFormatterFlusher& flusher)
 {
   RGWAccessControlPolicy policy(store->ctx());
@@ -1227,7 +1214,7 @@ int RGWBucketAdminOp::get_policy(RGWRadosStore *store, RGWBucketAdminOpState& op
   return 0;
 }
 
-int RGWBucketAdminOp::dump_s3_policy(RGWRadosStore *store, RGWBucketAdminOpState& op_state,
+int RGWBucketAdminOp::dump_s3_policy(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state,
                   ostream& os)
 {
   RGWAccessControlPolicy_S3 policy(store->ctx());
@@ -1241,7 +1228,7 @@ int RGWBucketAdminOp::dump_s3_policy(RGWRadosStore *store, RGWBucketAdminOpState
   return 0;
 }
 
-int RGWBucketAdminOp::unlink(RGWRadosStore *store, RGWBucketAdminOpState& op_state)
+int RGWBucketAdminOp::unlink(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state)
 {
   RGWBucket bucket;
 
@@ -1252,7 +1239,7 @@ int RGWBucketAdminOp::unlink(RGWRadosStore *store, RGWBucketAdminOpState& op_sta
   return bucket.unlink(op_state, null_yield);
 }
 
-int RGWBucketAdminOp::link(RGWRadosStore *store, RGWBucketAdminOpState& op_state, string *err)
+int RGWBucketAdminOp::link(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state, string *err)
 {
   RGWBucket bucket;
   map<string, bufferlist> attrs;
@@ -1282,7 +1269,7 @@ int RGWBucketAdminOp::chown(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpStat
 
 }
 
-int RGWBucketAdminOp::check_index(RGWRadosStore *store, RGWBucketAdminOpState& op_state,
+int RGWBucketAdminOp::check_index(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state,
                   RGWFormatterFlusher& flusher, optional_yield y)
 {
   int ret;
@@ -1317,7 +1304,7 @@ int RGWBucketAdminOp::check_index(RGWRadosStore *store, RGWBucketAdminOpState& o
   return 0;
 }
 
-int RGWBucketAdminOp::remove_bucket(RGWRadosStore *store, RGWBucketAdminOpState& op_state,
+int RGWBucketAdminOp::remove_bucket(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state,
                                     optional_yield y, bool bypass_gc, bool keep_index_consistent)
 {
   RGWBucket bucket;
@@ -1334,7 +1321,7 @@ int RGWBucketAdminOp::remove_bucket(RGWRadosStore *store, RGWBucketAdminOpState&
   return ret;
 }
 
-int RGWBucketAdminOp::remove_object(RGWRadosStore *store, RGWBucketAdminOpState& op_state)
+int RGWBucketAdminOp::remove_object(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state)
 {
   RGWBucket bucket;
 
@@ -1345,7 +1332,7 @@ int RGWBucketAdminOp::remove_object(RGWRadosStore *store, RGWBucketAdminOpState&
   return bucket.remove_object(op_state);
 }
 
-int RGWBucketAdminOp::sync_bucket(RGWRadosStore *store, RGWBucketAdminOpState& op_state, string *err_msg)
+int RGWBucketAdminOp::sync_bucket(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state, string *err_msg)
 {
   RGWBucket bucket;
   map<string, bufferlist> attrs;
@@ -1357,15 +1344,14 @@ int RGWBucketAdminOp::sync_bucket(RGWRadosStore *store, RGWBucketAdminOpState& o
   return bucket.sync(op_state, &attrs, err_msg);
 }
 
-static int bucket_stats(RGWRadosStore *store, const std::string& tenant_name, std::string&  bucket_name, Formatter *formatter)
+static int bucket_stats(rgw::sal::RGWRadosStore *store, const std::string& tenant_name, std::string&  bucket_name, Formatter *formatter)
 {
   RGWBucketInfo bucket_info;
   map<RGWObjCategory, RGWStorageStats> stats;
   map<string, bufferlist> attrs;
 
   real_time mtime;
-  auto obj_ctx = store->svc()->sysobj->init_obj_ctx();
-  int r = store->getRados()->get_bucket_info(obj_ctx, tenant_name, bucket_name, bucket_info, &mtime, null_yield, &attrs);
+  int r = store->getRados()->get_bucket_info(store->svc(), tenant_name, bucket_name, bucket_info, &mtime, null_yield, &attrs);
   if (r < 0)
     return r;
 
@@ -1384,6 +1370,7 @@ static int bucket_stats(RGWRadosStore *store, const std::string& tenant_name, st
 
   formatter->open_object_section("stats");
   formatter->dump_string("bucket", bucket.name);
+  formatter->dump_int("num_shards", bucket_info.num_shards);
   formatter->dump_string("tenant", bucket.tenant);
   formatter->dump_string("zonegroup", bucket_info.zonegroup);
   formatter->dump_string("placement_rule", bucket_info.placement_rule.to_str());
@@ -1420,7 +1407,7 @@ static int bucket_stats(RGWRadosStore *store, const std::string& tenant_name, st
   return 0;
 }
 
-int RGWBucketAdminOp::limit_check(RGWRadosStore *store,
+int RGWBucketAdminOp::limit_check(rgw::sal::RGWRadosStore *store,
 				  RGWBucketAdminOpState& op_state,
 				  const std::list<std::string>& user_ids,
 				  RGWFormatterFlusher& flusher,
@@ -1450,33 +1437,32 @@ int RGWBucketAdminOp::limit_check(RGWRadosStore *store,
     formatter->open_array_section("buckets");
 
     string marker;
-    bool is_truncated{false};
+    rgw::sal::RGWBucketList buckets;
     do {
-      RGWUserBuckets buckets;
+      rgw::sal::RGWRadosUser user(store, rgw_user(user_id));
 
-      ret = rgw_read_user_buckets(store, rgw_user(user_id), buckets,
-				  marker, string(), max_entries, false,
-				  &is_truncated);
+      ret = user.list_buckets(marker, string(), max_entries, false, buckets);
+
       if (ret < 0)
         return ret;
 
-      map<string, RGWBucketEnt>& m_buckets = buckets.get_buckets();
+      map<string, rgw::sal::RGWBucket*>& m_buckets = buckets.get_buckets();
 
       for (const auto& iter : m_buckets) {
-	auto& bucket = iter.second.bucket;
+	auto bucket = iter.second;
 	uint32_t num_shards = 1;
 	uint64_t num_objects = 0;
 
 	/* need info for num_shards */
 	RGWBucketInfo info;
-	auto obj_ctx = store->svc()->sysobj->init_obj_ctx();
 
-	marker = bucket.name; /* Casey's location for marker update,
-			       * as we may now not reach the end of
-			       * the loop body */
+	marker = bucket->get_name(); /* Casey's location for marker update,
+				     * as we may now not reach the end of
+				     * the loop body */
 
-	ret = store->getRados()->get_bucket_info(obj_ctx, bucket.tenant, bucket.name,
-				     info, nullptr, null_yield);
+	ret = store->getRados()->get_bucket_info(store->svc(), bucket->get_tenant(),
+						 bucket->get_name(), info, nullptr,
+						 null_yield);
 	if (ret < 0)
 	  continue;
 
@@ -1517,8 +1503,8 @@ int RGWBucketAdminOp::limit_check(RGWRadosStore *store,
 
 	  if (warn || (! warnings_only)) {
 	    formatter->open_object_section("bucket");
-	    formatter->dump_string("bucket", bucket.name);
-	    formatter->dump_string("tenant", bucket.tenant);
+	    formatter->dump_string("bucket", bucket->get_name());
+	    formatter->dump_string("tenant", bucket->get_tenant());
 	    formatter->dump_int("num_objects", num_objects);
 	    formatter->dump_int("num_shards", num_shards);
 	    formatter->dump_int("objects_per_shard", objs_per_shard);
@@ -1528,7 +1514,7 @@ int RGWBucketAdminOp::limit_check(RGWRadosStore *store,
 	}
       }
       formatter->flush(cout);
-    } while (is_truncated); /* foreach: bucket */
+    } while (buckets.is_truncated()); /* foreach: bucket */
 
     formatter->close_section();
     formatter->close_section();
@@ -1542,7 +1528,7 @@ int RGWBucketAdminOp::limit_check(RGWRadosStore *store,
   return ret;
 } /* RGWBucketAdminOp::limit_check */
 
-int RGWBucketAdminOp::info(RGWRadosStore *store, RGWBucketAdminOpState& op_state,
+int RGWBucketAdminOp::info(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state,
                   RGWFormatterFlusher& flusher)
 {
   int ret = 0;
@@ -1559,19 +1545,18 @@ int RGWBucketAdminOp::info(RGWRadosStore *store, RGWBucketAdminOpState& op_state
   if (op_state.is_user_op()) {
     formatter->open_array_section("buckets");
 
-    RGWUserBuckets buckets;
+    rgw::sal::RGWBucketList buckets;
+    rgw::sal::RGWRadosUser user(store, op_state.get_user_id());
     string marker;
     bool is_truncated = false;
 
     do {
-      ret = rgw_read_user_buckets(store, op_state.get_user_id(), buckets,
-				  marker, string(), max_entries, false,
-				  &is_truncated);
+      ret = user.list_buckets(marker, string(), max_entries, false, buckets);
       if (ret < 0)
         return ret;
 
-      map<string, RGWBucketEnt>& m = buckets.get_buckets();
-      map<string, RGWBucketEnt>::iterator iter;
+      map<string, rgw::sal::RGWBucket*>& m = buckets.get_buckets();
+      map<string, rgw::sal::RGWBucket*>::iterator iter;
 
       for (iter = m.begin(); iter != m.end(); ++iter) {
         std::string obj_name = iter->first;
@@ -1623,7 +1608,7 @@ int RGWBucketAdminOp::info(RGWRadosStore *store, RGWBucketAdminOpState& op_state
   return 0;
 }
 
-int RGWBucketAdminOp::set_quota(RGWRadosStore *store, RGWBucketAdminOpState& op_state)
+int RGWBucketAdminOp::set_quota(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state)
 {
   RGWBucket bucket;
 
@@ -1633,7 +1618,7 @@ int RGWBucketAdminOp::set_quota(RGWRadosStore *store, RGWBucketAdminOpState& op_
   return bucket.set_quota(op_state);
 }
 
-static int purge_bucket_instance(RGWRadosStore *store, const RGWBucketInfo& bucket_info)
+static int purge_bucket_instance(rgw::sal::RGWRadosStore *store, const RGWBucketInfo& bucket_info)
 {
   int max_shards = (bucket_info.num_shards > 0 ? bucket_info.num_shards : 1);
   for (int i = 0; i < max_shards; i++) {
@@ -1664,7 +1649,7 @@ inline auto split_tenant(const std::string& bucket_name){
 }
 
 using bucket_instance_ls = std::vector<RGWBucketInfo>;
-void get_stale_instances(RGWRadosStore *store, const std::string& bucket_name,
+void get_stale_instances(rgw::sal::RGWRadosStore *store, const std::string& bucket_name,
                          const vector<std::string>& lst,
                          bucket_instance_ls& stale_instances)
 {
@@ -1695,7 +1680,7 @@ void get_stale_instances(RGWRadosStore *store, const std::string& bucket_name,
   // all the instances
   auto [tenant, bucket] = split_tenant(bucket_name);
   RGWBucketInfo cur_bucket_info;
-  int r = store->getRados()->get_bucket_info(obj_ctx, tenant, bucket, cur_bucket_info, nullptr, null_yield);
+  int r = store->getRados()->get_bucket_info(store->svc(), tenant, bucket, cur_bucket_info, nullptr, null_yield);
   if (r < 0) {
     if (r == -ENOENT) {
       // bucket doesn't exist, everything is stale then
@@ -1750,11 +1735,11 @@ void get_stale_instances(RGWRadosStore *store, const std::string& bucket_name,
   return;
 }
 
-static int process_stale_instances(RGWRadosStore *store, RGWBucketAdminOpState& op_state,
+static int process_stale_instances(rgw::sal::RGWRadosStore *store, RGWBucketAdminOpState& op_state,
                                    RGWFormatterFlusher& flusher,
                                    std::function<void(const bucket_instance_ls&,
                                                       Formatter *,
-                                                      RGWRadosStore*)> process_f)
+                                                      rgw::sal::RGWRadosStore*)> process_f)
 {
   std::string marker;
   void *handle;
@@ -1800,13 +1785,13 @@ static int process_stale_instances(RGWRadosStore *store, RGWBucketAdminOpState& 
   return 0;
 }
 
-int RGWBucketAdminOp::list_stale_instances(RGWRadosStore *store,
+int RGWBucketAdminOp::list_stale_instances(rgw::sal::RGWRadosStore *store,
                                            RGWBucketAdminOpState& op_state,
                                            RGWFormatterFlusher& flusher)
 {
   auto process_f = [](const bucket_instance_ls& lst,
                       Formatter *formatter,
-                      RGWRadosStore*){
+                      rgw::sal::RGWRadosStore*){
                      for (const auto& binfo: lst)
                        formatter->dump_string("key", binfo.bucket.get_key());
                    };
@@ -1814,13 +1799,13 @@ int RGWBucketAdminOp::list_stale_instances(RGWRadosStore *store,
 }
 
 
-int RGWBucketAdminOp::clear_stale_instances(RGWRadosStore *store,
+int RGWBucketAdminOp::clear_stale_instances(rgw::sal::RGWRadosStore *store,
                                             RGWBucketAdminOpState& op_state,
                                             RGWFormatterFlusher& flusher)
 {
   auto process_f = [](const bucket_instance_ls& lst,
                       Formatter *formatter,
-                      RGWRadosStore *store){
+                      rgw::sal::RGWRadosStore *store){
                      for (const auto &binfo: lst) {
                        int ret = purge_bucket_instance(store, binfo);
                        if (ret == 0){
@@ -1841,10 +1826,9 @@ static int fix_single_bucket_lc(rgw::sal::RGWRadosStore *store,
                                 const std::string& tenant_name,
                                 const std::string& bucket_name)
 {
-  auto obj_ctx = store->svc()->sysobj->init_obj_ctx();
   RGWBucketInfo bucket_info;
   map <std::string, bufferlist> bucket_attrs;
-  int ret = store->getRados()->get_bucket_info(obj_ctx, tenant_name, bucket_name,
+  int ret = store->getRados()->get_bucket_info(store->svc(), tenant_name, bucket_name,
                                    bucket_info, nullptr, null_yield, &bucket_attrs);
   if (ret < 0) {
     // TODO: Should we handle the case where the bucket could've been removed between

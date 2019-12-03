@@ -132,10 +132,13 @@ if(LINUX)
   set(HAVE_UDEV ${UDEV_FOUND})
   find_package(blkid REQUIRED)
   set(HAVE_BLKID ${BLKID_FOUND})
+  find_package(keyutils REQUIRED)
+  set(HAVE_KEYUTILS ${KEYUTILS_FOUND})
 elseif(FREEBSD)
   set(HAVE_UDEV OFF)
   set(HAVE_LIBAIO OFF)
   set(HAVE_BLKID OFF)
+  set(HAVE_KEYUTILS OFF)
 else()
   set(HAVE_UDEV OFF)
   set(HAVE_BLKID OFF)
@@ -186,8 +189,11 @@ include(CMakeDependentOption)
 CMAKE_DEPENDENT_OPTION(WITH_BLUESTORE_PMEM "Enable PMDK libraries" OFF
   "WITH_BLUESTORE" OFF)
 
+CMAKE_DEPENDENT_OPTION(WITH_RBD_RWL "Enable librbd persistent write back cache" OFF
+  "WITH_RBD" OFF)
+
 CMAKE_DEPENDENT_OPTION(WITH_SYSTEM_PMDK "Require and build with system PMDK" OFF
-  "WITH_BLUESTORE_PMEM" OFF)
+  "WITH_RBD_RWL OR WITH_BLUESTORE_PMEM" OFF)
 
 if(WITH_BLUESTORE_PMEM)
   set(HAVE_BLUESTORE_PMEM ON)
@@ -230,6 +236,13 @@ option(WITH_KRBD "Enable Linux krbd support of 'rbd' utility" ON)
 
 if(WITH_KRBD AND NOT WITH_RBD)
   message(FATAL_ERROR "Cannot have WITH_KRBD without WITH_RBD.")
+endif()
+if(LINUX)
+  if(WITH_LIBCEPHFS OR WITH_KRBD)
+    # keyutils is only used when talking to the Linux Kernel key store 
+    find_package(keyutils REQUIRED)
+    set(HAVE_KEYUTILS ${KEYUTILS_FOUND})
+  endif()
 endif()
 
 option(WITH_LEVELDB "LevelDB is here" ON)
@@ -301,10 +314,6 @@ if (HAVE_LIBTCMALLOC AND TCMALLOC_VERSION_STRING VERSION_LESS 2.6.2)
   set(LIBTCMALLOC_MISSING_ALIGNED_ALLOC ON)
 endif()
 
-if(WITH_LIBCEPHFS OR WITH_KRBD)
-  find_package(keyutils REQUIRED)
-endif()
-
 find_package(CURL REQUIRED)
 set(CMAKE_REQUIRED_INCLUDES ${CURL_INCLUDE_DIRS})
 set(CMAKE_REQUIRED_LIBRARIES ${CURL_LIBRARIES})
@@ -316,7 +325,7 @@ set(CRYPTO_LIBS OpenSSL::Crypto)
 option(WITH_DPDK "Enable DPDK messaging" OFF)
 if(WITH_DPDK)
   find_package(dpdk)
-  if(NOT DPDK_FOUND AND NOT TARGET dpdk-ext)
+  if(NOT DPDK_FOUND)
     include(BuildDPDK)
     build_dpdk(${CMAKE_BINARY_DIR}/src/dpdk)
   endif()
@@ -340,6 +349,7 @@ option(WITH_RADOSGW_FCGI_FRONTEND "Rados Gateway's FCGI frontend is enabled" OFF
 option(WITH_RADOSGW_BEAST_FRONTEND "Rados Gateway's Beast frontend is enabled" ON)
 option(WITH_RADOSGW_BEAST_OPENSSL "Rados Gateway's Beast frontend uses OpenSSL" ON)
 option(WITH_RADOSGW_AMQP_ENDPOINT "Rados Gateway's pubsub support for AMQP push endpoint" ON)
+option(WITH_RADOSGW_KAFKA_ENDPOINT "Rados Gateway's pubsub support for Kafka push endpoint" ON)
 
 if(WITH_RADOSGW)
   find_package(EXPAT REQUIRED)
@@ -440,7 +450,9 @@ set(HAVE_LIBROCKSDB 1)
 find_package(ZLIB REQUIRED)
 
 #option for EventTrace
-option(WITH_EVENTTRACE "Event tracing support" OFF)
+CMAKE_DEPENDENT_OPTION(
+  WITH_EVENTTRACE "Event tracing support, requires WITH_LTTNG"
+  OFF "USE_LTTNG" OFF)
 
 #option for LTTng
 option(WITH_LTTNG "LTTng tracing is enabled" ON)
@@ -524,7 +536,7 @@ endif()
 # Rocksdb
 option(WITH_SYSTEM_ROCKSDB "require and build with system rocksdb" OFF)
 if (WITH_SYSTEM_ROCKSDB)
-  find_package(RocksDB 5.8 REQUIRED)
+  find_package(RocksDB 5.14 REQUIRED)
 endif()
 
 option(WITH_SEASTAR "Build seastar components")
@@ -582,6 +594,9 @@ if(WITH_SYSTEM_NPM)
     message(FATAL_ERROR "Can't find npm.")
   endif()
 endif()
+set(DASHBOARD_FRONTEND_LANGS "" CACHE STRING
+  "List of comma separated ceph-dashboard frontend languages to build. \
+  Use value `ALL` to build all languages")
 
 include_directories(SYSTEM ${PROJECT_BINARY_DIR}/include)
 
@@ -636,3 +651,6 @@ add_tags(ctags
   EXCLUDE_OPTS ${CTAG_EXCLUDES}
   EXCLUDES "*.js" "*.css")
 add_custom_target(tags DEPENDS ctags)
+
+find_package(CppCheck)
+find_package(IWYU)

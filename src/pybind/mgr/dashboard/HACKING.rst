@@ -332,6 +332,91 @@ vs. ``it('image edit test' () => ...)``. As shown, the first example makes gramm
 prefix whereas the second message does not.``it()`` should describe what the individual test is doing and
 what it expects to happen.
 
+Differences between Frontend Unit Tests and End-to-End (E2E) Tests / FAQ
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+General introduction about testing and E2E/unit tests 
+
+
+What are E2E/unit tests designed for?
+.....................................
+
+E2E test:
+
+"Protractor is an end-to-end test framework for Angular and AngularJS applications.
+Protractor runs tests against your application running in a real browser,
+interacting with it as a user would." `(src) <http://www.protractortest.org/#/>`__
+
+It requires a fully functional system and tests the interaction of all components
+of the application (Ceph, back-end, front-end).
+E2E tests are designed to mimic the behavior of the user when interacting with the application
+- for example when it comes to workflows like creating/editing/deleting an item.
+Also the tests should verify that certain items are displayed as a user would see them
+when clicking through the UI (for example a menu entry or a pool that has been
+created during a test and the pool and its properties should be displayed in the table).
+
+Angular Unit Tests:
+
+Unit tests, as the name suggests, are tests for smaller units of the code.
+Those tests are designed for testing all kinds of Angulars' components (e.g. services, pipes etc.).
+They do not require a connection to the backend, hence those tests are independent of it.
+The expected data of the backend is mocked in the frontend and by using this data
+the functionality of the frontend can be tested without having to have real data from the backend.
+As previously mentioned, data is either mocked or, in a simple case, contains a static input,
+a function call and an expected static output.
+More complex examples include the state of a component (attributes of the component class),
+that define how the output changes according to the given input.
+
+Which E2E/unit tests are considered to be valid?
+................................................
+
+This is not easy to answer, but new tests that are written in the same way as already existing
+dashboard tests should generally be considered valid.
+Unit tests should focus on the component to be tested.
+This is either an Angular component, directive, service, pipe, etc.
+
+E2E tests should focus on testing the functionality of the whole application.
+Approximately a third of the overall E2E tests should verify the correctness
+of user visible elements.
+
+How should an E2E/unit test look like?
+......................................
+
+Unit tests should focus on the described purpose
+and shouldn't try to test other things in the same `it` block.
+
+E2E tests should contain a description that either verifies
+the correctness of a user visible element or a complete process
+like for example the creation/validation/deletion of a pool.
+
+What should an E2E/unit test cover?
+...................................
+
+E2E tests should mostly, but not exclusively, cover interaction with the backend.
+This way the interaction with the backend is utilized to write integration tests.
+
+A unit test should mostly cover critical or complex functionality
+of a component (Angular Components, Services, Pipes, Directives, etc).
+
+What should an E2E/unit test NOT cover?
+.......................................
+
+Avoid duplicate testing: do not write E2E tests for what's already
+been covered as frontend-unit tests and vice versa.
+It may not be possible to completely avoid an overlap.
+
+Unit tests should not be used to extensively click through components and E2E tests
+shouldn't be used to extensively test a single component of Angular.
+
+Best practices/guideline
+........................
+
+As a general guideline we try to follow the 70/20/10 approach - 70% unit tests,
+20% integration tests and 10% end-to-end tests.
+For further information please refer to `this document
+<https://testing.googleblog.com/2015/04/just-say-no-to-more-end-to-end-tests.html>`__
+and the included "Testing Pyramid".
+
 Further Help
 ~~~~~~~~~~~~
 
@@ -836,7 +921,7 @@ parameter.
 For ``POST`` and ``PUT`` methods, all method parameters are considered
 body parameters by default. To override this default, one can use the
 ``path_params`` and ``query_params`` to specify which method parameters are
-path and query parameters respectivelly.
+path and query parameters respectively.
 Body parameters are decoded from the request body, either from a form format, or
 from a dictionary in JSON format.
 
@@ -1090,16 +1175,18 @@ How to access the manager module instance from a controller?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 We provide the manager module instance as a global variable that can be
-imported in any module. We also provide a logger instance in the same way.
+imported in any module.
 
 Example:
 
 .. code-block:: python
 
+  import logging
   import cherrypy
-  from .. import logger, mgr
+  from .. import mgr
   from ..tools import ApiController, RESTController
 
+  logger = logging.getLogger(__name__)
 
   @ApiController('servers')
   class Servers(RESTController):
@@ -1667,9 +1754,11 @@ API endpoints.However, by default it is not very detailed. There are two
 decorators that can be used to add more information:
 
 * ``@EndpointDoc()`` for documentation of endpoints. It has four optional arguments
-  (explained below): ``description``, ``group``, ``parameters`` and``responses``.
+  (explained below): ``description``, ``group``, ``parameters`` and
+  ``responses``.
 * ``@ControllerDoc()`` for documentation of controller or group associated with
-  the endpoints. It only takes the two first arguments: ``description`` and``group``.
+  the endpoints. It only takes the two first arguments: ``description`` and
+  ``group``.
 
 
 ``description``: A a string with a short (1-2 sentences) description of the object.
@@ -1844,19 +1933,39 @@ In order to create a new plugin, the following steps are required:
 
 #. Add a new file under ``src/pybind/mgr/dashboard/plugins``.
 #. Import the ``PLUGIN_MANAGER`` instance and the ``Interfaces``.
-#. Create a class extending the desired interfaces. The plug-in library will check if all the methods of the interfaces have been properly overridden.
+#. Create a class extending the desired interfaces. The plug-in library will
+   check if all the methods of the interfaces have been properly overridden.
 #. Register the plugin in the ``PLUGIN_MANAGER`` instance.
-#. Import the plug-in from within the Ceph Dashboard ``module.py`` (currently no dynamic loading is implemented).
+#. Import the plug-in from within the Ceph Dashboard ``module.py`` (currently no
+   dynamic loading is implemented).
 
-The available interfaces are the following:
+The available Mixins (helpers) are:
 
 - ``CanMgr``: provides the plug-in with access to the ``mgr`` instance under ``self.mgr``.
-- ``CanLog``: provides the plug-in with access to the Ceph Dashboard logger under ``self.log``.
-- ``Setupable``: requires overriding ``setup()`` hook. This method is run in the Ceph Dashboard ``serve()`` method, right after CherryPy has been configured, but before it is started. It's a placeholder for the plug-in initialization logic.
-- ``HasOptions``: requires overriding ``get_options()`` hook by returning a list of ``Options()``. The options returned here are added to the ``MODULE_OPTIONS``.
-- ``HasCommands``: requires overriding ``register_commands()`` hook by defining the commands the plug-in can handle and decorating them with ``@CLICommand``. The commands can be optionally returned, so that they can be invoked externally (which makes unit testing easier).
-- ``HasControllers``: requires overriding ``get_controllers()`` hook by defining and returning the controllers as usual.
-- ``FilterRequest.BeforeHandler``: requires overriding ``filter_request_before_handler()`` hook. This method receives a ``cherrypy.request`` object for processing. A usual implementation of this method will allow some requests to pass or will raise a ``cherrypy.HTTPError` based on the ``request`` metadata and other conditions.
+
+The available Interfaces are:
+
+- ``Initializable``: requires overriding ``init()`` hook. This method is run at
+  the very beginning of the dashboard module, right after all imports have been
+  performed.
+- ``Setupable``: requires overriding ``setup()`` hook. This method is run in the
+  Ceph Dashboard ``serve()`` method, right after CherryPy has been configured,
+  but before it is started. It's a placeholder for the plug-in initialization
+  logic.
+- ``HasOptions``: requires overriding ``get_options()`` hook by returning a list
+  of ``Options()``. The options returned here are added to the
+  ``MODULE_OPTIONS``.
+- ``HasCommands``: requires overriding ``register_commands()`` hook by defining
+  the commands the plug-in can handle and decorating them with ``@CLICommand``.
+  The commands can be optionally returned, so that they can be invoked
+  externally (which makes unit testing easier).
+- ``HasControllers``: requires overriding ``get_controllers()`` hook by defining
+  and returning the controllers as usual.
+- ``FilterRequest.BeforeHandler``: requires overriding
+  ``filter_request_before_handler()`` hook. This method receives a
+  ``cherrypy.request`` object for processing. A usual implementation of this
+  method will allow some requests to pass or will raise a ``cherrypy.HTTPError``
+  based on the ``request`` metadata and other conditions.
 
 New interfaces and hooks should be added as soon as they are required to
 implement new functionality. The above list only comprises the hooks needed for
@@ -1875,23 +1984,22 @@ A sample plugin implementation would look like this:
   import cherrypy
 
   @PM.add_plugin
-  class Mute(I.CanMgr, I.CanLog, I.Setupable, I.HasOptions,
-                       I.HasCommands, I.FilterRequest.BeforeHandler,
-                       I.HasControllers):
+  class Mute(I.CanMgr, I.Setupable, I.HasOptions, I.HasCommands,
+                       I.FilterRequest.BeforeHandler, I.HasControllers):
     @PM.add_hook
     def get_options(self):
       return [Option('mute', default=False, type='bool')]
 
     @PM.add_hook
     def setup(self):
-      self.mute = self.mgr.get_module_options('mute')
+      self.mute = self.mgr.get_module_option('mute')
 
     @PM.add_hook
     def register_commands(self):
       @CLICommand("dashboard mute")
       def _(mgr):
         self.mute = True
-        self.mgr.set_module_options('mute', True)
+        self.mgr.set_module_option('mute', True)
         return 0
 
     @PM.add_hook
@@ -1908,4 +2016,54 @@ A sample plugin implementation would look like this:
         def get(_):
           return self.mute
 
-      return [FeatureTogglesEndpoint]
+      return [MuteController]
+
+
+Additionally, a helper for creating plugins ``SimplePlugin`` is provided. It
+facilitates the basic tasks (Options, Commands, and common Mixins). The previous
+plugin could be rewritten like this:
+
+.. code-block:: python
+
+  from . import PLUGIN_MANAGER as PM
+  from . import interfaces as I
+  from .plugin import SimplePlugin as SP
+
+  import cherrypy
+
+  @PM.add_plugin
+  class Mute(SP, I.Setupable, I.FilterRequest.BeforeHandler, I.HasControllers):
+    OPTIONS = [
+        SP.Option('mute', default=False, type='bool')
+    ]
+
+    def shut_up(self):
+      self.set_option('mute', True)
+      self.mute = True
+      return 0
+
+    COMMANDS = [
+        SP.Command("dashboard mute", handler=shut_up)
+    ]
+
+    @PM.add_hook
+    def setup(self):
+      self.mute = self.get_option('mute')
+
+    @PM.add_hook
+    def filter_request_before_handler(self, request):
+      if self.mute:
+        raise cherrypy.HTTPError(500, "I'm muted :-x")
+
+    @PM.add_hook
+    def get_controllers(self):
+      from ..controllers import ApiController, RESTController
+
+      @ApiController('/mute')
+      class MuteController(RESTController):
+        def get(_):
+          return self.mute
+
+      return [MuteController]
+
+

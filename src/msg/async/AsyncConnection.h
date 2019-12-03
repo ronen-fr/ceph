@@ -110,6 +110,7 @@ private:
   AsyncConnection(CephContext *cct, AsyncMessenger *m, DispatchQueue *q,
 		  Worker *w, bool is_msgr2, bool local);
   ~AsyncConnection() override;
+  bool unregistered = false;
 public:
   void maybe_start_delay_thread();
 
@@ -139,6 +140,14 @@ public:
 
   int get_con_mode() const override;
 
+  bool is_unregistered() const {
+    return unregistered;
+  }
+
+  void unregister() {
+    unregistered = true;
+  }
+
  private:
   enum {
     STATE_NONE,
@@ -166,12 +175,14 @@ public:
   int state;
   ConnectedSocket cs;
   int port;
+public:
   Messenger::Policy policy;
+private:
 
   DispatchQueue *dispatch_queue;
 
   // lockfree, only used in own thread
-  bufferlist outcoming_bl;
+  bufferlist outgoing_bl;
   bool open_write = false;
 
   std::mutex write_lock;

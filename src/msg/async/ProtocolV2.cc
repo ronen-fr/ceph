@@ -145,7 +145,7 @@ void ProtocolV2::reset_session() {
 
   connection->dispatch_queue->discard_queue(connection->conn_id);
   discard_out_queue();
-  connection->outcoming_bl.clear();
+  connection->outgoing_bl.clear();
 
   connection->dispatch_queue->queue_remote_reset(connection);
 
@@ -222,12 +222,27 @@ uint64_t ProtocolV2::discard_requeued_up_to(uint64_t out_seq, uint64_t seq) {
   return count;
 }
 
+// it's expected the `write_lock` is held while calling this method.
 void ProtocolV2::reset_recv_state() {
-  auth_meta.reset(new AuthConnectionMeta);
-  session_stream_handlers.tx.reset(nullptr);
-  session_stream_handlers.rx.reset(nullptr);
-  pre_auth.txbuf.clear();
-  pre_auth.rxbuf.clear();
+  ldout(cct, 5) << __func__ << dendl;
+
+  // execute in the same thread that uses the rx/tx handlers. We need
+  // to do the warp because holding `write_lock` is not enough as
+  // `write_event()` unlocks it just before calling `write_message()`.
+  // `submit_to()` here is NOT blocking.
+  connection->center->submit_to(connection->center->get_id(), [this] {
+    ldout(cct, 5) << "reset_recv_state reseting crypto handlers" << dendl;
+
+    // Possibly unnecessary. See the comment in `deactivate_existing`.
+    std::lock_guard<std::mutex> l(connection->lock);
+    std::lock_guard<std::mutex> wl(connection->write_lock);
+
+    auth_meta.reset(new AuthConnectionMeta);
+    session_stream_handlers.rx.reset(nullptr);
+    session_stream_handlers.tx.reset(nullptr);
+    pre_auth.rxbuf.clear();
+    pre_auth.txbuf.clear();
+  }, /* nowait = */true);
 
   // clean read and write callbacks
   connection->pendingReadLen.reset();
@@ -509,7 +524,7 @@ ssize_t ProtocolV2::write_message(Message *m, bool more) {
 			     m->get_payload(),
 			     m->get_middle(),
 			     m->get_data());
-  connection->outcoming_bl.append(message.get_buffer(session_stream_handlers));
+  connection->outgoing_bl.append(message.get_buffer(session_stream_handlers));
 
   ldout(cct, 5) << __func__ << " sending message m=" << m
                 << " seq=" << m->get_seq() << " " << *m << dendl;
@@ -519,19 +534,19 @@ ssize_t ProtocolV2::write_message(Message *m, bool more) {
                  << " src=" << entity_name_t(messenger->get_myname())
                  << " off=" << header2.data_off
                  << dendl;
-  ssize_t total_send_size = connection->outcoming_bl.length();
+  ssize_t total_send_size = connection->outgoing_bl.length();
   ssize_t rc = connection->_try_send(more);
   if (rc < 0) {
     ldout(cct, 1) << __func__ << " error sending " << m << ", "
                   << cpp_strerror(rc) << dendl;
   } else {
     connection->logger->inc(
-        l_msgr_send_bytes, total_send_size - connection->outcoming_bl.length());
+        l_msgr_send_bytes, total_send_size - connection->outgoing_bl.length());
     ldout(cct, 10) << __func__ << " sending " << m
                    << (rc ? " continuely." : " done.") << dendl;
   }
 
-#if defined(WITH_LTTNG) && defined(WITH_EVENTTRACE)
+#if defined(WITH_EVENTTRACE)
   if (m->get_type() == CEPH_MSG_OSD_OP)
     OID_EVENT_TRACE_WITH_MSG(m, "SEND_MSG_OSD_OP_END", false);
   else if (m->get_type() == CEPH_MSG_OSD_OPREPLY)
@@ -545,12 +560,12 @@ ssize_t ProtocolV2::write_message(Message *m, bool more) {
 void ProtocolV2::append_keepalive() {
   ldout(cct, 10) << __func__ << dendl;
   auto keepalive_frame = KeepAliveFrame::Encode();
-  connection->outcoming_bl.append(keepalive_frame.get_buffer(session_stream_handlers));
+  connection->outgoing_bl.append(keepalive_frame.get_buffer(session_stream_handlers));
 }
 
 void ProtocolV2::append_keepalive_ack(utime_t &timestamp) {
   auto keepalive_ack_frame = KeepAliveFrameAck::Encode(timestamp);
-  connection->outcoming_bl.append(keepalive_ack_frame.get_buffer(session_stream_handlers));
+  connection->outgoing_bl.append(keepalive_ack_frame.get_buffer(session_stream_handlers));
 }
 
 void ProtocolV2::handle_message_ack(uint64_t seq) {
@@ -640,7 +655,7 @@ void ProtocolV2::write_event() {
       uint64_t left = ack_left;
       if (left) {
         auto ack = AckFrame::Encode(in_seq);
-        connection->outcoming_bl.append(ack.get_buffer(session_stream_handlers));
+        connection->outgoing_bl.append(ack.get_buffer(session_stream_handlers));
         ldout(cct, 10) << __func__ << " try send msg ack, acked " << left
                        << " messages" << dendl;
         ack_left -= left;
@@ -1366,8 +1381,8 @@ CtPtr ProtocolV2::handle_message() {
   ldout(cct, 20) << __func__ << dendl;
   ceph_assert(state == THROTTLE_DONE);
 
-#if defined(WITH_LTTNG) && defined(WITH_EVENTTRACE)
-  ltt_recv_stamp = ceph_clock_now();
+#if defined(WITH_EVENTTRACE)
+  utime_t ltt_recv_stamp = ceph_clock_now();
 #endif
   recv_stamp = ceph_clock_now();
 
@@ -1455,7 +1470,7 @@ CtPtr ProtocolV2::handle_message() {
     }
   }
 
-#if defined(WITH_LTTNG) && defined(WITH_EVENTTRACE)
+#if defined(WITH_EVENTTRACE)
   if (message->get_type() == CEPH_MSG_OSD_OP ||
       message->get_type() == CEPH_MSG_OSD_OPREPLY) {
     utime_t ltt_processed_stamp = ceph_clock_now();
@@ -2353,34 +2368,40 @@ CtPtr ProtocolV2::handle_client_ident(ceph::bufferlist &payload)
 
   peer_global_seq = client_ident.global_seq();
 
-  // Looks good so far, let's check if there is already an existing connection
-  // to this peer.
+  if (connection->policy.server &&
+      connection->policy.lossy) {
+    // incoming lossy client, no need to register this connection
+  } else {
+    // Looks good so far, let's check if there is already an existing connection
+    // to this peer.
+    connection->lock.unlock();
+    AsyncConnectionRef existing = messenger->lookup_conn(
+      *connection->peer_addrs);
 
-  connection->lock.unlock();
-  AsyncConnectionRef existing = messenger->lookup_conn(*connection->peer_addrs);
+    if (existing &&
+	existing->protocol->proto_type != 2) {
+      ldout(cct,1) << __func__ << " existing " << existing << " proto "
+		   << existing->protocol.get() << " version is "
+		   << existing->protocol->proto_type << ", marking down"
+		   << dendl;
+      existing->mark_down();
+      existing = nullptr;
+    }
 
-  if (existing &&
-      existing->protocol->proto_type != 2) {
-    ldout(cct,1) << __func__ << " existing " << existing << " proto "
-		 << existing->protocol.get() << " version is "
-		 << existing->protocol->proto_type << ", marking down" << dendl;
-    existing->mark_down();
-    existing = nullptr;
-  }
+    connection->inject_delay();
 
-  connection->inject_delay();
+    connection->lock.lock();
+    if (state != SESSION_ACCEPTING) {
+      ldout(cct, 1) << __func__
+		    << " state changed while accept, it must be mark_down"
+		    << dendl;
+      ceph_assert(state == CLOSED);
+      return _fault();
+    }
 
-  connection->lock.lock();
-  if (state != SESSION_ACCEPTING) {
-    ldout(cct, 1) << __func__
-                  << " state changed while accept, it must be mark_down"
-                  << dendl;
-    ceph_assert(state == CLOSED);
-    return _fault();
-  }
-
-  if (existing) {
-    return handle_existing_connection(existing);
+    if (existing) {
+      return handle_existing_connection(existing);
+    }
   }
 
   // if everything is OK reply with server identification
@@ -2675,15 +2696,18 @@ CtPtr ProtocolV2::reuse_connection(const AsyncConnectionRef& existing,
   }
   exproto->peer_global_seq = peer_global_seq;
 
+  ceph_assert(connection->center->in_thread());
   auto temp_cs = std::move(connection->cs);
   EventCenter *new_center = connection->center;
   Worker *new_worker = connection->worker;
+  // we can steal the session_stream_handlers under the assumption
+  // this happens in the event center's thread as there should be
+  // no user outside its boundaries (simlarly to e.g. outgoing_bl).
+  auto temp_stream_handlers = std::move(session_stream_handlers);
+  exproto->auth_meta = auth_meta;
 
   ldout(messenger->cct, 5) << __func__ << " stop myself to swap existing"
                            << dendl;
-
-  std::swap(exproto->session_stream_handlers, session_stream_handlers);
-  exproto->auth_meta = auth_meta;
 
   // avoid _stop shutdown replacing socket
   // queue a reset on the new connection, which we're dumping for the old
@@ -2705,14 +2729,25 @@ CtPtr ProtocolV2::reuse_connection(const AsyncConnectionRef& existing,
   ceph_assert(connection->recv_start == connection->recv_end);
 
   auto deactivate_existing = std::bind(
-      [existing, new_worker, new_center, exproto](ConnectedSocket &cs) mutable {
+      [ existing,
+        new_worker,
+        new_center,
+        exproto,
+        temp_stream_handlers=std::move(temp_stream_handlers)
+      ](ConnectedSocket &cs) mutable {
         // we need to delete time event in original thread
         {
           std::lock_guard<std::mutex> l(existing->lock);
           existing->write_lock.lock();
           exproto->requeue_sent();
-          existing->outcoming_bl.clear();
+          // XXX: do we really need the locking for `outgoing_bl`? There is
+          // a comment just above its definition saying "lockfree, only used
+          // in own thread". I'm following lockfull schema just in the case.
+          // From performance point of view it should be fine – this happens
+          // far away from hot paths.
+          existing->outgoing_bl.clear();
           existing->open_write = false;
+          exproto->session_stream_handlers = std::move(temp_stream_handlers);
           existing->write_lock.unlock();
           if (exproto->state == NONE) {
             existing->shutdown_socket();

@@ -119,7 +119,7 @@ OutputDataSocket::~OutputDataSocket()
 std::string OutputDataSocket::create_shutdown_pipe(int *pipe_rd, int *pipe_wr)
 {
   int pipefd[2];
-  if (pipe_cloexec(pipefd) < 0) {
+  if (pipe_cloexec(pipefd, 0) < 0) {
     int e = errno;
     ostringstream oss;
     oss << "OutputDataSocket::create_shutdown_pipe error: " << cpp_strerror(e);
@@ -152,6 +152,7 @@ std::string OutputDataSocket::bind_and_listen(const std::string &sock_path, int 
 	<< "failed to create socket: " << cpp_strerror(err);
     return oss.str();
   }
+  // FIPS zeroization audit 20191115: this memset is not security related.
   memset(&address, 0, sizeof(struct sockaddr_un));
   address.sun_family = AF_UNIX;
   snprintf(address.sun_path, sizeof(address.sun_path),
@@ -198,6 +199,7 @@ void* OutputDataSocket::entry()
   ldout(m_cct, 5) << "entry start" << dendl;
   while (true) {
     struct pollfd fds[2];
+    // FIPS zeroization audit 20191115: this memset is not security related.
     memset(fds, 0, sizeof(fds));
     fds[0].fd = m_sock_fd;
     fds[0].events = POLLIN | POLLRDBAND;

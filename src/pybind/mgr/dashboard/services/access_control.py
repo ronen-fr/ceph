@@ -3,21 +3,28 @@
 # pylint: disable=too-many-branches, too-many-locals, too-many-statements
 from __future__ import absolute_import
 
+from string import punctuation, ascii_lowercase, digits, ascii_uppercase
+
 import errno
 import json
+import logging
 import threading
 import time
+import re
 
 import bcrypt
 
 from mgr_module import CLIReadCommand, CLIWriteCommand
 
-from .. import mgr, logger
+from .. import mgr
 from ..security import Scope, Permission
 from ..exceptions import RoleAlreadyExists, RoleDoesNotExist, ScopeNotValid, \
                          PermissionNotValid, RoleIsAssociatedWithUser, \
                          UserAlreadyExists, UserDoesNotExist, ScopeNotInRole, \
                          RoleNotInUser
+
+
+logger = logging.getLogger('access_control')
 
 
 # password hashing algorithm
@@ -32,6 +39,64 @@ def password_hash(password, salt_password=None):
 
 
 _P = Permission  # short alias
+
+
+class PasswordCheck(object):
+    def __init__(self, password, username, old_password=None):
+        self.password = password
+        self.username = username
+        self.old_password = old_password
+        self.forbidden_words = ['osd', 'host', 'dashboard', 'pool',
+                                'block', 'nfs', 'ceph', 'monitors',
+                                'gateway', 'logs', 'crush', 'maps']
+        self.complexity_credits = 0
+
+    @staticmethod
+    def _check_if_contains_word(password, word):
+        return re.compile('(?:{0})'.format(word),
+                          flags=re.IGNORECASE).search(password)
+
+    def check_password_characters(self):
+        digit_credit = 1
+        small_letter_credit = 1
+        big_letter_credit = 2
+        special_character_credit = 3
+        other_character_credit = 5
+        for _ in self.password:
+            if _ in ascii_uppercase:
+                self.complexity_credits += big_letter_credit
+            elif _ in ascii_lowercase:
+                self.complexity_credits += small_letter_credit
+            elif _ in digits:
+                self.complexity_credits += digit_credit
+            elif _ in punctuation:
+                self.complexity_credits += special_character_credit
+            else:
+                self.complexity_credits += other_character_credit
+        return self.complexity_credits
+
+    def check_if_as_the_old_password(self):
+        return self.old_password and self.password == self.old_password
+
+    def check_if_contains_username(self):
+        return self._check_if_contains_word(self.password, self.username)
+
+    def check_if_contains_forbidden_words(self):
+        return self._check_if_contains_word(self.password,
+                                            '|'.join(self.forbidden_words))
+
+    def check_if_sequential_characters(self):
+        for _ in range(1, len(self.password)-1):
+            if ord(self.password[_-1])+1 == ord(self.password[_])\
+               == ord(self.password[_+1])-1:
+                return True
+        return False
+
+    def check_if_repetetive_characters(self):
+        for _ in range(1, len(self.password)-1):
+            if self.password[_-1] == self.password[_] == self.password[_+1]:
+                return True
+        return False
 
 
 class Role(object):
@@ -308,7 +373,7 @@ class AccessControlDB(object):
             del self.roles[name]
 
     def create_user(self, username, password, name, email, enabled=True):
-        logger.debug("AC: creating user: username=%s", username)
+        logger.debug("creating user: username=%s", username)
         with self.lock:
             if username in self.users:
                 raise UserAlreadyExists(username)
@@ -352,14 +417,14 @@ class AccessControlDB(object):
         return "{}{}".format(cls.ACDB_CONFIG_KEY, version)
 
     def check_and_update_db(self):
-        logger.debug("AC: Checking for previews DB versions")
+        logger.debug("Checking for previews DB versions")
 
         def check_migrate_v0_to_current():
             # check if there is username/password from previous version
             username = mgr.get_module_option('username', None)
             password = mgr.get_module_option('password', None)
             if username and password:
-                logger.debug("AC: Found single user credentials: user=%s", username)
+                logger.debug("Found single user credentials: user=%s", username)
                 # found user credentials
                 user = self.create_user(username, "", None, None)
                 # password is already hashed, so setting manually
@@ -371,7 +436,7 @@ class AccessControlDB(object):
             # Check if version 1 exists in the DB and migrate it to current version
             v1_db = mgr.get_store(self.accessdb_config_key(1))
             if v1_db:
-                logger.debug("AC: Found database v1 credentials")
+                logger.debug("Found database v1 credentials")
                 v1_db = json.loads(v1_db)
 
                 for user, _ in v1_db['users'].items():
@@ -390,11 +455,11 @@ class AccessControlDB(object):
 
     @classmethod
     def load(cls):
-        logger.info("AC: Loading user roles DB version=%s", cls.VERSION)
+        logger.info("Loading user roles DB version=%s", cls.VERSION)
 
         json_db = mgr.get_store(cls.accessdb_config_key())
         if json_db is None:
-            logger.debug("AC: No DB v%s found, creating new...", cls.VERSION)
+            logger.debug("No DB v%s found, creating new...", cls.VERSION)
             db = cls(cls.VERSION, {}, {})
             # check if we can update from a previous version database
             db.check_and_update_db()

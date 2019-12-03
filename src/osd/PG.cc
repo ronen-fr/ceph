@@ -25,6 +25,7 @@
 #include "OpRequest.h"
 #include "ScrubStore.h"
 #include "Session.h"
+#include "osd/scheduler/OpSchedulerItem.h"
 
 #include "common/Timer.h"
 #include "common/perf_counters.h"
@@ -75,6 +76,8 @@
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 #define dout_prefix _prefix(_dout, this)
+
+using namespace ceph::osd::scheduler;
 
 template <class T>
 static ostream& _prefix(std::ostream *_dout, T *t)
@@ -819,12 +822,15 @@ bool PG::check_in_progress_op(
   const osd_reqid_t &r,
   eversion_t *version,
   version_t *user_version,
-  int *return_code) const
+  int *return_code,
+  vector<pg_log_op_return_item_t> *op_returns
+  ) const
 {
   return (
-    projected_log.get_request(r, version, user_version, return_code) ||
+    projected_log.get_request(r, version, user_version, return_code,
+			      op_returns) ||
     recovery_state.get_pg_log().get_log().get_request(
-      r, version, user_version, return_code));
+      r, version, user_version, return_code, op_returns));
 }
 
 void PG::publish_stats_to_osd()
@@ -1267,8 +1273,8 @@ void PG::requeue_op(OpRequestRef op)
   } else {
     dout(20) << __func__ << " " << op << dendl;
     osd->enqueue_front(
-      OpQueueItem(
-        unique_ptr<OpQueueItem::OpQueueable>(new PGOpItem(info.pgid, op)),
+      OpSchedulerItem(
+        unique_ptr<OpSchedulerItem::OpQueueable>(new PGOpItem(info.pgid, op)),
 	op->get_req()->get_cost(),
 	op->get_req()->get_priority(),
 	op->get_req()->get_recv_stamp(),
@@ -1301,8 +1307,8 @@ void PG::requeue_map_waiters()
       dout(20) << __func__ << " " << p->first << " " << p->second << dendl;
       for (auto q = p->second.rbegin(); q != p->second.rend(); ++q) {
 	auto req = *q;
-	osd->enqueue_front(OpQueueItem(
-          unique_ptr<OpQueueItem::OpQueueable>(new PGOpItem(info.pgid, req)),
+	osd->enqueue_front(OpSchedulerItem(
+          unique_ptr<OpSchedulerItem::OpQueueable>(new PGOpItem(info.pgid, req)),
 	  req->get_req()->get_cost(),
 	  req->get_req()->get_priority(),
 	  req->get_req()->get_recv_stamp(),
@@ -1807,6 +1813,22 @@ HeartbeatStampsRef PG::get_hb_stamps(int peer)
   return osd->get_hb_stamps(peer);
 }
 
+void PG::schedule_renew_lease(epoch_t lpr, ceph::timespan delay)
+{
+  auto spgid = info.pgid;
+  auto o = osd;
+  osd->mono_timer.add_event(
+    delay,
+    [o, lpr, spgid]() {
+      o->queue_renew_lease(lpr, spgid);
+    });
+}
+
+void PG::queue_check_readable(epoch_t lpr, ceph::timespan delay)
+{
+  osd->queue_check_readable(info.pgid, lpr, delay);
+}
+
 void PG::rebuild_missing_set_with_deletes(PGLog &pglog)
 {
   pglog.rebuild_missing_set_with_deletes(
@@ -2066,34 +2088,40 @@ void PG::clear_scrub_reserved()
 void PG::scrub_reserve_replicas()
 {
   ceph_assert(recovery_state.get_backfill_targets().empty());
+  std::vector<std::pair<int, Message*>> messages;
+  messages.reserve(get_actingset().size());
+  epoch_t  e = get_osdmap_epoch();
   for (set<pg_shard_t>::iterator i = get_actingset().begin();
-       i != get_actingset().end();
-       ++i) {
+      i != get_actingset().end();
+      ++i) {
     if (*i == pg_whoami) continue;
     dout(10) << "scrub requesting reserve from osd." << *i << dendl;
-    osd->send_message_osd_cluster(
-      i->osd,
-      new MOSDScrubReserve(spg_t(info.pgid.pgid, i->shard),
-			   get_osdmap_epoch(),
-			   MOSDScrubReserve::REQUEST, pg_whoami),
-      get_osdmap_epoch());
+    Message* m =  new MOSDScrubReserve(spg_t(info.pgid.pgid, i->shard), e,
+					MOSDScrubReserve::REQUEST, pg_whoami);
+    messages.push_back(std::make_pair(i->osd, m));
+  }
+  if (!messages.empty()) {
+    osd->send_message_osd_cluster(messages, e);
   }
 }
 
 void PG::scrub_unreserve_replicas()
 {
   ceph_assert(recovery_state.get_backfill_targets().empty());
+  std::vector<std::pair<int, Message*>> messages;
+  messages.reserve(get_actingset().size());
+  epoch_t e = get_osdmap_epoch();
   for (set<pg_shard_t>::iterator i = get_actingset().begin();
        i != get_actingset().end();
        ++i) {
     if (*i == pg_whoami) continue;
     dout(10) << "scrub requesting unreserve from osd." << *i << dendl;
-    osd->send_message_osd_cluster(
-      i->osd,
-      new MOSDScrubReserve(spg_t(info.pgid.pgid, i->shard),
-			   get_osdmap_epoch(),
-			   MOSDScrubReserve::RELEASE, pg_whoami),
-      get_osdmap_epoch());
+    Message* m =  new MOSDScrubReserve(spg_t(info.pgid.pgid, i->shard), e,
+					MOSDScrubReserve::RELEASE, pg_whoami);
+    messages.push_back(std::make_pair(i->osd, m));
+  }
+  if (!messages.empty()) {
+    osd->send_message_osd_cluster(messages, e);
   }
 }
 

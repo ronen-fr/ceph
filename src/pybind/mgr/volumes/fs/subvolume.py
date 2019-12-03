@@ -57,7 +57,8 @@ class SubVolume(object):
 
     ### basic subvolume operations
 
-    def create_subvolume(self, spec, size=None, namespace_isolated=True, mode=0o755, pool=None):
+    def create_subvolume(self, spec, size=None,  pool=None, namespace_isolated=True,
+                         uid=None, gid=None, mode=0o755):
         """
         Set up metadata, pools and auth for a subvolume.
 
@@ -66,8 +67,11 @@ class SubVolume(object):
 
         :param spec: subvolume path specification
         :param size: In bytes, or None for no size limit
-        :param namespace_isolated: If true, use separate RADOS namespace for this subvolume
         :param pool: the RADOS pool where the data objects of the subvolumes will be stored
+        :param namespace_isolated: If true, use separate RADOS namespace for this subvolume
+        :param uid: the user identifier
+        :param gid: the group identifier
+        :mode: the user permissions
         :return: None
         """
         subvolpath = spec.subvolume_path
@@ -101,6 +105,23 @@ class SubVolume(object):
                 xattr_val = self._get_ancestor_xattr(subvolpath, "ceph.dir.layout.pool")
             # TODO: handle error...
             self.fs.setxattr(subvolpath, xattr_key, xattr_val.encode('utf-8'), 0)
+
+            groupstat = self.fs.stat(spec.group_path)
+            if uid is None:
+                uid = int(groupstat.st_uid)
+            elif uid < 0:
+                raise VolumeException(-errno.EINVAL, "Provide a valid uid")
+
+            if gid is None:
+                gid = int(groupstat.st_gid)
+            elif gid < 0:
+                raise VolumeException(-errno.EINVAL, "Provide a valid gid")
+
+            try:
+                self.fs.chown(subvolpath, uid, gid)
+            except cephfs.InvalidValue:
+                raise VolumeException(-e.args[0], e.args[1])
+
         except Exception as e:
             try:
                 # cleanup subvol path on best effort basis
@@ -143,6 +164,53 @@ class SubVolume(object):
         except cephfs.Error as e:
             raise VolumeException(-e.args[0], e.args[1])
 
+    def resize_subvolume(self, subvolpath, newsize, noshrink):
+        """
+        :param subvolpath: subvolume path
+        :param newsize: new size In bytes
+        :return: new quota size and used bytes as a tuple
+        """
+        if newsize <= 0:
+            raise VolumeException(-errno.EINVAL, "Provide a valid size")
+
+        try:
+            maxbytes = int(self.fs.getxattr(subvolpath, 'ceph.quota.max_bytes').decode('utf-8'))
+        except cephfs.NoData:
+            maxbytes = 0
+
+        subvolstat = self.fs.stat(subvolpath)
+        if newsize > 0 and newsize < subvolstat.st_size:
+            if noshrink:
+                raise VolumeException(-errno.EINVAL, "Can't resize the subvolume. The new size '{0}' would be lesser than the current "
+                                      "used size '{1}'".format(newsize, subvolstat.st_size))
+
+        if newsize == maxbytes:
+            return newsize, subvolstat.st_size
+
+        try:
+            self.fs.setxattr(subvolpath, 'ceph.quota.max_bytes', str(newsize).encode('utf-8'), 0)
+        except Exception as e:
+            raise VolumeException(-e.args[0], "Cannot set new size for the subvolume. '{0}'".format(e.args[1]))
+        return newsize, subvolstat.st_size
+
+    def resize_infinite(self, subvolpath, newsize):
+        """
+        :param subvolpath: the subvolume path
+        :param newsize: the string inf
+        :return: new quota size and used bytes as a tuple
+        """
+
+        if not (newsize == "inf" or newsize == "infinite"):
+            raise VolumeException(-errno.EINVAL, "Invalid parameter '{0}'".format(newsize))
+
+        subvolstat = self.fs.stat(subvolpath)
+        size = 0
+        try:
+            self.fs.setxattr(subvolpath, 'ceph.quota.max_bytes', str(size).encode('utf-8'), 0)
+        except Exception as e:
+            raise VolumeException(-errno.ENOENT, "Cannot resize the subvolume to infinite size. '{0}'".format(e.args[1]))
+        return size, subvolstat.st_size
+
     def purge_subvolume(self, spec, should_cancel):
         """
         Finish clearing up a subvolume from the trash directory.
@@ -151,22 +219,20 @@ class SubVolume(object):
         def rmtree(root_path):
             log.debug("rmtree {0}".format(root_path))
             try:
-                dir_handle = self.fs.opendir(root_path)
+                with self.fs.opendir(root_path) as dir_handle:
+                    d = self.fs.readdir(dir_handle)
+                    while d and not should_cancel():
+                        if d.d_name not in (b".", b".."):
+                            d_full = os.path.join(root_path, d.d_name)
+                            if d.is_dir():
+                                rmtree(d_full)
+                            else:
+                                self.fs.unlink(d_full)
+                        d = self.fs.readdir(dir_handle)
             except cephfs.ObjectNotFound:
                 return
             except cephfs.Error as e:
                 raise VolumeException(-e.args[0], e.args[1])
-            d = self.fs.readdir(dir_handle)
-            while d and not should_cancel():
-                if d.d_name not in (b".", b".."):
-                    d_full = os.path.join(root_path, d.d_name)
-                    if d.is_dir():
-                        rmtree(d_full)
-                    else:
-                        self.fs.unlink(d_full)
-
-                d = self.fs.readdir(dir_handle)
-            self.fs.closedir(dir_handle)
             # remove the directory only if we were not asked to cancel
             # (else we would fail to remove this anyway)
             if not should_cancel():
@@ -189,9 +255,40 @@ class SubVolume(object):
             raise VolumeException(-e.args[0], e.args[1])
         return path
 
+    def get_dir_entries(self, path):
+        """
+        Get the directory names in a given path
+        :param path: the given path
+        :return: the list of directory names
+        """
+        dirs = []
+        try:
+            with self.fs.opendir(path) as dir_handle:
+                d = self.fs.readdir(dir_handle)
+                while d:
+                    if (d.d_name not in (b".", b"..")) and d.is_dir():
+                        dirs.append(d.d_name)
+                    d = self.fs.readdir(dir_handle)
+        except cephfs.ObjectNotFound:
+            # When the given path is not found, we just return an empty list
+            return []
+        except cephfs.Error as e:
+            raise VolumeException(-e.args[0], e.args[1])
+        return dirs
+
     ### group operations
 
-    def create_group(self, spec, mode=0o755, pool=None):
+    def create_group(self, spec, pool=None, uid=None, gid=None, mode=0o755):
+        """
+        Create a subvolume group.
+
+        :param spec: subvolume path specification
+        :param pool: the RADOS pool where the data objects of the subvolumes will be stored
+        :param uid: the user identifier
+        :param gid: the group identifier
+        :mode: the user permissions
+        :return: None
+        """
         path = spec.group_path
         self.fs.mkdirs(path, mode)
         try:
@@ -202,6 +299,22 @@ class SubVolume(object):
             except cephfs.InvalidValue:
                 raise VolumeException(-errno.EINVAL,
                                       "Invalid pool layout '{0}'. It must be a valid data pool".format(pool))
+
+            if uid is None:
+                uid = 0
+            elif uid < 0:
+                raise VolumeException(-errno.EINVAL, "Provide a valid uid")
+
+            if gid is None:
+                gid = 0
+            elif gid < 0:
+                raise VolumeException(-errno.EINVAL, "Provide a valid gid")
+
+            try:
+                self.fs.chown(path, uid, gid)
+            except cephfs.InvalidValue:
+                raise VolumeException(-e.args[0], e.args[1])
+
         except Exception as e:
             try:
                 # cleanup group path on best effort basis

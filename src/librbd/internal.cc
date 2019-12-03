@@ -148,6 +148,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     uint32_t hi = bid >> 32;
     uint32_t lo = bid & 0xFFFFFFFF;
     uint32_t extra = rand() % 0xFFFFFFFF;
+    // FIPS zeroization audit 20191117: this memset is not security related.
     memset(&ondisk, 0, sizeof(ondisk));
 
     memcpy(&ondisk.text, RBD_HEADER_TEXT, sizeof(RBD_HEADER_TEXT));
@@ -306,6 +307,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     {RBD_IMAGE_OPTION_FEATURES_CLEAR, UINT64},
     {RBD_IMAGE_OPTION_DATA_POOL, STR},
     {RBD_IMAGE_OPTION_FLATTEN, UINT64},
+    {RBD_IMAGE_OPTION_CLONE_FORMAT, UINT64},
   };
 
   std::string image_option_name(int optname) {
@@ -334,6 +336,8 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       return "data_pool";
     case RBD_IMAGE_OPTION_FLATTEN:
       return "flatten";
+    case RBD_IMAGE_OPTION_CLONE_FORMAT:
+      return "clone_format";
     default:
       return "unknown (" + stringify(optname) + ")";
     }
@@ -750,9 +754,14 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     }
 
     CephContext *cct = (CephContext *)io_ctx.cct();
-    uint64_t flatten;
-    if (opts.get(RBD_IMAGE_OPTION_FLATTEN, &flatten) == 0) {
+    uint64_t option;
+    if (opts.get(RBD_IMAGE_OPTION_FLATTEN, &option) == 0) {
       lderr(cct) << "create does not support 'flatten' image option" << dendl;
+      return -EINVAL;
+    }
+    if (opts.get(RBD_IMAGE_OPTION_CLONE_FORMAT, &option) == 0) {
+      lderr(cct) << "create does not support 'clone_format' image option"
+                 << dendl;
       return -EINVAL;
     }
 
@@ -1110,14 +1119,19 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     CephContext *cct = ictx->cct;
     ldout(cct, 20) << __func__ << ": ictx=" << ictx << dendl;
 
-    if (!ictx->test_features(RBD_FEATURE_EXCLUSIVE_LOCK)) {
-      lderr(cct) << "exclusive-lock feature is not enabled" << dendl;
-      return -EINVAL;
-    }
-
     managed_lock::Locker locker;
     C_SaferCond get_owner_ctx;
-    ExclusiveLock<>(*ictx).get_locker(&locker, &get_owner_ctx);
+    {
+      std::shared_lock owner_locker{ictx->owner_lock};
+
+      if (ictx->exclusive_lock == nullptr) {
+        lderr(cct) << "exclusive-lock feature is not enabled" << dendl;
+        return -EINVAL;
+      }
+
+      ictx->exclusive_lock->get_locker(&locker, &get_owner_ctx);
+    }
+
     int r = get_owner_ctx.wait();
     if (r == -ENOENT) {
       return r;
@@ -1316,9 +1330,14 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
 	   ImageOptions& opts, ProgressContext &prog_ctx, size_t sparse_size)
   {
     CephContext *cct = (CephContext *)dest_md_ctx.cct();
-    uint64_t flatten;
-    if (opts.get(RBD_IMAGE_OPTION_FLATTEN, &flatten) == 0) {
+    uint64_t option;
+    if (opts.get(RBD_IMAGE_OPTION_FLATTEN, &option) == 0) {
       lderr(cct) << "copy does not support 'flatten' image option" << dendl;
+      return -EINVAL;
+    }
+    if (opts.get(RBD_IMAGE_OPTION_CLONE_FORMAT, &option) == 0) {
+      lderr(cct) << "copy does not support 'clone_format' image option"
+                 << dendl;
       return -EINVAL;
     }
 
