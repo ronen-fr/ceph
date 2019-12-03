@@ -33,5 +33,11 @@ class ContextConfigAdmin {
 public:
   ContextConfigAdmin(CephContext* cct, ceph::common::ConfigProxy& conf);
   ~ContextConfigAdmin();
+  /*!
+    Note: the only reason of having register_admin_commands() provided as a public interface (and not just called
+    from the ctor), is the (not just theoretical) race to register and unregister the same server block when creating
+    a Context and immediately removing it
+  */
+  seastar::future<> register_admin_commands();
   seastar::future<> unregister_admin_commands();
 };

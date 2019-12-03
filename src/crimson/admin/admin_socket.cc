@@ -1,20 +1,9 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
-/*
- * Ceph - scalable distributed file system
- *
- * Copyright (C) 2011 New Dream Network
- *
- * This is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License version 2.1, as published by the Free Software
- * Foundation.  See file COPYING.
- *
- */
 
 #include "common/version.h"
 #include "crimson/net/Socket.h"
-#define UNIT_TEST_OSD_ASOK
+// activate for some inline unit-testing: #define UNIT_TEST_OSD_ASOK
 #include "crimson/admin/admin_socket.h"
 #include "crimson/common/log.h"
 //#include "seastar/testing/test_case.hh"
@@ -67,7 +56,7 @@ AdminHooksIter AdminSocket::end() {
 /*!
   note that 'end-flag' is an optional parameter, and is only used internally (to
   signal the end() state).
- */ 
+ */
 AdminHooksIter::AdminHooksIter(AdminSocket& master, bool end_flag)
     : m_master{master}
 {
@@ -80,14 +69,14 @@ AdminHooksIter::AdminHooksIter(AdminSocket& master, bool end_flag)
   }
 }
 
-AdminHooksIter& AdminHooksIter::operator++() 
+AdminHooksIter& AdminHooksIter::operator++()
 {
   ++m_siter;
   if (m_siter == m_miter->second.m_hooks.end()) {
     // move to the next server-block
     m_miter->second.m_gate.leave();
     m_in_gate = false;
-    
+
     while (true) {
       m_miter++;
       if (m_miter == m_master.servers.end())
@@ -132,10 +121,9 @@ seastar::future<bool> AdminSocketHook::call(std::string_view command, const cmdm
   } else {
     f->open_object_section(section.c_str());
   }
-  //logger().info("{} cmd={} out section={}", __func__, command, section); 
 
   bool bres{false};
-  
+
   /*
       call the command-specific hook.
       A note re error handling:
@@ -178,7 +166,7 @@ AdminSocket::~AdminSocket()
   Note re context: running in the core running the asok.
   And no futurization until required to support multiple cores.
 */
-AsokRegistrationRes AdminSocket::server_registration(AdminSocket::hook_server_tag  server_tag,
+AsokRegistrationRes AdminSocket::server_registration(AdminSocket::hook_server_tag server_tag,
                                  const std::vector<AsokServiceDef>& apis_served)
 {
   auto ne = servers.try_emplace(
@@ -190,8 +178,7 @@ AsokRegistrationRes AdminSocket::server_registration(AdminSocket::hook_server_ta
     return std::nullopt;
   }
 
-  logger().warn("{}: {} server registration (tag: {})", __func__, (int)getpid(), (uint64_t)(server_tag));
-  logger().warn("{}: {} server registration (tbl size: {})", __func__, (int)getpid(), servers.size());
+  logger().info("{}: {} server registration (tag: {})", __func__, (int)getpid(), (uint64_t)(server_tag));
   return this->shared_from_this();
 }
 
@@ -223,7 +210,7 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
 
     if (srv_itr == servers.end()) {
       logger().warn("{}: unregistering a non-existing registration (tag: {})", __func__, (uint64_t)(server_tag));
-      // list what servers *are* there (for debugging)
+      // list what servers *are* there (for debugging). Should be under the lock
       for (auto& [k, d] : servers) {
         logger().debug("---> server: {} {}", (uint64_t)(k), d.m_hooks.front().command);
       }
@@ -359,7 +346,7 @@ seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse
           de-registration)
   */
   return seastar::do_with(std::move(cmdmap), std::move(format), std::move(match),
-                         [this, full_command_seq](auto&& cmdmap, auto&& format, auto&& match) { 
+                         [this, full_command_seq](auto&& cmdmap, auto&& format, auto&& match) {
     return locate_subcmd(match).then_wrapped([this, &match, &cmdmap, format, full_command_seq](auto&& fgh) {
 
       if (fgh.failed()) {
@@ -368,7 +355,7 @@ seastar::future<std::optional<AdminSocket::parsed_command_t>> AdminSocket::parse
         AdminSocket::GateAndHook gh = fgh.get0();
         if (!gh.api)
            return seastar::make_ready_future<Maybe_parsed>(Maybe_parsed{std::nullopt});
-        else 
+        else
           return seastar::make_ready_future<Maybe_parsed>(
                   parsed_command_t{match, cmdmap, format, gh.api, gh.api->hook, gh.m_gate, full_command_seq});
       }
@@ -380,7 +367,7 @@ bool AdminSocket::validate_command(const parsed_command_t& parsed,
                                    const std::string& command_text,
                                    ceph::buffer::list& out) const
 {
-  // did we receive any arguments apart from the command word?
+  // did we receive any arguments apart from the command word(s)?
   //logger().debug("ct:{} {} origl:{} pmc:{} pmcl:{}", command_text, command_text.length(), parsed.m_cmd_seq_len, parsed.m_cmd, parsed.m_cmd.length());
   if (parsed.m_cmd_seq_len == parsed.m_cmd.length())
     return true;
@@ -419,7 +406,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
         then_wrapped([&out, &out_buf, gatep](auto&& fut) -> seastar::future<bool> {
 
           gatep->leave();
-  
+
           if (fut.failed()) {
             // add 'failed' to the contents of out_buf? not what happens in the old code
             return seastar::make_ready_future<bool>(false);
@@ -433,7 +420,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline, seastar::output
           logger().info("asok response length: {}", outbuf_cont.length());
 
           return out.write((char*)&response_length, sizeof(uint32_t)).then([&out, outbuf_cont]() {
-            //std::cerr << "fin " <<  outbuf_cont.length() << std::endl;
+
             if (outbuf_cont.empty())
               return out.write("    ");
             else
@@ -469,16 +456,15 @@ seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp, s
     then( [&out, this](auto full_cmd) {
 
       seastar::sstring cmd_line{full_cmd.begin(), full_cmd.end()};
-      logger().debug("{}: {}\n", __func__, cmd_line);
+      logger().debug("{}: incoming asok string: {}\n", __func__, cmd_line);
       return execute_line(cmd_line, out);
 
     }).then([&out]() { return out.flush(); }).
     finally([&out]() { return out.close(); }).
-    then([&inp,&out]() { 
-      logger().warn("{}: cn--", __func__);
+    then([&inp,&out]() {
       return inp.close();
     }).handle_exception([](auto ep) {
-      logger().error("dddd exception on {}: {}", __func__, ep);
+      logger().debug("exception on {}: {}", __func__, ep);
       return seastar::make_ready_future<>();
     }).discard_result();
 }
@@ -488,13 +474,14 @@ seastar::future<> AdminSocket::init(const std::string& path)
 #ifdef UNIT_TEST_OSD_ASOK
   // in-line unit-testing:
   std::ignore = seastar::async([this]() {
+     seastar::sleep(3s).wait();
      asok_unit_testing::utest_run_1(this).wait();
   });
 #endif
 
   return seastar::async([this, path] {
     auto serverfut = init_async(path);
-  }); 
+  });
 }
 
 
@@ -502,7 +489,7 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
 {
   internal_hooks().get(); // we are executing in an async thread, thus OK to wait()
 
-  logger().debug("{}: path={}", __func__, path);
+  logger().debug("{}: asok socket path={}", __func__, path);
   auto sock_path = seastar::socket_address{seastar::unix_domain_addr{path}};
 
   return seastar::do_with(seastar::engine().listen(sock_path), [this](seastar::server_socket& lstn) {
@@ -511,14 +498,13 @@ seastar::future<> AdminSocket::init_async(const std::string& path)
       return lstn.accept().
         then([this](seastar::accept_result from_accept) {
 
-          seastar::connected_socket cn    = std::move(from_accept.connection);
-          logger().debug("{}: cn++", __func__);
+          seastar::connected_socket cn = std::move(from_accept.connection);
 
           return do_with(std::move(cn.input()), std::move(cn.output()), std::move(cn),
                         [this](auto& inp, auto& out, auto& cn) {
 
             return handle_client(inp, out).finally([this, &inp, &out] {
-              std::cerr << "finally "  << std::endl;
+              ; // left for debugging: std::cerr << "finally "  << std::endl;
             });
           });
       });
@@ -547,7 +533,7 @@ class VersionHook : public AdminSocketHook {
 public:
   explicit VersionHook(AdminSocket* as) : m_as{as} {}
 
-  seastar::future<> exec_command(ceph::Formatter* f, [[maybe_unused]] std::string_view command, 
+  seastar::future<> exec_command(ceph::Formatter* f, [[maybe_unused]] std::string_view command,
                                  [[maybe_unused]] const cmdmap_t& cmdmap,
 	                         [[maybe_unused]] std::string_view format, [[maybe_unused]] bufferlist& out) const final
   {
@@ -618,19 +604,21 @@ public:
   seastar::future<> exec_command(ceph::Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
                                  std::string_view format, bufferlist& out) const final
   {
-    int cmdnum = 0; 
+    return seastar::with_shared(m_as->servers_tbl_rwlock, [this,f]() {
+      int cmdnum = 0;
 
-    for (const auto& hk_info : *m_as) {
-      ostringstream secname;
-      secname << "cmd" << setfill('0') << std::setw(3) << cmdnum;
-      dump_cmd_and_help_to_json(f,
-                                CEPH_FEATURES_ALL,
-                                secname.str().c_str(),
-                                hk_info->cmddesc,
-                                hk_info->help);
-      cmdnum++;
-    }
-    return seastar::now();
+      for (const auto& hk_info : *m_as) {
+        ostringstream secname;
+        secname << "cmd" << setfill('0') << std::setw(3) << cmdnum;
+        dump_cmd_and_help_to_json(f,
+                                  CEPH_FEATURES_ALL,
+                                  secname.str().c_str(),
+                                  hk_info->cmddesc,
+                                  hk_info->help);
+        cmdnum++;
+      }
+      return seastar::now();
+    });
   }
 };
 
@@ -833,11 +821,11 @@ struct test_lookup_st {
           //  look for the command, waste some time, then free the server-block
           //
           return seastar::async([this, act_period, ins_period]() mutable {
-  
+
             bool fnd{false};
-  
+
             for (const auto& hk : *asok) {
-  
+
               if (hk->command == cmd) {
                 fnd = true;
                 // wait here for a while, with the iterator still holding the gate
@@ -864,9 +852,9 @@ struct test_lookup_st {
 
 seastar::future<> utest_run_1(AdminSocket* asok)
 {
-  const seconds run_time{3};
+  constexpr seconds run_time{3};
   seastar::gate gt;
- 
+
   return seastar::do_with(std::move(gt), [run_time, asok](auto& gt) {
 
     test_reg_st* ta1 = new test_reg_st{asok, AdminSocket::hook_server_tag{(void*)(0x17)}, 200ms, gt, test_hooks  };
@@ -878,7 +866,7 @@ seastar::future<> utest_run_1(AdminSocket* asok)
     return seastar::sleep(run_time).
      then([&gt]() { return gt.close();}).
      then([&gt](){ return seastar::sleep(2000ms); }).
-     then([ta1, &ta2, tlk1, &tlk2]() { 
+     then([ta1, &ta2, tlk1, &tlk2]() {
        delete ta1;
        delete tlk1;
        return seastar::now();

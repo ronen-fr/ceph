@@ -189,8 +189,9 @@ class ContextConfigAdminImp {
   class TestThrowHook : public CephContextHookBase {
   public:
     explicit TestThrowHook(ContextConfigAdminImp& master) : CephContextHookBase(master) {};
-    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-                              std::string_view format, bufferlist& out) const final {
+    seastar::future<> exec_command([[maybe_unused]] Formatter* f, [[maybe_unused]] std::string_view command,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
+                                   [[maybe_unused]] std::string_view format, [[maybe_unused]] bufferlist& out) const final {
 
       if (command == "fthrowCtx")
         return seastar::make_exception_future<>(std::system_error{1, std::system_category()});
@@ -217,29 +218,12 @@ public:
     , assert_hook{*this}
     , ctx_test_throw_hook{*this}
   {
-    register_admin_commands();
   }
 
-  ~ContextConfigAdminImp() {
-            logger().warn("{}: {} {}", __func__, (int)getpid(), (uint64_t)(this));
+  ~ContextConfigAdminImp() {}
 
-          return;
-    //std::unique_ptr<ContextConfigAdmin> moved_context_admin{std::move(m_cct->asok_config_admin)};
-    //m_cct->asok_config_admin = nullptr;
-    std::ignore = seastar::do_with(std::move(m_cct)/*, std::move(m_cct->asok_config_admin)*/,
-                                 [this] (auto& cct/*, auto& cxadmin*/) mutable {
-      cct->get();
-      return unregister_admin_commands().then([cct](){
-        //cct->put();
-      }).then([this](){
-        std::cerr << "~ContextConfigAdminImp() " << (uint64_t)(this) << std::endl;
-
-      });
-    });
-  }
-
-  void register_admin_commands() {
-    logger().warn("{}: {} {} {}", __func__, "context-admin", (int)getpid(), (uint64_t)(this));
+  seastar::future<> register_admin_commands() {
+    logger().debug("{}: {} {} {}", __func__, "context-admin", (int)getpid(), (uint64_t)(this));
 
     static const std::vector<AsokServiceDef> hooks_tbl{
         AsokServiceDef{"config show",    "config show",  &config_show_hook,      "dump current config settings"}
@@ -252,16 +236,15 @@ public:
       , AsokServiceDef{"fthrowCtx",      "fthrowCtx",    &ctx_test_throw_hook,   ""}    // dev throw
     };
 
-    const std::vector<AsokServiceDef>* const my_apis = &hooks_tbl;
-
-    std::ignore = seastar::async([this, my_apis]() {
-                                   m_socket_server =  m_cct->get_admin_socket()->register_server(AdminSocket::hook_server_tag{this}, *my_apis).get0();
-                                 });
+    return m_cct->get_admin_socket()->register_server(AdminSocket::hook_server_tag{this}, hooks_tbl).
+           then([this](AsokRegistrationRes rr) {
+             m_socket_server = rr;
+           });
   }
 
   seastar::future<> unregister_admin_commands()
   {
-    if (!m_socket_server) {
+    if (!m_socket_server.has_value()) {
       logger().warn("{} no socket server", __func__);
       return seastar::now();
     }
@@ -279,7 +262,6 @@ public:
    // // t2 // m_socket_server = std::nullopt; // should be redundant
 
     // note that unregister_server() closes a seastar::gate (i.e. - it blocks)
-    logger().warn("cad imp unreg {}", (uint64_t)(&(*srv)));
     return admin_if->unregister_server(AdminSocket::hook_server_tag{this}, std::move(srv));
   }
 };
@@ -292,6 +274,11 @@ ContextConfigAdmin::ContextConfigAdmin(CephContext* cct, ceph::common::ConfigPro
   , m_cct{cct}
 {}
 
+seastar::future<>  ContextConfigAdmin::register_admin_commands()
+{
+  return m_imp->register_admin_commands();
+}
+
 seastar::future<>  ContextConfigAdmin::unregister_admin_commands()
 {
   return m_imp->unregister_admin_commands();
@@ -299,20 +286,14 @@ seastar::future<>  ContextConfigAdmin::unregister_admin_commands()
 
 ContextConfigAdmin::~ContextConfigAdmin()
 {
-  // for dev: logger().warn("{}: ~ContextConfigAdmin {} {} {}", __func__,
-  // for dev:               (int)getpid(), (uint64_t)(this), (m_imp ? "++" : "--"));
-
   // relinquish control over the actual implementation object, as that one should only be
   // destructed after the relevant seastar::gate closes
 
-  logger().warn("{} step 2: {}", __func__, (int)getpid());
-
-  // test using sleep()
-  //std::ignore = seastar::sleep(1s).
-  std::ignore = ([imp_ptr = std::move(m_imp)]() {
-     if (!imp_ptr) {
-       return seastar::now();
-     }
-     return imp_ptr->unregister_admin_commands();
-  })();
+  std::ignore = seastar::do_with(std::move(m_imp), [](auto&& imp) {
+    // test using sleep(). Change from 1ms to 1s:
+    return seastar::sleep(1ms).
+    then([imp_ptr = imp.get()]() {
+       return imp_ptr->unregister_admin_commands();
+    });
+  });
 }

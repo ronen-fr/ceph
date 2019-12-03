@@ -281,9 +281,11 @@ seastar::future<> OSD::start()
     std::cerr << "\n^^^^^^^^^^^^^^^^^^^^^^^^^^" << x << std::endl;
 
     return shard_services.get_cct()->get_admin_socket()->init(x.length() ? x : "/tmp/asok");
-    //return seastar::now();
   }).then([this] {
-    std::cerr << "\n^^^^^^^^^^^^^^^^^^^^^^^^^^XXX" << std::endl;
+    return shard_services.get_cct()->get_config_admin()->register_admin_commands();
+  }).then([this] {
+    return osd_admin->register_admin_commands();
+  }).then([this] {
     return start_boot();
   });
 }

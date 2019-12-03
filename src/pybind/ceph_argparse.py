@@ -1354,6 +1354,7 @@ def send_command(cluster, target=('mon', ''), cmd=None, inbuf=b'', timeout=0,
 
     If target is osd.N, send command to that osd (except for pgid cmds)
     """
+    verbose=1
     cmd = cmd or []
     try:
         if target[0] == 'osd':

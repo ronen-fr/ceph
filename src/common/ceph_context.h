@@ -40,10 +40,8 @@
 #include "common/perf_counters_collection.h"
 #endif
 
-
 #include "crush/CrushLocation.h"
 
-//class AdminSocket;  // not enough for lw_shared_ptr
 class CephContextServiceThread;
 class CephContextHook;
 class CephContextObs;
@@ -59,7 +57,6 @@ namespace ceph {
 }
 
 #ifdef WITH_SEASTAR
-
 class CephContext {
 public:
   CephContext();
@@ -68,7 +65,7 @@ public:
 	      int = 0)
     : CephContext{}
   {}
-  CephContext(CephContext&&); // = default;
+  CephContext(CephContext&&);
   ~CephContext();
 
   uint32_t get_module_type() const;
@@ -86,26 +83,34 @@ public:
   /**
    * Get the admin socket associated with this CephContext.
    *
-   * Currently there is always an admin socket object,
-   * so this will never return NULL.
+   * Note that an admin socket should only be created for
+   * daemons.
    *
-   * @return the admin socket
+   * @return the admin socket or nullptr
    */
-  AdminSocket* get_admin_socket() { return asok.get(); }
+  AdminSocket* get_admin_socket() { 
+    if (asok) {
+      return asok.get();
+    }
+    return nullptr;
+  }
+
+  ContextConfigAdmin* get_config_admin() { 
+    if (asok_config_admin) {
+      return asok_config_admin.get();
+    }
+    return nullptr;
+  }
 
 private:
   std::unique_ptr<CryptoRandom> _crypto_random;
   unsigned nref;
-  //std::unique_ptr<AdminSocket> asok;
   seastar::lw_shared_ptr<AdminSocket> asok;
   std::unique_ptr<ContextConfigAdmin> asok_config_admin;
 
   friend class ContextConfigAdminImp;
 };
-
 #else
-
-#warning why no WITH_SEASTAR
 class AdminSocket;
 
 /* A CephContext represents the context held by a single library user.

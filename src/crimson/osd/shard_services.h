@@ -47,7 +47,7 @@ class ShardServices {
   ceph::mgr::Client &mgrc;
   ceph::os::FuturizedStore &store;
 
-  CephContext cct;
+  CephContext cct{0, CODE_ENVIRONMENT_DAEMON, 0};;
 
   PerfCounters *perf = nullptr;
   PerfCounters *recoverystate_perf = nullptr;

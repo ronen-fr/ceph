@@ -152,25 +152,6 @@ public:
     });
   }
 
-#if 0
-  // seems that Config.h has no Formatter awareness. return a 
-  seastar::future<>
-  show_config(/*ceph::Formatter* f*/ std::vector<std::string>& kout);/* {
-    std::vector<std::string> keys;
-    get_config().get_all_keys(&keys);
-
-    for (auto& k : keys) {
-      (void)k; //
-      //f->dump_string(k);
-      kout.push_back(k);
-    }
-    return seastar::now();
-  }*/
-
-  seastar::future<>
-  show_config(std::ostream& os);
-#endif
-
   seastar::future<>
   show_config(ceph::Formatter* f);
 

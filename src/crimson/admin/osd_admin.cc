@@ -73,7 +73,7 @@ class OsdAdminImp {
     virtual seastar::future<> exec_command(Formatter* formatter, std::string_view command, const cmdmap_t& cmdmap,
 	                      std::string_view format, bufferlist& out) const = 0;
 
-    explicit OsdAdminHookBase(OsdAdminImp& master) : 
+    explicit OsdAdminHookBase(OsdAdminImp& master) :
       m_osd_admin{master}
     {}
   };
@@ -104,8 +104,9 @@ class OsdAdminImp {
   class SendBeaconHook : public OsdAdminHookBase {
   public:
     explicit SendBeaconHook(OsdAdminImp& master) : OsdAdminHookBase(master) {};
-    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) const final
+    seastar::future<> exec_command(Formatter* f, [[maybe_unused]] std::string_view command,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
+	                           [[maybe_unused]] std::string_view format, [[maybe_unused]] bufferlist& out) const final
     {
       // \todo if (!is_active()) -> where to find the data?
       // \todo   return seastar::now();
@@ -120,8 +121,9 @@ class OsdAdminImp {
   class TestThrowHook : public OsdAdminHookBase {
   public:
     explicit TestThrowHook(OsdAdminImp& master) : OsdAdminHookBase(master) {};
-    seastar::future<> exec_command(Formatter* f, std::string_view command, const cmdmap_t& cmdmap,
-	                      std::string_view format, bufferlist& out) const final {
+    seastar::future<> exec_command(Formatter* f, std::string_view command,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
+                                   [[maybe_unused]] std::string_view format, [[maybe_unused]] bufferlist& out) const final {
 
       if (command == "fthrow")
         return seastar::make_exception_future<>(ceph::osd::no_message_available{});
@@ -130,7 +132,7 @@ class OsdAdminImp {
   };
 
   /*!
-       provide the hooks with access to OSD internals 
+       provide the hooks with access to OSD internals
   */
   const OSDSuperblock& osd_superblock() {
     return m_osd->superblock;
@@ -150,7 +152,6 @@ public:
     , send_beacon_hook{*this}
     , osd_test_throw_hook{*this}
   {
-    register_admin_commands();
   }
 
   ~OsdAdminImp() {
@@ -159,7 +160,7 @@ public:
     //   unregister_admin_commands();
   }
 
-  void register_admin_commands() {  // should probably be a future<void>
+  seastar::future<> register_admin_commands() {
     static const std::vector<AsokServiceDef> hooks_tbl{
         AsokServiceDef{"status",      "status",        &osd_status_hook,      "OSD status"}
       , AsokServiceDef{"send_beacon", "send_beacon",   &send_beacon_hook,     "send OSD beacon to mon immediately"}
@@ -167,17 +168,16 @@ public:
       , AsokServiceDef{"fthrow",      "fthrow",        &osd_test_throw_hook,  ""}  // dev tool
     };
 
-    const std::vector<AsokServiceDef>* const my_apis = &hooks_tbl;
-
-    std::ignore = seastar::async([this, my_apis]() {
-                                   m_socket_server =  m_cct->get_admin_socket()->register_server(AdminSocket::hook_server_tag{this}, *my_apis).get0();
-                                 });
+    return m_cct->get_admin_socket()->register_server(AdminSocket::hook_server_tag{this}, hooks_tbl).
+      then([this](AsokRegistrationRes rr) {
+        m_socket_server = rr;
+      });
   }
 
   seastar::future<> unregister_admin_commands()
   {
-    if (!m_socket_server) {
-      logger().debug("{}: OSD asok APIs removed already", __func__);
+    if (!m_socket_server.has_value()) {
+      logger().warn("{}: OSD asok APIs removed already", __func__);
       return seastar::now();
     }
 
@@ -196,6 +196,11 @@ public:
 OsdAdmin::OsdAdmin(OSD* osd, CephContext* cct, ceph::common::ConfigProxy& conf)
   : m_imp{ std::make_unique<ceph::osd::OsdAdminImp>(osd, cct, conf) }
 {}
+
+seastar::future<>  OsdAdmin::register_admin_commands()
+{
+  return m_imp->register_admin_commands();
+}
 
 seastar::future<> OsdAdmin::unregister_admin_commands()
 {

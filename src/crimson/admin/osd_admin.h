@@ -34,6 +34,7 @@ class OsdAdmin {
 public:
   OsdAdmin(ceph::osd::OSD* osd, CephContext* cct, ceph::common::ConfigProxy& conf);
   ~OsdAdmin();
+  seastar::future<> register_admin_commands();
   seastar::future<> unregister_admin_commands();
 };
 

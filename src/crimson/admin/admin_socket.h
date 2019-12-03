@@ -18,7 +18,7 @@
 
   Running on a single core:
   - the hooks database is only manipulated on that main core. The same applies to the hook-servers.
-  
+
   (was:
     hook servers running on other cores dispatch the register/unregister requests to that main core).
     Incoming requests arriving on the admin socket are only received on that specific core. The actual
@@ -44,7 +44,7 @@ inline constexpr auto CEPH_ADMIN_SOCK_VERSION = "2"sv;
 
 /*!
   A specific hook must implement exactly one of the two interfaces:
-  (1) call(command, cmdmap, format, out) 
+  (1) call(command, cmdmap, format, out)
   or
   (2) exec_command(formatter, command, cmdmap, format, out)
 
@@ -119,9 +119,9 @@ public:
 
   /*!
    * register an admin socket hooks server
-   * 
+   *
    * The server registers a set of APIs under a common hook_server_tag.
-   * 
+   *
    * The commands block registered by a specific server have a common
    * seastar::gate, used when the server wishes to remove its block's
    * registration.
@@ -146,14 +146,14 @@ public:
    */
 
   seastar::future<AsokRegistrationRes>
-  register_server(hook_server_tag  server_tag, const std::vector<AsokServiceDef>& apis_served); 
+  register_server(hook_server_tag  server_tag, const std::vector<AsokServiceDef>& apis_served);
 
 
   // no single-command unregistration, as en-bulk per server unregistration is the pref method.
   // I will consider adding specific API for those cases where the client needs to disable
   // one specific service. It will be clearly named, to mark the fact that it would not replace
   // deregistration. Something like disable_command(). The point against adding it: will have to
-  // make the server-block objects mutable. 
+  // make the server-block objects mutable.
 
   /*!
      unregister all hooks registered by this hooks-server
@@ -174,7 +174,7 @@ private:
     table lock.
   */
   AsokRegistrationRes server_registration(hook_server_tag  server_tag,
-                                          const std::vector<AsokServiceDef>& apis_served); 
+                                          const std::vector<AsokServiceDef>& apis_served);
 
   /*!
     Registering the APIs that are served directly by the admin_socket server.
