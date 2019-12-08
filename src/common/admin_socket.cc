@@ -147,7 +147,7 @@ std::string AdminSocket::destroy_wakeup_pipe()
 
   th.join();
 
-  // Close read end. Doing this before join() blocks the listenter and prevents
+  // Close read end. Doing this before join() blocks the listener and prevents
   // joining.
   retry_sys_call(::close, m_wakeup_rd_fd);
   m_wakeup_rd_fd = -1;

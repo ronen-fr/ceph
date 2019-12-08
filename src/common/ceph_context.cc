@@ -55,15 +55,24 @@ using ceph::HeartbeatMap;
 #include <pthread.h>
 
 #ifdef WITH_SEASTAR
+
+#include <seastar/core/shared_ptr.hh>
+#include "crimson/admin/context_admin.h"
+
 CephContext::CephContext()
   : _conf{crimson::common::local_conf()},
     _perf_counters_collection{crimson::common::local_perf_coll()},
     _crypto_random{std::make_unique<CryptoRandom>()}
-{}
+{
+  asok = seastar::make_lw_shared<crimson::admin::AdminSocket>(this);
+  asok_config_admin = make_unique<crimson::admin::ContextConfigAdmin>(this, _conf);
+}
 
 // define the dtor in .cc as CryptoRandom is an incomplete type in the header
 CephContext::~CephContext()
 {}
+
+CephContext::CephContext(CephContext&&) = default;
 
 uint32_t CephContext::get_module_type() const
 {
@@ -93,7 +102,14 @@ PerfCountersCollectionImpl* CephContext::get_perfcounters_collection()
   return _perf_counters_collection.get_perf_collection();
 }
 
-#else  // WITH_SEASTAR
+void CephContext::release_admin_socket()
+{
+  if (asok) {
+    asok.release();
+  }
+}
+
+#else  // (not) WITH_SEASTAR
 namespace {
 
 class LockdepObs : public md_config_obs_t {

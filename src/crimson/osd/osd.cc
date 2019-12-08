@@ -274,6 +274,17 @@ seastar::future<> OSD::start()
     return heartbeat->start(public_msgr.get_myaddrs(),
                             cluster_msgr.get_myaddrs());
   }).then([this] {
+    // attach the CCT's AdminSocket object to the OSD's admin socket path
+    auto asok_path = local_conf().get_val<std::string>("admin_socket");
+    return shard_services.get_cct()->get_admin_socket()->init(asok_path);
+  }).then([this] {
+    return shard_services.get_cct()->get_config_admin()->register_admin_commands();
+  }).then([this] {
+    // register OSD-specific admin-socket hooks
+    osd_admin = std::make_unique<crimson::admin::OsdAdmin>(this,
+                        shard_services.get_cct(), crimson::common::local_conf());
+    return osd_admin->register_admin_commands();
+  }).then([this] {
     return start_boot();
   });
 }
@@ -391,12 +402,57 @@ seastar::future<> OSD::_send_alive()
   }
 }
 
+/*
+  Note re process:
+  stop_asok_admin() is executed as part of a destruction process,
+  and may occur even before start is complete. We thus take nothing for granted,
+  and all interfaces are checked for existence.
+*/
+seastar::future<> OSD::stop_asok_admin()
+{
+  auto the_cct = shard_services.get_cct();
+
+  return ([this]() {
+    if (osd_admin) {
+      return osd_admin->unregister_admin_commands();
+    } else {
+      return seastar::make_ready_future<>();
+    }
+  })().then([the_cct] {
+    if (the_cct && the_cct->get_config_admin()) {
+      return the_cct->get_config_admin()->unregister_admin_commands();
+    } else {
+      return seastar::make_ready_future<>();
+    }
+  }).then([this, the_cct] {
+    if (the_cct && the_cct->get_admin_socket()) {
+      return the_cct->get_admin_socket()->stop();
+    } else {
+      return seastar::make_ready_future<>();
+    }
+  }).then([this, the_cct] {
+    if (the_cct) {
+      the_cct->release_admin_socket();
+    }
+    return seastar::make_ready_future<>();
+  }).handle_exception([](auto ep) {
+    logger().error("exception on admin-stop: {}", ep);
+    return seastar::make_ready_future<>();
+  }).finally([this] {
+    logger().info("OSD::stop_asok_admin(): Admin-sock service destructed");
+  });
+}
+
 seastar::future<> OSD::stop()
 {
   logger().info("stop");
   // see also OSD::shutdown()
   state.set_stopping();
-  return gate.close().then([this] {
+
+  return gate.close()
+  .then([this] {
+    return stop_asok_admin();
+  }).then([this] {
     return heartbeat->stop();
   }).then([this] {
     return monc->stop();
@@ -534,7 +590,6 @@ seastar::future<> OSD::ms_handle_connect(crimson::net::ConnectionRef conn)
 seastar::future<> OSD::ms_handle_reset(crimson::net::ConnectionRef conn)
 {
   // TODO: cleanup the session attached to this connection
-  logger().warn("ms_handle_reset");
   return seastar::now();
 }
 
