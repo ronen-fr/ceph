@@ -177,7 +177,7 @@ class PosixServerSocketImpl : public ServerSocketImpl {
       handler(h), _fd(f) {}
   int accept(ConnectedSocket *sock, const SocketOptions &opts, entity_addr_t *out, Worker *w) override;
   void abort_accept() override {
-    ::close(_fd);
+    ::shutdown(_fd, SHUT_RD);
     _fd = -1;
   }
   int fd() const override {
