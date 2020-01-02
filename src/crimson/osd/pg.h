@@ -465,11 +465,12 @@ public:
     const OpInfo &op_info,
     Operation *op,
     F &&f) {
-    auto [oid, type] = get_oid_and_lock(*m, op_info);
-    return get_locked_obc(op, oid, type)
-      .safe_then([this, f=std::forward<F>(f), type](auto obc) {
-	return f(obc).finally([this, obc, type] {
-	  obc->put_lock_type(type);
+    auto [oid, tp_temp] = get_oid_and_lock(*m, op_info);
+    auto tp=tp_temp;
+    return get_locked_obc(op, oid, tp)
+      .safe_then([this, f=std::forward<F>(f), tp](auto obc) {
+	return f(obc).finally([this, obc, tp] {
+	  obc->put_lock_type(tp);
 	  return load_obc_ertr::now();
 	});
       });

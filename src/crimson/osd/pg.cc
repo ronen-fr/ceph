@@ -680,7 +680,8 @@ PG::get_locked_obc(
 {
   return get_or_load_head_obc(oid.get_head()).safe_then(
     [this, op, oid, type](auto p) -> load_obc_ertr::future<ObjectContextRef>{
-      auto &[head_obc, head_existed] = p;
+      auto &[head_obc_temp, head_existed] = p;
+      auto head_obc = head_obc_temp; // can't capture a "special reference type"
       if (oid.is_head()) {
 	if (head_existed) {
 	  return head_obc->get_lock_type(op, type).then([head_obc] {
@@ -700,7 +701,7 @@ PG::get_locked_obc(
 	      auto &[obc, existed] = p;
 	      if (existed) {
 		return load_obc_ertr::future<>(
-		  obc->get_lock_type(op, type)).safe_then([obc] {
+		  obc->get_lock_type(op, type)).safe_then([obc=obc] {
 		  ceph_assert(obc->loaded);
 		  return load_obc_ertr::make_ready_future<ObjectContextRef>(obc);
 		});

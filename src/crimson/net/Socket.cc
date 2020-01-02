@@ -111,7 +111,8 @@ void Socket::shutdown() {
   socket.shutdown_output();
 }
 
-static inline seastar::future<> close_and_handle_errors(auto& out) {
+template <typename PRM>
+static inline seastar::future<> close_and_handle_errors(PRM& out) {
   return out.close().handle_exception_type([] (const std::system_error& e) {
     if (e.code() != error::broken_pipe &&
         e.code() != error::connection_reset) {

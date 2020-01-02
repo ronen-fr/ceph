@@ -114,7 +114,8 @@ int main(int argc, char* argv[])
     ("mkfs", "create a [new] data directory")
     ("debug", "enable debug output on all loggers");
 
-  auto [ceph_args, app_args] = partition_args(app, argv, argv + argc);
+  auto [ceph_args_tmp, app_args] = partition_args(app, argv, argv + argc);
+  auto ceph_args = ceph_args_tmp;
   if (ceph_argparse_need_usage(ceph_args) &&
       std::find(app_args.begin(), app_args.end(), "--help") == app_args.end()) {
     usage(argv[0]);

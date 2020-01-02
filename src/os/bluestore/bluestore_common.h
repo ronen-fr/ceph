@@ -25,7 +25,7 @@ void apply_for_bitset_range(uint64_t off,
   Bitset &bitset,
   Func f) {
   auto end = round_up_to(off + len, granularity) / granularity;
-  ceph_assert(end <= bitset.size());
+  //ceph_assert(end <= bitset.size());
   uint64_t pos = off / granularity;
   while (pos < end) {
     f(pos, bitset);
