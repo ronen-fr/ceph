@@ -257,7 +257,7 @@ static seastar::future<ceph::bufferlist> do_pgnls_common(
             std::move(items), std::move(next));
       });
   }).then(
-    [pg_end, filter] (const std::vector<hobject_t>& items, auto next) {
+    [pg_end] (const std::vector<hobject_t>& items, auto next) {
       auto is_matched = [] (const auto& obj) {
         return !obj.is_min();
       };
@@ -401,7 +401,7 @@ OpsExecuter::execute_osd_op(OSDOp& osd_op)
       return backend.setxattr(os, osd_op, txn);
     });
   case CEPH_OSD_OP_DELETE:
-    return do_write_op([&osd_op] (auto& backend, auto& os, auto& txn) {
+    return do_write_op([] (auto& backend, auto& os, auto& txn) {
       return backend.remove(os, txn);
     });
   case CEPH_OSD_OP_CALL:
@@ -491,7 +491,7 @@ static seastar::future<ceph::bufferlist> do_pgls_common(
             if (!obj.is_min()) {
               entries.emplace_back(obj.oid, obj.get_key());
             }
-            return entries;
+            return std::move(entries);
           }),
         seastar::make_ready_future<hobject_t>(next));
     }).then([pg_end](entries_t entries, hobject_t next) {

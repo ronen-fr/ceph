@@ -125,7 +125,7 @@ private:
 };
 
 template <class ErrorT, ErrorT ErrorV>
-const inline unthrowable_wrapper<ErrorT, ErrorV> unthrowable_wrapper<ErrorT,ErrorV>::instance{};
+const inline unthrowable_wrapper<ErrorT, ErrorV> unthrowable_wrapper<ErrorT, ErrorV>::instance{};
 
 template <class ErrorT, ErrorT ErrorV>
 std::exception_ptr unthrowable_wrapper<ErrorT, ErrorV>::carrier_instance = \

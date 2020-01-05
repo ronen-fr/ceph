@@ -117,8 +117,7 @@ seastar::future<bool> AdminSocketHook::call(std::string_view  command,
                [this, &command, &cmdmap, &format, &out, f = ftr.get()] {
                  return exec_command(f, command, cmdmap, format, out);
                })
-        .then_wrapped([&ftr, &command,
-                       &br](seastar::future<> res) -> seastar::future<bool> {
+        .then_wrapped([&br](seastar::future<> res) -> seastar::future<bool> {
           //  we now have a ready future (or a failure)
           if (res.failed()) {
             std::ignore = res.handle_exception([](std::exception_ptr eptr) {
@@ -131,7 +130,7 @@ seastar::future<bool> AdminSocketHook::call(std::string_view  command,
 
           return seastar::make_ready_future<bool>(br);
         })
-        .then([this, &ftr, &out](auto res) -> seastar::future<bool> {
+        .then([&ftr, &out](auto res) -> seastar::future<bool> {
           ftr->close_section();
           ftr->enable_line_break();
           ftr->flush(out);
@@ -198,7 +197,7 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag  server_tag,
 {
   // reducing the ref-count on us (the ASOK server) by discarding server_ref:
   return seastar::do_with(std::move(server_ref), [this, server_tag](auto& srv) {
-    return unregister_server(server_tag).finally([this, server_tag, &srv]() {
+    return unregister_server(server_tag).finally([server_tag]() {
       logger().debug("unregister_server: {}", (uint64_t)(server_tag));
     });
   });
@@ -385,7 +384,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline,
       [this, &out](auto&& parsed, auto&& out_buf) {
         return (parsed.m_hook->call(parsed.m_cmd, parsed.m_parameters,
                                     parsed.m_format, out_buf))
-          .then_wrapped([&out, &out_buf](auto&& fut) -> seastar::future<bool> {
+          .then_wrapped([&out](auto&& fut) -> seastar::future<bool> {
             if (fut.failed()) {
               // add 'failed' to the contents of out_buf? not what
               // happens in the old code
@@ -416,7 +415,7 @@ seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&  inp,
     })
     .then([&out]() { return out.flush(); })
     .finally([&out]() { return out.close(); })
-    .then([&inp, &out]() { return inp.close(); })
+    .then([&inp]() { return inp.close(); })
     .handle_exception([](auto ep) {
       logger().debug("exception on {}: {}", __func__, ep);
       return seastar::make_ready_future<>();
@@ -474,17 +473,17 @@ seastar::future<> AdminSocket::init(const std::string& path)
                                        std::move(from_accept.connection);
 
                                      return do_with(
-                                       std::move(cn.input()),
-                                       std::move(cn.output()), std::move(cn),
+                                       cn.input(),
+                                       cn.output(), std::move(cn),
                                        [this](auto& inp, auto& out, auto& cn) {
                                          return handle_client(inp, out).finally(
-                                           [this, &inp, &out] {
+                                           [] {
                                              ;  // left for debugging
                                            });
                                        });
                                    });
                                })
-            .then([this] {
+            .then([] {
               logger().debug("AdminSocket::init(): admin-sock thread terminated");
               return seastar::now();
             });
@@ -519,7 +518,7 @@ seastar::future<> AdminSocket::stop()
     })
     .handle_exception(
       [](std::exception_ptr eptr) { return seastar::make_ready_future<>(); })
-    .finally([this]() { return seastar::make_ready_future<>(); });
+    .finally([]() { return seastar::make_ready_future<>(); });
 }
 
 // ///////////////////////////////////////
@@ -658,7 +657,7 @@ class TestThrowHook : public AdminSocketHook {
       return seastar::make_exception_future<>(
         std::system_error{ 1, std::system_category() });
 
-    return seastar::sleep(3s).then([this]() {
+    return seastar::sleep(3s).then([]() {
       throw(std::invalid_argument("As::TestThrowHook"));
       return seastar::now();
     });

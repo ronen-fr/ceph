@@ -991,7 +991,7 @@ seastar::future<> Client::reopen_session(int rank)
 	[this](auto &pending_conns) {
 	  return seastar::parallel_for_each(
 	    pending_conns,
-	    [this] (auto &conn) {
+	    [] (auto &conn) {
 	      if (!conn) {
 		return seastar::now();
 	      } else {
