@@ -680,8 +680,9 @@ PG::get_locked_obc(
 {
   return get_or_load_head_obc(oid.get_head()).safe_then(
     [this, op, oid, type](auto p) -> load_obc_ertr::future<ObjectContextRef>{
-      auto &[head_obc_temp, head_existed] = p;
-      auto head_obc = head_obc_temp; // can't capture a "special reference type"
+      crimson::osd::ObjectContextRef head_obc;
+      bool head_existed;
+      std::tie(head_obc, head_existed) = p;
       if (oid.is_head()) {
 	if (head_existed) {
 	  return head_obc->get_lock_type(op, type).then([head_obc] {

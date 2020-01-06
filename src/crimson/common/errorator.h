@@ -79,8 +79,8 @@ public:
 template <class ErrorT, ErrorT ErrorV>
 struct unthrowable_wrapper : error_t<unthrowable_wrapper<ErrorT, ErrorV>> {
   unthrowable_wrapper(const unthrowable_wrapper&) = delete;
-  static const unthrowable_wrapper instance;
   [[nodiscard]] static const auto& make() {
+    static constexpr unthrowable_wrapper instance{};
     return instance;
   }
 
@@ -118,14 +118,11 @@ private:
     return carrier_instance;
   }
   static const auto& from_exception_ptr(std::exception_ptr) {
-    return instance;
+    return make();
   }
 
   friend class error_t<unthrowable_wrapper<ErrorT, ErrorV>>;
 };
-
-template <class ErrorT, ErrorT ErrorV>
-const inline unthrowable_wrapper<ErrorT, ErrorV> unthrowable_wrapper<ErrorT, ErrorV>::instance{};
 
 template <class ErrorT, ErrorT ErrorV>
 std::exception_ptr unthrowable_wrapper<ErrorT, ErrorV>::carrier_instance = \
