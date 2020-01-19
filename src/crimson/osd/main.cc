@@ -114,9 +114,7 @@ int main(int argc, char* argv[])
     ("mkfs", "create a [new] data directory")
     ("debug", "enable debug output on all loggers");
 
-  std::vector<const char*> ceph_args, app_args;
-  std::tie(ceph_args, app_args) = partition_args(app, argv, argv + argc);
-
+  auto [ceph_args, app_args] = partition_args(app, argv, argv + argc);
   if (ceph_argparse_need_usage(ceph_args) &&
       std::find(app_args.begin(), app_args.end(), "--help") == app_args.end()) {
     usage(argv[0]);
@@ -136,7 +134,8 @@ int main(int argc, char* argv[])
   using crimson::common::sharded_conf;
   using crimson::common::sharded_perf_coll;
   try {
-    return app.run_deprecated(app_args.size(), const_cast<char**>(app_args.data()), [&] {
+    return app.run_deprecated(app_args.size(), const_cast<char**>(app_args.data()),
+      [&, &ceph_args=ceph_args] {
       auto& config = app.configuration();
       return seastar::async([&] {
 	if (config.count("debug")) {

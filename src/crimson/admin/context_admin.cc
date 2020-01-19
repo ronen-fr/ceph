@@ -9,22 +9,21 @@
   - process-wide commands ('abort', 'assert')
   - ...
  */
-#ifndef WITH_SEASTAR
-#error "this is a Crimson-specific implementation of some CephContext APIs"
-#endif
 
-#include <iostream>
 #include <boost/algorithm/string.hpp>
-#include "seastar/core/thread.hh"
+#include <iostream>
+#include <seastar/core/thread.hh>
+
+#include "common/Graylog.h"
 #include "common/config.h"
 #include "common/errno.h"
-#include "common/Graylog.h"
-#include "crimson/common/log.h"
 #include "common/valgrind.h"
+#include "crimson/common/log.h"
 // for CINIT_FLAGS
-#include "common/common_init.h"
 #include <iostream>
+
 #include "common/ceph_context.h"
+#include "common/common_init.h"
 
 using crimson::common::local_conf;
 
@@ -40,24 +39,30 @@ namespace crimson::admin {
 /**
   the hooks and states needed to handle configuration requests
 */
-class ContextConfigAdminImp {
+class ContextAdminImp {
 
   /**
-     ContextConfigAdminImp objects are held by CephContext objects. m_cct
+     ContextAdminImp objects are held by CephContext objects. m_cct
      points back to our master.
   */
-  CephContext*                  m_cct;
+  CephContext* m_cct;
   crimson::common::ConfigProxy& m_conf;
 
   /**
-     shared-ownership of the socket server itself, to guarantee its existence
-     until we have a chance to remove our registration:
+     a reference to the socket server, to be used when
+     registering ourselves
   */
-  AsokRegistrationRes m_socket_server;
+  AdminSocketRef m_socket_server;
+
+  /**
+     and a 2'nd shared-ownership of the socket server itself, to guarantee its
+     existence until we have a chance to remove our registration:
+  */
+  AsokRegistrationRes m_server_registration;
 
   friend class CephContextHookBase;
   friend class ConfigGetHook;
-  friend class ContextConfigAdmin;
+  friend class ContextAdmin;
 
   /**
       Common code for all CephContext admin hooks.
@@ -66,16 +71,16 @@ class ContextConfigAdminImp {
    */
   class CephContextHookBase : public AdminSocketHook {
    protected:
-    ContextConfigAdminImp& m_config_admin;
+    ContextAdminImp& m_config_admin;
 
     /// the specific command implementation
-    seastar::future<> exec_command(Formatter*       formatter,
-                                   std::string_view command,
-                                   const cmdmap_t&  cmdmap,
-                                   std::string_view format,
-                                   bufferlist&      out) const override = 0;
+    seastar::future<> exec_command(Formatter* formatter,
+                                   [[maybe_unused]] std::string_view command,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
+                                   [[maybe_unused]] std::string_view format,
+                                   [[maybe_unused]] bufferlist& out) const override = 0;
 
-    explicit CephContextHookBase(ContextConfigAdminImp& master)
+    explicit CephContextHookBase(ContextAdminImp& master)
         : m_config_admin{ master }
     {}
   };
@@ -85,11 +90,11 @@ class ContextConfigAdminImp {
   */
   class ConfigShowHook : public CephContextHookBase {
    public:
-    explicit ConfigShowHook(ContextConfigAdminImp& master)
+    explicit ConfigShowHook(ContextAdminImp& master)
         : CephContextHookBase(master){};
-    seastar::future<> exec_command(ceph::Formatter*                  f,
+    seastar::future<> exec_command(ceph::Formatter* f,
                                    [[maybe_unused]] std::string_view command,
-                                   [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
                                    [[maybe_unused]] std::string_view format,
                                    [[maybe_unused]] bufferlist& out) const final
     {
@@ -103,11 +108,11 @@ class ContextConfigAdminImp {
   */
   class ConfigGetHook : public CephContextHookBase {
    public:
-    explicit ConfigGetHook(ContextConfigAdminImp& master)
+    explicit ConfigGetHook(ContextAdminImp& master)
         : CephContextHookBase(master){};
-    seastar::future<> exec_command(ceph::Formatter*                  f,
+    seastar::future<> exec_command(ceph::Formatter* f,
                                    [[maybe_unused]] std::string_view command,
-                                   [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
                                    [[maybe_unused]] std::string_view format,
                                    [[maybe_unused]] bufferlist& out) const final
     {
@@ -137,16 +142,16 @@ class ContextConfigAdminImp {
   */
   class ConfigSetHook : public CephContextHookBase {
    public:
-    explicit ConfigSetHook(ContextConfigAdminImp& master)
+    explicit ConfigSetHook(ContextAdminImp& master)
         : CephContextHookBase(master){};
 
-    seastar::future<> exec_command(ceph::Formatter*                  f,
-                                   std::string_view                  command,
-                                   const cmdmap_t&                   cmdmap,
+    seastar::future<> exec_command(ceph::Formatter* f,
+                                   std::string_view command,
+                                   const cmdmap_t& cmdmap,
                                    [[maybe_unused]] std::string_view format,
                                    [[maybe_unused]] bufferlist& out) const final
     {
-      std::string              var;
+      std::string var;
       std::vector<std::string> new_val;
       if (!cmd_getval<std::string>(nullptr, cmdmap, "var", var) ||
           !cmd_getval(nullptr, cmdmap, "val", new_val)) {
@@ -181,11 +186,11 @@ class ContextConfigAdminImp {
   */
   class AssertAlwaysHook : public CephContextHookBase {
    public:
-    explicit AssertAlwaysHook(ContextConfigAdminImp& master)
+    explicit AssertAlwaysHook(ContextAdminImp& master)
         : CephContextHookBase(master){};
-    seastar::future<> exec_command(ceph::Formatter*                  f,
+    seastar::future<> exec_command(ceph::Formatter* f,
                                    [[maybe_unused]] std::string_view command,
-                                   [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
                                    [[maybe_unused]] std::string_view format,
                                    [[maybe_unused]] bufferlist& out) const final
     {
@@ -205,11 +210,11 @@ class ContextConfigAdminImp {
    */
   class TestThrowHook : public CephContextHookBase {
    public:
-    explicit TestThrowHook(ContextConfigAdminImp& master)
+    explicit TestThrowHook(ContextAdminImp& master)
         : CephContextHookBase(master){};
-    seastar::future<> exec_command([[maybe_unused]] Formatter*       f,
+    seastar::future<> exec_command([[maybe_unused]] Formatter* f,
                                    [[maybe_unused]] std::string_view command,
-                                   [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
                                    [[maybe_unused]] std::string_view format,
                                    [[maybe_unused]] bufferlist& out) const final
     {
@@ -221,16 +226,19 @@ class ContextConfigAdminImp {
     }
   };
 
-  ConfigShowHook   config_show_hook;
-  ConfigGetHook    config_get_hook;
-  ConfigSetHook    config_set_hook;
+  ConfigShowHook config_show_hook;
+  ConfigGetHook config_get_hook;
+  ConfigSetHook config_set_hook;
   AssertAlwaysHook assert_hook;
-  TestThrowHook    ctx_test_throw_hook;  // for development testing
+  TestThrowHook ctx_test_throw_hook;  // for development testing
 
  public:
-  ContextConfigAdminImp(CephContext* cct, crimson::common::ConfigProxy& conf)
+  ContextAdminImp(CephContext* cct,
+                        crimson::common::ConfigProxy& conf/*,
+                        crimson::admin::AdminSocketRef asok*/)
       : m_cct{ cct }
       , m_conf{ conf }
+      //, m_socket_server{ std::move(asok) }
       , config_show_hook{ *this }
       , config_get_hook{ *this }
       , config_set_hook{ *this }
@@ -238,9 +246,9 @@ class ContextConfigAdminImp {
       , ctx_test_throw_hook{ *this }
   {}
 
-  ~ContextConfigAdminImp() = default;
+  ~ContextAdminImp() = default;
 
-  seastar::future<> register_admin_commands()
+  seastar::future<> register_admin_commands(crimson::admin::AdminSocketRef asok)
   {
     logger().debug("context-admin {}: pid:{} tag:{}", __func__, (int)getpid(),
                    (uint64_t)(this));
@@ -269,54 +277,60 @@ class ContextConfigAdminImp {
       // clang-format on
     };
 
-    return m_cct->get_admin_socket()
+    m_socket_server = std::move(asok);
+    return m_socket_server
       ->register_server(AdminSocket::hook_server_tag{ this }, hooks_tbl)
-      .then([this](AsokRegistrationRes res) { m_socket_server = res; });
+      .then([this](AsokRegistrationRes res) { m_server_registration = res; });
   }
 
   seastar::future<> unregister_admin_commands()
   {
-    if (!m_socket_server.has_value()) {
+    if (!m_server_registration.has_value()) {
       logger().warn(
-        "ContextConfigAdminImp::unregister_admin_commands(): no socket server");
+        "ContextAdminImp::unregister_admin_commands(): no socket server");
       return seastar::now();
     }
 
-    auto admin_if = m_cct->get_admin_socket();
-    if (!admin_if) {
-      logger().warn(
-        "ContextConfigAdminImp::unregister_admin_commands(): no admin_if");
-      return seastar::now();
-    }
+    // auto admin_if = m_cct->get_admin_socket();
+    // if (!admin_if) {
+    //  logger().warn(
+    //    "ContextAdminImp::unregister_admin_commands(): no admin_if");
+    //  return seastar::now();
+    //}
 
     //  we are holding a shared-ownership of the admin socket server, just so
     //  that we can keep it alive until after our de-registration.
-    AdminSocketRef srv{ std::move(*m_socket_server) };
-    m_socket_server.reset();
-    return admin_if->unregister_server(AdminSocket::hook_server_tag{ this },
-                                       std::move(srv));
+    AdminSocketRef srv{ std::move(*m_server_registration) };
+    m_server_registration.reset();
+    return m_socket_server->unregister_server(
+      AdminSocket::hook_server_tag{ this }, std::move(srv));
   }
 };
 
 //
 //  some PIMPL details:
 //
-ContextConfigAdmin::ContextConfigAdmin(CephContext*                  cct,
-                                       crimson::common::ConfigProxy& conf)
-    : m_imp{ std::make_unique<ContextConfigAdminImp>(cct, conf) }
+ContextAdmin::ContextAdmin(CephContext* cct,
+                                       crimson::common::ConfigProxy& conf/*,
+                                       crimson::admin::AdminSocketRef asok*/)
+    : m_imp{ std::make_unique<ContextAdminImp>(cct, conf/*, asok*/) }
 {}
 
-seastar::future<> ContextConfigAdmin::register_admin_commands()
+seastar::future<> ContextAdmin::register_admin_commands(crimson::admin::AdminSocketRef asok)
 {
-  return m_imp->register_admin_commands();
+  return m_imp->register_admin_commands(asok);
 }
 
-seastar::future<> ContextConfigAdmin::unregister_admin_commands()
+seastar::future<> ContextAdmin::unregister_admin_commands()
 {
-  auto moved_imp{ std::move(m_imp) };
-  return moved_imp->unregister_admin_commands();
+  return seastar::do_with(std::move(m_imp), [this](auto& detached_imp) {
+    return detached_imp->unregister_admin_commands();
+  });
+  //  note than when this block terminates, the pimpl implementation object
+  //  is destroyed, freeing its last shared ownership of the admin-socket
+  //  object
 }
 
-ContextConfigAdmin::~ContextConfigAdmin() = default;
+ContextAdmin::~ContextAdmin() = default;
 
 }  // namespace crimson::admin

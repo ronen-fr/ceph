@@ -88,16 +88,24 @@ public:
    *
    * @return the admin socket or nullptr
    */
-  crimson::admin::AdminSocket* get_admin_socket() { 
-    if (asok) {
-      return asok.get();
-    }
-    return nullptr;
-  }
+  //crimson::admin::AdminSocket* get_admin_socket() { 
+  //  if (asok) {
+  //    return asok.get();
+  //  }
+  //  return nullptr;
+  //}
 
   void release_admin_socket();
 
-  crimson::admin::ContextConfigAdmin* get_config_admin() { 
+  /**
+   * Create a ContexConfigAdmin object to handle incoming asok requests
+   * that are "CephContext-centered".
+   */
+  seastar::future<> init_config_admin(crimson::admin::AdminSocketRef asok);
+
+  seastar::future<> release_config_admin(/*crimson::admin::AdminSocketRef asok*/);
+
+  crimson::admin::ContextAdmin* get_config_admin() { 
     if (asok_config_admin) {
       return asok_config_admin.get();
     }
@@ -108,9 +116,9 @@ private:
   std::unique_ptr<CryptoRandom> _crypto_random;
   unsigned nref;
   seastar::lw_shared_ptr<crimson::admin::AdminSocket> asok;
-  std::unique_ptr<crimson::admin::ContextConfigAdmin> asok_config_admin;
+  std::unique_ptr<crimson::admin::ContextAdmin> asok_config_admin;
 
-  friend class crimson::admin::ContextConfigAdminImp;
+  friend class crimson::admin::ContextAdminImp;
 };
 #else
 class AdminSocket;

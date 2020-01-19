@@ -64,9 +64,11 @@ CephContext::CephContext()
     _perf_counters_collection{crimson::common::local_perf_coll()},
     _crypto_random{std::make_unique<CryptoRandom>()}
 {
-  asok = seastar::make_lw_shared<crimson::admin::AdminSocket>(this);
-  asok_config_admin = make_unique<crimson::admin::ContextConfigAdmin>(this, _conf);
+  //asok = seastar::make_lw_shared<crimson::admin::AdminSocket>(this);
+  //asok_config_admin = make_unique<crimson::admin::ContextAdmin>(this, _conf);
 }
+
+
 
 // define the dtor in .cc as CryptoRandom is an incomplete type in the header
 CephContext::~CephContext()
@@ -102,11 +104,23 @@ PerfCountersCollectionImpl* CephContext::get_perfcounters_collection()
   return _perf_counters_collection.get_perf_collection();
 }
 
+seastar::future<> CephContext::init_config_admin(crimson::admin::AdminSocketRef asok)
+{
+  asok_config_admin = make_unique<crimson::admin::ContextAdmin>(this, _conf);
+  return asok_config_admin->register_admin_commands(asok);
+}
+
+seastar::future<> CephContext::release_config_admin(/*crimson::admin::AdminSocketRef asok*/)
+{
+  if (asok_config_admin) {
+    return asok_config_admin->unregister_admin_commands();
+  } else {
+    return seastar::make_ready_future<>();
+  }
+}
+
 void CephContext::release_admin_socket()
 {
-  if (asok) {
-    asok.release();
-  }
 }
 
 #else  // (not) WITH_SEASTAR

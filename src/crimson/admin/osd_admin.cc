@@ -1,24 +1,20 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "common/ceph_context.h"
+#include "crimson/admin/osd_admin.h"
+//#include "common/ceph_context.h"
 
 #include <iostream>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
-#include "seastar/core/future.hh"
-#include "seastar/core/thread.hh"
+#include <seastar/core/future.hh>
+#include <seastar/core/thread.hh>
 #include "crimson/admin/admin_socket.h"
-#include "crimson/admin/osd_admin.h"
 #include "crimson/osd/osd.h"
 #include "crimson/osd/exceptions.h"
 #include "common/config.h"
 #include "crimson/common/log.h"
 #include <iostream>
-
-#ifndef WITH_SEASTAR
-#error "this is a Crimson-specific implementation of some OSD APIs"
-#endif
 
 using crimson::osd::OSD;
 
@@ -38,8 +34,8 @@ class OsdAdminImp {
   friend class OsdAdmin;
   friend class OsdAdminHookBase;
 
-  OSD*                          m_osd;
-  CephContext*                  m_cct;
+  OSD* m_osd;
+  CephContext* m_cct;
   crimson::common::ConfigProxy& m_conf;
 
   //  shared-ownership of the socket server itself, to guarantee its existence
@@ -56,11 +52,11 @@ class OsdAdminImp {
 
     /// the specific command implementation
     virtual seastar::future<> exec_command(
-      [[maybe_unused]] Formatter*       formatter,
+      [[maybe_unused]] Formatter* formatter,
       [[maybe_unused]] std::string_view command,
-      [[maybe_unused]] const cmdmap_t&  cmdmap,
+      [[maybe_unused]] const cmdmap_t& cmdmap,
       [[maybe_unused]] std::string_view format,
-      [[maybe_unused]] bufferlist&      out) const = 0;
+      [[maybe_unused]] bufferlist& out) const = 0;
 
     explicit OsdAdminHookBase(OsdAdminImp& master) : m_osd_admin{ master } {}
   };
@@ -71,10 +67,10 @@ class OsdAdminImp {
   class OsdStatusHook : public OsdAdminHookBase {
    public:
     explicit OsdStatusHook(OsdAdminImp& master) : OsdAdminHookBase(master){};
-    seastar::future<> exec_command(Formatter*                        f,
+    seastar::future<> exec_command(Formatter* f,
                                    [[maybe_unused]] std::string_view command,
-                                   [[maybe_unused]] const cmdmap_t&  cmdmap,
-                                   std::string_view                  format,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
+                                   std::string_view format,
                                    [[maybe_unused]] bufferlist& out) const final
     {
 
@@ -97,9 +93,9 @@ class OsdAdminImp {
   class SendBeaconHook : public OsdAdminHookBase {
    public:
     explicit SendBeaconHook(OsdAdminImp& master) : OsdAdminHookBase(master){};
-    seastar::future<> exec_command(Formatter*                        f,
+    seastar::future<> exec_command(Formatter* f,
                                    [[maybe_unused]] std::string_view command,
-                                   [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
                                    [[maybe_unused]] std::string_view format,
                                    [[maybe_unused]] bufferlist& out) const final
     {
@@ -117,9 +113,9 @@ class OsdAdminImp {
   class TestThrowHook : public OsdAdminHookBase {
    public:
     explicit TestThrowHook(OsdAdminImp& master) : OsdAdminHookBase(master){};
-    seastar::future<> exec_command(Formatter*                        f,
-                                   std::string_view                  command,
-                                   [[maybe_unused]] const cmdmap_t&  cmdmap,
+    seastar::future<> exec_command(Formatter* f,
+                                   std::string_view command,
+                                   [[maybe_unused]] const cmdmap_t& cmdmap,
                                    [[maybe_unused]] std::string_view format,
                                    [[maybe_unused]] bufferlist& out) const final
     {
@@ -157,9 +153,9 @@ class OsdAdminImp {
     return m_osd->state.to_string();
   }
 
-  OsdStatusHook  osd_status_hook;
+  OsdStatusHook osd_status_hook;
   SendBeaconHook send_beacon_hook;
-  TestThrowHook  osd_test_throw_hook;
+  TestThrowHook osd_test_throw_hook;
 
  public:
   OsdAdminImp(OSD* osd, CephContext* cct, crimson::common::ConfigProxy& conf)
@@ -171,12 +167,7 @@ class OsdAdminImp {
       , osd_test_throw_hook{ *this }
   {}
 
-  ~OsdAdminImp()
-  {
-    // our registration with the admin_socket server was already removed by
-    // 'OsdAdmin' - our 'pimpl' owner. Thus no need for:
-    //   unregister_admin_commands();
-  }
+  ~OsdAdminImp() = default;
 
   seastar::future<> register_admin_commands()
   {
@@ -195,7 +186,7 @@ class OsdAdminImp {
       // clang-format on
     };
 
-    return m_cct->get_admin_socket()
+    return m_osd->asok
       ->register_server(AdminSocket::hook_server_tag{ this }, hooks_tbl)
       .then([this](AsokRegistrationRes res) { m_socket_server = res; });
   }
@@ -210,21 +201,16 @@ class OsdAdminImp {
     AdminSocketRef srv{ std::move(m_socket_server.value()) };
     m_socket_server.reset();
 
-    auto admin_if = m_cct->get_admin_socket();
-    if (admin_if) {
-      return admin_if->unregister_server(AdminSocket::hook_server_tag{ this },
-                                         std::move(srv));
-    } else {
-      return seastar::now();
-    }
+    return m_osd->asok->unregister_server(AdminSocket::hook_server_tag{ this },
+                                          std::move(srv));
   }
 };
 
 //
 //  some PIMPL details:
 //
-OsdAdmin::OsdAdmin(OSD*                          osd,
-                   CephContext*                  cct,
+OsdAdmin::OsdAdmin(OSD* osd,
+                   CephContext* cct,
                    crimson::common::ConfigProxy& conf)
     : m_imp{ std::make_unique<crimson::admin::OsdAdminImp>(osd, cct, conf) }
 {}
@@ -236,11 +222,9 @@ seastar::future<> OsdAdmin::register_admin_commands()
 
 seastar::future<> OsdAdmin::unregister_admin_commands()
 {
-  if (m_imp) {
-    auto moved_m_imp{ std::move(m_imp) };
-    return moved_m_imp->unregister_admin_commands();
-  } else
-    return seastar::now();
+  return seastar::do_with(std::move(m_imp), [this](auto& detached_imp) {
+    return detached_imp->unregister_admin_commands();
+  });
 }
 
 OsdAdmin::~OsdAdmin() = default;

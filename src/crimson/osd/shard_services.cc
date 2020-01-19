@@ -77,14 +77,12 @@ seastar::future<> ShardServices::dispatch_context_transaction(
 seastar::future<> ShardServices::dispatch_context_messages(
   BufferedRecoveryMessages &&ctx)
 {
-  // map<int, vector<MessageRef>> 
   auto ret = seastar::parallel_for_each(std::move(ctx.message_map),
     [this](auto& osd_messages) {
-      int peer;
-      vector<MessageRef> messages;
-      std::tie(peer, messages) = osd_messages;
+      auto &[peer, messages] = osd_messages;
       logger().debug("dispatch_context_messages sending messages to {}", peer);
-      return seastar::parallel_for_each(std::move(messages), [=](auto& m) {
+      return seastar::parallel_for_each(
+        std::move(messages), [=, peer=peer](auto& m) {
         return send_to_osd(peer, m, osdmap->get_epoch());
       });
     });

@@ -118,7 +118,9 @@ class OSD final : public crimson::net::Dispatcher,
   std::unique_ptr<Heartbeat> heartbeat;
   seastar::timer<seastar::lowres_clock> heartbeat_timer;
 
-  std::unique_ptr<crimson::admin::OsdAdmin>    osd_admin;
+  // admin-socket
+  seastar::lw_shared_ptr<crimson::admin::AdminSocket> asok;
+  std::unique_ptr<crimson::admin::OsdAdmin> osd_admin;
 
 public:
   OSD(int id, uint32_t nonce,
@@ -186,6 +188,7 @@ private:
   void check_osdmap_features();
 
   seastar::future<> stop_asok_admin();
+  seastar::future<> start_asok_admin();
 
 public:
   OSDMapGate osdmap_gate;

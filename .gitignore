@@ -62,6 +62,12 @@ GTAGS
 # common cmake build dir
 /build
 /build.*
+/build_clang_ccache
+/build_gcc
+/cbuild
+/.vscode
+/src/python-common
+/src2/
 
 # editor backup files etc.
 \#*\#

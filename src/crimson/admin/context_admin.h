@@ -8,7 +8,7 @@ class CephContext;
 
 namespace crimson::admin {
 
-class ContextConfigAdminImp;
+class ContextAdminImp;
 
 /**
   \brief implementation of the configuration-related 'admin_socket' API of
@@ -19,13 +19,13 @@ class ContextConfigAdminImp;
   - process-wide commands ('abort', 'assert')
   - ...
  */
-class ContextConfigAdmin {
+class ContextAdmin {
 
-  std::unique_ptr<ContextConfigAdminImp> m_imp;
+  std::unique_ptr<ContextAdminImp> m_imp;
 
  public:
-  ContextConfigAdmin(CephContext* cct, crimson::common::ConfigProxy& conf);
-  ~ContextConfigAdmin();
+  ContextAdmin(CephContext* cct, crimson::common::ConfigProxy& conf/*, crimson::admin::AdminSocketRef asok*/);
+  ~ContextAdmin();
 
   /**
     Note: the only reason of having register_admin_commands() provided as a
@@ -33,7 +33,7 @@ class ContextConfigAdmin {
     theoretical) race to register and unregister the same server block when
     creating a Context and immediately removing it
   */
-  seastar::future<> register_admin_commands();
+  seastar::future<> register_admin_commands(crimson::admin::AdminSocketRef asok);
   seastar::future<> unregister_admin_commands();
 };
 }  // namespace crimson::admin

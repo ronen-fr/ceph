@@ -274,16 +274,9 @@ seastar::future<> OSD::start()
     return heartbeat->start(public_msgr.get_myaddrs(),
                             cluster_msgr.get_myaddrs());
   }).then([this] {
-    // attach the CCT's AdminSocket object to the OSD's admin socket path
-    auto asok_path = local_conf().get_val<std::string>("admin_socket");
-    return shard_services.get_cct()->get_admin_socket()->init(asok_path);
-  }).then([this] {
-    return shard_services.get_cct()->get_config_admin()->register_admin_commands();
-  }).then([this] {
-    // register OSD-specific admin-socket hooks
-    osd_admin = std::make_unique<crimson::admin::OsdAdmin>(this,
-                        shard_services.get_cct(), crimson::common::local_conf());
-    return osd_admin->register_admin_commands();
+    // create the admin-socket server, and the objects that register
+    // to handle incoming commands
+    return start_asok_admin();
   }).then([this] {
     return start_boot();
   });
@@ -403,11 +396,76 @@ seastar::future<> OSD::_send_alive()
 }
 
 /*
+  The OSD's Admin Socket object created here has three servers (i.e. - blocks of commands
+  to handle) registered to it:
+  - OSD's specific commands are handled by the OSD object;
+  - CephContext general commands are registered by the OSD's CephContext, and
+  - there are some common commands registered to be directly handled by the AdminSocket object
+    itself.
+
+  A note regarding the CephContext pointer passed to AdminSocket at creation: that one is used
+  by AdminSocket internally (mostly related to error reporting by legacy code), and is unrelated to
+  the role played by the (same) CephContext object as a command handler.
+*/
+seastar::future<> OSD::start_asok_admin()
+{
+  auto the_cct = shard_services.get_cct();
+  asok = seastar::make_lw_shared<crimson::admin::AdminSocket>(the_cct);
+  auto asok_path = local_conf().get_val<std::string>("admin_socket");
+
+  return asok->init(asok_path).then([this, the_cct] {
+    // register the CephContext-related admin-socket hooks
+    return the_cct->init_config_admin(asok);
+  }).then([this, the_cct] {
+    // register OSD-specific admin-socket hooks
+    osd_admin = std::make_unique<crimson::admin::OsdAdmin>(this, the_cct,
+                        crimson::common::local_conf());
+    return osd_admin->register_admin_commands();
+  });
+
+}
+
+/*
   Note re process:
   stop_asok_admin() is executed as part of a destruction process,
   and may occur even before start is complete. We thus take nothing for granted,
   and all interfaces are checked for existence.
 */
+seastar::future<> OSD::stop_asok_admin()
+{
+  auto the_cct = shard_services.get_cct();
+
+  return ([this]() {
+    if (osd_admin) {
+      return osd_admin->unregister_admin_commands();
+    } else {
+      return seastar::make_ready_future<>();
+    }
+  })().then([the_cct] {
+    if (the_cct && the_cct->get_config_admin()) {
+      return the_cct->release_config_admin();
+    } else {
+      return seastar::make_ready_future<>();
+    }
+  }).then([this] {
+    if (asok) {
+      return asok->stop();
+    } else {
+      return seastar::make_ready_future<>();
+    }
+  }).then([this, the_cct] {
+    if (the_cct) {
+      //the_cct->release_admin_socket();
+    }
+    return seastar::make_ready_future<>();
+  }).handle_exception([](auto ep) {
+    logger().error("exception on admin-stop: {}", ep);
+    return seastar::make_ready_future<>();
+  }).finally([this] {
+    logger().info("OSD::stop_asok_admin(): Admin-sock service destructed");
+  });
+}
+#if 0
 seastar::future<> OSD::stop_asok_admin()
 {
   auto the_cct = shard_services.get_cct();
@@ -442,6 +500,7 @@ seastar::future<> OSD::stop_asok_admin()
     logger().info("OSD::stop_asok_admin(): Admin-sock service destructed");
   });
 }
+#endif
 
 seastar::future<> OSD::stop()
 {
