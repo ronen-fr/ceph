@@ -258,8 +258,6 @@ public:
     //  we are holding a shared-ownership of the admin socket server, just so that we
     //  can keep it alive until after our de-registration.
     AdminSocketRef srv{std::move(*m_socket_server)};
-    //AdminSocketRef srv = *m_socket_server;
-    //m_socket_server = std::nullopt; // should be redundant
 
     // note that unregister_server() closes a seastar::gate (i.e. - it blocks)
     return admin_if->unregister_server(AdminSocket::hook_server_tag{this}, std::move(srv));

@@ -40,10 +40,8 @@
 #include "common/perf_counters_collection.h"
 #endif
 
-
 #include "crush/CrushLocation.h"
 
-//class AdminSocket;  // not enough for lw_shared_ptr
 class CephContextServiceThread;
 class CephContextHook;
 class CephContextObs;
@@ -67,7 +65,7 @@ public:
 	      int = 0)
     : CephContext{}
   {}
-  CephContext(CephContext&&); // = default;
+  CephContext(CephContext&&);
   ~CephContext();
 
   uint32_t get_module_type() const;
