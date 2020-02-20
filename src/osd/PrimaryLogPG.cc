@@ -527,6 +527,13 @@ void PrimaryLogPG::replica_clear_repop_obc(
   }
 }
 
+// (Neha walkthru) RRR this is where we determine whether we should send the complete
+// op or just the log entries to that specific OSD.
+// Takes the peer and the object.
+// If peer is a primary: no question. We send the complete OP.
+// Otherwise: check if it's a backfill target (hoid > ...).
+// Then we check for async recovery target: first we check if the peer we are going to
+// send this, is missing this object.
 bool PrimaryLogPG::should_send_op(
   pg_shard_t peer,
   const hobject_t &hoid) {
@@ -549,6 +556,8 @@ bool PrimaryLogPG::should_send_op(
   }
   if (is_async_recovery_target(peer) &&
       recovery_state.get_peer_missing(peer).is_missing(hoid)) {
+    //  we will allow this transaction to proceed, but will not try to write to
+    //  that specific peer.
     should_send = false;
     dout(10) << __func__ << " issue_repop shipping empty opt to osd." << peer
              << ", object " << hoid
@@ -630,12 +639,18 @@ bool PrimaryLogPG::is_degraded_or_backfilling_object(const hobject_t& soid)
        ++i) {
     if (*i == get_primary()) continue;
     pg_shard_t peer = *i;
+    /*
+        (from Neha) RRR peer_missing is a database of all the information about missing objects
+        in a specific peer (OSD). The objects that are missing, the versions that are missing,
+        and all the information that is required in order to recover later.
+    */
     auto peer_missing_entry = recovery_state.get_peer_missing().find(peer);
     // If an object is missing on an async_recovery_target, return false.
     // This will not block the op and the object is async recovered later.
     if (peer_missing_entry != recovery_state.get_peer_missing().end() &&
 	peer_missing_entry->second.get_items().count(soid)) {
       if (is_async_recovery_target(peer))
+        // let this function continue, i.e. if we are only missing async recovery targets - we are not degraded
 	continue;
       else
 	return true;
@@ -12407,6 +12422,7 @@ bool PrimaryLogPG::start_recovery_ops(
     return have_unfound();
   }
 
+  // we are the primary for this PG. What is missing?
   const auto &missing = recovery_state.get_pg_log().get_missing();
 
   uint64_t num_unfound = get_num_unfound();
@@ -12423,10 +12439,12 @@ bool PrimaryLogPG::start_recovery_ops(
   }
   if (!started) {
     // We still have missing objects that we should grab from replicas.
-    started += recover_primary(max, handle);
+    // (We have not started a recovery effort on the replicas.) RRR
+    started += recover_primary(max, handle); // RRR why +=?
   }
   if (!started && num_unfound != get_num_unfound()) {
-    // second chance to recovery replicas
+    // get_num_unfound() changed from a few lines above. Thus we give
+    // a second chance to replicas' recovery
     started = recover_replicas(max, handle, &recovery_started);
   }
 
@@ -12860,7 +12878,7 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
     async_by_num_missing.begin(), async_by_num_missing.end());
   for (auto &replica: replicas_by_num_missing) {
     pg_shard_t &peer = replica.second;
-    ceph_assert(peer != get_primary());
+    ceph_assert(peer != get_primary()); // remember we are doing *replicas* recovery
     auto pm = recovery_state.get_peer_missing().find(peer);
     ceph_assert(pm != recovery_state.get_peer_missing().end());
     size_t m_sz = pm->second.num_missing();

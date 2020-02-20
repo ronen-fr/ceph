@@ -2674,6 +2674,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
         scrubber.active = true;
 
 	{
+          // RRR to explain this
 	  ObjectStore::Transaction t;
 	  scrubber.cleanup_store(&t);
 	  scrubber.store.reset(Scrub::Store::create(osd->store, &t,
@@ -2700,13 +2701,17 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
         break;
 
       case PG::Scrubber::NEW_CHUNK:
+        /*
+         RRR where we choose a range of XX to work on.
+
+        */
         scrubber.primary_scrubmap = ScrubMap();
         scrubber.received_maps.clear();
 
 	// begin (possible) preemption window
 	if (scrub_preempted) {
 	  scrubber.preempt_left--;
-	  scrubber.preempt_divisor *= 2;
+	  scrubber.preempt_divisor *= 2; // RRR reducing chunks size if we seem to be under load
 	  dout(10) << __func__ << " preempted, " << scrubber.preempt_left
 		   << " left" << dendl;
 	  scrub_preempted = false;

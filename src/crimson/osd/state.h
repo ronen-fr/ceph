@@ -60,7 +60,7 @@ public:
     case State::ACTIVE: return "active";
     case State::STOPPING: return "stopping";
     case State::WAITING_FOR_HEALTHY: return "waiting_for_healthy";
-    default: return "???";
+    // wrong to have "default" here. Prevents a warning when needed. default: return "???";
     }
   }
 };

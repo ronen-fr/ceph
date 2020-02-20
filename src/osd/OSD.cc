@@ -3234,6 +3234,10 @@ int OSD::get_num_op_threads()
     return get_num_op_shards() * cct->_conf->osd_op_num_threads_per_shard_ssd;
 }
 
+/**
+ * recovery throttling times depend on the type of disks
+ * holding the store and holding the journal.
+ */
 float OSD::get_osd_recovery_sleep()
 {
   if (cct->_conf->osd_recovery_sleep)

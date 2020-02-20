@@ -957,9 +957,11 @@ Message * ReplicatedBackend::generate_subop(
 
   // ship resulting transaction, log entries, and pg_stats
   if (!parent->should_send_op(peer, soid)) {
+    // just encode a 'get_data()' in an empty transaction object
     ObjectStore::Transaction t;
     encode(t, wr->get_data());
   } else {
+    // send the actual op
     encode(op_t, wr->get_data());
     wr->get_header().data_off = op_t.get_data_alignment();
   }
@@ -1061,6 +1063,7 @@ void ReplicatedBackend::do_repop(OpRequestRef op)
   // sanity checks
   ceph_assert(m->map_epoch >= get_info().history.same_interval_since);
 
+  // "I'm a replica. Get my log. Get my missings, and see what items are there.
   dout(30) << __func__ << " missing before " << get_parent()->get_log().get_missing().get_items() << dendl;
   parent->maybe_preempt_replica_scrub(soid);
 
@@ -1110,12 +1113,16 @@ void ReplicatedBackend::do_repop(OpRequestRef op)
 
   // flag set to true during async recovery
   bool async = false;
+  // "get all the missing objects for that peer". It may be an async recovery target, or may not.
+  //  we do not know yet.
   pg_missing_tracker_t pmissing = get_parent()->get_local_missing();
   if (pmissing.is_missing(soid)) {
+    // yes - it is an async recovery target
     async = true;
     dout(30) << __func__ << " is_missing " << pmissing.is_missing(soid) << dendl;
     for (auto &&e: log) {
       dout(30) << " add_next_event entry " << e << dendl;
+      // so let's try to update what we know about the missing object
       get_parent()->add_local_next_event(e);
       dout(30) << " entry is_delete " << e.is_delete() << dendl;
     }

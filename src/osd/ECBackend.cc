@@ -931,7 +931,7 @@ void ECBackend::sub_write_committed(
   }
 }
 
-void ECBackend::handle_sub_write(
+void ECBackend::handle_sub_write( // the parallel of "do replication" (do_repop())
   pg_shard_t from,
   OpRequestRef msg,
   ECSubWrite &op,
@@ -947,6 +947,7 @@ void ECBackend::handle_sub_write(
     add_temp_objs(op.temp_added);
   }
   if (op.backfill_or_async_recovery) {
+    // RRR Neha: if so, we should only write the log entries, not the whole transaction
     for (set<hobject_t>::iterator i = op.temp_removed.begin();
 	 i != op.temp_removed.end();
 	 ++i) {

@@ -1810,6 +1810,11 @@ void PeeringState::calc_replicated_acting(
   }
 }
 
+/*
+  RRR (per Neha in the walkthru)
+  Can we still recover?
+  Was once named "recoverable_and_ge_min_size()".
+*/
 bool PeeringState::recoverable(const vector<int> &want) const
 {
   unsigned num_want_acting = 0;
@@ -1919,7 +1924,7 @@ void PeeringState::choose_async_recovery_replicated(
   set<pg_shard_t> *async_recovery,
   const OSDMapRef osdmap) const
 {
-  set<pair<int, pg_shard_t> > candidates_by_cost;
+  set<pair<int, pg_shard_t> > candidates_by_cost; // RRR the 'int' is the cost of recovery of the specific shard
   for (auto osd_num : *want) {
     pg_shard_t shard_i(osd_num, shard_id_t::NO_SHARD);
     // do not include strays
@@ -2040,7 +2045,7 @@ bool PeeringState::choose_acting(pg_shard_t &auth_log_shard_id,
   vector<int> want;
   stringstream ss;
   if (pool.info.is_replicated())
-    calc_replicated_acting(
+    calc_replicated_acting( // selects acting OSDs and also backfill targets
       auth_log_shard,
       cct->_conf.get_val<uint64_t>(
         "osd_force_auth_primary_missing_objects"),
@@ -2050,9 +2055,9 @@ bool PeeringState::choose_acting(pg_shard_t &auth_log_shard_id,
       up_primary,
       all_info,
       restrict_to_up_acting,
-      &want,
-      &want_backfill,
-      &want_acting_backfill,
+      &want,                    // RRR proposed acting set
+      &want_backfill,           // backfill targets
+      &want_acting_backfill,    // a combination of both
       get_osdmap(),
       ss);
   else
@@ -2070,6 +2075,7 @@ bool PeeringState::choose_acting(pg_shard_t &auth_log_shard_id,
   psdout(10) << ss.str() << dendl;
 
   if (!recoverable(want)) {
+    // if the set is not enough for recovery
     want_acting.clear();
     return false;
   }
@@ -3985,6 +3991,15 @@ void PeeringState::pre_submit_op(
     }
   }
 
+  /*
+        Neha on Ceph code walk-through: OSD (async) recovery 22:47:
+        missing_loc is a data structure that contains the correct information
+        about a particular object, i.e. it lists all the OSDs that have
+        up-to-date information about the object.
+        Here we go over the acting set, which should have correct information,
+        and add the set to the missing_loc for the object.
+  */
+
   if (requires_missing_loc) {
     for (auto &&entry: logv) {
       psdout(30) << __func__ << " missing_loc before: "
@@ -3993,7 +4008,7 @@ void PeeringState::pre_submit_op(
                               eversion_t(), entry.is_delete());
       // clear out missing_loc
       missing_loc.clear_location(entry.soid);
-      for (auto &i: get_actingset()) {
+      for (auto &i: get_actingset()) { // RRR why not const auto &?
         if (!get_peer_missing(i).is_missing(entry.soid))
           missing_loc.add_location(entry.soid, i);
       }
@@ -5394,6 +5409,10 @@ void PeeringState::Recovering::exit()
   pl->get_peering_perf().tinc(rs_recovering_latency, dur);
 }
 
+/*
+ RRR Neha: the PG has recovered, and is trying to return to the active set.
+ 
+*/
 PeeringState::Recovered::Recovered(my_context ctx)
   : my_base(ctx),
     NamedState(context< PeeringMachine >().state_history, "Started/Primary/Active/Recovered")
