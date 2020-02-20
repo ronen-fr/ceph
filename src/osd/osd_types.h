@@ -5777,7 +5777,7 @@ struct ScrubMap {
     uint64_t size;
     __u32 omap_digest;         ///< omap crc32c
     __u32 digest;              ///< data crc32c
-    bool negative:1;
+    bool negative:1;           // RRR ???
     bool digest_present:1;
     bool omap_digest_present:1;
     bool read_error:1;

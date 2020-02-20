@@ -619,7 +619,7 @@ int PGBackend::be_scan_list(
 
 bool PGBackend::be_compare_scrub_objects(
   pg_shard_t auth_shard,
-  const ScrubMap::object &auth,
+  const ScrubMap::object &auth,  // RRR the authoritative source
   const object_info_t& auth_oi,
   const ScrubMap::object &candidate,
   shard_info_wrapper &shard_result,

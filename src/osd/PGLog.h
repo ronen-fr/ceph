@@ -706,6 +706,10 @@ public:
     missing.add(oid, need, have, is_delete);
   }
 
+  /*
+     Neha comments: we already did that for the primary.
+     Now we are handling the replica.
+  */
   void missing_add_next_entry(const pg_log_entry_t& e) {
     missing.add_next_event(e);
   }
