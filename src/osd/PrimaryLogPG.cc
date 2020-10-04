@@ -11608,7 +11608,7 @@ void PrimaryLogPG::_committed_pushed_object(
 
 void PrimaryLogPG::_applied_recovered_object(ObjectContextRef obc)
 {
-  dout(20) << __func__ << dendl;
+  dout(7/*20*/) << __func__ << dendl;
   if (obc) {
     dout(20) << "obc = " << *obc << dendl;
   }
@@ -11616,24 +11616,26 @@ void PrimaryLogPG::_applied_recovered_object(ObjectContextRef obc)
   --active_pushes;
 
   // requeue an active chunky scrub waiting on recovery ops
-  if (!recovery_state.is_deleting() && active_pushes == 0 && m_scrubber->is_scrub_active()) {
+  if (!recovery_state.is_deleting() && active_pushes == 0 &&
+      m_scrubber->is_scrub_active()) {
 
-    m_scrubber->queue_pushes_update(ops_blocked_by_scrub());
+    osd->queue_scrub_pushes_update(this, is_scrub_blocking_ops());
   }
 }
 
 void PrimaryLogPG::_applied_recovered_object_replica()
 {
-  dout(7 /*20*/) << __func__ << " ap: " << active_pushes << " prio: " << (bool)m_scrubber->replica_op_priority() << dendl;
-  ceph_assert(active_pushes >= 1); // RRR \todo verify we won't get here with active_pushes==0
-                                   // after is_deleting() is cleared.
+  dout(7 /*20*/) << __func__ << " ap: " << active_pushes
+		 << " prio: " << (bool)m_scrubber->replica_op_priority() << dendl;
+  ceph_assert(active_pushes >= 1);  // RRR \todo verify we won't get here with
+				    // active_pushes==0 after is_deleting() is cleared.
   --active_pushes;
 
   // requeue an active chunky scrub waiting on recovery ops
   if (!recovery_state.is_deleting() && active_pushes == 0 &&
       m_scrubber->is_scrub_active()) {
 
-    m_scrubber->queue_pushes_update(m_scrubber->replica_op_priority());
+    osd->queue_scrub_replica_pushes(this, m_scrubber->replica_op_priority());
   }
 }
 
@@ -14595,14 +14597,14 @@ void PrimaryLogPG::do_replica_scrub_map(OpRequestRef op)
 
   if (!m_scrubber->is_scrub_active()) {
     dout(10) << __func__ << " scrub isn't active" << dendl;
-    // RRR ask whether we should op-start here
+    /// RRR \todo ask whether we should mark op-start here
     return;
   }
   m_scrubber->map_from_replica(op);
 }
 
-bool PrimaryLogPG::_range_available_for_scrub(
-  const hobject_t &begin, const hobject_t &end)
+bool PrimaryLogPG::_range_available_for_scrub(const hobject_t& begin,
+					      const hobject_t& end)
 {
   pair<hobject_t, ObjectContextRef> next;
   next.second = object_contexts.lookup(begin);
@@ -14611,9 +14613,7 @@ bool PrimaryLogPG::_range_available_for_scrub(
   while (more && next.first < end) {
     if (next.second && next.second->is_blocked()) {
       next.second->requeue_scrub_on_unblock = true;
-      dout(10) << __func__ << ": scrub delayed, "
-	       << next.first << " is blocked"
-	       << dendl;
+      dout(10) << __func__ << ": scrub delayed, " << next.first << " is blocked" << dendl;
       return false;
     }
     more = object_contexts.get_next(next.first, &next);
