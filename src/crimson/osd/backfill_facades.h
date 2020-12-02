@@ -12,44 +12,42 @@ namespace crimson::osd {
 // PeeringFacade -- a facade (in the GoF-defined meaning) simplifying
 // the interface of PeeringState. The motivation is to have an inventory
 // of behaviour that must be provided by a unit test's mock.
-struct BackfillState::PeeringFacade {
+struct PeeringFacade final : BackfillState::PeeringFacade {
   PeeringState& peering_state;
 
-  decltype(auto) earliest_backfill() const {
+  hobject_t earliest_backfill() const override {
     return peering_state.earliest_backfill();
   }
 
-  decltype(auto) get_backfill_targets() const {
+  std::set<pg_shard_t> get_backfill_targets() const override {
     return peering_state.get_backfill_targets();
   }
 
-  decltype(auto) get_peer_last_backfill(pg_shard_t peer) const {
+  const hobject_t& get_peer_last_backfill(pg_shard_t peer) const override {
     return peering_state.get_peer_info(peer).last_backfill;
   }
 
-  decltype(auto) get_last_update() const {
+  const eversion_t& get_last_update() const override {
     return peering_state.get_info().last_update;
   }
 
-  decltype(auto) get_log_tail() const {
+  const eversion_t& get_log_tail() const override {
     return peering_state.get_info().log_tail;
   }
 
-  template <class... Args>
-  void scan_log_after(Args&&... args) const {
-    peering_state.get_pg_log().get_log().scan_log_after(
-      std::forward<Args>(args)...);
+  void scan_log_after(eversion_t v, scan_log_func_t f) const override {
+    peering_state.get_pg_log().get_log().scan_log_after(v, std::move(f));
   }
 
-  bool is_backfill_target(pg_shard_t peer) const {
+  bool is_backfill_target(pg_shard_t peer) const override {
     return peering_state.is_backfill_target(peer);
   }
   void update_complete_backfill_object_stats(const hobject_t &hoid,
-                                             const pg_stat_t &stats) {
+                                             const pg_stat_t &stats) override {
     return peering_state.update_complete_backfill_object_stats(hoid, stats);
   }
 
-  bool is_backfilling() const {
+  bool is_backfilling() const override {
     return peering_state.is_backfilling();
   }
 
@@ -61,10 +59,10 @@ struct BackfillState::PeeringFacade {
 // PGFacade -- a facade (in the GoF-defined meaning) simplifying the huge
 // interface of crimson's PG class. The motivation is to have an inventory
 // of behaviour that must be provided by a unit test's mock.
-struct BackfillState::PGFacade {
+struct PGFacade final : BackfillState::PGFacade {
   PG& pg;
 
-  decltype(auto) get_projected_last_update() const {
+  const eversion_t& get_projected_last_update() const override {
     return pg.projected_last_update;
   }
 

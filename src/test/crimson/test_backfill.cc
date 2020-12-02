@@ -17,7 +17,6 @@
 #include "common/hobject.h"
 #include "crimson/osd/backfill_state.h"
 #include "osd/recovery_types.h"
-#include "test/crimson/test_backfill_facades.h"
 
 
 // The sole purpose is to convert from the string representation.
@@ -205,8 +204,9 @@ struct BackfillFixture::PeeringFacade
   const eversion_t& get_log_tail() const override {
     return backfill_source.log_tail;
   }
-  template <class... Args>
-  void scan_log_after(Args&&... args) const {
+
+  void scan_log_after(eversion_t, scan_log_func_t) const override {
+    /* NOP */
   }
 
   bool is_backfill_target(pg_shard_t peer) const override {
