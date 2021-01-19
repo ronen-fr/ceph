@@ -30,7 +30,7 @@
 #include "crimson/osd/osd_operations/background_recovery.h"
 #include "crimson/osd/shard_services.h"
 #include "crimson/osd/osdmap_gate.h"
-#include "crimson/osd/pg_recovery.h"
+#include "crimson/osd/scrubber_common_cr.h"
 #include "crimson/osd/pg_recovery_listener.h"
 #include "crimson/osd/recovery_backend.h"
 
@@ -46,6 +46,13 @@ namespace recovery {
 
 namespace crimson::net {
   class Messenger;
+}
+
+namespace Scrub {
+class Store;
+class ReplicaReservations;
+class LocalReservation;
+class ReservedByRemotePrimary;
 }
 
 namespace crimson::os {
@@ -65,6 +72,12 @@ class PG : public boost::intrusive_ref_counter<
 {
   using ec_profile_t = std::map<std::string,std::string>;
   using cached_map_t = boost::local_shared_ptr<const OSDMap>;
+
+  friend class PgScrubber;
+  friend class PrimaryLogScrub;
+  friend class Scrub::ReplicaReservations;
+  friend class Scrub::LocalReservation;
+  friend class Scrub::ReservedByRemotePrimary;
 
   ClientRequest::PGPipeline client_request_pg_pipeline;
   PeeringEvent::PGPipeline peering_request_pg_pipeline;
