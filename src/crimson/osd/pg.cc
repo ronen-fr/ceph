@@ -341,6 +341,11 @@ PG::do_delete_work(ceph::os::Transaction &t, ghobject_t _next)
 void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
 {
   // TODO: should update the stats upon finishing the scrub
+
+  // RRR already (in Classic) part of _scrub_finish
+  m_scrubber->scrub_requested(scrub_level, scrub_type, m_planned_scrub);
+
+  #if 0
   peering_state.update_stats([scrub_level, this](auto& history, auto& stats) {
     const utime_t now = ceph_clock_now();
     history.last_scrub = peering_state.get_info().last_update;
@@ -353,6 +358,7 @@ void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
     // yes, please publish the stats
     return true;
   });
+  #endif
 }
 
 void PG::log_state_enter(const char *state) {
