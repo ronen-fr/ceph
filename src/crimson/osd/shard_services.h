@@ -15,6 +15,7 @@
 #include "crimson/osd/osdmap_service.h"
 #include "crimson/osd/object_context.h"
 #include "common/AsyncReserver.h"
+#include "crimson/osd/osd_scrub_sched.h"
 
 namespace crimson::net {
   class Messenger;
@@ -212,9 +213,15 @@ public:
   AsyncReserver<spg_t, DirectFinisher> local_reserver;
   AsyncReserver<spg_t, DirectFinisher> remote_reserver;
 
+  bool is_recovery_active() { return false; /* RRR */ }
+  ScrubQueue m_scrub_queue;
+  ScrubQueue& get_scrub_services() { return m_scrub_queue; }
+
 private:
   epoch_t up_thru_wanted = 0;
-public:
+
+
+ public:
   seastar::future<> send_alive(epoch_t want);
 };
 
