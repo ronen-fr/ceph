@@ -23,10 +23,10 @@
 #include "messages/MOSDOp.h"
 #include "messages/MOSDPGLog.h"
 #include "messages/MOSDPGPull.h"
-#include "messages/MOSDPGPush.h"
-#include "messages/MOSDPGPushReply.h"
-#include "messages/MOSDPGRecoveryDelete.h"
-#include "messages/MOSDPGRecoveryDeleteReply.h"
+//#include "messages/MOSDPGPush.h"
+//#include "messages/MOSDPGPushReply.h"
+//#include "messages/MOSDPGRecoveryDelete.h"
+//#include "messages/MOSDPGRecoveryDeleteReply.h"
 #include "messages/MOSDRepOpReply.h"
 #include "messages/MOSDScrub2.h"
 #include "messages/MPGStats.h"
@@ -43,7 +43,7 @@
 #include "crimson/mon/MonClient.h"
 #include "crimson/net/Connection.h"
 #include "crimson/net/Messenger.h"
-#include "crimson/os/futurized_collection.h"
+//#include "crimson/os/futurized_collection.h"
 #include "crimson/os/futurized_store.h"
 #include "crimson/osd/heartbeat.h"
 #include "crimson/osd/osd_meta.h"
@@ -61,7 +61,7 @@ namespace {
   seastar::logger& logger() {
     return crimson::get_logger(ceph_subsys_osd);
   }
-  static constexpr int TICK_INTERVAL = 1;
+  constexpr int TICK_INTERVAL = 1;
 }
 
 using crimson::common::local_conf;
@@ -156,8 +156,7 @@ seastar::future<> OSD::mkfs(uuid_d osd_uuid, uuid_d cluster_fsid)
     superblock.compat_features = get_osd_initial_compat_set();
 
     logger().info(
-      "{} writing superblock cluster_fsid {} osd_fsid {}",
-      __func__,
+      "OSD::mkfs: writing superblock cluster_fsid {} osd_fsid {}",
       cluster_fsid,
       superblock.osd_fsid);
     return store->create_new_collection(coll_t::meta());
@@ -397,7 +396,7 @@ seastar::future<> OSD::_add_me_to_crush()
   };
   return get_weight().then([this](auto weight) {
     const crimson::crush::CrushLocation loc{make_unique<CephContext>().get()};
-    logger().info("{} crush location is {}", __func__, loc);
+    logger().info("OSD::_add_me_to_crush(): crush location is {}", loc);
     string cmd = fmt::format(R"({{
       "prefix": "osd crush create-or-move",
       "id": {},
@@ -768,9 +767,9 @@ seastar::future<OSD::cached_map_t> OSD::get_map(epoch_t e)
   if (auto found = osdmaps.find(e); found) {
     return seastar::make_ready_future<cached_map_t>(std::move(found));
   } else {
-    return load_map(e).then([e, this](unique_ptr<OSDMap> osdmap) {
+    return load_map(e).then([e, this](unique_ptr<OSDMap> osd_map) {
       return seastar::make_ready_future<cached_map_t>(
-        osdmaps.insert(e, std::move(osdmap)));
+        osdmaps.insert(e, std::move(osd_map)));
     });
   }
 }
@@ -1359,6 +1358,84 @@ seastar::future<> OSD::prepare_to_stop()
     });
   }
   return seastar::now();
+}
+
+void OSD::sched_scrub()
+{
+  auto& scrub_queuer = shard_services.get_scrub_services();
+
+  if (!scrub_queuer.can_inc_scrubs()) {
+    logger().debug("{}: OSD cannot inc scrubs", __func__);
+    return;
+  }
+
+  // \todo all the checks re recovery etc
+
+
+  utime_t now = ceph_clock_now();
+  const bool time_permit = scrub_queuer.scrub_time_permit(now);
+  const bool load_is_low = scrub_queuer.scrub_load_below_threshold();
+  logger().debug("{}: sched_scrub load_is_low? {}", __func__,
+		 load_is_low ? "low" : "high!");
+
+  for (auto scrub_job : scrub_queuer) {
+
+    if (scrub_job.sched_time > now) {
+      logger().debug("{}: {} scheduled for {} (which is > now ({})", __func__,
+		     scrub_job.pgid, scrub_job.sched_time, now);
+      break;
+    }
+
+    if ((scrub_job.deadline.is_zero() || scrub_job.deadline >= now) &&
+	!(time_permit && load_is_low)) {
+      logger().debug("{}: not scheduling {} due to {}", __func__, scrub_job.pgid,
+		     (!time_permit ? "time not permitted" : "high load"));
+      continue;
+    }
+
+    auto pg = get_pg(scrub_job.pgid);
+    if (!pg) {
+      logger().debug("{}: {} not found", __func__, scrub_job.pgid);
+      continue;
+    }
+
+    // This has already started, so go on to the next scrub job
+    if (pg->m_scrubber->is_scrub_active()) {
+      //pg->unlock();
+      logger().debug("{}: already in progress pgid {}", __func__, scrub_job.pgid);
+      continue;
+    }
+
+    /*// Skip other kinds of scrubbing if only explicitly requested repairing is allowed
+    if (allow_requested_repair_only && !pg->m_planned_scrub.must_repair) {
+      pg->unlock();
+      dout(10) << __func__ << " skip " << scrub_job.pgid
+	       << " because repairing is not explicitly requested on it"
+	       << dendl;
+      continue;
+    }*/
+
+    // If it is reserving, let it resolve before going to the next scrub job
+    if (pg->m_scrubber->is_reserving()) {
+      //pg->unlock();
+      logger().debug("{}: resource reservation in progress for {}", __func__,
+		     scrub_job.pgid);
+      break;
+    }
+
+    // dout(15) << "sched_scrub scrubbing " << scrub_job.pgid << " at " <<
+    // scrub_job.sched_time
+    //     << (pg->get_must_scrub() ? ", explicitly requested" :
+    //	 (load_is_low ? ", load_is_low" : " deadline < now"))
+    //   << dendl;
+
+    if (pg->sched_scrub()) {
+      //pg->unlock();
+      logger().info("{}: scheduled a scrub! ({})", __func__, scrub_job.pgid);
+      break;
+    }
+    //pg->unlock();
+  }
 }
 
 }
