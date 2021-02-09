@@ -30,6 +30,7 @@
 #include "crimson/osd/osd_operations/background_recovery.h"
 #include "crimson/osd/shard_services.h"
 #include "crimson/osd/osdmap_gate.h"
+#include "crimson/osd/pg_recovery.h"
 #include "crimson/osd/scrubber_common_cr.h"
 #include "crimson/osd/pg_recovery_listener.h"
 #include "crimson/osd/recovery_backend.h"
@@ -48,13 +49,6 @@ namespace crimson::net {
   class Messenger;
 }
 
-namespace Scrub {
-class Store;
-class ReplicaReservations;
-class LocalReservation;
-class ReservedByRemotePrimary;
-}
-
 namespace crimson::os {
   class FuturizedStore;
 }
@@ -62,6 +56,14 @@ namespace crimson::os {
 namespace crimson::osd {
 class ClientRequest;
 class OpsExecuter;
+class PgScrubSched;
+
+namespace Scrub {
+class Store;
+class ReplicaReservations;
+class LocalReservation;
+class ReservedByRemotePrimary;
+}
 
 class PG : public boost::intrusive_ref_counter<
   PG,
@@ -525,6 +527,14 @@ public:
   void dump_primary(Formatter*);
 
 private:
+  std::unique_ptr<ScrubPgIF> m_scrubber;
+  std::unique_ptr<PgScrubSched> m_scrub_sched;
+  /// flags detailing scheduling/operation characteristics of the next scrub
+  requested_scrub_t m_planned_scrub;
+  bool scrub_after_recovery{false}; // RRR to finish handling
+  bool range_available_for_scrub(const hobject_t &begin, const hobject_t &end) { return true;}
+
+ private:
   template<RWState::State State>
   load_obc_ertr::future<> with_clone_obc(hobject_t oid, with_obc_func_t&& func);
 

@@ -35,6 +35,8 @@
 #include "crimson/osd/osd_operations/osdop_params.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 #include "crimson/osd/pg_recovery.h"
+#include "crimson/osd/pg_scrub_sched.h"
+#include "crimson/osd/scrubber.h"
 #include "crimson/osd/replicated_recovery_backend.h"
 
 namespace {
@@ -120,6 +122,8 @@ PG::PG(
     new ReadablePredicate(pg_whoami),
     new RecoverablePredicate());
   osdmap_gate.got_map(osdmap->get_epoch());
+  m_scrubber = make_unique<PgScrubber>(this);
+  m_scrub_sched = make_unique<PgScrubSched>(*this);
 }
 
 PG::~PG() {}
@@ -361,6 +365,12 @@ void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
   #endif
 }
 
+// consider moving to pg_scrub_sched_t
+bool PG::sched_scrub()
+{
+  return m_scrub_sched->sched_scrub();
+}
+
 void PG::log_state_enter(const char *state) {
   logger().info("Entering state: {}", state);
 }
@@ -483,6 +493,31 @@ void PG::do_peering_event(
   if (!peering_state.pg_has_reset_since(evt.get_epoch_requested())) {
     logger().debug("{} handling {} for pg: {}", __func__, evt.get_desc(), pgid);
     do_peering_event(evt.get_event(), rctx);
+  } else {
+    logger().debug("{} ignoring {} -- pg has reset", __func__, evt.get_desc());
+  }
+}
+
+// RRR bookmark
+/*
+void PG::do_scrub_event(
+  const boost::statechart::event_base &evt,
+  PeeringCtx &rctx)
+{
+  peering_state.handle_event(
+    evt,
+    &rctx);
+  peering_state.write_if_dirty(rctx.transaction);
+}
+ */
+
+// was it removed?
+void PG::do_scrub_event(
+  PgScrubEvent& evt, PeeringCtx &rctx)
+{
+  if (m_scrubber && !peering_state.pg_has_reset_since(evt.get_epoch_requested())) {
+    logger().debug("{} handling {} for pg: {}", __func__, evt.get_desc(), pgid);
+    m_scrubber->do_scrub_event(evt, rctx);
   } else {
     logger().debug("{} ignoring {} -- pg has reset", __func__, evt.get_desc());
   }

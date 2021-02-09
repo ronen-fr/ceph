@@ -223,6 +223,7 @@ private:
     stop_acked.set_value();
   }
   seastar::future<> prepare_to_stop();
+
 public:
   blocking_future<Ref<PG>> get_or_create_pg(
     spg_t pgid,
@@ -240,6 +241,13 @@ public:
   void update_heartbeat_peers();
 
   friend class PGAdvanceMap;
+
+
+  // -- scrubbing --
+  void sched_scrub();
+  void resched_all_scrubs();
+  //bool scrub_random_backoff();
+
 };
 
 inline std::ostream& operator<<(std::ostream& out, const OSD& osd) {
