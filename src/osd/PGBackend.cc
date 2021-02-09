@@ -894,8 +894,8 @@ map<pg_shard_t, ScrubMap *>::const_iterator
       shard_info.primary = true;
     if (i->second.read_error) {
       shard_info.set_read_error();
-      if (error)
-        shard_errorstream << ", ";
+      //if (error)
+      //  shard_errorstream << ", ";
       error = true;
       shard_errorstream << "candidate had a read error";
     }

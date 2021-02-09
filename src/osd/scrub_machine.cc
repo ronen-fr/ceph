@@ -353,7 +353,6 @@ sc::result WaitReplicas::react(const GotReplicas&)
     // were we preempted?
     if (scrbr->get_preemptor().disable_and_test()) {  // a test&set
 
-
       dout(10) << "WaitReplicas::react(const GotReplicas&) PREEMPTED!" << dendl;
       return transit<PendingTimer>();
 
