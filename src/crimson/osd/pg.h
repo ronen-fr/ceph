@@ -26,11 +26,13 @@
 #include "crimson/osd/backfill_state.h"
 #include "crimson/osd/osd_operations/client_request.h"
 #include "crimson/osd/osd_operations/peering_event.h"
+#include "crimson/osd/osd_operations/scrub_event.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
 #include "crimson/osd/osd_operations/background_recovery.h"
 #include "crimson/osd/shard_services.h"
 #include "crimson/osd/osdmap_gate.h"
 #include "crimson/osd/pg_recovery.h"
+#include "crimson/osd/pg_scrub_sched.h"
 #include "crimson/osd/scrubber_common_cr.h"
 #include "crimson/osd/pg_recovery_listener.h"
 #include "crimson/osd/recovery_backend.h"
@@ -80,10 +82,12 @@ class PG : public boost::intrusive_ref_counter<
   friend class Scrub::ReplicaReservations;
   friend class Scrub::LocalReservation;
   friend class Scrub::ReservedByRemotePrimary;
+  friend class PgScrubSched;
 
   ClientRequest::PGPipeline client_request_pg_pipeline;
   PeeringEvent::PGPipeline peering_request_pg_pipeline;
   RepRequest::PGPipeline replicated_request_pg_pipeline;
+  ScrubEvent::PGPipeline scrub_request_pg_pipeline;
 
   spg_t pgid;
   pg_shard_t pg_whoami;
@@ -104,6 +108,10 @@ public:
      ec_profile_t profile);
 
   ~PG();
+
+  bool state_test(uint64_t m) const { return peering_state.state_test(m); }
+  void state_set(uint64_t m) { peering_state.state_set(m); }
+  void state_clear(uint64_t m) { peering_state.state_clear(m); }
 
   const pg_shard_t& get_pg_whoami() const final {
     return pg_whoami;
@@ -167,6 +175,7 @@ public:
   }
 
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) final;
+  bool sched_scrub();
 
   uint64_t get_snap_trimq_size() const final {
     return 0;
@@ -482,6 +491,9 @@ public:
   void do_peering_event(
     PGPeeringEvent& evt, PeeringCtx &rctx);
 
+  void do_scrub_event(
+    PgScrubEvent& evt, PeeringCtx &rctx);
+
   void handle_advance_map(cached_map_t next_map, PeeringCtx &rctx);
   void handle_activate_map(PeeringCtx &rctx);
   void handle_initialize(PeeringCtx &rctx);
@@ -532,6 +544,8 @@ private:
   /// flags detailing scheduling/operation characteristics of the next scrub
   requested_scrub_t m_planned_scrub;
   bool scrub_after_recovery{false}; // RRR to finish handling
+  //PgScrubSched m_scrub_sched;
+  /// flags detailing scheduling/operation characteristics of the next scrub
   bool range_available_for_scrub(const hobject_t &begin, const hobject_t &end) { return true;}
 
  private:
@@ -549,7 +563,7 @@ private:
   void fill_op_params_bump_pg_version(
     osd_op_params_t& osd_op_p,
     Ref<MOSDOp> m,
-    const bool user_modify);
+    bool user_modify);
   seastar::future<Ref<MOSDOpReply>> handle_failed_op(
     const std::error_code& e,
     ObjectContextRef obc,
@@ -578,6 +592,8 @@ private:
 
 public:
   cached_map_t get_osdmap() { return osdmap; }
+  cached_map_t get_osdmap() const { return osdmap; }
+
   eversion_t next_version() {
     return eversion_t(get_osdmap_epoch(),
 		      ++projected_last_update.version);
@@ -659,7 +675,7 @@ public:
   int get_recovery_op_priority() const {
     int64_t pri = 0;
     get_pool().info.opts.get(pool_opts_t::RECOVERY_OP_PRIORITY, &pri);
-    return  pri > 0 ? pri : crimson::common::local_conf()->osd_recovery_op_priority;
+    return  pri > 0 ? (int)pri : (int)crimson::common::local_conf()->osd_recovery_op_priority;
   }
   seastar::future<> mark_unfound_lost(int) {
     // TODO: see PrimaryLogPG::mark_all_unfound_lost()
@@ -695,6 +711,7 @@ private:
   friend class PGAdvanceMap;
   friend class PeeringEvent;
   friend class RepRequest;
+  friend class ScrubEvent;
   friend class BackfillRecovery;
   friend struct PGFacade;
 private:

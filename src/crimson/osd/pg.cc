@@ -116,7 +116,8 @@ PG::PG(
       osdmap,
       this,
       this),
-    wait_for_active_blocker(this)
+    wait_for_active_blocker(this),
+    m_scrub_sched{*this}
 {
   peering_state.set_backend_predicates(
     new ReadablePredicate(pg_whoami),
@@ -368,7 +369,7 @@ void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
 // consider moving to pg_scrub_sched_t
 bool PG::sched_scrub()
 {
-  return m_scrub_sched->sched_scrub();
+  return m_scrub_sched.sched_scrub();
 }
 
 void PG::log_state_enter(const char *state) {
@@ -517,7 +518,7 @@ void PG::do_scrub_event(
 {
   if (m_scrubber && !peering_state.pg_has_reset_since(evt.get_epoch_requested())) {
     logger().debug("{} handling {} for pg: {}", __func__, evt.get_desc(), pgid);
-    m_scrubber->do_scrub_event(evt, rctx);
+    m_scrubber->do_scrub_event(evt.get_event(), rctx);
   } else {
     logger().debug("{} ignoring {} -- pg has reset", __func__, evt.get_desc());
   }
@@ -566,7 +567,7 @@ void PG::dump_primary(Formatter* f)
 
   f->open_array_section("recovery_state");
   PeeringState::QueryState q(f);
-  peering_state.handle_event(q, 0);
+  peering_state.handle_event(q, nullptr);
   f->close_section();
 
   // TODO: snap_trimq
@@ -638,15 +639,15 @@ seastar::future<> PG::submit_transaction(const OpInfo& op_info,
     logger().debug("{} op_returns: {}",
                    __func__, log_entries.back().op_returns);
   }
-  log_entries.back().clean_regions = std::move(osd_op_p.clean_regions);
+  log_entries.back().clean_regions = osd_op_p.clean_regions;
   peering_state.pre_submit_op(obc->obs.oi.soid, log_entries, osd_op_p.at_version);
-  peering_state.append_log_with_trim_to_updated(std::move(log_entries), osd_op_p.at_version,
+  peering_state.append_log_with_trim_to_updated(std::forward<std::vector<pg_log_entry_t>>(log_entries), osd_op_p.at_version,
 						txn, true, false);
 
   return backend->mutate_object(peering_state.get_acting_recovery_backfill(),
 				std::move(obc),
 				std::move(txn),
-				std::move(osd_op_p),
+				osd_op_p,
 				peering_state.get_last_peering_reset(),
 				map_epoch,
 				std::move(log_entries)).then(
@@ -939,7 +940,7 @@ PG::with_clone_obc(hobject_t oid, with_obc_func_t&& func)
     return clone->template with_lock<State>(
       [coid=*coid, existed=existed,
        head=std::move(head), clone=std::move(clone),
-       func=std::move(func), this]() -> load_obc_ertr::future<> {
+       func=func, this]() -> load_obc_ertr::future<> {
       auto loaded = load_obc_ertr::make_ready_future<ObjectContextRef>(clone);
       if (existed) {
         logger().debug("with_clone_obc: found {} in cache", coid);
@@ -996,13 +997,13 @@ PG::reload_obc(crimson::osd::ObjectContext& obc) const
     -> load_obc_ertr::future<> {
     logger().debug(
       "{}: reloaded obs {} for {}",
-      __func__,
+      "PG::reload_obc",
       md->os.oi,
       obc.get_oid());
     if (!md->ss) {
       logger().error(
         "{}: oid {} missing snapset",
-        __func__,
+	"PG::reload_obc",
         obc.get_oid());
       return crimson::ct_error::object_corrupted::make();
     }

@@ -260,11 +260,11 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    *  we are a replica being asked by the Primary to reserve OSD resources for
    *  scrubbing
    */
-  void handle_scrub_reserve_request(ScrubEvent op) final;
+  void handle_scrub_reserve_request(RemoteScrubEvent op) final;
 
-  void handle_scrub_reserve_grant(ScrubEvent op, pg_shard_t from) final;
-  void handle_scrub_reserve_reject(ScrubEvent op, pg_shard_t from) final;
-  void handle_scrub_reserve_release(ScrubEvent op) final;
+  void handle_scrub_reserve_grant(RemoteScrubEvent op, pg_shard_t from) final;
+  void handle_scrub_reserve_reject(RemoteScrubEvent op, pg_shard_t from) final;
+  void handle_scrub_reserve_release(RemoteScrubEvent op) final;
   void discard_replica_reservations() final;
   void clear_scrub_reservations() final;  // PG::clear... fwds to here
   void unreserve_replicas() final;
@@ -293,7 +293,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   // used if we are a replica
 
-  void replica_scrub_op(ScrubEvent op) final;
+  void replica_scrub_op(RemoteScrubEvent op) final;
 
   /// the op priority, taken from the primary's request message
   Scrub::scrub_prio_t replica_op_priority() const final
@@ -317,7 +317,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   }
 
   /// handle a message carrying a replica map
-  void map_from_replica(ScrubEvent op) final;
+  void map_from_replica(RemoteScrubEvent op) final;
 
   /**
    *  should we requeue blocked ops?
@@ -458,9 +458,9 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
  private:
 
   //void queue_local_event(MessageRef msg, Scrub::scrub_prio_t prio);
-  void queue_local_event(boost::statechart::event_base& fsm_event, Scrub::scrub_prio_t prio);
-  void queue_local_event(boost::intrusive_ptr<const boost::statechart::event_base> fsm_event, Scrub::scrub_prio_t prio);
-  void queue_local_event2(const boost::statechart::event_base& fsm_event, Scrub::scrub_prio_t prio);
+  void queue_local_event(boost::statechart::event_base* fsm_event, Scrub::scrub_prio_t prio);
+  //void queue_local_event(boost::intrusive_ptr<const boost::statechart::event_base> fsm_event, Scrub::scrub_prio_t prio);
+  //void queue_local_event2(const boost::statechart::event_base& fsm_event, Scrub::scrub_prio_t prio);
 
   void reset_internal_state();
 

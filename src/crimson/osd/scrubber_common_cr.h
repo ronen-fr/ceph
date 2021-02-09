@@ -165,9 +165,9 @@ struct ScrubPgIF {
   [[nodiscard]] virtual bool is_reserving() const = 0;
 
   /// handle a message carrying a replica map
-  virtual void map_from_replica(crimson::osd::ScrubEvent op) = 0;
+  virtual void map_from_replica(crimson::osd::RemoteScrubEvent op) = 0;
 
-  virtual void replica_scrub_op(crimson::osd::ScrubEvent op) = 0;
+  virtual void replica_scrub_op(crimson::osd::RemoteScrubEvent op) = 0;
 
   virtual void set_op_parameters(requested_scrub_t&) = 0;
 
@@ -262,13 +262,13 @@ struct ScrubPgIF {
   virtual bool reserve_local() = 0;
 
   // on the replica:
-  virtual void handle_scrub_reserve_request(crimson::osd::ScrubEvent op) = 0;
-  virtual void handle_scrub_reserve_release(crimson::osd::ScrubEvent op) = 0;
+  virtual void handle_scrub_reserve_request(crimson::osd::RemoteScrubEvent op) = 0;
+  virtual void handle_scrub_reserve_release(crimson::osd::RemoteScrubEvent op) = 0;
 
   // and on the primary:
-  virtual void handle_scrub_reserve_grant(crimson::osd::ScrubEvent op,
+  virtual void handle_scrub_reserve_grant(crimson::osd::RemoteScrubEvent op,
 					  pg_shard_t from) = 0;
-  virtual void handle_scrub_reserve_reject(crimson::osd::ScrubEvent op,
+  virtual void handle_scrub_reserve_reject(crimson::osd::RemoteScrubEvent op,
 					   pg_shard_t from) = 0;
 
   virtual void reg_next_scrub(const requested_scrub_t& request_flags) = 0;

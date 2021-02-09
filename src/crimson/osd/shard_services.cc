@@ -54,7 +54,8 @@ ShardServices::ShardServices(
 	&cct,
 	&finisher,
 	crimson::common::local_conf()->osd_max_backfills,
-	crimson::common::local_conf()->osd_min_recovery_priority)
+	crimson::common::local_conf()->osd_min_recovery_priority),
+      m_scrub_queue{&cct, *this}
 {
   perf = build_osd_logger(&cct);
   cct.get_perfcounters_collection()->add(perf);

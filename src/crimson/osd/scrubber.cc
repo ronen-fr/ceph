@@ -128,8 +128,17 @@ void PgScrubber::requeue_waiting() const
   ; /* RRR m_pg->requeue_ops(m_pg->waiting_for_scrub); */
 }
 
-// void PgScrubber::queue_local_event(MessageRef msg, Scrub::scrub_prio_t prio){}
 
+void PgScrubber::do_scrub_event(crimson::osd::PgScrubEvent evt, PeeringCtx &rctx)
+{
+  logger().warn("{}: event: ???", __func__);
+
+  m_fsm->process_event(evt.get_event());
+}
+
+
+// void PgScrubber::queue_local_event(MessageRef msg, Scrub::scrub_prio_t prio){}
+#if 0
 void PgScrubber::queue_local_event(
   boost::intrusive_ptr<const boost::statechart::event_base> fsm_event,
   Scrub::scrub_prio_t prio)
@@ -139,6 +148,7 @@ void PgScrubber::queue_local_event(
     m_pg->get_pg_whoami(), m_pg->get_pgid(), m_pg->get_osdmap_epoch(),
     m_pg->get_osdmap_epoch(), fsm_event);
 }
+
 void PgScrubber::queue_local_event2(const boost::statechart::event_base& fsm_event,
 				    Scrub::scrub_prio_t prio)
 {
@@ -147,6 +157,7 @@ void PgScrubber::queue_local_event2(const boost::statechart::event_base& fsm_eve
     m_pg->get_pg_whoami(), m_pg->get_pgid(), m_pg->get_osdmap_epoch(),
     m_pg->get_osdmap_epoch(), fsm_event);
 }
+
 void PgScrubber::queue_local_event(boost::statechart::event_base& fsm_event,
 				   Scrub::scrub_prio_t prio)
 {
@@ -154,6 +165,37 @@ void PgScrubber::queue_local_event(boost::statechart::event_base& fsm_event,
     static_cast<crimson::osd::PG*>(m_pg), m_pg->get_shard_services(),
     m_pg->get_pg_whoami(), m_pg->get_pgid(), m_pg->get_osdmap_epoch(),
     m_pg->get_osdmap_epoch(), fsm_event);
+}
+#endif
+
+#if 0
+void PgScrubber::queue_local_event(boost::statechart::event_base* fsm_event,
+				   Scrub::scrub_prio_t prio)
+{
+  std::unique_ptr<PgScrubEvent> evt((PgScrubEvent*)fsm_event);
+
+  std::ignore = m_pg->get_shard_services().start_operation<LocalScrubEvent>(
+    static_cast<crimson::osd::PG*>(m_pg), m_pg->get_shard_services(),
+    m_pg->get_pg_whoami(), m_pg->get_pgid(), m_pg->get_osdmap_epoch(),
+    m_pg->get_osdmap_epoch(), std::move(*evt));
+}
+#endif
+
+void PgScrubber::queue_local_event(boost::statechart::event_base* fsm_event,
+				   Scrub::scrub_prio_t prio)
+{
+  std::unique_ptr<PgScrubEvent> evt((PgScrubEvent*)fsm_event);
+
+  std::ignore = m_pg->get_shard_services().start_operation<LocalScrubEvent>(
+    //static_cast<crimson::osd::PG*>(m_pg),
+    m_pg,
+    m_pg->get_shard_services(),
+    m_pg->get_pg_whoami(),
+    m_pg->get_pgid(),
+    m_pg->get_osdmap_epoch(),
+    m_pg->get_osdmap_epoch(),
+    Scrub::InternalError{});
+    //std::move(*evt));
 }
 
 
@@ -881,7 +923,8 @@ PgScrubber::add_delayed_scheduling()  // replace with an errorator, if returning
 
   } else {
     // just a requeue
-    queue_local_event(Scrub::InternalSchedScrub{}.intrusive_from_this(),
+    //queue_local_event(Scrub::InternalSchedScrub{}.intrusive_from_this(),
+    queue_local_event(new Scrub::InternalSchedScrub{},
 		      Scrub::scrub_prio_t::high_priority);
     return seastar::make_ready_future<bool>(true);
   }
