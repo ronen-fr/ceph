@@ -46,8 +46,8 @@ PGBackend::create(pg_t pgid,
     return std::make_unique<ReplicatedBackend>(pgid, pg_shard,
 					       coll, shard_services);
   case pg_pool_t::TYPE_ERASURE:
-    return std::make_unique<ECBackend>(pg_shard.shard, coll, shard_services,
-                                       std::move(ec_profile),
+    return std::make_unique<ECBackend>(pg_shard, coll, shard_services,
+                                       /*std::move(*/ec_profile,
                                        pool.stripe_width);
   default:
     throw runtime_error(seastar::format("unsupported pool type '{}'",
@@ -55,12 +55,15 @@ PGBackend::create(pg_t pgid,
   }
 }
 
-PGBackend::PGBackend(shard_id_t shard,
+PGBackend::PGBackend(pg_shard_t shard,
                      CollectionRef coll,
-                     crimson::os::FuturizedStore* store)
-  : shard{shard},
+                     crimson::os::FuturizedStore* store,
+		     crimson::osd::ShardServices& shard_services)
+  : shard{shard.shard},
     coll{coll},
-    store{store}
+    store{store},
+    shard_services{shard_services},
+    pg_shard{shard}
 {}
 
 PGBackend::load_metadata_ertr::future<PGBackend::loaded_object_md_t::ref>
@@ -413,6 +416,273 @@ PGBackend::stat_errorator::future<> PGBackend::stat(
   // TODO: ctx->delta_stats.num_rd++;
 }
 
+
+
+/*
+  PGBackend::loaded_object_md_t::ref
+  after the load_metadata() we have:
+   - the exists flag
+   - the snapset
+ */
+
+/*
+ * outcome (if the object exists):
+ * - the scrub-map entry in the 'pos' position has its length updated from the store
+ * - if deep:
+ *   we compute checksums, and update the relevant fields in the map entry
+ */
+PGBackend::ll_read_errorator::future<> PGBackend::scan_obj_from_list(ScrubMap& map,
+								  ScrubMapBuilder& pos)
+{
+  logger().debug("{}: in position {}", __func__, 0 /* RRR */);
+
+  // hobject_t& poid_nu = pos.ls[pos.pos];
+
+  // auto the_obj = ghobject_t{poid, ghobject_t::NO_GEN, shard};
+
+  return seastar::do_with(  //                                                         -
+    &pos.ls[pos.pos],	    //                                                        -
+    [map, pos, this](auto poid) mutable -> ll_read_errorator::future<> {
+      return load_metadata(*poid)
+	.safe_then(
+	  [poid, pos, this, map](auto md_ref) mutable -> ll_read_errorator::future<> {
+	    if (!md_ref->os.exists) {
+
+	      return crimson::ct_error::enoent::make();
+	    }
+
+	    // the object exists
+	    ScrubMap::object& o = map.objects[*poid];
+	    o.size = md_ref->os.oi.size;
+
+	    if (pos.deep) {
+
+	      return calc_deep_scrub_info(*poid, map, pos, o);
+
+	    } else {
+
+	      return ll_read_errorator::make_ready_future();
+	    }
+	  },
+
+	  load_metadata_ertr::all_same_way(
+	    []() { return ll_read_errorator::make_ready_future(); })
+	  //);
+	  //   }
+
+
+	  )
+	.safe_then(
+
+	  []() { return PGBackend::ll_read_errorator::make_ready_future(); }
+
+	  /*,
+	  crimson::ct_error::object_corrupted::handle([indx = pos.pos]() {
+	    logger().error(
+	      "PGBackend::scan_obj_from_list(): object xx at pos {} missing object info",
+	      indx);
+	    PGBackend::stat_errorator::assert_all{"object corrupted"};
+	    return ll_read_errorator::make_ready_future();
+	  })*/,
+
+	  ll_read_errorator::all_same_way(
+	    []() { return ll_read_errorator::make_ready_future(); })
+
+
+	  );
+    });
+}
+
+/* go over all objects in the list, starting from current pos.
+ *
+
+*/
+
+PGBackend::ll_read_errorator::future<> PGBackend::scan_list(ScrubMap& map, ScrubMapBuilder& pos)
+{
+  return crimson::do_for_each(pos.ls, [map, pos, this](auto&& poid) mutable {
+
+    // do what pos.next_object() would have done:
+    pos.data_pos = 0;
+    pos.omap_pos.clear();
+    pos.omap_keys = 0;
+    pos.omap_bytes = 0;
+
+    return scan_obj_from_list(map, pos).safe_then([](){return PGBackend::ll_read_errorator::make_ready_future();}
+    );
+
+  });
+}
+
+
+void PGBackend::omap_checks(const map<pg_shard_t,ScrubMap*> &maps,
+			       const set<hobject_t> &master_set,
+			       omap_stat_t& omap_stats,
+			       ostream &warnstream) const
+{
+  if (std::none_of(maps.cbegin(), maps.cend(), [](auto& mp) {
+    return mp.second->has_large_omap_object_errors || mp.second->has_omap_keys;
+  })) {
+    // no suspect maps
+    return;
+  }
+
+  // Iterate through objects and update omap stats
+  for (const auto& ho : master_set) {
+    for (const auto& [map_shard, smap] : maps) {
+      if (map_shard.shard != shard) {
+	// Only set omap stats for the primary
+	continue;
+      }
+
+      auto it = smap->objects.find(ho);
+      if (it == smap->objects.end())
+	continue;
+
+      ScrubMap::object& obj = it->second;
+      omap_stats.omap_bytes += obj.object_omap_bytes;
+      omap_stats.omap_keys += obj.object_omap_keys;
+
+      if (obj.large_omap_object_found) {
+        // 'large_omap_object_found' may have been set by the scrubber
+	pg_t pg;
+	auto osdmap = shard_services.get_osdmap();
+	osdmap->map_to_pg(ho.pool, ho.oid.name, ho.get_key(), ho.nspace, &pg);
+	pg_t mpg = osdmap->raw_pg_to_pg(pg);
+	omap_stats.large_omap_objects++;
+	warnstream << "Large omap object found. Object: " << ho
+		   << " PG: " << pg << " (" << mpg << ")"
+		   << " Key count: " << obj.large_omap_object_key_count
+		   << " Size (bytes): " << obj.large_omap_object_value_size
+		   << '\n';
+	break;
+      }
+    }
+  }
+}
+
+
+using set_err_fn_t = void (shard_info_wrapper::*)();
+using check_so_cond_t = bool ScrubMap::object::*;
+enum class on_error_fl { cont, stop };
+
+/// \returns should we continue checking
+bool auth_object_check(bool tested_flag,
+		       shard_info_wrapper& shard_info,
+		       set_err_fn_t set_err_fn,
+		       ostringstream& errstream,
+		       std::string_view err_message,
+		       bool& prev_error,
+		       on_error_fl stop_on_error)
+{
+  if (tested_flag) {
+
+    (shard_info.*set_err_fn)();
+
+    if (prev_error) {
+      errstream << ", ";
+    } else {
+      prev_error = true;
+    }
+
+    errstream << err_message;
+    return stop_on_error == on_error_fl::cont;
+  }
+
+  return true;
+}
+
+auto PGBackend::select_auth_object(const hobject_t& obj,
+			const map<pg_shard_t, ScrubMap*>& maps,
+			object_info_t* auth_oi,
+			map<pg_shard_t, shard_info_wrapper>& shard_map,
+			bool& digest_match,
+			spg_t pgid,
+			ostream& errorstream)
+-> ll_read_errorator::future<map<pg_shard_t, ScrubMap*>::const_iterator>
+{
+  // Create list of shards with primary first so it will be auth copy all
+  // other things being equal.
+
+  list<pg_shard_t> shards;
+  for (const auto& [sh, smap] : maps) {
+    std::ignore = smap;
+    if (sh.shard != shard)
+      shards.push_back(sh);
+  }
+  shards.push_front(pg_shard);
+
+  //
+  //
+
+  auto auth = maps.cend();
+  digest_match = true;
+
+  for (auto &s : shards) {
+
+    const auto shard_s_map = maps.find(s);
+    const auto& [jshard, jmap] = *shard_s_map;
+    auto obj_in_smap = jmap->objects.find(obj);
+    if (obj_in_smap == jmap->objects.end())
+      continue;
+
+    auto& [ho, smap_obj] = *obj_in_smap;
+
+    // isn't 's' the same as 'shard_s_map->first' ?
+
+    auto& shard_info = shard_map[jshard];
+    if (jshard == pg_shard)
+      shard_info.primary = true;
+
+
+    bool error{false};
+    ostringstream shard_errorstream;
+
+    if (auth_object_check(smap_obj.read_error, shard_info,
+    	&shard_info_wrapper::set_read_error, shard_errorstream, "candidate had a read error", error, on_error_fl::cont) &&
+
+    auth_object_check(smap_obj.ec_hash_mismatch, shard_info,
+			&shard_info_wrapper::set_ec_hash_mismatch, shard_errorstream, "candidate had an ec hash mismatch", error, on_error_fl::cont) &&
+
+    auth_object_check(smap_obj.ec_size_mismatch, shard_info,
+			&shard_info_wrapper::set_ec_size_mismatch, shard_errorstream, "candidate had an ec size mismatch", error, on_error_fl::cont) &&
+
+    // no further checking if a stat error. We don't need to also see a missing_object_info_attr.
+    auth_object_check(smap_obj.stat_error, shard_info,
+			&shard_info_wrapper::set_stat_error, shard_errorstream, "candidate had a stat error", error, on_error_fl::stop)) {
+
+
+	//  We won't pick an auth copy if the snapset is missing or won't decode.
+
+	// RRR complete snapset checks
+
+	// RRR complete erasure-pool-specific checks
+
+	// checking the attrs
+
+      map<string, bufferptr>::iterator k = smap_obj.attrs.find(OI_ATTR);
+      if (auth_object_check((k == smap_obj.attrs.end()), shard_info,
+			   &shard_info_wrapper::set_info_missing, shard_errorstream, "candidate had a missing info key", error, on_error_fl::stop)) {
+
+
+
+
+			   // RRRRRRRRRRRRRRRRRRRRRRR
+
+
+      }};
+
+    // finished checking this shard
+
+    if (error) {
+    	errorstream << pgid.pgid << " shard " << s << " soid " << obj << " : " << shard_errorstream.str() << "\n";
+    }
+
+  }
+
+  return ll_read_errorator::make_ready_future<map<pg_shard_t, ScrubMap*>::const_iterator>(auth);
+}
+
 bool PGBackend::maybe_create_new_object(
   ObjectState& os,
   ceph::os::Transaction& txn)
@@ -742,6 +1012,63 @@ PGBackend::list_objects(const hobject_t& start, uint64_t limit) const
         std::make_tuple(objects, next.hobj));
     });
 }
+
+
+seastar::future<vector<ghobject_t>>
+PGBackend::list_range(const hobject_t& start, const hobject_t& end, vector<hobject_t>& ls ) const
+{
+  if (__builtin_expect(stopping, false)) {
+    throw crimson::common::system_shutdown_exception();
+  }
+
+  auto gstart = start.is_min() ? ghobject_t{} : ghobject_t{start, 0, shard};
+  ghobject_t gend{end, 0, shard};
+
+
+  return store->list_objects(coll,
+			     gstart,
+			     gend,
+			     INT_MAX)
+    .then([&](auto ret) {
+      auto& [gobjects, next] = ret;
+      std::vector<ghobject_t> objects;
+
+      // RRR fix this to not double-walk
+
+      boost::copy(gobjects |
+		  boost::adaptors::filtered([](const ghobject_t& o) {
+		    if (o.is_pgmeta()) {
+		      return false;
+		    } else if (o.hobj.is_temp()) {
+		      return false;
+		    } else {
+		      return o.is_no_gen();
+		    }
+		  }) |
+		  boost::adaptors::transformed([](const ghobject_t& o) {
+		    return o.hobj;
+		  }),
+		  std::back_inserter(ls));
+
+      boost::copy(gobjects |
+		  boost::adaptors::filtered([](const ghobject_t& o) {
+		    if (o.is_pgmeta()) {
+		      return false;
+		    } else if (o.hobj.is_temp()) {
+		      return false;
+		    } else {
+		      return !o.is_no_gen();
+		    }
+		  //}) |
+		  //boost::adaptors::transformed([](const ghobject_t& o) {
+		  //  return o.hobj;
+		  }),
+		  std::back_inserter(objects));
+      return seastar::make_ready_future<std::vector<ghobject_t>>(
+	objects);
+    });
+}
+
 
 seastar::future<> PGBackend::setxattr(
   ObjectState& os,

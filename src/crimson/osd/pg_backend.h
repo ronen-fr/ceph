@@ -38,13 +38,17 @@ class PGBackend
 protected:
   using CollectionRef = crimson::os::CollectionRef;
   using ec_profile_t = std::map<std::string, std::string>;
+
+ public: // RRR ask
   // low-level read errorator
   using ll_read_errorator = crimson::os::FuturizedStore::read_errorator;
 
 public:
-  using load_metadata_ertr = crimson::errorator<
-    crimson::ct_error::object_corrupted>;
-  PGBackend(shard_id_t shard, CollectionRef coll, crimson::os::FuturizedStore* store);
+  using load_metadata_ertr = crimson::errorator<crimson::ct_error::object_corrupted>;
+  PGBackend(pg_shard_t shard,
+	    CollectionRef coll,
+	    crimson::os::FuturizedStore* store,
+	    crimson::osd::ShardServices& shard_services);
   virtual ~PGBackend() = default;
   static std::unique_ptr<PGBackend> create(pg_t pgid,
 					   const pg_shard_t pg_shard,
@@ -54,26 +58,35 @@ public:
 					   const ec_profile_t& ec_profile);
   using attrs_t =
     std::map<std::string, ceph::bufferptr, std::less<>>;
+
   using read_errorator = ll_read_errorator::extend<
     crimson::ct_error::object_corrupted>;
+
   read_errorator::future<> read(
     const ObjectState& os,
     OSDOp& osd_op);
+
   read_errorator::future<> sparse_read(
     const ObjectState& os,
     OSDOp& osd_op);
+
   using checksum_errorator = ll_read_errorator::extend<
     crimson::ct_error::object_corrupted,
     crimson::ct_error::invarg>;
+
   checksum_errorator::future<> checksum(
     const ObjectState& os,
     OSDOp& osd_op);
+
   using cmp_ext_errorator = ll_read_errorator::extend<
     crimson::ct_error::invarg>;
+
   cmp_ext_errorator::future<> cmp_ext(
     const ObjectState& os,
     OSDOp& osd_op);
+
   using stat_errorator = crimson::errorator<crimson::ct_error::enoent>;
+
   stat_errorator::future<> stat(
     const ObjectState& os,
     OSDOp& osd_op);
@@ -81,45 +94,55 @@ public:
   // TODO: switch the entire write family to errorator.
   using write_ertr = crimson::errorator<
     crimson::ct_error::file_too_large>;
+
   seastar::future<> create(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans);
+
   seastar::future<> remove(
     ObjectState& os,
     ceph::os::Transaction& txn);
+
   seastar::future<> write(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params);
+
   seastar::future<> write_same(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params);
+
   seastar::future<> writefull(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params);
+
   using append_errorator = crimson::errorator<
     crimson::ct_error::invarg>;
+
   append_errorator::future<> append(
     ObjectState& os,
     OSDOp& osd_op,
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params);
+
   write_ertr::future<> truncate(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params);
+
   write_ertr::future<> zero(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params);
+
   seastar::future<crimson::osd::acked_peers_t> mutate_object(
     std::set<pg_shard_t> pg_shards,
     crimson::osd::ObjectContextRef &&obc,
@@ -128,31 +151,65 @@ public:
     epoch_t min_epoch,
     epoch_t map_epoch,
     std::vector<pg_log_entry_t>&& log_entries);
-  seastar::future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects(
-    const hobject_t& start,
-    uint64_t limit) const;
+
+  seastar::future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects( // NOLINT(modernize-use-nodiscard)
+    const hobject_t& start, uint64_t limit) const;
+
+  seastar::future<vector<ghobject_t>> list_range(const hobject_t& start,
+						 const hobject_t& end,
+						 vector<hobject_t>& ls) const;
+
+  ll_read_errorator::future<> scan_list(ScrubMap& map, ScrubMapBuilder& pos);
+  ll_read_errorator::future<> scan_obj_from_list(ScrubMap& map, ScrubMapBuilder& pos); // move to 'private'
+
+  virtual ll_read_errorator::future<> calc_deep_scrub_info(const hobject_t& soid,   ScrubMap &map,
+					 ScrubMapBuilder &pos,
+					 ScrubMap::object &o) const = 0;
+
+  auto select_auth_object(const hobject_t& obj,
+			  const map<pg_shard_t, ScrubMap*>& maps,
+			  object_info_t* auth_oi,
+			  map<pg_shard_t, shard_info_wrapper>& shard_map,
+			  bool& digest_match,
+			  spg_t pgid,
+			  ostream& errorstream)
+    -> ll_read_errorator::future<map<pg_shard_t, ScrubMap*>::const_iterator>;
+
+  void omap_checks(const map<pg_shard_t, ScrubMap*>& maps,
+		   const set<hobject_t>& master_set,
+		   omap_stat_t& omap_stats,
+		   ostream& warnstream) const;
+
   seastar::future<> setxattr(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans);
+
   using get_attr_errorator = crimson::os::FuturizedStore::get_attr_errorator;
+
   get_attr_errorator::future<> getxattr(
     const ObjectState& os,
     OSDOp& osd_op) const;
+
   get_attr_errorator::future<ceph::bufferptr> getxattr(
     const hobject_t& soid,
     std::string_view key) const;
+
   get_attr_errorator::future<> get_xattrs(
     const ObjectState& os,
     OSDOp& osd_op) const;
+
   using rm_xattr_ertr = crimson::errorator<crimson::ct_error::enoent>;
+
   rm_xattr_ertr::future<> rm_xattr(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans);
+
   seastar::future<struct stat> stat(
     CollectionRef c,
     const ghobject_t& oid) const;
+
   seastar::future<std::map<uint64_t, uint64_t>> fiemap(
     CollectionRef c,
     const ghobject_t& oid,
@@ -169,26 +226,33 @@ public:
   ll_read_errorator::future<> omap_get_vals_by_keys(
     const ObjectState& os,
     OSDOp& osd_op) const;
+
   seastar::future<> omap_set_vals(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params);
+
   ll_read_errorator::future<ceph::bufferlist> omap_get_header(
     const crimson::os::CollectionRef& c,
     const ghobject_t& oid) const;
+
   ll_read_errorator::future<> omap_get_header(
     const ObjectState& os,
     OSDOp& osd_op) const;
+
   seastar::future<> omap_set_header(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans);
+
   seastar::future<> omap_remove_range(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans);
+
   using omap_clear_ertr = crimson::errorator<crimson::ct_error::enoent>;
+
   omap_clear_ertr::future<> omap_clear(
     ObjectState& os,
     OSDOp& osd_op,
@@ -201,7 +265,9 @@ public:
     bool is_primary;
   };
   virtual void on_actingset_changed(peering_info_t pi) = 0;
+
   virtual void on_activate_complete();
+
 protected:
   const shard_id_t shard;
   CollectionRef coll;
@@ -211,12 +277,18 @@ protected:
   virtual seastar::future<> request_committed(
     const osd_reqid_t& reqid,
     const eversion_t& at_version) = 0;
+  crimson::osd::ShardServices& shard_services;
+
+  // should I add? RRR
+  const pg_shard_t pg_shard;
+
 public:
   struct loaded_object_md_t {
     ObjectState os;
     std::optional<SnapSet> ss;
     using ref = std::unique_ptr<loaded_object_md_t>;
   };
+
   load_metadata_ertr::future<loaded_object_md_t::ref> load_metadata(
     const hobject_t &oid);
 
@@ -235,6 +307,7 @@ private:
 		      osd_op_params_t&& osd_op_p,
 		      epoch_t min_epoch, epoch_t max_epoch,
 		      std::vector<pg_log_entry_t>&& log_entries) = 0;
+
   friend class ReplicatedRecoveryBackend;
   friend class ::crimson::osd::PG;
 };

@@ -21,10 +21,10 @@ ReplicatedBackend::ReplicatedBackend(pg_t pgid,
                                      pg_shard_t whoami,
                                      ReplicatedBackend::CollectionRef coll,
                                      crimson::osd::ShardServices& shard_services)
-  : PGBackend{whoami.shard, coll, &shard_services.get_store()},
+  : PGBackend{whoami, coll, &shard_services.get_store(), shard_services},
     pgid{pgid},
-    whoami{whoami},
-    shard_services{shard_services}
+    whoami{whoami}/*,
+    shard_services{shard_services}*/
 {}
 
 ReplicatedBackend::ll_read_errorator::future<ceph::bufferlist>
@@ -99,6 +99,13 @@ ReplicatedBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
       pending_trans.erase(pending_txn);
       return seastar::make_ready_future<crimson::osd::acked_peers_t>(std::move(acked_peers));
     });
+}
+
+ReplicatedBackend::ll_read_errorator::future<> ReplicatedBackend::calc_deep_scrub_info(
+  const hobject_t& soid, ScrubMap& map, ScrubMapBuilder& pos, ScrubMap::object& o) const
+{
+  // RRR
+  return seastar::make_ready_future<>();
 }
 
 void ReplicatedBackend::on_actingset_changed(peering_info_t pi)
