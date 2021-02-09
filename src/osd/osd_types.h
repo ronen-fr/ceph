@@ -6125,12 +6125,14 @@ struct ScrubMapBuilder {
   uint64_t omap_keys = 0;
   uint64_t omap_bytes = 0;
 
-  bool empty() {
+  bool empty() const {
     return ls.empty();
   }
-  bool done() {
+
+  bool done() const {
     return pos >= ls.size();
   }
+
   void reset() {
     *this = ScrubMapBuilder();
   }

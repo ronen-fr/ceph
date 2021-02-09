@@ -99,25 +99,30 @@ public:
 
   using get_attrs_ertr = crimson::errorator<
     crimson::ct_error::enoent>;
+
   using attrs_t = std::map<std::string, ceph::bufferptr, std::less<>>;
   virtual get_attrs_ertr::future<attrs_t> get_attrs(
     CollectionRef c,
     const ghobject_t& oid) = 0;
+
   virtual seastar::future<struct stat> stat(
     CollectionRef c,
     const ghobject_t& oid) = 0;
 
   using omap_values_t = std::map<std::string, bufferlist, std::less<>>;
   using omap_keys_t = std::set<std::string>;
+
   virtual read_errorator::future<omap_values_t> omap_get_values(
     CollectionRef c,
     const ghobject_t& oid,
     const omap_keys_t& keys) = 0;
+
   virtual seastar::future<std::tuple<std::vector<ghobject_t>, ghobject_t>> list_objects(
     CollectionRef c,
     const ghobject_t& start,
     const ghobject_t& end,
     uint64_t limit) const = 0;
+
   virtual read_errorator::future<std::tuple<bool, omap_values_t>> omap_get_values(
     CollectionRef c,           ///< [in] collection
     const ghobject_t &oid,     ///< [in] oid
@@ -134,9 +139,11 @@ public:
 
   virtual seastar::future<> do_transaction(CollectionRef ch,
 					   ceph::os::Transaction&& txn) = 0;
+
   virtual seastar::future<OmapIteratorRef> get_omap_iterator(
     CollectionRef ch,
     const ghobject_t& oid) = 0;
+
   virtual seastar::future<std::map<uint64_t, uint64_t>> fiemap(
     CollectionRef ch,
     const ghobject_t& oid,
@@ -145,9 +152,12 @@ public:
 
   virtual seastar::future<> write_meta(const std::string& key,
 				       const std::string& value) = 0;
+
   virtual seastar::future<std::tuple<int, std::string>> read_meta(
     const std::string& key) = 0;
+
   virtual uuid_d get_fsid() const  = 0;
+
   virtual unsigned get_max_attr_name_length() const = 0;
 };
 

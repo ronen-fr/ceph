@@ -193,7 +193,7 @@ public:
     return !is_max() && !is_head() && !is_snapdir();
   }
 
-  /// @return true iff the object should have a snapset in it's attrs
+  /// @return true iff the object should have a snapset in its attrs
   bool has_snapset() const {
     return is_head() || is_snapdir();
   }
