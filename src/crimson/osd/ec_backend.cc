@@ -2,12 +2,12 @@
 
 #include "crimson/osd/shard_services.h"
 
-ECBackend::ECBackend(shard_id_t shard,
+ECBackend::ECBackend(pg_shard_t shard,
                      ECBackend::CollectionRef coll,
                      crimson::osd::ShardServices& shard_services,
                      const ec_profile_t&,
                      uint64_t)
-  : PGBackend{shard, coll, &shard_services.get_store()}
+  : PGBackend{shard, coll, &shard_services.get_store(), shard_services}
 {
   // todo
 }
@@ -32,4 +32,11 @@ ECBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
 {
   // todo
   return seastar::make_ready_future<crimson::osd::acked_peers_t>();
+}
+
+ECBackend::ll_read_errorator::future<> ECBackend::calc_deep_scrub_info(
+  const hobject_t& soid, ScrubMap& map, ScrubMapBuilder& pos, ScrubMap::object& o) const
+{
+  // todo
+  return seastar::make_ready_future<>();
 }

@@ -20,6 +20,7 @@ add_executable(crimson-osd
   osd_operations/replicated_request.cc
   osd_operations/background_recovery.cc
   osd_operations/recovery_subrequest.cc
+  osd_operations/scrub_event.cc
   pg_recovery.cc
   recovery_backend.cc
   replicated_recovery_backend.cc
@@ -47,7 +48,7 @@ add_executable(crimson-osd
   ${PROJECT_SOURCE_DIR}/src/osd/recovery_types.cc
   ${PROJECT_SOURCE_DIR}/src/osd/osd_perf_counters.cc
   watch.cc
-  )
+        )
 target_link_libraries(crimson-osd
   crimson-admin
   crimson-common
