@@ -116,8 +116,7 @@ PG::PG(
       osdmap,
       this,
       this),
-    wait_for_active_blocker(this),
-    m_scrub_sched{*this}
+    wait_for_active_blocker(this)
 {
   peering_state.set_backend_predicates(
     new ReadablePredicate(pg_whoami),
@@ -348,7 +347,6 @@ void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
 bool PG::sched_scrub()
 {
   return m_scrub_sched->sched_scrub();
-  return m_scrub_sched.sched_scrub();
 }
 
 void PG::log_state_enter(const char *state) {
@@ -491,14 +489,12 @@ void PG::do_scrub_event(
 }
  */
 
-// was it removed?
 void PG::do_scrub_event(
   PgScrubEvent& evt, PeeringCtx &rctx)
 {
   if (m_scrubber && !peering_state.pg_has_reset_since(evt.get_epoch_requested())) {
     logger().debug("{} handling {} for pg: {}", __func__, evt.get_desc(), pgid);
     m_scrubber->do_scrub_event(evt, rctx);
-    m_scrubber->do_scrub_event(evt.get_event(), rctx);
   } else {
     logger().debug("{} ignoring {} -- pg has reset", __func__, evt.get_desc());
   }
