@@ -55,6 +55,9 @@ struct ScrubMachineListener {
 
   virtual seastar::future<bool> select_range() = 0;
 
+  virtual void select_range_n_notify() = 0;
+  virtual void initiate_primary_map_build() = 0;
+
   /// walk the log to find the latest update that affects our chunk
   virtual eversion_t search_log_for_updates() const = 0;
 
@@ -64,11 +67,11 @@ struct ScrubMachineListener {
 
   virtual seastar::future<>  build_primary_map_chunk() = 0;
 
-  virtual seastar::future<>  build_replica_map_chunk() = 0;
+  virtual void build_replica_map_chunk() = 0;
 
   virtual void scrub_compare_maps() = 0;
 
-  virtual seastar::future<> on_init() = 0;
+  virtual void on_init() = 0;
   virtual void on_init_immediate() = 0;
 
   virtual void on_replica_init() = 0;
@@ -88,7 +91,12 @@ struct ScrubMachineListener {
    * 'false' means we are configured with no replicas, and
    * should expect no maps to arrive.
    */
-  virtual seastar::future<bool> get_replicas_maps(bool replica_can_preempt) = 0;
+  //virtual seastar::future<bool> get_replicas_maps(bool replica_can_preempt) = 0;
+
+  /**
+   * posts a 'BuildMap' event after sending requests to all replicas.
+   */
+  virtual void get_replicas_maps(bool replica_can_preempt) = 0;
 
   virtual Scrub::FsmNext on_digest_updates() = 0;
 

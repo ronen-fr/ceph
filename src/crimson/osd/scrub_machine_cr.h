@@ -14,15 +14,15 @@
 #include <boost/statechart/state_machine.hpp>
 #include <boost/statechart/transition.hpp>
 
+#include "crimson/osd/osd_operations/pg_scrub_event.h"
 #include "common/version.h"
-#include "include/Context.h"
-
 #include "crimson/osd/scrub_machine_lstnr_cr.h"
 #include "crimson/osd/scrubber_common_cr.h"
+#include "include/Context.h"
 
 using namespace std::string_literals;
 
-//class PG;  // holding a pointer to that one - just for testing
+// class PG;  // holding a pointer to that one - just for testing
 
 
 namespace crimson::osd {
@@ -32,6 +32,8 @@ namespace Scrub {
 
 namespace sc = ::boost::statechart;
 namespace mpl = ::boost::mpl;
+
+#ifdef MOVED_TO_PGSCRUBEVENT
 
 //
 //  EVENTS
@@ -58,6 +60,8 @@ void on_event_discard(std::string_view nm);
 MEV(RemotesReserved)	 ///< all replicas have granted our reserve request
 MEV(ReservationFailure)	 ///< a reservation request has failed
 
+MEV(OnInitDone)	 ///< startup operations (mainly - cleaning the scrubstore) have
+		 ///< completed
 MEV(StartScrub)	 ///< initiate a new scrubbing session (relevant if we are a Primary)
 MEV(AfterRepairScrub)  ///< initiate a new scrubbing session. Only triggered at Recovery
 		       ///< completion.
@@ -70,7 +74,10 @@ MEV(ActivePushesUpd)	 ///< Update to active_pushes. 'active_pushes' represents r
 			 ///< that is in-flight to the local ObjectStore
 MEV(UpdatesApplied)	 // external
 MEV(InternalAllUpdates)	 ///< the internal counterpart of UpdatesApplied
-MEV(GotReplicas)	 ///< got a map from a replica
+
+MEV(ReplicaRequestsSent)  ///< sent the requests to all replicas for their maps
+
+MEV(GotReplicas)  ///< got a map from a replica
 
 MEV(IntBmPreempted)  ///< internal - BuildMap preempted. Required, as detected within the
 		     ///< ctor
@@ -92,6 +99,7 @@ MEV(ReplicaPushesUpd)  ///< Update to active_pushes. 'active_pushes' represents 
 
 MEV(FullReset)	///< guarantee that the FSM is in the quiescent state (i.e. NotActive)
 
+#endif
 
 struct NotActive;	    ///< the quiescent state. No active scrubbing.
 struct ReservingReplicas;   ///< securing scrub resources from replicas' OSDs
@@ -157,6 +165,7 @@ struct ReservingReplicas : sc::state<ReservingReplicas, ScrubMachine> {
 
 // the "active" sub-states
 
+struct ActStartup;    ///< waiting for start-of-scrub operations to complete
 struct RangeBlocked;  ///< the objects range is blocked
 struct PendingTimer;  ///< either delaying the scrub by some time and requeuing, or just
 		      ///< requeue
@@ -168,7 +177,7 @@ struct DrainReplMaps;  ///< a problem during BuildMap. Wait for all replicas to 
 		       ///< then restart.
 struct WaitReplicas;   ///< wait for all replicas to report
 
-struct ActiveScrubbing : sc::state<ActiveScrubbing, ScrubMachine, PendingTimer> {
+struct ActiveScrubbing : sc::state<ActiveScrubbing, ScrubMachine, ActStartup> {
 
   explicit ActiveScrubbing(my_context ctx);
   ~ActiveScrubbing();
@@ -183,6 +192,13 @@ struct ActiveScrubbing : sc::state<ActiveScrubbing, ScrubMachine, PendingTimer> 
   sc::result react(const AllChunksDone&);
   sc::result react(const FullReset&);
   sc::result react(const InternalError&);
+};
+
+struct ActStartup : sc::state<ActStartup, ActiveScrubbing> {
+
+  explicit ActStartup(my_context ctx);
+
+  using reactions = mpl::list<sc::transition<OnInitDone, PendingTimer>>;
 };
 
 struct RangeBlocked : sc::state<RangeBlocked, ActiveScrubbing> {
@@ -231,6 +247,7 @@ struct WaitLastUpdate : sc::state<WaitLastUpdate, ActiveScrubbing> {
   void on_new_updates(const UpdatesApplied&);
 
   using reactions = mpl::list<sc::custom_reaction<InternalAllUpdates>,
+			      sc::transition<ReplicaRequestsSent, BuildMap>,
 			      sc::in_state_reaction<UpdatesApplied,
 						    WaitLastUpdate,
 						    &WaitLastUpdate::on_new_updates>>;
@@ -316,4 +333,4 @@ struct ActiveReplica : sc::state<ActiveReplica, ScrubMachine> {
 };
 
 }  // namespace Scrub
-}
+}  // namespace crimson::osd

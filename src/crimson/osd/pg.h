@@ -32,7 +32,6 @@
 #include "crimson/osd/shard_services.h"
 #include "crimson/osd/osdmap_gate.h"
 #include "crimson/osd/pg_recovery.h"
-#include "crimson/osd/pg_scrub_sched.h"
 #include "crimson/osd/scrubber_common_cr.h"
 #include "crimson/osd/pg_recovery_listener.h"
 #include "crimson/osd/recovery_backend.h"
@@ -538,14 +537,11 @@ public:
   void print(std::ostream& os) const;
   void dump_primary(Formatter*);
 
-private:
   std::unique_ptr<ScrubPgIF> m_scrubber;
   std::unique_ptr<PgScrubSched> m_scrub_sched;
   /// flags detailing scheduling/operation characteristics of the next scrub
   requested_scrub_t m_planned_scrub;
   bool scrub_after_recovery{false}; // RRR to finish handling
-  //PgScrubSched m_scrub_sched;
-  /// flags detailing scheduling/operation characteristics of the next scrub
   bool range_available_for_scrub(const hobject_t &begin, const hobject_t &end) { return true;}
 
  private:

@@ -1,7 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "scrub_machine.h"
+#include "scrub_machine_cr.h"
 
 #include <chrono>
 #include <typeinfo>
@@ -10,7 +10,7 @@
 
 #include "crimson/osd/osd.h"
 // RRR #include "OpRequest.h"
-#include "ScrubStore.h"
+//#include "crimson/osd/scrub_store.h"
 #include "scrub_machine_lstnr_cr.h"
 
 #if 0
@@ -34,31 +34,38 @@ seastar::logger &logger() { return crimson::get_logger(ceph_subsys_osd); }
   auto pg_id = context<ScrubMachine>().m_pg_id;                                \
   std::ignore = pg_id;
 
+namespace crimson::osd {
+
 namespace Scrub {
 
 // --------- trace/debug auxiliaries -------------------------------
 
-void on_event_creation(std::string_view nm) {
+void on_event_creation(std::string_view nm)
+{
   logger().debug("{}: event: --vvvv---- {}", __func__, nm);
 }
 
-void on_event_discard(std::string_view nm) {
+void on_event_discard(std::string_view nm)
+{
   logger().debug("{}: event: --^^^^---- {}", __func__, nm);
 }
 
-void ScrubMachine::my_states() const {
+void ScrubMachine::my_states() const
+{
   for (auto si = state_begin(); si != state_end(); ++si) {
-    const auto &siw{*si}; // prevents a warning re side-effects
-    logger.debug("{}: state: {}", __func__, boost::core::demangle(typeid(siw).name());
+    const auto& siw{*si};  // prevents a warning re side-effects
+    logger().debug("{}: state: {}", __func__, boost::core::demangle(typeid(siw).name()));
   }
 }
 
-void ScrubMachine::assert_not_active() const {
-  ceph_assert(state_cast<const NotActive *>());
+void ScrubMachine::assert_not_active() const
+{
+  ceph_assert(state_cast<const NotActive*>());
 }
 
-bool ScrubMachine::is_reserving() const {
-  return state_cast<const ReservingReplicas *>();
+bool ScrubMachine::is_reserving() const
+{
+  return state_cast<const ReservingReplicas*>();
 }
 
 #if 0
@@ -82,7 +89,7 @@ NotActive::NotActive(my_context ctx) : my_base(ctx) {
 
 // ----------------------- ReservingReplicas ---------------------------------
 
-ReservingReplicas::ReservingReplicas(my_context ctx) : my_base(ctx) XXXX {
+ReservingReplicas::ReservingReplicas(my_context ctx) : my_base(ctx) {
   logger().debug("scrubberFSM -- state -->> ReservingReplicas");
   DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
   scrbr->reserve_replicas();
@@ -159,7 +166,7 @@ PendingTimer::PendingTimer(my_context ctx) : my_base(ctx) {
   logger().debug("scrubberFSM -- state -->> Act/PendingTimer");
   DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
 
-  scrbr->add_delayed_scheduling();
+  std::ignore = scrbr->add_delayed_scheduling();
 }
 
 // ----------------------- NewChunk -----------------------------------
@@ -175,17 +182,13 @@ NewChunk::NewChunk(my_context ctx) : my_base(ctx) {
 
   scrbr->get_preemptor().adjust_parameters();
 
-  //  choose range to work on
-  bool got_a_chunk = scrbr->select_range();
-  if (got_a_chunk) {
-    logger().debug("{}: selection OK", __func__);
-    post_event(
-        boost::intrusive_ptr<SelectedChunkFree>(new SelectedChunkFree{}));
-  } else {
-    logger().debug("{}: selected chunk is busy", __func__);
-    // wait until we are available (transitioning to Blocked)
-    post_event(boost::intrusive_ptr<ChunkIsBusy>(new ChunkIsBusy{}));
-  }
+  // choose range to work on.
+
+  //  choose range to work on.
+  //  select_range_n_notify() will either signal SelectedChunkFree or
+  //  ChunkIsBusy
+
+  scrbr->select_range_n_notify();
 }
 
 sc::result NewChunk::react(const SelectedChunkFree &) {
@@ -248,14 +251,18 @@ sc::result WaitLastUpdate::react(const InternalAllUpdates &) {
   logger().debug("WaitLastUpdate::react(const InternalAllUpdates&)");
 
   scrbr->get_replicas_maps(scrbr->get_preemptor().is_preemptable());
-  return transit<BuildMap>();
+
+  // the transit will be initiated by get_replicas_maps():
+  // return transit<BuildMap>();
+  return discard_event();
 }
 
 // ----------------------- BuildMap -----------------------------------
 
-BuildMap::BuildMap(my_context ctx) : my_base(ctx) {
+BuildMap::BuildMap(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> Act/BuildMap");
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
 
   // no need to check for an epoch change, as all possible flows that brought us
   // here have a check_interval() verification of their final event.
@@ -269,25 +276,27 @@ BuildMap::BuildMap(my_context ctx) : my_base(ctx) {
 
   } else {
 
-    auto ret = scrbr->build_primary_map_chunk();
+    scrbr->initiate_primary_map_build();
 
-    if (ret == -EINPROGRESS) {
-      // must wait for the backend to finish. No specific event provided.
-      // build_primary_map_chunk() has already requeued us.
-      logger().debug("{}: waiting for the backend...", __func__);
-
-    } else if (ret < 0) {
-
-      logger().debug("{}: BuildMap::BuildMap() Error! Aborting. Ret: {}",
-                     __func__, ret);
-      // scrbr->mark_local_map_ready();
-      post_event(boost::intrusive_ptr<InternalError>(new InternalError{}));
-
-    } else {
-
-      // the local map was created
-      post_event(boost::intrusive_ptr<IntLocalMapDone>(new IntLocalMapDone{}));
-    }
+    //    auto ret = scrbr->build_primary_map_chunk();
+    //
+    //    if (ret == -EINPROGRESS) {
+    //      // must wait for the backend to finish. No specific event provided.
+    //      // build_primary_map_chunk() has already requeued us.
+    //      logger().debug("{}: waiting for the backend...", __func__);
+    //
+    //    } else if (ret < 0) {
+    //
+    //      logger().debug("{}: BuildMap::BuildMap() Error! Aborting. Ret: {}",
+    //                     __func__, ret);
+    //      // scrbr->mark_local_map_ready();
+    //      post_event(boost::intrusive_ptr<InternalError>(new InternalError{}));
+    //
+    //    } else {
+    //
+    //      // the local map was created
+    //      post_event(boost::intrusive_ptr<IntLocalMapDone>(new IntLocalMapDone{}));
+    //    }
   }
 }
 
@@ -387,13 +396,12 @@ sc::result WaitDigestUpdate::react(const DigestUpdate &) {
                            // elicits a correct warning from Clang
 }
 
-ScrubMachine::ScrubMachine(PG *pg, ScrubMachineListener *pg_scrub)
-    : m_pg{pg}, m_pg_id{pg->pg_id}, m_scrbr{pg_scrub} {
+ScrubMachine::ScrubMachine(crimson::osd::PG *pg, ScrubMachineListener *pg_scrub)
+    : m_pg{pg}, m_pg_id{pg->get_pgid()}, m_scrbr{pg_scrub} {
       logger().debug("ScrubMachine created {}", m_pg_id);
 }
 
-ScrubMachine::~ScrubMachine() {
-}
+ScrubMachine::~ScrubMachine() = default;
 
 // -------- for replicas -----------------------------------------------------
 
@@ -451,6 +459,10 @@ sc::result ActiveReplica::react(const SchedReplica &) {
     return transit<NotActive>();
   }
 
+  scrbr->build_replica_map_chunk();
+  return discard_event();
+
+#if 0
   // start or check progress of build_replica_map_chunk()
 
   auto ret = scrbr->build_replica_map_chunk();
@@ -478,6 +490,7 @@ sc::result ActiveReplica::react(const SchedReplica &) {
   scrbr->send_replica_map(PreemptionNoted::no_preemption);
   scrbr->replica_handling_done();
   return transit<NotActive>();
+#endif
 }
 
 /**
@@ -489,3 +502,5 @@ sc::result ActiveReplica::react(const FullReset &) {
 }
 
 } // namespace Scrub
+
+}

@@ -116,8 +116,7 @@ PG::PG(
       osdmap,
       this,
       this),
-    wait_for_active_blocker(this),
-    m_scrub_sched{*this}
+    wait_for_active_blocker(this)
 {
   peering_state.set_backend_predicates(
     new ReadablePredicate(pg_whoami),
@@ -512,7 +511,6 @@ void PG::do_scrub_event(
 }
  */
 
-// was it removed?
 void PG::do_scrub_event(
   PgScrubEvent& evt, PeeringCtx &rctx)
 {
