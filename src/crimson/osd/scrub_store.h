@@ -21,23 +21,21 @@ struct object_id_t;
 struct inconsistent_obj_wrapper;
 struct inconsistent_snapset_wrapper;
 
-namespace crimson::osd {
-
-namespace Scrub {
+namespace crimson::osd::Scrub {
 
 class Store {
  public:
-
   using BuffersVec = std::vector<ceph::bufferlist>;
 
-  //using sstore_errorator =
-  //  crimson::errorator<crimson::ct_error::enoent, crimson::ct_error::input_output_error>;
+  // using sstore_errorator =
+  //  crimson::errorator<crimson::ct_error::enoent,
+  //  crimson::ct_error::input_output_error>;
 
   using sstore_errorator = ::crimson::os::FuturizedStore::read_errorator;
 
   using ErrtBuffersVec = sstore_errorator::future<BuffersVec>;
 
-  ~Store();
+  ~Store() {}
 
   static Store* create(crimson::os::FuturizedStore* store,
 		       ceph::os::Transaction* t,
@@ -48,19 +46,22 @@ class Store {
 
   void add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e);
 
-  bool empty() const;
+  bool empty() const
+  {
+    return results.empty();
+  }
 
   seastar::future<> flush(ceph::os::Transaction*);
 
   void cleanup(ceph::os::Transaction*);
 
   Store::ErrtBuffersVec get_snap_errors(int64_t pool,
-						  const librados::object_id_t& start,
-						  uint64_t max_return) const;
+					const librados::object_id_t& start,
+					uint64_t max_return) const;
 
   Store::ErrtBuffersVec get_object_errors(int64_t pool,
-						    const librados::object_id_t& start,
-						    uint64_t max_return) const;
+					  const librados::object_id_t& start,
+					  uint64_t max_return) const;
 
  private:
   Store(const coll_t& coll, const ghobject_t& oid, crimson::os::FuturizedStore* store);
@@ -79,26 +80,22 @@ class Store {
   // a temp object holding mappings from seq-id to inconsistencies found in
   // scrubbing
   ::crimson::osd::OSDriver driver;
-  //mutable ::crimson::osd::MapCacher::MapCacher<std::string, ::ceph::bufferlist> backend;
+  // mutable ::crimson::osd::MapCacher::MapCacher<std::string, ::ceph::bufferlist>
+  // backend;
   mutable ::crimson::osd::MapCacher::MapCacher backend;
   std::map<std::string, ::ceph::bufferlist> results;
 
-  using OptKV = std::optional<std::pair<std::string, ::ceph::bufferlist>>;
+  // using OptKV = std::optional<std::pair<std::string, ::ceph::bufferlist>>;
 };
 
 class StoreCreator {
 
-// RRR make this a seastar uniqp?
-seastar::shared_promise<Store*> m_store;
+  // RRR make this a seastar uniqp?
+  seastar::shared_promise<Store*> m_store;
 
-/// send the transaction that will create the new store
-void create();
-
-
+  /// send the transaction that will create the new store
+  // void create();
 };
 
 
-}  // namespace Scrub
-
-}
-
+}  // namespace crimson::osd::Scrub

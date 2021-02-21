@@ -14,8 +14,8 @@
 #include <boost/statechart/state_machine.hpp>
 #include <boost/statechart/transition.hpp>
 
-#include "crimson/osd/osd_operations/pg_scrub_event.h"
 #include "common/version.h"
+#include "crimson/osd/osd_operations/pg_scrub_event.h"
 #include "crimson/osd/scrub_machine_lstnr_cr.h"
 #include "crimson/osd/scrubber_common_cr.h"
 #include "include/Context.h"

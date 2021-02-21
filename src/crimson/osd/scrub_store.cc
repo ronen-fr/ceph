@@ -73,9 +73,7 @@ string last_snap_key(int64_t pool)
 }
 }  // namespace
 
-namespace crimson::osd {
-
-namespace Scrub {
+namespace crimson::osd::Scrub {
 
 Store* Store::create(crimson::os::FuturizedStore* store,
 		     ceph::os::Transaction* t,
@@ -98,17 +96,21 @@ Store::Store(const coll_t& coll,
 void Store::add_object_error(int64_t pool, const inconsistent_obj_wrapper& e)
 {
   bufferlist bl;
-  e.encode(bl);
-  results[to_object_key(pool, e.object)] = bl;
+  // RRR e.encode(bl);
+  // RRR results[to_object_key(pool, e.object)] = bl;
 }
 
 void Store::add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e)
 {
   bufferlist bl;
-  e.encode(bl);
-  results[to_snap_key(pool, e.object)] = bl;
+  // RRR e.encode(bl);
+  // RRR results[to_snap_key(pool, e.object)] = bl;
 }
 
+void Store::cleanup(ceph::os::Transaction* t)
+{
+  t->remove(coll, hoid);
+}
 
 seastar::future<> Store::flush(::ceph::os::Transaction* t)
 {
@@ -119,34 +121,15 @@ seastar::future<> Store::flush(::ceph::os::Transaction* t)
       results.clear();
       return seastar::make_ready_future<>();
     });
-
   }
 
-    results.clear();
-    return seastar::make_ready_future<>();
+  results.clear();
+  return seastar::make_ready_future<>();
   //  crimson::osd::OSDriver::OSTransaction txn = driver.get_transaction(t);
   //  backend.set_keys(results, &txn);
 }
 
-#if 0
 /// RRR check if makes sense to make this a range generator at some future
-std::vector<bufferlist>
-Store::get_errors(const string& start,
-		  const string& end,
-		  int64_t max_return) const
-{
-  vector<bufferlist> errors;
-
-  auto next = std::make_pair(start, bufferlist{});
-  while (max_return && !backend.get_next(next.first, &next)) {
-    if (next.first >= end)
-      break;
-    errors.push_back(next.second);
-    max_return--;
-  }
-  return errors;
-}
-#endif
 
 Store::ErrtBuffersVec Store::get_errors(const string& start,
 					const string& end,
@@ -155,19 +138,17 @@ Store::ErrtBuffersVec Store::get_errors(const string& start,
   return ::seastar::do_with(
     vector<bufferlist>{},
     [this, start, end, max_return](auto&& errors) mutable -> Store::ErrtBuffersVec {
-
       return seastar::repeat(
 	       [this, start, end, mx = max_return,
 		&errors]() mutable -> ::seastar::future<seastar::stop_iteration> {
-
 		 if (--mx < 0) {
 		   return seastar::make_ready_future<::seastar::stop_iteration>(
 		     ::seastar::stop_iteration::yes);
 		 }
 
 		 return backend.get_next(start).safe_then(
-		   [end,
-		    &errors](auto&& kv) mutable -> ::seastar::future<::seastar::stop_iteration> {
+		   [end, &errors](
+		     auto&& kv) mutable -> ::seastar::future<::seastar::stop_iteration> {
 		     if (!kv.has_value() || kv->first >= end) {
 		       return seastar::make_ready_future<::seastar::stop_iteration>(
 			 ::seastar::stop_iteration::yes);
@@ -181,13 +162,11 @@ Store::ErrtBuffersVec Store::get_errors(const string& start,
 		     return seastar::make_ready_future<::seastar::stop_iteration>(
 		       ::seastar::stop_iteration::yes);
 		   });
-
 	       })
 	.then([end, &errors]() -> Store::ErrtBuffersVec {
 	  return Store::sstore_errorator::make_ready_future<BuffersVec>(
 	    std::forward<vector<bufferlist>>(errors));
 	});
-
     });
 }
 
@@ -259,5 +238,4 @@ Store::ErrtBuffersVec Store::get_object_errors(int64_t pool,
 }
 
 
-}  // namespace Scrub
-}  // namespace crimson::osd
+}  // namespace crimson::osd::Scrub

@@ -119,11 +119,25 @@ void ScrubQueue::dumps_scrub(ceph::Formatter* f)
 }
 
 void ScrubQueue::queue_scrub_event(PG const* pg,
-				 MessageRef scrub_msg,
-				 Scrub::scrub_prio_t with_priority)
-{
+				   MessageRef scrub_msg,
+				   Scrub::scrub_prio_t with_priority)
+{}
 
+bool ScrubQueue::can_inc_scrubs()
+{
+  return true;
 }
+bool ScrubQueue::inc_scrubs_local()
+{
+  return true;
+}
+void ScrubQueue::dec_scrubs_local() {}
+bool ScrubQueue::inc_scrubs_remote()
+{
+  return true;
+}
+void ScrubQueue::dec_scrubs_remote() {}
+void ScrubQueue::dump_scrub_reservations(ceph::Formatter* f) {}
 
 
 }  // namespace crimson::osd

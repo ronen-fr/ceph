@@ -92,7 +92,7 @@ class ReplicaReservations {
  */
 class LocalReservation {
   crimson::osd::PG* m_pg;
-  //ScrubQueue* m_osds;
+  // ScrubQueue* m_osds;
   ScrubQueue& m_queuer;
   bool m_holding_local_reservation{false};
 
@@ -110,13 +110,15 @@ class LocalReservation {
  */
 class ReservedByRemotePrimary {
   ::crimson::osd::PG* m_pg;
-  //crimson::osd::ShardServices* m_osds;
+  // crimson::osd::ShardServices* m_osds;
   ScrubQueue& m_queuer;
   bool m_reserved_by_remote_primary{false};
   const epoch_t m_reserved_at;
 
  public:
-  ReservedByRemotePrimary(::crimson::osd::PG* pg, crimson::osd::ScrubQueue& osds, epoch_t epoch);
+  ReservedByRemotePrimary(::crimson::osd::PG* pg,
+			  crimson::osd::ScrubQueue& osds,
+			  epoch_t epoch);
   ~ReservedByRemotePrimary();
   [[nodiscard]] bool is_reserved() const
   {
@@ -171,7 +173,7 @@ class MapsCollectionStatus {
 
 }  // namespace Scrub
 
-}
+}  // namespace crimson::osd
 
 
 namespace crimson::osd {
@@ -204,9 +206,9 @@ struct scrub_flags_t {
    * process with the 'repair' flag set (in the RequestScrub event).
    */
   bool required{false};
-};
 
-ostream& operator<<(ostream& out, const scrub_flags_t& sf);
+  friend ostream& operator<<(ostream& out, const scrub_flags_t& sf);
+};
 
 
 /**
@@ -374,8 +376,8 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   void scrub_compare_maps() final;
 
   void on_init() final;
-  void on_init_immediate() final {};
-  //seastar::future<> on_init_results;
+  void on_init_immediate() final{};
+  // seastar::future<> on_init_results;
   void on_replica_init() final;
   void replica_handling_done() final;
 
@@ -385,12 +387,12 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   seastar::future<bool> add_delayed_scheduling() final;
 
-//  /**
-//   * @returns have we asked at least one replica?
-//   * 'false' means we are configured with no replicas, and
-//   * should expect no maps to arrive.
-//   */
-//  seastar::future<bool> get_replicas_maps(bool replica_can_preempt) final;
+  //  /**
+  //   * @returns have we asked at least one replica?
+  //   * 'false' means we are configured with no replicas, and
+  //   * should expect no maps to arrive.
+  //   */
+  //  seastar::future<bool> get_replicas_maps(bool replica_can_preempt) final;
   void get_replicas_maps(bool replica_can_preempt) final;
 
   Scrub::FsmNext on_digest_updates() final;
@@ -458,14 +460,15 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
     return m_active;
   }
 
-  void do_scrub_event(crimson::osd::PgScrubEvent evt, PeeringCtx &rctx) final;
+  void do_scrub_event(crimson::osd::PgScrubEvent evt, PeeringCtx& rctx) final;
 
  private:
-
-  //void queue_local_event(MessageRef msg, Scrub::scrub_prio_t prio);
-  void queue_local_event(boost::statechart::event_base* fsm_event, Scrub::scrub_prio_t prio);
-  //void queue_local_event(boost::intrusive_ptr<const boost::statechart::event_base> fsm_event, Scrub::scrub_prio_t prio);
-  //void queue_local_event2(const boost::statechart::event_base& fsm_event, Scrub::scrub_prio_t prio);
+  // void queue_local_event(MessageRef msg, Scrub::scrub_prio_t prio);
+  void queue_local_event(boost::statechart::event_base* fsm_event,
+			 Scrub::scrub_prio_t prio);
+  // void queue_local_event(boost::intrusive_ptr<const boost::statechart::event_base>
+  // fsm_event, Scrub::scrub_prio_t prio); void queue_local_event2(const
+  // boost::statechart::event_base& fsm_event, Scrub::scrub_prio_t prio);
 
   void reset_internal_state();
 
@@ -572,7 +575,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 		     const set<pg_shard_t>& bad_peers);
 
 
-  //seastar::future<int> objects_list_range(
+  // seastar::future<int> objects_list_range(
   //  hobject_t start,
   //  hobject_t end,
   //  vector<hobject_t>* ls);
@@ -581,17 +584,15 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   // common code used by build_primary_map_chunk() and build_replica_map_chunk():
   seastar::future<> build_scrub_map_chunk(ScrubMap& map,  // primary or replica?
-			    ScrubMapBuilder& pos,
-			    hobject_t start,
-			    hobject_t end,
-			    scrub_level_t shallow_or_deep);
+					  ScrubMapBuilder& pos,
+					  hobject_t start,
+					  hobject_t end,
+					  scrub_level_t shallow_or_deep);
 
   seastar::future<> scan_rollback_obs(const vector<ghobject_t>& rollback_obs);
 
-  seastar::future<> compare_smaps(
-    const map<pg_shard_t,ScrubMap*> &maps,
-    const set<hobject_t> &master_set
-  );
+  seastar::future<> compare_smaps(const map<pg_shard_t, ScrubMap*>& maps,
+				  const set<hobject_t>& master_set);
 
   std::unique_ptr<Scrub::ScrubMachine> m_fsm;
   const spg_t m_pg_id;	///< a local copy of m_pg->pg_id
@@ -616,7 +617,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   int num_digest_updates_pending{0};
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
-  //boost::range_detail::filter_holder
+  // boost::range_detail::filter_holder
 
   /// Returns shared pointer to current osdmap
   OSDMapService::cached_map_t get_osdmap();
@@ -673,12 +674,12 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   /// Cleaned std::map pending snap metadata scrub
   ScrubMap m_cleaned_meta_map;
 
-  seastar::future<>  request_scrub_map(pg_shard_t replica,
-			  eversion_t version,
-			  hobject_t start,
-			  hobject_t end,
-			  bool deep,
-			  bool allow_preemption);
+  seastar::future<> request_scrub_map(pg_shard_t replica,
+				      eversion_t version,
+				      hobject_t start,
+				      hobject_t end,
+				      bool deep,
+				      bool allow_preemption);
 
 
   Scrub::MapsCollectionStatus m_maps_status;
@@ -692,8 +693,10 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   std::map<hobject_t, std::list<std::pair<ScrubMap::object, pg_shard_t>>> m_authoritative;
 
   object_stat_collection_t m_scrub_cstat;
-  void verify_cstat(bool repair, scrub_level_t shallow_or_deep, std::string_view mode_txt);
-  bool cstat_details_mismatch(std::string_view mode_txt); // 'true' if mismatch found
+  void verify_cstat(bool repair,
+		    scrub_level_t shallow_or_deep,
+		    std::string_view mode_txt);
+  bool cstat_details_mismatch(std::string_view mode_txt);  // 'true' if mismatch found
   using sum_item_t = const int64_t object_stat_sum_t::*;
   bool cstat_differs(sum_item_t e, bool is_invalid);
   std::string cstat_diff_txt(sum_item_t e, std::string_view msg);
@@ -717,7 +720,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    *  Queue a XX event to be sent to the replica, to trigger a re-check of the
    * availability of the scrub map prepared by the backend.
    */
-  //void requeue_replica(Scrub::scrub_prio_t is_high_priority);
+  // void requeue_replica(Scrub::scrub_prio_t is_high_priority);
 
   /**
    * the 'preemption' "state-machine".
