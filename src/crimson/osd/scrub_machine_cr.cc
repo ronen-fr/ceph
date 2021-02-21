@@ -25,13 +25,16 @@ using namespace std::chrono_literals;
 namespace sc = boost::statechart;
 
 namespace {
-seastar::logger &logger() { return crimson::get_logger(ceph_subsys_osd); }
-} // namespace
+seastar::logger& logger()
+{
+  return crimson::get_logger(ceph_subsys_osd);
+}
+}  // namespace
 
-#define DECLARE_LOCALS                                                         \
-  ScrubMachineListener *scrbr = context<ScrubMachine>().m_scrbr;               \
-  std::ignore = scrbr;                                                         \
-  auto pg_id = context<ScrubMachine>().m_pg_id;                                \
+#define DECLARE_LOCALS                                           \
+  ScrubMachineListener* scrbr = context<ScrubMachine>().m_scrbr; \
+  std::ignore = scrbr;                                           \
+  auto pg_id = context<ScrubMachine>().m_pg_id;                  \
   std::ignore = pg_id;
 
 namespace crimson::osd {
@@ -83,20 +86,23 @@ template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
 
 // ----------------------- NotActive -----------------------------------------
 
-NotActive::NotActive(my_context ctx) : my_base(ctx) {
+NotActive::NotActive(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> NotActive");
 }
 
 // ----------------------- ReservingReplicas ---------------------------------
 
-ReservingReplicas::ReservingReplicas(my_context ctx) : my_base(ctx) {
+ReservingReplicas::ReservingReplicas(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> ReservingReplicas");
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   scrbr->reserve_replicas();
 }
 
-sc::result ReservingReplicas::react(const ReservationFailure &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+sc::result ReservingReplicas::react(const ReservationFailure&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("ReservingReplicas::react(const ReservationFailure&)");
 
   // the Scrubber must release all resources and abort the scrubbing
@@ -107,24 +113,27 @@ sc::result ReservingReplicas::react(const ReservationFailure &) {
 /**
  * note: the event poster is handling the scrubber reset
  */
-sc::result ReservingReplicas::react(const FullReset &) {
+sc::result ReservingReplicas::react(const FullReset&)
+{
   logger().debug("ReservingReplicas::react(const FullReset&)");
   return transit<NotActive>();
 }
 
 // ----------------------- ActiveScrubbing -----------------------------------
 
-ActiveScrubbing::ActiveScrubbing(my_context ctx) : my_base(ctx) {
+ActiveScrubbing::ActiveScrubbing(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> ActiveScrubbing");
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   scrbr->on_init();
 }
 
 /**
  *  upon exiting the Active state
  */
-ActiveScrubbing::~ActiveScrubbing() {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+ActiveScrubbing::~ActiveScrubbing()
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("{}", __func__);
   scrbr->unreserve_replicas();
 }
@@ -134,17 +143,29 @@ ActiveScrubbing::~ActiveScrubbing() {
  * when encountering a backend error.
  * We kill the scrub and reset the FSM.
  */
-sc::result ActiveScrubbing::react(const InternalError &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+sc::result ActiveScrubbing::react(const InternalError&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("{}", __func__);
   scrbr->clear_pgscrub_state();
   return transit<NotActive>();
 }
 
-sc::result ActiveScrubbing::react(const FullReset &) {
+sc::result ActiveScrubbing::react(const FullReset&)
+{
   logger().debug("zz: ActiveScrubbing::react(const FullReset&)");
   // caller takes care of clearing the scrubber & FSM states
   return transit<NotActive>();
+}
+
+// ----------------------- ActStartup -----------------------------------
+
+/*
+ * Crimson-specific: waiting for initialization.
+ */
+ActStartup::ActStartup(my_context ctx) : my_base(ctx)
+{
+  logger().debug("scrubberFSM -- state -->> Act/ActStartup");
 }
 
 // ----------------------- RangeBlocked -----------------------------------
@@ -153,7 +174,8 @@ sc::result ActiveScrubbing::react(const FullReset &) {
  * Blocked. Will be released by kick_object_context_blocked() (or upon
  * an abort)
  */
-RangeBlocked::RangeBlocked(my_context ctx) : my_base(ctx) {
+RangeBlocked::RangeBlocked(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> Act/RangeBlocked");
 }
 
@@ -162,9 +184,10 @@ RangeBlocked::RangeBlocked(my_context ctx) : my_base(ctx) {
 /**
  *  Sleeping till timer reactivation - or just requeuing
  */
-PendingTimer::PendingTimer(my_context ctx) : my_base(ctx) {
+PendingTimer::PendingTimer(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> Act/PendingTimer");
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
 
   std::ignore = scrbr->add_delayed_scheduling();
 }
@@ -176,9 +199,10 @@ PendingTimer::PendingTimer(my_context ctx) : my_base(ctx) {
  *  - preemption data was set
  *  - epoch start was updated
  */
-NewChunk::NewChunk(my_context ctx) : my_base(ctx) {
+NewChunk::NewChunk(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> Act/NewChunk");
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
 
   scrbr->get_preemptor().adjust_parameters();
 
@@ -191,8 +215,9 @@ NewChunk::NewChunk(my_context ctx) : my_base(ctx) {
   scrbr->select_range_n_notify();
 }
 
-sc::result NewChunk::react(const SelectedChunkFree &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+sc::result NewChunk::react(const SelectedChunkFree&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("zz: NewChunk::react(const SelectedChunkFree&)");
 
   scrbr->set_subset_last_update(scrbr->search_log_for_updates());
@@ -201,7 +226,8 @@ sc::result NewChunk::react(const SelectedChunkFree &) {
 
 // ----------------------- WaitPushes -----------------------------------
 
-WaitPushes::WaitPushes(my_context ctx) : my_base(ctx) {
+WaitPushes::WaitPushes(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> Act/WaitPushes");
   post_event(boost::intrusive_ptr<ActivePushesUpd>(new ActivePushesUpd{}));
 }
@@ -209,11 +235,12 @@ WaitPushes::WaitPushes(my_context ctx) : my_base(ctx) {
 /*
  * Triggered externally, by the entity that had an update re pushes
  */
-sc::result WaitPushes::react(const ActivePushesUpd &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+sc::result WaitPushes::react(const ActivePushesUpd&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug(
-      "{}: WaitPushes::react(const ActivePushesUpd&) pending_active_pushes: {}",
-      __func__, scrbr->pending_active_pushes());
+    "{}: WaitPushes::react(const ActivePushesUpd&) pending_active_pushes: {}", __func__,
+    scrbr->pending_active_pushes());
 
   if (!scrbr->pending_active_pushes()) {
     // done waiting
@@ -225,18 +252,19 @@ sc::result WaitPushes::react(const ActivePushesUpd &) {
 
 // ----------------------- WaitLastUpdate -----------------------------------
 
-WaitLastUpdate::WaitLastUpdate(my_context ctx) : my_base(ctx) {
+WaitLastUpdate::WaitLastUpdate(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> Act/WaitLastUpdate");
   post_event(boost::intrusive_ptr<UpdatesApplied>(new UpdatesApplied{}));
 }
 
-void WaitLastUpdate::on_new_updates(const UpdatesApplied &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+void WaitLastUpdate::on_new_updates(const UpdatesApplied&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("WaitLastUpdate::on_new_updates(const UpdatesApplied&)");
 
   if (scrbr->has_pg_marked_new_updates()) {
-    post_event(
-        boost::intrusive_ptr<InternalAllUpdates>(new InternalAllUpdates{}));
+    post_event(boost::intrusive_ptr<InternalAllUpdates>(new InternalAllUpdates{}));
   } else {
     // will be requeued by op_applied
     logger().debug("{}: wait for EC read/modify/writes to queue", __func__);
@@ -246,8 +274,9 @@ void WaitLastUpdate::on_new_updates(const UpdatesApplied &) {
 /*
  *  request maps from the replicas in the acting set
  */
-sc::result WaitLastUpdate::react(const InternalAllUpdates &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+sc::result WaitLastUpdate::react(const InternalAllUpdates&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("WaitLastUpdate::react(const InternalAllUpdates&)");
 
   scrbr->get_replicas_maps(scrbr->get_preemptor().is_preemptable());
@@ -300,8 +329,9 @@ BuildMap::BuildMap(my_context ctx) : my_base(ctx)
   }
 }
 
-sc::result BuildMap::react(const IntLocalMapDone &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+sc::result BuildMap::react(const IntLocalMapDone&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("BuildMap::react(const IntLocalMapDone&)");
 
   scrbr->mark_local_map_ready();
@@ -310,15 +340,17 @@ sc::result BuildMap::react(const IntLocalMapDone &) {
 
 // ----------------------- DrainReplMaps -----------------------------------
 
-DrainReplMaps::DrainReplMaps(my_context ctx) : my_base(ctx) {
+DrainReplMaps::DrainReplMaps(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> Act/DrainReplMaps");
   // we may have received all maps already. Send the event that will make us
   // check.
   post_event(boost::intrusive_ptr<GotReplicas>(new GotReplicas{}));
 }
 
-sc::result DrainReplMaps::react(const GotReplicas &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+sc::result DrainReplMaps::react(const GotReplicas&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("DrainReplMaps::react(const GotReplicas&)");
 
   if (scrbr->are_all_maps_available()) {
@@ -326,28 +358,31 @@ sc::result DrainReplMaps::react(const GotReplicas &) {
     return transit<PendingTimer>();
   }
 
-  logger().debug("DrainReplMaps::react(const GotReplicas&): still draining "
-                 "incoming maps: {}",
-                 scrbr->dump_awaited_maps());
+  logger().debug(
+    "DrainReplMaps::react(const GotReplicas&): still draining "
+    "incoming maps: {}",
+    scrbr->dump_awaited_maps());
   return discard_event();
 }
 
 // ----------------------- WaitReplicas -----------------------------------
 
-WaitReplicas::WaitReplicas(my_context ctx) : my_base(ctx) {
+WaitReplicas::WaitReplicas(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> Act/WaitReplicas");
   post_event(boost::intrusive_ptr<GotReplicas>(new GotReplicas{}));
 }
 
-sc::result WaitReplicas::react(const GotReplicas &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+sc::result WaitReplicas::react(const GotReplicas&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("WaitReplicas::react(const GotReplicas&)");
 
   if (scrbr->are_all_maps_available()) {
     logger().debug("{}: WaitReplicas::react(const GotReplicas&) got all", __func__);
 
     // were we preempted?
-    if (scrbr->get_preemptor().disable_and_test()) { // a test&set
+    if (scrbr->get_preemptor().disable_and_test()) {  // a test&set
 
       logger().debug("{}: WaitReplicas::react(const GotReplicas&) PREEMPTED!", __func__);
       return transit<PendingTimer>();
@@ -364,7 +399,8 @@ sc::result WaitReplicas::react(const GotReplicas &) {
 
 // ----------------------- WaitDigestUpdate -----------------------------------
 
-WaitDigestUpdate::WaitDigestUpdate(my_context ctx) : my_base(ctx) {
+WaitDigestUpdate::WaitDigestUpdate(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> Act/WaitDigestUpdate");
   // perform an initial check: maybe we already
   // have all the updates we need:
@@ -372,33 +408,35 @@ WaitDigestUpdate::WaitDigestUpdate(my_context ctx) : my_base(ctx) {
   post_event(boost::intrusive_ptr<DigestUpdate>(new DigestUpdate{}));
 }
 
-sc::result WaitDigestUpdate::react(const DigestUpdate &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+sc::result WaitDigestUpdate::react(const DigestUpdate&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("WaitDigestUpdate::react(const DigestUpdate&)");
 
   switch (scrbr->on_digest_updates()) {
 
-  case Scrub::FsmNext::goto_notactive:
-    // scrubbing is done
-    return transit<NotActive>();
+    case Scrub::FsmNext::goto_notactive:
+      // scrubbing is done
+      return transit<NotActive>();
 
-  case Scrub::FsmNext::next_chunk:
-    // go get the next chunk
-    return transit<PendingTimer>();
+    case Scrub::FsmNext::next_chunk:
+      // go get the next chunk
+      return transit<PendingTimer>();
 
-  case Scrub::FsmNext::do_discard:
-    // still waiting for more updates
-    return discard_event();
+    case Scrub::FsmNext::do_discard:
+      // still waiting for more updates
+      return discard_event();
   }
-  __builtin_unreachable(); // Prevent a gcc warning.
-                           // Adding a phony 'default:' above is wrong: (a)
-                           // prevents a warning if FsmNext is extended, and (b)
-                           // elicits a correct warning from Clang
+  __builtin_unreachable();  // Prevent a gcc warning.
+			    // Adding a phony 'default:' above is wrong: (a)
+			    // prevents a warning if FsmNext is extended, and (b)
+			    // elicits a correct warning from Clang
 }
 
-ScrubMachine::ScrubMachine(crimson::osd::PG *pg, ScrubMachineListener *pg_scrub)
-    : m_pg{pg}, m_pg_id{pg->get_pgid()}, m_scrbr{pg_scrub} {
-      logger().debug("ScrubMachine created {}", m_pg_id);
+ScrubMachine::ScrubMachine(crimson::osd::PG* pg, ScrubMachineListener* pg_scrub)
+    : m_pg{pg}, m_pg_id{pg->get_pgid()}, m_scrbr{pg_scrub}
+{
+  logger().debug("ScrubMachine created {}", m_pg_id);
 }
 
 ScrubMachine::~ScrubMachine() = default;
@@ -407,18 +445,21 @@ ScrubMachine::~ScrubMachine() = default;
 
 // ----------------------- ReplicaWaitUpdates --------------------------------
 
-ReplicaWaitUpdates::ReplicaWaitUpdates(my_context ctx) : my_base(ctx) {
+ReplicaWaitUpdates::ReplicaWaitUpdates(my_context ctx) : my_base(ctx)
+{
   logger().debug("scrubberFSM -- state -->> ReplicaWaitUpdates");
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   scrbr->on_replica_init();
 }
 
 /*
  * Triggered externally, by the entity that had an update re pushes
  */
-sc::result ReplicaWaitUpdates::react(const ReplicaPushesUpd &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
-  logger().debug("ReplicaWaitUpdates::react(const ReplicaPushesUpd&): {}", scrbr->pending_active_pushes());
+sc::result ReplicaWaitUpdates::react(const ReplicaPushesUpd&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  logger().debug("ReplicaWaitUpdates::react(const ReplicaPushesUpd&): {}",
+		 scrbr->pending_active_pushes());
 
   if (scrbr->pending_active_pushes() == 0) {
 
@@ -432,24 +473,27 @@ sc::result ReplicaWaitUpdates::react(const ReplicaPushesUpd &) {
 /**
  * the event poster is handling the scrubber reset
  */
-sc::result ReplicaWaitUpdates::react(const FullReset &) {
+sc::result ReplicaWaitUpdates::react(const FullReset&)
+{
   logger().debug("ReplicaWaitUpdates::react(const FullReset&)");
   return transit<NotActive>();
 }
 
 // ----------------------- ActiveReplica -----------------------------------
 
-ActiveReplica::ActiveReplica(my_context ctx) : my_base(ctx) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
+ActiveReplica::ActiveReplica(my_context ctx) : my_base(ctx)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("scrubberFSM -- state -->> ActiveReplica");
-  scrbr->on_replica_init(); // as we might have skipped ReplicaWaitUpdates
+  scrbr->on_replica_init();  // as we might have skipped ReplicaWaitUpdates
   post_event(boost::intrusive_ptr<SchedReplica>(new SchedReplica{}));
 }
 
-sc::result ActiveReplica::react(const SchedReplica &) {
-  DECLARE_LOCALS; // 'scrbr' & 'pg_id' aliases
-  logger().debug(
-      "{}: ActiveReplica::react(const SchedReplica&). is_preemptable? {}", __func__, scrbr->get_preemptor().is_preemptable());
+sc::result ActiveReplica::react(const SchedReplica&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  logger().debug("{}: ActiveReplica::react(const SchedReplica&). is_preemptable? {}",
+		 __func__, scrbr->get_preemptor().is_preemptable());
 
   if (scrbr->get_preemptor().was_preempted()) {
     logger().debug("{}: replica scrub job preempted", __func__);
@@ -496,11 +540,12 @@ sc::result ActiveReplica::react(const SchedReplica &) {
 /**
  * the event poster is handling the scrubber reset
  */
-sc::result ActiveReplica::react(const FullReset &) {
+sc::result ActiveReplica::react(const FullReset&)
+{
   logger().debug("zz: ActiveReplica::react(const FullReset&)");
   return transit<NotActive>();
 }
 
-} // namespace Scrub
+}  // namespace Scrub
 
-}
+}  // namespace crimson::osd

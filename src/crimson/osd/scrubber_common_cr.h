@@ -105,9 +105,10 @@ struct requested_scrub_t {
    * Otherwise - PG_STATE_FAILED_REPAIR will be asserted.
    */
   bool check_repair{false};
+
+  friend ostream& operator<<(ostream& out, const requested_scrub_t& sf);
 };
 
-ostream& operator<<(ostream& out, const requested_scrub_t& sf);
 
 /**
  *  The interface used by the PG when requesting scrub-related info or services
