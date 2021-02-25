@@ -159,6 +159,29 @@ public:
 template std::unique_ptr<AdminSocketHook> make_asok_hook<AssertAlwaysHook>();
 
 /**
+ * RRR temporary - calling osd::sched_scrub()
+ */
+class DbgSchedScrubHook : public AdminSocketHook {
+ public:
+  DbgSchedScrubHook(crimson::osd::OSD &osd)  :
+    AdminSocketHook{"dbg_sched_scrub",
+		    "",
+		    "calls osd::sched_scrub()"},
+  m_osd{osd}
+  {}
+  seastar::future<tell_result_t> call(const cmdmap_t&,
+				      std::string_view format,
+				      ceph::bufferlist&& input) const final
+  {
+    m_osd.sched_scrub();
+    return seastar::make_ready_future<tell_result_t>();
+  }
+ private:
+  crimson::osd::OSD& m_osd;
+};
+template std::unique_ptr<AdminSocketHook> make_asok_hook<DbgSchedScrubHook>(crimson::osd::OSD& osd);
+
+/**
 * A Seastar admin hook: fetching the values of configured metrics
 */
 class SeastarMetricsHook : public AdminSocketHook {
