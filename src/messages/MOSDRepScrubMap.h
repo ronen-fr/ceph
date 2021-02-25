@@ -16,6 +16,7 @@
 #define CEPH_MOSDREPSCRUBMAP_H
 
 #include "MOSDFastDispatchOp.h"
+#include <sstream>
 
 /*
  * pass a ScrubMap from a shard back to the primary
@@ -57,6 +58,12 @@ public:
     out << "rep_scrubmap(" << pgid << " e" << map_epoch
 	<< " from shard " << from
 	<< (preempted ? " PREEMPTED":"") << ")";
+  }
+
+  std::string get_desc() const {
+    std::stringstream o;
+    print(o);
+    return o.str();
   }
 
   void encode_payload(uint64_t features) override {

@@ -15,6 +15,7 @@
 #include "osd/osd_types.h"
 //#include "osd/PGPeeringEvent.h"
 #include "osd/PeeringState.h"
+#include "crimson/osd/scrubber_common_cr.h"
 
 namespace crimson::osd {
 
@@ -135,5 +136,75 @@ class LocalScrubEvent final : public ScrubEvent {
 
   virtual ~LocalScrubEvent();
 };
+
+
+// //////////////////////////////////////////////////////////////////////////////// //
+
+using ScrubEventFwd = void (ScrubPgIF::*)(epoch_t);
+
+// carrying a scrubber function to call with epoch data
+class ScrubEvent2 : public OperationT<ScrubEvent2> {
+ public:
+  static constexpr OperationTypeCode type = OperationTypeCode::scrub_event;
+
+  class PGPipeline {
+    OrderedPipelinePhase await_map = {"ScrubEvent::PGPipeline::await_map"};
+    OrderedPipelinePhase process = {"ScrubEvent::PGPipeline::process"};
+    friend class ScrubEvent2;
+  };
+
+  seastar::future<Ref<PG>> get_pg();
+  ~ScrubEvent2();
+
+ protected:
+  OrderedPipelinePhase::Handle handle;
+  PGPipeline& pp(PG& pg);
+
+  ShardServices& shard_services;
+  PeeringCtx ctx;
+  pg_shard_t from;  // to be removed
+  spg_t pgid;
+  std::chrono::milliseconds delay{0s};
+  //PgScrubEvent evt;
+  ScrubEventFwd event_fwd_func;
+  epoch_t epoch_queued;
+  Ref<PG> pg;
+
+ public:
+  //pg_shard_t get_from() const { return from; }
+
+  spg_t get_pgid() const { return pgid; }
+
+  //const PgScrubEvent& get_event() const { return evt; }
+
+  virtual void on_pg_absent();
+  virtual seastar::future<> complete_rctx(Ref<PG>);
+  //virtual seastar::future<Ref<PG>> get_pg() = 0;
+
+ public:
+  //template <typename... Args>
+  ScrubEvent2(Ref<PG> pg,
+              ShardServices& shard_services,
+	     const pg_shard_t& from,
+	     const spg_t& pgid,
+	      ScrubEventFwd func,
+	      epoch_t epoch);
+	     //Args&&... args)
+
+
+  ScrubEvent2(Ref<PG> pg,
+	      ShardServices& shard_services,
+	      const pg_shard_t& from,
+	      const spg_t& pgid,
+	      std::chrono::milliseconds delay,
+	      ScrubEventFwd func,
+	      epoch_t epoch);
+
+  void print(std::ostream&) const final;
+  void dump_detail(ceph::Formatter* f) const final;
+  seastar::future<> start();
+};
+
+
 
 }  // namespace crimson::osd

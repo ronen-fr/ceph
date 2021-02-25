@@ -82,9 +82,9 @@ class ReplicaReservations {
 
   ~ReplicaReservations();
 
-  void handle_reserve_grant(RemoteScrubEvent op, pg_shard_t from);
+  void handle_reserve_grant(const MOSDScrubReserve& msg, pg_shard_t from);
 
-  void handle_reserve_reject(RemoteScrubEvent op, pg_shard_t from);
+  void handle_reserve_reject(const MOSDScrubReserve& msg, pg_shard_t from);
 };
 
 /**
@@ -173,10 +173,6 @@ class MapsCollectionStatus {
 
 }  // namespace Scrub
 
-}  // namespace crimson::osd
-
-
-namespace crimson::osd {
 
 /**
  * the scrub operation flags. Primary only.
@@ -250,6 +246,12 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void send_replica_pushes_upd(epoch_t epoch_queued) final;
 
+  void send_full_reset(epoch_t epoch_queued) final;  // crimson
+
+  void send_chunk_free(epoch_t epoch_queued) final;  // crimson
+
+  void send_chunk_busy(epoch_t epoch_queued) final;  // crimson
+
   /**
    *  we allow some number of preemptions of the scrub, which mean we do
    *  not block.  Then we start to block.  Once we start blocking, we do
@@ -264,11 +266,24 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    *  we are a replica being asked by the Primary to reserve OSD resources for
    *  scrubbing
    */
-  void handle_scrub_reserve_request(RemoteScrubEvent op) final;
+  void handle_scrub_reserve_request(const MOSDScrubReserve& req, pg_shard_t from);
+  //void handle_scrub_reserve_request(Ref<MOSDScrubReserve> req, pg_shard_t from);
 
-  void handle_scrub_reserve_grant(RemoteScrubEvent op, pg_shard_t from) final;
-  void handle_scrub_reserve_reject(RemoteScrubEvent op, pg_shard_t from) final;
-  void handle_scrub_reserve_release(RemoteScrubEvent op) final;
+  //void handle_scrub_reserve_grant(RemoteScrubEvent op, pg_shard_t from) final;
+  //void handle_scrub_reserve_reject(RemoteScrubEvent op, pg_shard_t from) final;
+  //void handle_scrub_reserve_release(RemoteScrubEvent op) final;
+
+  void handle_scrub_reserve_grant(const MOSDScrubReserve& msg, pg_shard_t from);
+  void handle_scrub_reserve_reject(const MOSDScrubReserve& msg, pg_shard_t from);
+  void handle_scrub_reserve_release(const MOSDScrubReserve& req, pg_shard_t from);
+
+  //void handle_scrub_reserve_op(Ref<MOSDScrubReserve> req, pg_shard_t from) final;
+  void handle_scrub_reserve_op(const MOSDScrubReserve& req, pg_shard_t from) final;
+
+  void handle_scrub_map_request(const MOSDRepScrub& req, pg_shard_t from) final;
+  void map_from_replica(const MOSDRepScrubMap& msg, pg_shard_t from) final;
+
+
   void discard_replica_reservations() final;
   void clear_scrub_reservations() final;  // PG::clear... fwds to here
   void unreserve_replicas() final;
@@ -297,7 +312,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   // used if we are a replica
 
-  void replica_scrub_op(RemoteScrubEvent op) final;
+  void replica_scrub_op(RemoteScrubEvent op); // to be removed?
 
   /// the op priority, taken from the primary's request message
   Scrub::scrub_prio_t replica_op_priority() const final
@@ -321,7 +336,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   }
 
   /// handle a message carrying a replica map
-  void map_from_replica(RemoteScrubEvent op) final;
+  //void map_from_replica(RemoteScrubEvent op) final;
 
   /**
    *  should we requeue blocked ops?
@@ -460,15 +475,28 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
     return m_active;
   }
 
-  void do_scrub_event(crimson::osd::PgScrubEvent evt, PeeringCtx& rctx) final;
+  void do_scrub_event(const crimson::osd::PgScrubEvent& evt, PeeringCtx& rctx) final;
 
  private:
   // void queue_local_event(MessageRef msg, Scrub::scrub_prio_t prio);
-  void queue_local_event(boost::statechart::event_base* fsm_event,
-			 Scrub::scrub_prio_t prio);
-  // void queue_local_event(boost::intrusive_ptr<const boost::statechart::event_base>
-  // fsm_event, Scrub::scrub_prio_t prio); void queue_local_event2(const
-  // boost::statechart::event_base& fsm_event, Scrub::scrub_prio_t prio);
+  void queue_local_event_aux(PgScrubEvent* fsm_event,
+			 Scrub::scrub_prio_t prio,
+			 std::string_view desc);
+
+
+  template <typename SM_EVT>
+  void queue_local_event(SM_EVT* fsm_event,
+				     Scrub::scrub_prio_t prio)
+  {
+    PgScrubEvent* e = new PgScrubEvent(m_pg->get_osdmap_epoch(), m_pg->get_osdmap_epoch(), *fsm_event);
+
+    queue_local_event_aux(e, prio, e->get_desc());
+  }
+
+  void queue_local_trigger(ScrubEventFwd trigger,
+			   epoch_t epoch_queued,
+			   std::chrono::milliseconds delay,
+			   std::string_view desc);
 
   void reset_internal_state();
 
@@ -828,5 +856,4 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   preemption_data_t preemption_data;
 };
-
 }  // namespace crimson::osd

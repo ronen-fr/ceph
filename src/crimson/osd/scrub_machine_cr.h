@@ -89,8 +89,7 @@ MEV(DigestUpdate)  ///< external. called upon success of a MODIFY op. See
 		   ///< scrub_snapshot_metadata()
 MEV(AllChunksDone)
 
-MEV(StartReplica)	 ///< initiating replica scrub. replica_scrub_op() -> OSD Q ->
-			 ///< replica_scrub()
+MEV(StartReplica)	 ///< initiating replica scrub
 MEV(StartReplicaNoWait)	 ///< 'start replica' when there are no pending updates
 
 MEV(SchedReplica)

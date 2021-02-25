@@ -682,6 +682,12 @@ OSD::ms_dispatch(crimson::net::ConnectionRef conn, MessageRef m)
       return handle_rep_op_reply(conn, boost::static_pointer_cast<MOSDRepOpReply>(m));
     case MSG_OSD_SCRUB2:
       return handle_scrub(conn, boost::static_pointer_cast<MOSDScrub2>(m));
+    case MSG_OSD_SCRUB_RESERVE:
+      return handle_scrub_res(conn, boost::static_pointer_cast<MOSDScrubReserve>(m));
+    case MSG_OSD_REP_SCRUB:
+      return handle_scrub_map_request(conn, boost::static_pointer_cast<MOSDRepScrub>(m));
+    case MSG_OSD_REP_SCRUBMAP:
+      return handle_scrub_map_from_rep(conn, boost::static_pointer_cast<MOSDRepScrubMap>(m));
     default:
       dispatched = false;
       return seastar::now();
@@ -1274,6 +1280,8 @@ void OSD::update_heartbeat_peers()
   heartbeat->update_peers(whoami);
 }
 
+// RRR why not return the future?
+
 seastar::future<> OSD::handle_peering_op(
   crimson::net::ConnectionRef conn,
   Ref<MOSDPeeringOp> m)
@@ -1289,6 +1297,81 @@ seastar::future<> OSD::handle_peering_op(
     m->get_spg(),
     std::move(*evt));
   return seastar::now();
+}
+
+// RRR the following 3 functions should be merged (into a templated one?)
+seastar::future<> OSD::handle_scrub_res(
+  crimson::net::ConnectionRef conn, // RRR do I need to maintain the conn alive?
+  Ref<MOSDScrubReserve> m)
+{
+  const int src = m->get_source().num();
+  logger().debug("handle_scrub_res on {} from {}", m->get_spg(), src);
+
+  //td::unique_ptr<PgScrubEvent> evt(m->get_map_epoch(), m->get_min_epoch(), m->get_event());
+
+
+  auto pg = get_pg(m->get_spg());
+  auto from = pg_shard_t{src, m->get_spg().shard};
+
+  if (!pg) {
+    logger().debug("{}: {} not found", __func__, m->get_spg().pgid);
+    return seastar::make_ready_future<>();
+  }
+
+  // RRR add the waiting for the map
+
+
+  return pg->do_scrub_request(std::move(m), from);
+
+  /*
+  std::unique_ptr<PGPeeringEvent> evt(m->get_event());
+  (void) shard_services.start_operation<RemotePeeringEvent>(
+    *this,
+    conn,
+    shard_services,
+    pg_shard_t{from, m->get_spg().shard},
+    m->get_spg(),
+    std::move(*evt));
+    */
+  //return seastar::now();
+}
+
+seastar::future<> OSD::handle_scrub_map_request(
+  crimson::net::ConnectionRef conn, // RRR do I need to maintain the conn alive?
+  Ref<MOSDRepScrub> m)
+{
+  const int src = m->get_source().num();
+  logger().debug("handle_scrub_map_request on {} from {}", m->get_spg(), src);
+  auto pg = get_pg(m->get_spg());
+  auto from = pg_shard_t{src, m->get_spg().shard};
+
+  if (!pg) {
+    logger().debug("{}: {} not found", __func__, m->get_spg().pgid);
+    return seastar::make_ready_future<>();
+  }
+
+  // RRR add the waiting for the map
+
+  return pg->do_scrub_map_request(std::move(m), from);
+}
+
+seastar::future<> OSD::handle_scrub_map_from_rep(
+  crimson::net::ConnectionRef conn, // RRR do I need to maintain the conn alive?
+  Ref<MOSDRepScrubMap> m)
+{
+  const int src = m->get_source().num();
+  logger().debug("handle_scrub_map_from_rep on {} from {}", m->get_spg(), src);
+  auto pg = get_pg(m->get_spg());
+  auto from = pg_shard_t{src, m->get_spg().shard};
+
+  if (!pg) {
+    logger().debug("{}: {} not found", __func__, m->get_spg().pgid);
+    return seastar::make_ready_future<>();
+  }
+
+  // RRR add the waiting for the map
+
+  return pg->do_scrub_map_reply(std::move(m), from);
 }
 
 void OSD::check_osdmap_features()

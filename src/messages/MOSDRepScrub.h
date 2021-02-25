@@ -17,6 +17,7 @@
 #define CEPH_MOSDREPSCRUB_H
 
 #include "MOSDFastDispatchOp.h"
+#include <sstream>
 
 /*
  * instruct an OSD initiate a replica scrub on a specific PG
@@ -89,6 +90,12 @@ public:
 	<< ",priority=" << priority
 	<< (high_priority ? " (high)":"")
 	<< ")";
+  }
+
+  std::string get_desc() const {
+    std::stringstream s;
+    print(s);
+    return s.str();
   }
 
   void encode_payload(uint64_t features) override {

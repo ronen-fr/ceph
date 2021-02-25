@@ -15,7 +15,8 @@ namespace crimson::osd {
 struct OSDConnectionPriv : public crimson::net::Connection::user_private_t {
   ClientRequest::ConnectionPipeline client_request_conn_pipeline;
   RemotePeeringEvent::ConnectionPipeline peering_request_conn_pipeline;
-  RemoteScrubEvent::ConnectionPipeline scrub_request_conn_pipeline; // not sure if needed
+  RemoteScrubEvent::ConnectionPipeline scrub_event_conn_pipeline; // not sure if needed
+  ScrubRequest::ConnectionPipeline scrub_request_conn_pipeline;
   RepRequest::ConnectionPipeline replicated_request_conn_pipeline;
 };
 

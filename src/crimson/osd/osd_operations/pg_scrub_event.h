@@ -82,8 +82,7 @@ MEV(DigestUpdate)  ///< external. called upon success of a MODIFY op. See
 ///< scrub_snapshot_metadata()
 MEV(AllChunksDone)
 
-MEV(StartReplica)  ///< initiating replica scrub. replica_scrub_op() -> OSD Q ->
-///< replica_scrub()
+MEV(StartReplica)  ///< initiating replica scrub.
 MEV(StartReplicaNoWait)	 ///< 'start replica' when there are no pending updates
 
 MEV(SchedReplica)
@@ -108,7 +107,7 @@ class PgScrubEvent {
   bool requires_pg;
 
   // needed?
-  MEMPOOL_CLASS_HELPERS();
+  //MEMPOOL_CLASS_HELPERS();
 
 
   template <class T>
@@ -126,18 +125,19 @@ class PgScrubEvent {
     // desc = out.str();
 
     ::fmt::memory_buffer bf;
-    ::fmt::format_to(bf, "epoch_sent:{} epoch_requested: {} {}", epoch_sent,
+    ::fmt::format_to(bf, "epoch_sent:{} epoch_requested: {} {}-", epoch_sent,
 		   epoch_requested, sevt.print());
-    desc = bf.data();
+    desc = fmt::to_string(bf);
   };
 
- public:
+  ~PgScrubEvent() {} // RRR make sure it was really needed
+
   [[nodiscard]] const boost::statechart::event_base& get_event() const
   {
     return *evt;
   }
 
-  [[nodiscard]] const std::string& get_desc() const
+  [[nodiscard]] std::string get_desc() const
   {
     return desc;
   }

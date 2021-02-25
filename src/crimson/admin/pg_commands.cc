@@ -13,7 +13,14 @@
 #include "crimson/admin/admin_socket.h"
 #include "crimson/osd/osd.h"
 #include "crimson/osd/pg.h"
+#include "crimson/osd/pg_scrub_sched.h"
 
+
+namespace {
+seastar::logger& logger() {
+  return crimson::get_logger(ceph_subsys_osd);
+}
+}
 
 using crimson::osd::OSD;
 using crimson::osd::PG;
@@ -137,6 +144,43 @@ public:
       // TODO
       return seastar::make_ready_future<tell_result_t>();
     });
+  }
+};
+
+class PgScrubCommand final : public PGCommand {
+  scrub_level_t m_depth;
+ public:
+  explicit PgScrubCommand(crimson::osd::OSD& osd, scrub_level_t depth)
+      : PGCommand{osd, ((depth == scrub_level_t::deep) ? "deep_scrub" : "scrub"),
+		  "",  //"name=pgid,type=CephPgid,req=false",
+		  //"name=time,type=CephInt,req=false",
+		  "Trigger a scheduled scrub"}, m_depth{std::forward<scrub_level_t>(depth)}
+  {}
+  seastar::future<tell_result_t> do_command(Ref<PG> pg,
+					    const cmdmap_t& cmdmap,
+					    std::string_view format,
+					    ceph::bufferlist&&) const final
+  {
+    std::unique_ptr<Formatter> f{Formatter::create(format, "json-pretty", "json-pretty")};
+    // cmd_getval(cmdmap, "mulcmd", cmd);
+
+    // look for depth specification in the commandline
+
+    // RRR
+    //const scrub_level_t depth = scrub_level_t::shallow;
+
+    // auto ret = pg->get_shard_services().get_scrub_services().forced_scrub(pg);
+    auto ret = pg->m_scrub_sched->forced_scrub(f.get(), m_depth);
+
+    if (ret) {
+
+      return seastar::make_ready_future<tell_result_t>(std::move(f));
+
+    } else {
+
+      return seastar::make_ready_future<tell_result_t>(
+	tell_result_t{-EINVAL, "failure RRR"});
+    }
   }
 };
 
