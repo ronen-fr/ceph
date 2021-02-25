@@ -522,6 +522,34 @@ void PG::do_scrub_event(
   }
 }
 
+seastar::future<> PG::do_scrub_request(Ref<MOSDScrubReserve> req, pg_shard_t from)
+{
+  //req.get();
+  if (m_scrubber) {
+    m_scrubber->handle_scrub_reserve_op(*req, from);
+  }
+
+  return seastar::make_ready_future<>();
+}
+
+seastar::future<> PG::do_scrub_map_request(Ref<MOSDRepScrub> req, pg_shard_t from)
+{
+  if (m_scrubber) {
+    m_scrubber->handle_scrub_map_request(*req, from);
+  }
+
+  return seastar::make_ready_future<>();
+}
+
+seastar::future<> PG::do_scrub_map_reply(Ref<MOSDRepScrubMap> msg, pg_shard_t from)
+{
+  if (m_scrubber) {
+    m_scrubber->map_from_replica(*msg, from);
+  }
+
+  return seastar::make_ready_future<>();
+}
+
 void PG::handle_advance_map(
   cached_map_t next_map, PeeringCtx &rctx)
 {
@@ -584,6 +612,28 @@ void PG::WaitForActiveBlocker::dump_detail(Formatter *f) const
 {
   f->dump_stream("pgid") << pg->pgid;
 }
+
+void PG::set_last_scrub_stamp(utime_t when)
+{
+  logger().debug("{}: {}", __func__, when);
+  peering_state.set_last_scrub_stamp(when);
+}
+
+void PG::set_last_deep_scrub_stamp(utime_t when)
+{
+  logger().debug("{}: {}", __func__, when);
+  peering_state.set_last_deep_scrub_stamp(when);
+}
+
+void PG::set_specific_scrub_stamp(scrub_level_t depth, utime_t when)
+{
+  if (depth == scrub_level_t::deep) {
+    set_last_deep_scrub_stamp(when);
+  } else {
+    set_last_scrub_stamp(when);
+  }
+}
+
 
 void PG::WaitForActiveBlocker::on_active()
 {

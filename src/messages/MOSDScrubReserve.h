@@ -16,6 +16,9 @@
 #define CEPH_MOSDSCRUBRESERVE_H
 
 #include "MOSDFastDispatchOp.h"
+#include <sstream>
+#include <string_view>
+#include <string>
 
 class MOSDScrubReserve : public MOSDFastDispatchOp {
 private:
@@ -30,6 +33,8 @@ public:
     RELEASE = 2,
     REJECT = 3,
   };
+  inline static constexpr string_view req_names[4] = {"request"sv, "grant"sv,
+                                                      "release"sv, "reject"sv};
   int32_t type;
   pg_shard_t from;
 
@@ -43,6 +48,7 @@ public:
   MOSDScrubReserve()
     : MOSDFastDispatchOp{MSG_OSD_SCRUB_RESERVE, HEAD_VERSION, COMPAT_VERSION},
       map_epoch(0), type(-1) {}
+
   MOSDScrubReserve(spg_t pgid,
 		   epoch_t map_epoch,
 		   int type,
@@ -55,27 +61,22 @@ public:
     return "MOSDScrubReserve";
   }
 
-  void print(std::ostream& out) const {
-    out << "MOSDScrubReserve(" << pgid << " ";
-    switch (type) {
-    case REQUEST:
-      out << "REQUEST ";
-      break;
-    case GRANT:
-      out << "GRANT ";
-      break;
-    case REJECT:
-      out << "REJECT ";
-      break;
-    case RELEASE:
-      out << "RELEASE ";
-      break;
-    }
-    out << "e" << map_epoch << ")";
-    return;
+  std::string_view get_specific_req_name() const {
+    return req_names[type];
   }
 
-  void decode_payload() {
+  std::string get_desc() const {
+    std::stringstream s;
+    print(s);
+    return s.str();
+  }
+
+  void print(std::ostream& out) const {
+    out << "MOSDScrubReserve(" << pgid << " " << get_specific_req_name() <<
+      " e" << map_epoch << ")";
+  }
+
+  void decode_payload() final {
     using ceph::decode;
     auto p = payload.cbegin();
     decode(pgid, p);
@@ -84,7 +85,7 @@ public:
     decode(from, p);
   }
 
-  void encode_payload(uint64_t features) {
+  void encode_payload(uint64_t features) final {
     using ceph::encode;
     encode(pgid, payload);
     encode(map_epoch, payload);

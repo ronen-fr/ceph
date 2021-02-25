@@ -17,7 +17,8 @@ enum class OperationTypeCode {
   replicated_request,
   background_recovery,
   background_recovery_sub,
-  scrub_event,
+  scrub_event,	///< intra-OSD events carrying scrub state-machine events
+  scrub_request, ///< inter-OSD scrub requests/responses
   last_op
 };
 
@@ -31,6 +32,7 @@ static constexpr const char* const OP_NAMES[] = {
   "background_recovery",
   "background_recovery_sub",
   "scrub_event",
+  "scrub_request"
 };
 
 // prevent the addition of OperationTypeCode-s with no matching OP_NAMES entry:

@@ -153,7 +153,7 @@ sc::result ActiveScrubbing::react(const InternalError&)
 
 sc::result ActiveScrubbing::react(const FullReset&)
 {
-  logger().debug("zz: ActiveScrubbing::react(const FullReset&)");
+  logger().debug("ScrubberFSM: ActiveScrubbing::react(const FullReset&)");
   // caller takes care of clearing the scrubber & FSM states
   return transit<NotActive>();
 }
@@ -218,7 +218,7 @@ NewChunk::NewChunk(my_context ctx) : my_base(ctx)
 sc::result NewChunk::react(const SelectedChunkFree&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
-  logger().debug("zz: NewChunk::react(const SelectedChunkFree&)");
+  logger().debug("ScrubberFSM: NewChunk::react(const SelectedChunkFree&)");
 
   scrbr->set_subset_last_update(scrbr->search_log_for_updates());
   return transit<WaitPushes>();
@@ -492,11 +492,11 @@ ActiveReplica::ActiveReplica(my_context ctx) : my_base(ctx)
 sc::result ActiveReplica::react(const SchedReplica&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
-  logger().debug("{}: ActiveReplica::react(const SchedReplica&). is_preemptable? {}",
-		 __func__, scrbr->get_preemptor().is_preemptable());
+  logger().debug("scrubberFSM: ActiveReplica::react(const SchedReplica&). is_preemptable? {}",
+		 scrbr->get_preemptor().is_preemptable());
 
   if (scrbr->get_preemptor().was_preempted()) {
-    logger().debug("{}: replica scrub job preempted", __func__);
+    logger().debug("ScrubberFSM: ActiveReplica::react(SchedReplica): replica scrub job preempted");
 
     scrbr->send_replica_map(PreemptionNoted::preempted);
     scrbr->replica_handling_done();
@@ -504,27 +504,28 @@ sc::result ActiveReplica::react(const SchedReplica&)
   }
 
   scrbr->build_replica_map_chunk();
+  logger().debug("ScrubberFSM: ActiveReplica::react(SchedReplica): after calling build_replica_map");
   return discard_event();
 
 #if 0
   // start or check progress of build_replica_map_chunk()
 
   auto ret = scrbr->build_replica_map_chunk();
-  logger().debug("zz: ActiveReplica::react(const SchedReplica&) Ret: {}", ret);
+  logger().debug("ScrubberFSM: ActiveReplica::react(const SchedReplica&) Ret: {}", ret);
 
   if (ret == -EINPROGRESS) {
     // must wait for the backend to finish. No external event source.
     // build_replica_map_chunk() has already requeued a SchedReplica
     // event.
 
-    logger().debug("zz: waiting for the backend...");
+    logger().debug("ScrubberFSM: waiting for the backend...");
     return discard_event();
   }
 
   if (ret < 0) {
     //  the existing code ignores this option, treating an error
     //  report as a success.
-    logger().debug("zz: Error! Aborting. ActiveReplica::react(SchedReplica) Ret: {}", ret
+    logger().debug("ScrubberFSM: Error! Aborting. ActiveReplica::react(SchedReplica) Ret: {}", ret
 	   );
     scrbr->replica_handling_done();
     return transit<NotActive>();
@@ -542,7 +543,7 @@ sc::result ActiveReplica::react(const SchedReplica&)
  */
 sc::result ActiveReplica::react(const FullReset&)
 {
-  logger().debug("zz: ActiveReplica::react(const FullReset&)");
+  logger().debug("ScrubberFSM: ActiveReplica::react(const FullReset&)");
   return transit<NotActive>();
 }
 

@@ -27,6 +27,7 @@
 #include "crimson/osd/osd_operations/client_request.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 #include "crimson/osd/osd_operations/scrub_event.h"
+#include "crimson/osd/osd_operations/scrub_request.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
 #include "crimson/osd/osd_operations/background_recovery.h"
 #include "crimson/osd/shard_services.h"
@@ -82,11 +83,15 @@ class PG : public boost::intrusive_ref_counter<
   friend class Scrub::LocalReservation;
   friend class Scrub::ReservedByRemotePrimary;
   friend class PgScrubSched;
+  friend class ScrubRequest;
+  friend class ScrubEvent2; // RRR
 
   ClientRequest::PGPipeline client_request_pg_pipeline;
   PeeringEvent::PGPipeline peering_request_pg_pipeline;
   RepRequest::PGPipeline replicated_request_pg_pipeline;
-  ScrubEvent::PGPipeline scrub_request_pg_pipeline;
+  ScrubRequest::PGPipeline scrub_request_pg_pipeline; // RRR should probably be merged
+  ScrubEvent::PGPipeline scrub_event_pg_pipeline; // RRR should probably be merged
+  ScrubEvent2::PGPipeline scrub_event2_pg_pipeline; // RRR should probably be merged
 
   spg_t pgid;
   pg_shard_t pg_whoami;
@@ -493,6 +498,10 @@ public:
   void do_scrub_event(
     PgScrubEvent& evt, PeeringCtx &rctx);
 
+  seastar::future<> do_scrub_request(Ref<MOSDScrubReserve> req, pg_shard_t from);
+  seastar::future<> do_scrub_map_request(Ref<MOSDRepScrub> req, pg_shard_t from);
+  seastar::future<> do_scrub_map_reply(Ref<MOSDRepScrubMap> msg, pg_shard_t from);
+
   void handle_advance_map(cached_map_t next_map, PeeringCtx &rctx);
   void handle_activate_map(PeeringCtx &rctx);
   void handle_initialize(PeeringCtx &rctx);
@@ -543,6 +552,10 @@ public:
   requested_scrub_t m_planned_scrub;
   bool scrub_after_recovery{false}; // RRR to finish handling
   bool range_available_for_scrub(const hobject_t &begin, const hobject_t &end) { return true;}
+
+  void set_last_scrub_stamp(utime_t when);
+  void set_last_deep_scrub_stamp(utime_t when);
+  void set_specific_scrub_stamp(scrub_level_t depth, utime_t when);
 
  private:
   template<RWState::State State>

@@ -1810,6 +1810,16 @@ public:
   /// Get all pg_shards that needs recovery
   std::vector<pg_shard_t> get_replica_recovery_order() const;
 
+  void set_last_scrub_stamp(utime_t when)
+  {
+    info.history.last_scrub_stamp = when;
+  }
+
+  void set_last_deep_scrub_stamp(utime_t when)
+  {
+    info.history.last_deep_scrub_stamp = when;
+  }
+
   /**
    * update_history
    *
