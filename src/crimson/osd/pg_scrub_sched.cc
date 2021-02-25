@@ -26,6 +26,44 @@ PgScrubSched::PgScrubSched(PG& pg)
 {}
 
 
+bool PgScrubSched::forced_scrub(Formatter* f, scrub_level_t depth)
+{
+  const bool deep = (depth == scrub_level_t::deep);
+
+  logger().debug("{}: pg({}) depth:{}", __func__, m_pg_id, deep ? "deep" : "shallow");
+
+  // no need to check whether Primary, as PGCommand has already verified that
+  //
+  // if (!m_pg.is_primary()) {
+  //  // msg to f - not a primary
+  //  return false;
+  //}
+
+  // RRR complete auto interval_configured = [this](pool_opts_t pool_conf, Option::value_t
+
+  // the max-interval for the specific scrub requested depends on pool & global conf
+  const double pool_max_interval =
+    deep ? m_pg.get_pool().info.opts.value_or(pool_opts_t::DEEP_SCRUB_INTERVAL, 0.0)
+	 : m_pg.get_pool().info.opts.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
+
+  const double max_interval = (pool_max_interval > 0.0)
+				? pool_max_interval
+				: (deep ? m_pg.get_cct()->_conf->osd_deep_scrub_interval
+					: m_pg.get_cct()->_conf->osd_scrub_max_interval);
+
+  utime_t stamp = ceph_clock_now();
+  stamp -= (max_interval + 100.0);
+
+  m_pg.set_specific_scrub_stamp(depth, stamp);
+  m_pg.scrub_requested(depth, scrub_type_t::not_repair);
+
+  f->open_object_section("result");
+  f->dump_bool("deep", deep);
+  f->dump_stream("stamp") << stamp;
+  f->close_section();
+  return true;
+}
+
 /*
  *  implementation note:
  *  PG::sched_scrub() is called only once per a specific scrub session.
@@ -35,7 +73,7 @@ PgScrubSched::PgScrubSched(PG& pg)
  */
 bool PgScrubSched::sched_scrub()
 {
-  logger().debug("{}: pg({}) {}:{}", __func__, m_pg_id,
+  logger().debug("PgScrubSched::{}: pg({}) {}:{}", __func__, m_pg_id,
 		 (m_pg.peering_state.is_active() ? "<active>" : "<not-active>"),
 		 (m_pg.peering_state.is_clean() ? "<clean>" : "<not-clean>"));
   // ceph_assert(ceph_mutex_is_locked(_lock));
@@ -87,9 +125,12 @@ bool PgScrubSched::sched_scrub()
   scrub_queued = true;
   // m_pg.shard_services.queue_for_scrub(this, Scrub::scrub_prio_t::low_priority); // RRR
   // !!!!
+
+  // the following works, but then the process_event() is done in-place. We'd like
+  // to go thru the queue here RRR
   std::ignore = m_osds.start_operation<LocalScrubEvent>(&m_pg, m_osds, m_pg.get_pg_whoami(),
   		m_pg_id, m_pg.get_osdmap_epoch(), m_pg.get_osdmap_epoch(),
-  		crimson::osd::Scrub::StartScrub{});
+		  crimson::osd::Scrub::StartScrub{});
   return true;
 }
 

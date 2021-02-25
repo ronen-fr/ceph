@@ -20,6 +20,10 @@ class PgScrubSched {
 
   int get_scrub_priority();
 
+  // (handling asok commands) modify the scrub time-stamps to make the PG
+  //  eligible for immediate scrub.
+  bool forced_scrub(Formatter* f, scrub_level_t depth);
+
  private:
   std::optional<requested_scrub_t> verify_scrub_mode() const;
 

@@ -29,6 +29,9 @@
 //#include "messages/MOSDPGRecoveryDeleteReply.h"
 #include "messages/MOSDRepOpReply.h"
 #include "messages/MOSDScrub2.h"
+#include "messages/MOSDScrubReserve.h"
+#include "messages/MOSDRepScrub.h"
+#include "messages/MOSDRepScrubMap.h"
 #include "messages/MPGStats.h"
 
 #include "os/Transaction.h"
@@ -92,6 +95,7 @@ OSD::OSD(int id, uint32_t nonce,
     tick_timer{[this] {
       update_heartbeat_peers();
       update_stats();
+      // RRR add the scrub_sched loop here
     }},
     asok{seastar::make_lw_shared<crimson::admin::AdminSocket>()},
     osdmap_gate("OSD::osdmap_gate", std::make_optional(std::ref(shard_services)))
@@ -441,9 +445,13 @@ seastar::future<> OSD::start_asok_admin()
       asok->register_command(make_asok_hook<FlushPgStatsHook>(*this)),
       asok->register_command(make_asok_hook<DumpPGStateHistory>(std::as_const(*this))),
       asok->register_command(make_asok_hook<SeastarMetricsHook>()),
+      asok->register_command(make_asok_hook<DbgSchedScrubHook>(*this)),
       // PG commands
       asok->register_command(make_asok_hook<pg::QueryCommand>(*this)),
-      asok->register_command(make_asok_hook<pg::MarkUnfoundLostCommand>(*this)));
+      asok->register_command(make_asok_hook<pg::MarkUnfoundLostCommand>(*this)),
+      asok->register_command(make_asok_hook<pg::PgScrubCommand>(*this, scrub_level_t::deep)),
+      asok->register_command(make_asok_hook<pg::PgScrubCommand>(*this, scrub_level_t::shallow))
+      );
   }).then_unpack([] {
     return seastar::now();
   });

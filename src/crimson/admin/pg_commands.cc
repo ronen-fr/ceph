@@ -156,4 +156,7 @@ make_asok_hook<crimson::admin::pg::QueryCommand>(crimson::osd::OSD& osd);
 template std::unique_ptr<AdminSocketHook>
 make_asok_hook<crimson::admin::pg::MarkUnfoundLostCommand>(crimson::osd::OSD& osd);
 
+template std::unique_ptr<AdminSocketHook>
+make_asok_hook<crimson::admin::pg::PgScrubCommand>(crimson::osd::OSD& osd, scrub_level_t&& depth);
+
 } // namespace crimson::admin
