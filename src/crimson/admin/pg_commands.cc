@@ -13,7 +13,7 @@
 #include "crimson/admin/admin_socket.h"
 #include "crimson/osd/osd.h"
 #include "crimson/osd/pg.h"
-#include "crimson/osd/pg_scrub_sched.h"
+#include "crimson/osd/scrubber/pg_scrub_sched.h"
 
 
 namespace {

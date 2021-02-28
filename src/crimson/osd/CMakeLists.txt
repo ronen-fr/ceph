@@ -29,13 +29,13 @@ add_executable(crimson-osd
   osdmap_gate.cc
   pg_map.cc
   objclass.cc
-  scrubber.cc
-  osd_scrub_sched.cc
-  pg_scrub_sched.cc
-  scrub_store.cc
-  scrub_machine_cr.cc
-  scrub_map_cacher.cc
-  scrub_os_driver.cc
+  scrubber/scrubber.cc
+  scrubber/osd_scrub_sched.cc
+  scrubber/pg_scrub_sched.cc
+  scrubber/scrub_store.cc
+  scrubber/scrub_machine_cr.cc
+  scrubber/scrub_map_cacher.cc
+  scrubber/scrub_os_driver.cc
   ${PROJECT_SOURCE_DIR}/src/objclass/class_api.cc
   ${PROJECT_SOURCE_DIR}/src/osd/ClassHandler.cc
   ${PROJECT_SOURCE_DIR}/src/osd/osd_op_util.cc

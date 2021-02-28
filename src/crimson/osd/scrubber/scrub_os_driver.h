@@ -11,7 +11,7 @@
 #include "crimson/common/sharedptr_registry.h"
 #include "crimson/os/futurized_store.h"
 #include "crimson/os/futurized_collection.h"
-#include "crimson/osd/scrub_map_cacher.h"
+#include "crimson/osd/scrubber/scrub_map_cacher.h"
 #include "os/Transaction.h"
 
 namespace crimson::osd {

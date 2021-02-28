@@ -1,12 +1,12 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "crimson/osd/scrub_store.h"
+#include "crimson/osd/scrubber/scrub_store.h"
 
 #include <utility>
 
 #include "common/scrub_types.h"
-#include "crimson/osd/scrub_os_driver.h"
+#include "crimson/osd/scrubber/scrub_os_driver.h"
 #include "include/rados/rados_types.hpp"
 #include "osd/osd_types.h"
 
@@ -133,7 +133,7 @@ seastar::future<> Store::flush(::ceph::os::Transaction* t)
 
 Store::ErrtBuffersVec Store::get_errors(const string& start,
 					const string& end,
-					int64_t max_return) const
+					int64_t max_return) /*const*/
 {
   return ::seastar::do_with(
     vector<bufferlist>{},
@@ -218,7 +218,7 @@ future<vector<int>> try_the_loop_v2(int st, int gd, int mx)
 
 Store::ErrtBuffersVec Store::get_snap_errors(int64_t pool,
 					     const librados::object_id_t& start,
-					     uint64_t max_return) const
+					     uint64_t max_return)
 {
   const string begin =
     (start.name.empty() ? first_snap_key(pool) : to_snap_key(pool, start));
@@ -229,7 +229,7 @@ Store::ErrtBuffersVec Store::get_snap_errors(int64_t pool,
 
 Store::ErrtBuffersVec Store::get_object_errors(int64_t pool,
 					       const librados::object_id_t& start,
-					       uint64_t max_return) const
+					       uint64_t max_return)
 {
   const string begin =
     (start.name.empty() ? first_object_key(pool) : to_object_key(pool, start));

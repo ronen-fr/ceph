@@ -1,7 +1,7 @@
 // -*- mode:C++; tab-width:2; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=2 sw=2 smarttab
 
-#include "scrubber.h"
+#include "./scrubber.h"
 
 #include <iostream>
 #include <vector>
@@ -15,15 +15,14 @@
 #include "crimson/osd/osd.h"
 #include "crimson/osd/osd_operations/pg_scrub_event.h"
 #include "crimson/osd/osd_operations/scrub_event.h"
-#include "crimson/osd/pg_scrub_sched.h"
+#include "crimson/osd/pg_backend.h"
+#include "crimson/osd/scrubber/pg_scrub_sched.h"
+#include "crimson/osd/scrubber/scrub_machine_cr.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDRepScrub.h"
 #include "messages/MOSDRepScrubMap.h"
 #include "messages/MOSDScrub.h"
 #include "messages/MOSDScrubReserve.h"
-
-#include "pg_backend.h"
-#include "scrub_machine_cr.h"
 
 namespace {
 seastar::logger& logger()
@@ -100,10 +99,10 @@ eversion_t PgScrubber::get_last_update_applied() const
   return m_pg->get_peering_state().get_last_update_applied();
 }
 
-
 // RRR int PgScrubber::pending_active_pushes() const { return m_pg->active_pushes; }
 int PgScrubber::pending_active_pushes() const
 {
+  logger().warn("{}: NOT IMPLEMENTED", __func__);
   return 0;
 }
 
@@ -111,10 +110,12 @@ bool PgScrubber::state_test(uint64_t m) const
 {
   return m_pg->state_test(m);
 }
+
 void PgScrubber::state_set(uint64_t m)
 {
   m_pg->state_set(m);
 }
+
 void PgScrubber::state_clear(uint64_t m)
 {
   m_pg->state_clear(m);
@@ -134,7 +135,6 @@ void PgScrubber::requeue_waiting() const
 {
   ; /* RRR m_pg->requeue_ops(m_pg->waiting_for_scrub); */
 }
-
 
 void PgScrubber::do_scrub_event(const crimson::osd::PgScrubEvent& evt, PeeringCtx& rctx)
 {
@@ -221,11 +221,11 @@ void PgScrubber::queue_local_trigger(ScrubEventFwd trigger,
 				     std::chrono::milliseconds delay,
 				     std::string_view desc)
 {
-  logger().debug("{} q-ing func: {}", __func__, desc);
+  logger().debug("{} q-ing func: {} (this:{:p})", __func__, desc, (void*)this);
 
   std::ignore = m_pg->get_shard_services().start_operation<ScrubEvent2>(
     m_pg, m_pg->get_shard_services(), m_pg->get_pg_whoami(), m_pg->get_pgid(),
-    trigger, epoch_queued);
+    delay, trigger, epoch_queued, desc);
 
   //  std::ignore = m_pg->get_shard_services().start_operation<LocalScrubEvent>(
   //    // static_cast<crimson::osd::PG*>(m_pg),
@@ -287,11 +287,13 @@ bool PgScrubber::is_message_relevant(epoch_t epoch_to_verify)
   if (!m_active) {
     // not scrubbing. We can assume that the scrub was already terminated, and
     // we can silently discard the incoming event.
+    logger().debug("scrubber: {} denied - not active (ep. {})", __func__, epoch_to_verify);
     return false;
   }
 
   // is this a message from before we started this scrub?
   if (epoch_to_verify < m_epoch_start) {
+    logger().debug("scrubber: {} denied - epoch({}) < start({})", __func__, epoch_to_verify, m_epoch_start);
     return false;
   }
 
@@ -299,6 +301,7 @@ bool PgScrubber::is_message_relevant(epoch_t epoch_to_verify)
   if (!check_interval(epoch_to_verify)) {
     // if this is a new interval, on_change() has already terminated that
     // old scrub.
+    logger().debug("scrubber: {} denied - new interval (ep. {})", __func__, epoch_to_verify);
     return false;
   }
 
@@ -421,8 +424,8 @@ void PgScrubber::send_scrub_resched(epoch_t epoch_queued)
   if (is_message_relevant(epoch_queued)) {
     m_fsm->my_states();
     m_fsm->process_event(Scrub::InternalSchedScrub{});
+    logger().debug("scrubber event --<< {}", __func__);
   }
-  logger().debug("scrubber event --<< {}", __func__);
 }
 
 void PgScrubber::send_start_replica(epoch_t epoch_queued)
@@ -562,6 +565,57 @@ void PgScrubber::send_chunk_busy(epoch_t epoch_queued)
   logger().debug("scrubber event --<< {}", __func__);
 }
 
+void PgScrubber::send_requests_sent(epoch_t epoch_queued)
+{
+  logger().debug("scrubber event -->> {} epoch: {}", __func__, epoch_queued);
+  if (check_interval(epoch_queued)) {
+    m_fsm->my_states();
+    m_fsm->process_event(Scrub::ReplicaRequestsSent{});
+  }
+  logger().debug("scrubber event --<< {}", __func__);
+}
+
+void PgScrubber::send_local_map_done(epoch_t epoch_queued)
+{
+  logger().debug("scrubber event -->> {} epoch: {}", __func__, epoch_queued);
+  if (is_message_relevant(epoch_queued)) {
+    m_fsm->my_states();
+    m_fsm->process_event(Scrub::IntLocalMapDone{});
+  }
+  logger().debug("scrubber event --<< {}", __func__);
+}
+
+void PgScrubber::send_oninit_done(epoch_t epoch_queued)
+{
+  logger().debug("scrubber event -->> {} epoch: {}", __func__, epoch_queued);
+  if (is_message_relevant(epoch_queued)) {
+    m_fsm->my_states();
+    m_fsm->process_event(Scrub::OnInitDone{});
+  }
+  logger().debug("scrubber event --<< {}", __func__);
+}
+
+void PgScrubber::send_get_next_chunk(epoch_t epoch_queued)
+{
+  logger().debug("scrubber event -->> {} epoch: {}", __func__, epoch_queued);
+  if (is_message_relevant(epoch_queued)) {
+    m_fsm->my_states();
+    m_fsm->process_event(Scrub::NextChunk{});
+  }
+  logger().debug("scrubber event --<< {}", __func__);
+}
+
+void PgScrubber::send_scrub_is_finished(epoch_t epoch_queued)
+{
+  logger().debug("scrubber event -->> {} epoch: {}", __func__, epoch_queued);
+  if (is_message_relevant(epoch_queued)) {
+    m_fsm->my_states();
+    m_fsm->process_event(Scrub::ScrubFinished{});
+  }
+  logger().debug("scrubber event --<< {}", __func__);
+}
+
+// -----------------
 
 bool PgScrubber::is_reserving() const
 {
@@ -784,7 +838,7 @@ seastar::future<bool> PgScrubber::select_range()
   hobject_t start = m_start;
   hobject_t candidate_end;
 
-  return m_pg->get_backend().list_objects(start, max_idx).then([this](auto&& obj_n_next) {
+  return m_pg->get_backend().list_objects(start, max_idx).then([this](auto obj_n_next) {
     auto& [objects, candidate_end] = obj_n_next;
     if (objects.empty()) {
       logger().debug("select_range(): empty range NOT IMPLEMENTED");
@@ -1000,7 +1054,7 @@ public:
 
  */
 
-
+// RRR fix - to use the delay inherent in the queue_local_trigger()
 seastar::future<bool>
 PgScrubber::add_delayed_scheduling()  // replace with an errorator, if returning anything
 {
@@ -1010,7 +1064,7 @@ PgScrubber::add_delayed_scheduling()  // replace with an errorator, if returning
       1000.0 * m_osds.get_scrub_services().scrub_sleep_time(m_flags.required);
     sleep_time = milliseconds{long(scrub_sleep)};
   }
-  logger().debug(" sleep: {} ms. needed? {}", sleep_time.count(), m_needs_sleep);
+  logger().debug(" sleep: {} ms. needed? {} this:{:p}", sleep_time.count(), m_needs_sleep, (void*)this);
 
   // MessageRef resched_event_msg = make_message<PGScrubResched>(m_pg,
   // m_pg->get_osdmap_epoch());
@@ -1047,16 +1101,19 @@ PgScrubber::add_delayed_scheduling()  // replace with an errorator, if returning
       scrbr->m_sleep_started_at = utime_t{};
       // std::ignore = scrbr->m_osds.get_scrub_services().queue_scrub_event(this_pg,
       // resched_event_msg, Scrub::scrub_prio_t::low_priority);
-      auto x = new Scrub::InternalSchedScrub{};
-      scrbr->queue_local_event(x, Scrub::scrub_prio_t::low_priority);
+      //auto x = new Scrub::InternalSchedScrub{};
+      //scrbr->queue_local_event(x, Scrub::scrub_prio_t::low_priority);
+      scrbr->queue_local_trigger(&ScrubPgIF::send_scrub_resched, scrbr->m_pg->get_osdmap_epoch(), 0ms, "InternalSchedScrub");
       return seastar::make_ready_future<bool>(true);
     });
 
   } else {
     // just a requeue
     // queue_local_event(Scrub::InternalSchedScrub{}.intrusive_from_this(),
-    queue_local_event(new Scrub::InternalSchedScrub{},
-		      Scrub::scrub_prio_t::high_priority);
+
+    queue_local_trigger(&ScrubPgIF::send_scrub_resched, m_pg->get_osdmap_epoch(), 10ms, "InternalSchedScrub");
+    //queue_local_event(new Scrub::InternalSchedScrub{},
+	//	      Scrub::scrub_prio_t::high_priority);
     return seastar::make_ready_future<bool>(true);
   }
 }
@@ -1169,8 +1226,9 @@ void PgScrubber::get_replicas_maps(bool replica_can_preempt)
 
       /* RRR */ std::ignore = do_have_replicas;
 
-      queue_local_event(new Scrub::ReplicaRequestsSent{},  //.intrusive_from_this(),
-			Scrub::scrub_prio_t::high_priority);
+      queue_local_trigger(&ScrubPgIF::send_requests_sent, m_pg->get_osdmap_epoch(), 10ms, "ReplicaRequestsSent");
+      //queue_local_event(new Scrub::ReplicaRequestsSent{},  //.intrusive_from_this(),
+	//		Scrub::scrub_prio_t::high_priority);
     });
 }
 
@@ -1270,6 +1328,8 @@ void PgScrubber::cleanup_store(ObjectStore::Transaction* t)
   ceph_assert(!m_store);
 }
 
+// RRRR
+
 void PgScrubber::on_init()
 {
   // going upwards from 'inactive'
@@ -1279,7 +1339,7 @@ void PgScrubber::on_init()
   m_pg->publish_stats_to_osd();
   m_interval_start = m_pg->get_same_interval_since();
 
-  logger().debug("{}: start same_interval: {}", __func__, m_interval_start);
+  logger().debug("{}: start same_interval: {} (ep.: {})", __func__, m_interval_start, m_pg->get_osdmap_epoch());
 
   //  create a new store
   ObjectStore::Transaction t;
@@ -1294,10 +1354,12 @@ void PgScrubber::on_init()
 		  .then([this]() {
 		    m_start = m_pg->get_pgid().pgid.get_hobj_start();
 		    m_active = true;
-		    queue_local_event(
-		      new Scrub::OnInitDone{},
-		      // boost::intrusive_ptr<Scrub::OnInitDone>(new Scrub::OnInitDone{}),
-		      Scrub::scrub_prio_t::low_priority);
+		    //queue_local_event(
+		    //  new Scrub::OnInitDone{},
+		    //  // boost::intrusive_ptr<Scrub::OnInitDone>(new Scrub::OnInitDone{}),
+		    //  Scrub::scrub_prio_t::low_priority);
+		    queue_local_trigger(&ScrubPgIF::send_oninit_done, m_pg->get_osdmap_epoch(), 0ms, "OnInitDone");
+
 		  });
 }
 
@@ -1455,12 +1517,23 @@ void PgScrubber::initiate_primary_map_build()
 
   // RRR handle errors
 
-  std::ignore = build_primary_map_chunk().then([this]() {
+  std::ignore = build_primary_map_chunk().then_wrapped([this](auto&& f) {
+    logger().debug("after bld 1");
+    if (f.failed())
+    (void)f.discard_result();
+    return std::move(f);
+  }).then([this](){
     logger().debug("initiate_primary_map_build(): map built");
-    queue_local_event(
-      new Scrub::IntLocalMapDone{},
-      // boost::intrusive_ptr<Scrub::IntLocalMapDone>(new Scrub::IntLocalMapDone{}),
-      Scrub::scrub_prio_t::low_priority);
+    queue_local_trigger(&ScrubPgIF::send_local_map_done, m_interval_start, 20ms, "IntLocalMapDone");
+//    queue_local_event(
+//      new Scrub::IntLocalMapDone{},
+//      // boost::intrusive_ptr<Scrub::IntLocalMapDone>(new Scrub::IntLocalMapDone{}),
+//      Scrub::scrub_prio_t::low_priority);
+  }).then_wrapped([=](auto&& f){
+    logger().debug("initiate_primary_map_build(): map built - at the thenw");
+    if (f.failed())
+      (void)f.discard_result();
+    return std::move(f);
   });
 }
 
@@ -1518,7 +1591,10 @@ void PgScrubber::build_replica_map_chunk()
 	queue_local_trigger(&ScrubPgIF::send_full_reset, m_interval_start, 0ms, "ReplicaFinalReset");
 
 	return seastar::make_ready_future<>();
-      });
+      }).then_wrapped([](auto&& f) {
+    (void)f.discard_result();
+    return std::move(f);
+  });
 
   //     requeue_replica(m_replica_request_priority);
 }
@@ -1578,6 +1654,8 @@ int BlueStore::collection_list(
 
 seastar::future<> PgScrubber::scan_rollback_obs(const vector<ghobject_t>& rollback_obs)
 {
+  logger().debug("scrubber: {}: NOT IMPLEMENTED", __func__);
+
 #ifdef RRR_NOT_YET
   ObjectStore::Transaction t;
   eversion_t trimmed_to =
@@ -1685,25 +1763,29 @@ seastar::future<> PgScrubber::build_scrub_map_chunk(ScrubMap& map,
 						    hobject_t end,
 						    scrub_level_t depth)
 {
-  logger().debug("{}: [{},{}) pos: {} Depth: {}", __func__, start, end, pos,
-		 (depth == scrub_level_t::deep) ? "deep" : "shallow");
-
-  // start
   pos.reset();
 
   pos.deep = depth == scrub_level_t::deep;
-  // RRR map.valid_through = m_pg->info.last_update;
+  map.valid_through = m_pg->get_peering_state().get_info().last_update;
+  logger().debug("{}: [{},{}) pos: {} Depth: {}. Valid: {}", __func__, start, end, pos,
+		 pos.deep ? "deep" : "shallow", map.valid_through);
 
   // objects
 
-  // assume objects_list_range returns <new ls, vector<ghobject_t> rollback_obs>
+  return seastar::do_with(std::move(start), std::move(end),
+    [this, map, pos](auto&& start, auto&&end) mutable {
+
+      //return seastar::make_ready_future<>();
 
   return m_pg->get_backend()
     .list_range(start, end, pos.ls)
     .then(  // should list_range return an errorator?
 
       [this, map, pos, start, end /*,
-       depth*/](vector<ghobject_t>&& rollback_obs) mutable -> seastar::future<> {
+       depth*/](vector<ghobject_t> rollback_obs) mutable -> seastar::future<> {
+
+	logger().debug("PgScrubber::build_scrub_map_chunk() - debug point 37");
+
 	if (pos.empty()) {
 	  return seastar::make_ready_future<>();
 	}
@@ -1720,8 +1802,12 @@ seastar::future<> PgScrubber::build_scrub_map_chunk(ScrubMap& map,
 		pos.pos = 0;
 		return seastar::make_ready_future<>();
 	}*/
-      })
+      });})
     .then([this, map, pos]() mutable -> seastar::future<> {
+
+      logger().debug("PgScrubber::build_scrub_map_chunk() - debug point 59");
+      pos.pos = 0;
+
       // scan the objects
 
       return m_pg->get_backend().scan_list(map, pos).safe_then(
@@ -1924,13 +2010,15 @@ void PgScrubber::handle_scrub_map_request(const MOSDRepScrub& msg, pg_shard_t fr
 
   //ScrubEventFwd start_repl{static_cast<ScrubEventFwd>(&PgScrubber::send_start_replica)};
 
-  std::ignore = seastar::sleep(40ms).then([this]() mutable {
-    return m_pg->get_shard_services().start_operation<ScrubEvent2>( m_pg,
-      m_pg->get_shard_services(), m_pg->get_pg_whoami(), m_pg->get_pgid(),
-      &ScrubPgIF::send_start_replica/*start_repl*/, m_replica_min_epoch);
-  });
+//  std::ignore = seastar::sleep(40ms).then([this]() mutable {
+//    return m_pg->get_shard_services().start_operation<ScrubEvent2>( m_pg,
+//      m_pg->get_shard_services(), m_pg->get_pg_whoami(), m_pg->get_pgid(),
+//      &ScrubPgIF::send_start_replica/*start_repl*/, m_replica_min_epoch);
+//  });
 
   //m_osds.queue_for_rep_scrub(m_pg, m_replica_request_priority, m_flags.priority);
+
+  queue_local_trigger(&ScrubPgIF::send_start_replica, m_replica_min_epoch, 10ms, "StartReplicaNoWait");
 
 }
 
@@ -2811,7 +2899,7 @@ void PgScrubber::scrub_finish()
 
 Scrub::FsmNext PgScrubber::on_digest_updates()
 {
-  logger().debug("{}: #pending: {} pending? {} {}", __func__, num_digest_updates_pending,
+  logger().debug("{}: #pending: {} {}", __func__, num_digest_updates_pending,
 		 (m_end.is_max() ? " <last chunk> " : " <mid chunk> "));
 
   if (num_digest_updates_pending == 0) {
@@ -2829,6 +2917,31 @@ Scrub::FsmNext PgScrubber::on_digest_updates()
     return Scrub::FsmNext::do_discard;
   }
 }
+
+void PgScrubber::on_digest_updates_v2()
+{
+  logger().debug("{}: #pending: {} {}", __func__, num_digest_updates_pending,
+		 (m_end.is_max() ? " <last chunk> " : " <mid chunk> "));
+
+  if (num_digest_updates_pending > 0) {
+    // do nothing for now. We will be called again when new updates arrive
+    return;
+  }
+
+  // got all updates, and finished with this chunk. Any more?
+  if (m_end.is_max()) {
+    scrub_finish();
+    // consider moving the event to the finish itself
+    queue_local_trigger(&ScrubPgIF::send_scrub_is_finished, m_pg->get_osdmap_epoch(), 1ms,
+			"ScrubFinished");
+  } else {
+    // go get a new chunk (via "requeue")
+    preemption_data.reset();
+    queue_local_trigger(&ScrubPgIF::send_get_next_chunk, m_pg->get_osdmap_epoch(), 1ms,
+			"NextChunk");
+  }
+}
+
 
 /*
  * note that the flags-set fetched from the PG (m_pg->m_planned_scrub)
@@ -3149,10 +3262,15 @@ void ReplicaReservations::send_all_done()
   epoch_t epoch = m_pg->get_osdmap_epoch();
   logger().debug("{} @ e({})", __func__, epoch);
 
-  std::ignore = m_osds.start_operation<LocalScrubEvent>(m_pg, m_pg->get_shard_services(),
-  	 m_pg->get_pg_whoami(), m_pg->get_pgid(), PgScrubEvent{
-  	 	epoch, epoch,
-  	 	Scrub::RemotesReserved{}});
+//  std::ignore = m_osds.start_operation<LocalScrubEvent>(m_pg, m_pg->get_shard_services(),
+//  	 m_pg->get_pg_whoami(), m_pg->get_pgid(), PgScrubEvent{
+//  	 	epoch, epoch,
+//  	 	Scrub::RemotesReserved{}});
+ // m_scrubber->queue_local_trigger(&ScrubPgIF::send_chunk_busy, epoch, 5ms, "RemotesReserved");
+
+  std::ignore = m_osds.start_operation<ScrubEvent2>(
+    m_pg, m_pg->get_shard_services(), m_pg->get_pg_whoami(), m_pg->get_pgid(),
+    5ms, &ScrubPgIF::send_remotes_reserved, epoch, "RemotesReserved");
 }
 
 void ReplicaReservations::send_reject()

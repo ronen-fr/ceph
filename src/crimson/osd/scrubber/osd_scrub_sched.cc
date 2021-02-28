@@ -1,11 +1,11 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "crimson/osd/osd_scrub_sched.h"
+#include "crimson/osd/scrubber/osd_scrub_sched.h"
 
 #include "crimson/osd/osd.h"
 //#include "crimson/osd/pg.h"
-#include "crimson/osd/scrubber.h"
+#include "crimson/osd/scrubber/scrubber.h"
 
 namespace crimson::osd {
 

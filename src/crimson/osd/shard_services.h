@@ -15,7 +15,7 @@
 #include "crimson/osd/osdmap_service.h"
 #include "crimson/osd/object_context.h"
 #include "common/AsyncReserver.h"
-#include "crimson/osd/osd_scrub_sched.h"
+#include "crimson/osd/scrubber/osd_scrub_sched.h" // RRR recheck why needed
 
 namespace crimson::net {
   class Messenger;

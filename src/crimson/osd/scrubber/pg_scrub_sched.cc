@@ -2,12 +2,12 @@
 // vim: ts=8 sw=2 smarttab
 
 
-#include "crimson/osd/pg_scrub_sched.h"
-#include "crimson/osd/scrub_machine_cr.h"
+#include "./pg_scrub_sched.h"
 
 #include "debug.h"
 
-#include "pg_backend.h"
+#include "crimson/osd/pg_backend.h"
+#include "crimson/osd/scrubber/scrub_machine_cr.h"
 
 namespace {
 seastar::logger& logger()

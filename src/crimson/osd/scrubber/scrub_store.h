@@ -9,8 +9,8 @@
 
 #include "crimson/common/sharedptr_registry.h"
 #include "crimson/os/futurized_store.h"
-#include "crimson/osd/scrub_map_cacher.h"
-#include "crimson/osd/scrub_os_driver.h"
+#include "crimson/osd/scrubber/scrub_map_cacher.h"
+#include "crimson/osd/scrubber/scrub_os_driver.h"
 #include "os/Transaction.h"
 
 
@@ -57,11 +57,11 @@ class Store {
 
   Store::ErrtBuffersVec get_snap_errors(int64_t pool,
 					const librados::object_id_t& start,
-					uint64_t max_return) const;
+					uint64_t max_return) /*const*/;
 
   Store::ErrtBuffersVec get_object_errors(int64_t pool,
 					  const librados::object_id_t& start,
-					  uint64_t max_return) const;
+					  uint64_t max_return) /*const*/;
 
  private:
   Store(const coll_t& coll, const ghobject_t& oid, crimson::os::FuturizedStore* store);
@@ -72,7 +72,7 @@ class Store {
 
   ErrtBuffersVec get_errors(const string& start,
 			    const string& end,
-			    int64_t max_return) const;
+			    int64_t max_return) /*const*/;
 
  private:
   const coll_t coll;
@@ -82,7 +82,7 @@ class Store {
   ::crimson::osd::OSDriver driver;
   // mutable ::crimson::osd::MapCacher::MapCacher<std::string, ::ceph::bufferlist>
   // backend;
-  mutable ::crimson::osd::MapCacher::MapCacher backend;
+  /*mutable*/ ::crimson::osd::MapCacher::MapCacher backend;
   std::map<std::string, ::ceph::bufferlist> results;
 
   // using OptKV = std::optional<std::pair<std::string, ::ceph::bufferlist>>;

@@ -35,8 +35,8 @@
 #include "crimson/osd/osd_operations/osdop_params.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 #include "crimson/osd/pg_recovery.h"
-#include "crimson/osd/pg_scrub_sched.h"
-#include "crimson/osd/scrubber.h"
+#include "crimson/osd/scrubber/pg_scrub_sched.h"
+#include "crimson/osd/scrubber/scrubber.h"
 #include "crimson/osd/replicated_recovery_backend.h"
 
 namespace {

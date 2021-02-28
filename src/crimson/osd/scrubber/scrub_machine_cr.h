@@ -16,7 +16,7 @@
 
 #include "common/version.h"
 #include "crimson/osd/osd_operations/pg_scrub_event.h"
-#include "crimson/osd/scrub_machine_lstnr_cr.h"
+#include "crimson/osd/scrubber/scrub_machine_lstnr_cr.h"
 #include "crimson/osd/scrubber_common_cr.h"
 #include "include/Context.h"
 
@@ -299,7 +299,11 @@ struct WaitReplicas : sc::state<WaitReplicas, ActiveScrubbing> {
 struct WaitDigestUpdate : sc::state<WaitDigestUpdate, ActiveScrubbing> {
   explicit WaitDigestUpdate(my_context ctx);
 
-  using reactions = mpl::list<sc::custom_reaction<DigestUpdate>>;
+  using reactions = mpl::list<
+    	sc::custom_reaction<DigestUpdate> // version "0"
+    ,   sc::transition<NextChunk, PendingTimer>
+    ,   sc::transition<ScrubFinished, NotActive>
+			      >;
   sc::result react(const DigestUpdate&);
 };
 

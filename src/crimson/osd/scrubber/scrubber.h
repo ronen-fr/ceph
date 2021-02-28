@@ -22,8 +22,8 @@ class PG;
 #include "crimson/osd/pg.h"
 //#include "crimson/osd/shard_services.h"
 
-#include "crimson/osd/scrub_machine_lstnr_cr.h"
-#include "crimson/osd/scrub_store.h"
+#include "crimson/osd/scrubber/scrub_machine_lstnr_cr.h"
+#include "crimson/osd/scrubber/scrub_store.h"
 #include "crimson/osd/scrubber_common_cr.h"
 
 class Callback;
@@ -252,6 +252,16 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void send_chunk_busy(epoch_t epoch_queued) final;  // crimson
 
+  void send_requests_sent(epoch_t epoch_queued) final; // crimson
+
+  void send_local_map_done(epoch_t epoch_queued) final; // crimson
+
+  void send_oninit_done(epoch_t epoch_queued) final; // crimson
+
+  void send_get_next_chunk(epoch_t epoch_queued) final; // crimson + new in Classic
+
+  void send_scrub_is_finished(epoch_t epoch_queued) final; // crimson + new in Classic
+
   /**
    *  we allow some number of preemptions of the scrub, which mean we do
    *  not block.  Then we start to block.  Once we start blocking, we do
@@ -411,6 +421,8 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   void get_replicas_maps(bool replica_can_preempt) final;
 
   Scrub::FsmNext on_digest_updates() final;
+
+  void on_digest_updates_v2() final;
 
   void send_replica_map(Scrub::PreemptionNoted was_preempted) final;
 

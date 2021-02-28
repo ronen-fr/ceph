@@ -5,8 +5,8 @@
 
 #include <optional>
 
-#include "crimson/osd/scrubber.h"
-#include "crimson/osd/scrubber_common_cr.h"
+#include "crimson/osd/scrubber/scrubber.h"
+#include "crimson/osd/scrubber_common_cr.h" // RRR needed?
 
 namespace crimson::osd {
 

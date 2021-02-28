@@ -11,7 +11,7 @@
 #include "crimson/osd/osd.h"
 // RRR #include "OpRequest.h"
 //#include "crimson/osd/scrub_store.h"
-#include "scrub_machine_lstnr_cr.h"
+#include "crimson/osd/scrubber/scrub_machine_lstnr_cr.h"
 
 #if 0
 #define dout_context g_ceph_context
@@ -413,6 +413,23 @@ sc::result WaitDigestUpdate::react(const DigestUpdate&)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("WaitDigestUpdate::react(const DigestUpdate&)");
 
+  // on_digest_updates() will either:
+  // - do nothing - if we are still waiting for updates, or
+  // - finish the scrubbing of the current chunk, and:
+  //  - send NextChunk, or
+  //  - send ScrubFinished
+
+  scrbr->on_digest_updates_v2();
+  return discard_event();
+}
+
+#ifdef OBSOLETE_V0
+
+sc::result WaitDigestUpdate::react(const DigestUpdate&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  logger().debug("WaitDigestUpdate::react(const DigestUpdate&)");
+
   switch (scrbr->on_digest_updates()) {
 
     case Scrub::FsmNext::goto_notactive:
@@ -432,6 +449,8 @@ sc::result WaitDigestUpdate::react(const DigestUpdate&)
 			    // prevents a warning if FsmNext is extended, and (b)
 			    // elicits a correct warning from Clang
 }
+
+#endif
 
 ScrubMachine::ScrubMachine(crimson::osd::PG* pg, ScrubMachineListener* pg_scrub)
     : m_pg{pg}, m_pg_id{pg->get_pgid()}, m_scrbr{pg_scrub}

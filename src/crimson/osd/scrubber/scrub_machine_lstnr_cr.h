@@ -100,6 +100,8 @@ struct ScrubMachineListener {
 
   virtual Scrub::FsmNext on_digest_updates() = 0;
 
+  virtual void on_digest_updates_v2() = 0;
+
   virtual void send_replica_map(Scrub::PreemptionNoted was_preempted) = 0;
 
   [[nodiscard]] virtual bool has_pg_marked_new_updates() const = 0;
