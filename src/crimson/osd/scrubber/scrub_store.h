@@ -23,6 +23,13 @@ struct inconsistent_snapset_wrapper;
 
 namespace crimson::osd::Scrub {
 
+/*
+ * The scrub store manages two sets of objects-with-errors: one for snap errors, and
+ * a second for object inconsistencies. The lists are saved to disk as part of the
+ * database (as a separate collection) (but not replicated).
+ * Note that librados has an API to directly access this data. Thus - It should not
+ * be scrapped without discussion.
+ */
 class Store {
  public:
   using BuffersVec = std::vector<ceph::bufferlist>;

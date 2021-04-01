@@ -8,6 +8,7 @@
 #include "common/scrub_types.h"
 #include "crimson/osd/scrubber/scrub_os_driver.h"
 #include "include/rados/rados_types.hpp"
+#include "common/scrub_types.h"
 #include "osd/osd_types.h"
 
 namespace {

@@ -134,7 +134,7 @@ int OSDriver::get_next(
 }
 #endif
 
-
+#ifdef NOT_NEEDED_NOW
 seastar::future<::crimson::os::FuturizedStore::omap_values_t> test333(
   OSDriver* e,
   const std::set<std::string>& keys,
@@ -149,21 +149,7 @@ seastar::future<::crimson::os::FuturizedStore::omap_values_t> test333(
     //	[e]
   });
 }
+#endif
 
 }  // namespace crimson::osd
 
-/*
- *  return maybe_get_omap_vals_by_keys(store, coll, os.oi, keys_to_get).safe_then(
-    [&osd_op] (crimson::os::FuturizedStore::omap_values_t&& vals) {
-      encode(vals, osd_op.outdata);
-      return ll_read_errorator::now();
-    }).handle_error(
-      crimson::ct_error::enodata::handle([&osd_op] {
-	uint32_t num = 0;
-	encode(num, osd_op.outdata);
-	return ll_read_errorator::now();
-      }),
-      ll_read_errorator::pass_further{}
-    );
-
- */
