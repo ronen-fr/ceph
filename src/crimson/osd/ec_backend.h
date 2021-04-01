@@ -29,7 +29,7 @@ private:
 
   ll_read_errorator::future<> calc_deep_scrub_info(const hobject_t& soid,
 						   ScrubMap &map,
-						   ScrubMapBuilder &pos,
+						   //ScrubMapBuilder &pos,
 						   ScrubMap::object &o) const final;
 
   seastar::future<crimson::osd::acked_peers_t>

@@ -35,7 +35,7 @@ ECBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
 }
 
 ECBackend::ll_read_errorator::future<> ECBackend::calc_deep_scrub_info(
-  const hobject_t& soid, ScrubMap& map, ScrubMapBuilder& pos, ScrubMap::object& o) const
+  const hobject_t& soid, ScrubMap& map, /*ScrubMapBuilder& pos,*/ ScrubMap::object& o) const
 {
   // todo
   return seastar::make_ready_future<>();

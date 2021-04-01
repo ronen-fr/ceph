@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <chrono>
 #include <boost/smart_ptr/local_shared_ptr.hpp>
 #include <boost/container/flat_set.hpp>
 
@@ -51,7 +52,7 @@ public:
 	    crimson::osd::ShardServices& shard_services);
   virtual ~PGBackend() = default;
   static std::unique_ptr<PGBackend> create(pg_t pgid,
-					   const pg_shard_t pg_shard,
+					   pg_shard_t pg_shard,
 					   const pg_pool_t& pool,
 					   crimson::os::CollectionRef coll,
 					   crimson::osd::ShardServices& shard_services,
@@ -153,17 +154,21 @@ public:
     std::vector<pg_log_entry_t>&& log_entries);
 
   seastar::future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects( // NOLINT(modernize-use-nodiscard)
-    const hobject_t& start, uint64_t limit) const;
+    const hobject_t& start, uint64_t limit) const ;
 
-  seastar::future<vector<ghobject_t>> list_range(const hobject_t& start,
-						 const hobject_t& end,
+  // returns the vector of 'gen-objects' in this range.
+  // Vector 'ls' is updated with non-meta, non-temporary, no-gen objects
+  seastar::future<vector<ghobject_t>> list_range(hobject_t start,
+						 hobject_t end,
 						 vector<hobject_t>& ls) const;
 
   ll_read_errorator::future<> scan_list(ScrubMap& map, ScrubMapBuilder& pos);
-  ll_read_errorator::future<> scan_obj_from_list(ScrubMap& map, ScrubMapBuilder& pos); // move to 'private'
+  //ll_read_errorator::future<> scan_obj_from_list(ScrubMap& map, ScrubMapBuilder& pos); // move to 'private'
+  ll_read_errorator::future<> scan_obj_from_list(ScrubMap& map, hobject_t& obj_in_ls, bool is_deep,
+  		std::chrono::milliseconds deep_delay);
 
-  virtual ll_read_errorator::future<> calc_deep_scrub_info(const hobject_t& soid,   ScrubMap &map,
-					 ScrubMapBuilder &pos,
+  virtual ll_read_errorator::future<> calc_deep_scrub_info(const hobject_t& soid, ScrubMap &map,
+					 //ScrubMapBuilder &pos,
 					 ScrubMap::object &o) const = 0;
 
   auto select_auth_object(const hobject_t& obj,
@@ -291,6 +296,9 @@ public:
 
   load_metadata_ertr::future<loaded_object_md_t::ref> load_metadata(
     const hobject_t &oid);
+
+  load_metadata_ertr::future<attrs_t>
+    get_the_attrs(const hobject_t& oid);
 
 private:
   virtual ll_read_errorator::future<ceph::bufferlist> _read(

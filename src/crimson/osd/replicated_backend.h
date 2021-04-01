@@ -25,6 +25,17 @@ public:
   void got_rep_op_reply(const MOSDRepOpReply& reply) final;
   seastar::future<> stop() final;
   void on_actingset_changed(peering_info_t pi) final;
+
+
+  PGBackend::ll_read_errorator::future<ceph::buffer::hash>
+  deep_info_on_data(const hobject_t& soid, ScrubMap::object& o) const;
+
+  PGBackend::ll_read_errorator::future<ceph::buffer::hash>
+  deep_info_omap_header(const hobject_t& soid, ScrubMap::object& o) const;
+
+  PGBackend::ll_read_errorator::future<ceph::buffer::hash>
+  deep_info_omap(const hobject_t& soid, ScrubMap::object& o, ceph::buffer::hash accum_hash) const;
+
 private:
   ll_read_errorator::future<ceph::bufferlist> _read(const hobject_t& hoid,
 					            uint64_t off,
@@ -40,7 +51,7 @@ private:
 
   ll_read_errorator::future<> calc_deep_scrub_info(const hobject_t& soid,
   						   ScrubMap &map,
-						   ScrubMapBuilder &pos,
+						   //ScrubMapBuilder &pos,
 						   ScrubMap::object &o) const final;
 
   const pg_t pgid;

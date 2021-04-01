@@ -46,9 +46,9 @@ PGBackend::create(pg_t pgid,
     return std::make_unique<ReplicatedBackend>(pgid, pg_shard,
 					       coll, shard_services);
   case pg_pool_t::TYPE_ERASURE:
-    return std::make_unique<ECBackend>(pg_shard, coll, shard_services,
-                                       /*std::move(*/ec_profile,
-                                       pool.stripe_width);
+    //return std::make_unique<ECBackend>(pg_shard, coll, shard_services,
+      //                                 /*std::move(*/ec_profile,
+      //                                 pool.stripe_width);
   default:
     throw runtime_error(seastar::format("unsupported pool type '{}'",
                                         pool.type));
@@ -64,7 +64,10 @@ PGBackend::PGBackend(pg_shard_t shard,
     store{store},
     shard_services{shard_services},
     pg_shard{shard}
-{}
+{
+  logger().warn("{}: {:p}/{:p}", __func__ , (void*)store, (void*)(&shard_services.get_store()));
+  logger().warn("{}: collection: {}", __func__ , coll->get_cid());
+}
 
 PGBackend::load_metadata_ertr::future<PGBackend::loaded_object_md_t::ref>
 PGBackend::load_metadata(const hobject_t& oid)
@@ -73,24 +76,27 @@ PGBackend::load_metadata(const hobject_t& oid)
     throw crimson::common::system_shutdown_exception();
   }
 
+  logger().debug("{}: {}", __func__, oid.to_str());
   return store->get_attrs(
     coll,
     ghobject_t{oid, ghobject_t::NO_GEN, shard}).safe_then(
       [oid](auto &&attrs) -> load_metadata_ertr::future<loaded_object_md_t::ref>{
-	loaded_object_md_t::ref ret(new loaded_object_md_t());
+	loaded_object_md_t::ref ret(new loaded_object_md_t{});
 	if (auto oiiter = attrs.find(OI_ATTR); oiiter != attrs.end()) {
 	  bufferlist bl;
+	  //logger().info("load_metadata {}: {}", oid, oiiter->second);
 	  bl.push_back(std::move(oiiter->second));
 	  ret->os = ObjectState(
 	    object_info_t(bl),
 	    true);
+	  logger().info("load_metadata {}: {}", oid, ret->os.oi.get_flag_string());
 	} else {
 	  logger().error(
 	    "load_metadata: object {} present but missing object info",
 	    oid);
 	  return crimson::ct_error::object_corrupted::make();
 	}
-	
+
 	if (oid.is_head()) {
 	  if (auto ssiter = attrs.find(SS_ATTR); ssiter != attrs.end()) {
 	    bufferlist bl;
@@ -121,6 +127,30 @@ PGBackend::load_metadata(const hobject_t& oid)
 	    oid.is_head() ? std::optional<SnapSet>(SnapSet()) : std::nullopt
 	  });
       }));
+}
+
+PGBackend::load_metadata_ertr::future<PGBackend::attrs_t>
+PGBackend::get_the_attrs(const hobject_t& oid)
+{
+  if (__builtin_expect(stopping, false)) {
+    throw crimson::common::system_shutdown_exception();
+  }
+
+  logger().debug("{}: {}", __func__, oid.to_str());
+  return store->get_attrs(
+    coll,
+    ghobject_t{oid, ghobject_t::NO_GEN, shard}).safe_then(
+    [oid](auto &&attrs) -> load_metadata_ertr::future<PGBackend::attrs_t>{
+      return load_metadata_ertr::make_ready_future<PGBackend::attrs_t>(std::move(attrs));
+
+    }, crimson::ct_error::enoent::handle([oid] {
+      logger().debug(
+	"get_the_attrs: object {} doesn't exist, returning empty attrs map",
+	oid);
+      return load_metadata_ertr::make_ready_future<PGBackend::attrs_t>(
+	PGBackend::attrs_t{}
+      );
+    }));
 }
 
 seastar::future<crimson::osd::acked_peers_t>
@@ -425,6 +455,7 @@ PGBackend::stat_errorator::future<> PGBackend::stat(
    - the snapset
  */
 
+#if 0
 /*
  * outcome (if the object exists):
  * - the scrub-map entry in the 'pos' position has its length updated from the store
@@ -434,7 +465,11 @@ PGBackend::stat_errorator::future<> PGBackend::stat(
 PGBackend::ll_read_errorator::future<> PGBackend::scan_obj_from_list(ScrubMap& map,
 								  ScrubMapBuilder& pos)
 {
-  logger().debug("{}: in position {}", __func__, 0 /* RRR */);
+  //logger().debug("{}: in position {} NOT IMPLEMENTED", __func__, pos.ls[pos.pos].get_key() );
+
+  return seastar::make_ready_future<>();
+
+#ifdef NOT_YET
 
   // hobject_t& poid_nu = pos.ls[pos.pos];
 
@@ -491,7 +526,108 @@ PGBackend::ll_read_errorator::future<> PGBackend::scan_obj_from_list(ScrubMap& m
 
 	  );
     });
+#endif
 }
+#endif
+
+/*
+ * outcome (if the object exists):
+ * - the scrub-map entry in the 'pos' position has its length updated from the store
+ * - if deep:
+ *   we compute checksums, and update the relevant fields in the map entry
+ */
+PGBackend::ll_read_errorator::future<> PGBackend::scan_obj_from_list(
+  ScrubMap& map, hobject_t& obj_in_ls, bool is_deep, std::chrono::milliseconds deep_delay)
+{
+  logger().debug("{}: scanning {}", __func__, obj_in_ls);
+
+  // RRR should we query about a NO_GEN version of obj_in_ls?
+
+
+  return load_metadata(obj_in_ls).safe_then(
+    [&obj_in_ls, this, &map, is_deep,
+     deep_delay](auto&& md_ref) mutable -> ll_read_errorator::future<> {
+
+    if (!md_ref->os.exists) {
+      // load_metadata() returns an empty info struct on "no-ent"
+      logger().debug("PGBackend::scan_obj_from_list(): obj does not exist");
+      return crimson::ct_error::enoent::make();
+    }
+
+    // the object exists
+    ScrubMap::object& o = map.objects[obj_in_ls];
+    return get_the_attrs(obj_in_ls).safe_then(
+      [&obj_in_ls, this, &map, is_deep, deep_delay, &o, &md_ref](auto&& ats) {
+	o.attrs.merge(ats);
+	o.size = md_ref->os.oi.size;
+	logger().debug("kend::scan_obj_from_list(): obj:{} sz:{}", obj_in_ls, o.size);
+
+	{
+	  // dump the first two entries
+	  static int dbg_c{20};
+	  if (dbg_c-- > 0) {
+	    stringstream lb;
+	    lb << " =pgbeat= " << obj_in_ls << " ==pgbeat== \n";
+	    for (const auto& [k, v] : o.attrs) {
+	      lb << "\t\tPGBackend attr: " << k << " <-> " << v << "\n";
+	    }
+	    logger().debug("==scan_obj_from_list: {}", lb.str());
+	  }
+	}
+
+	if (is_deep) {
+
+	  return seastar::sleep(deep_delay)
+	    .  // consider using this sleep for chunking
+	    then([this, &obj_in_ls, &map, o]() mutable {
+	      return calc_deep_scrub_info(obj_in_ls, map, o);
+	    });
+
+	} else {
+
+	  return ll_read_errorator::make_ready_future();
+	}
+      },
+      load_metadata_ertr::all_same_way([&obj_in_ls]() {
+	logger().warn("PGBackend::scan_obj_from_list: error fetching {} attrs",
+		      obj_in_ls);
+
+	return ll_read_errorator::make_ready_future();
+      })
+    );
+    },
+
+     load_metadata_ertr::all_same_way([&obj_in_ls]() {
+	logger().warn("PGBackend::scan_obj_from_list: error fetching {} metadata",
+		      obj_in_ls);
+
+	return ll_read_errorator::make_ready_future();
+      })
+    );
+}
+
+#if 0
+	.safe_then(
+
+	  []() { return PGBackend::ll_read_errorator::make_ready_future(); }
+
+	  /*,
+	  crimson::ct_error::object_corrupted::handle([indx = pos.pos]() {
+	    logger().error(
+	      "PGBackend::scan_obj_from_list(): object xx at pos {} missing object info",
+	      indx);
+	    PGBackend::stat_merrorator::assert_all{"object corrupted"};
+	    return ll_read_errorator::make_ready_future();
+	  })*/,
+
+	  ll_read_errorator::all_same_way(
+	    []() { return ll_read_errorator::make_ready_future(); })
+
+
+	);
+    //});
+#endif
+
 
 /* go over all objects in the list, starting from current pos.
  *
@@ -500,15 +636,23 @@ PGBackend::ll_read_errorator::future<> PGBackend::scan_obj_from_list(ScrubMap& m
 
 PGBackend::ll_read_errorator::future<> PGBackend::scan_list(ScrubMap& map, ScrubMapBuilder& pos)
 {
-  return crimson::do_for_each(pos.ls, [map, pos, this](auto&& poid) mutable {
+  // RRR handle the time conversion:
+  utime_t sleeptime;
+  //sleeptime.set_from_double(get_cct()->_conf->osd_debug_deep_scrub_sleep)
+  std::chrono::milliseconds deep_delay{1ms};
+
+  logger().debug("{}: pos.ls sz:{} pos.deep:{}", __func__, pos.ls.size(), pos.deep);
+
+  return ::crimson::do_for_each(pos.ls, [&map, &pos, this, deep_delay](auto& poid) mutable {
 
     // do what pos.next_object() would have done:
-    pos.data_pos = 0;
-    pos.omap_pos.clear();
-    pos.omap_keys = 0;
-    pos.omap_bytes = 0;
+    //pos.data_pos = 0;
+    //pos.omap_pos.clear();
+    //pos.omap_keys = 0;
+    //pos.omap_bytes = 0;
 
-    return scan_obj_from_list(map, pos).safe_then([](){return PGBackend::ll_read_errorator::make_ready_future();}
+    return scan_obj_from_list(map, poid, pos.deep, deep_delay).safe_then([](){
+    	return PGBackend::ll_read_errorator::make_ready_future();}
     );
 
   });
@@ -520,6 +664,8 @@ void PGBackend::omap_checks(const map<pg_shard_t,ScrubMap*> &maps,
 			       omap_stat_t& omap_stats,
 			       ostream &warnstream) const
 {
+  logger().debug("{}: size of master-set {}", __func__, master_set.size());
+
   if (std::none_of(maps.cbegin(), maps.cend(), [](auto& mp) {
     return mp.second->has_large_omap_object_errors || mp.second->has_omap_keys;
   })) {
@@ -567,7 +713,7 @@ using check_so_cond_t = bool ScrubMap::object::*;
 enum class on_error_fl { cont, stop };
 
 /// \returns should we continue checking
-bool auth_object_check(bool tested_flag,
+static bool auth_object_check(bool tested_flag,
 		       shard_info_wrapper& shard_info,
 		       set_err_fn_t set_err_fn,
 		       ostringstream& errstream,
@@ -576,6 +722,7 @@ bool auth_object_check(bool tested_flag,
 		       on_error_fl stop_on_error)
 {
   if (tested_flag) {
+    logger().debug("{}: flag tested 'true': {}", __func__, err_message);
 
     (shard_info.*set_err_fn)();
 
@@ -592,18 +739,25 @@ bool auth_object_check(bool tested_flag,
   return true;
 }
 
+inline static int dcount(const object_info_t& oi)
+{
+  return (oi.is_data_digest() ? 1 : 0) +
+    (oi.is_omap_digest() ? 1 : 0);
+}
+
 auto PGBackend::select_auth_object(const hobject_t& obj,
-			const map<pg_shard_t, ScrubMap*>& maps,
-			object_info_t* auth_oi,
-			map<pg_shard_t, shard_info_wrapper>& shard_map,
-			bool& digest_match,
-			spg_t pgid,
-			ostream& errorstream)
--> ll_read_errorator::future<map<pg_shard_t, ScrubMap*>::const_iterator>
+				   const map<pg_shard_t, ScrubMap*>& maps,
+				   object_info_t* auth_oi,
+				   map<pg_shard_t, shard_info_wrapper>& shard_map,
+				   bool& digest_match,
+				   spg_t pgid,
+				   ostream& errorstream)
+  -> ll_read_errorator::future<map<pg_shard_t, ScrubMap*>::const_iterator>
 {
   // Create list of shards with primary first so it will be auth copy all
   // other things being equal.
 
+  // RRR why do we do that (ordering the shards) for each object separately?
   list<pg_shard_t> shards;
   for (const auto& [sh, smap] : maps) {
     std::ignore = smap;
@@ -612,75 +766,209 @@ auto PGBackend::select_auth_object(const hobject_t& obj,
   }
   shards.push_front(pg_shard);
 
-  //
+  logger().debug("{}: for obj {} (pg {}) shards: xx", __func__, obj, pgid, shards);
+
   //
 
   auto auth = maps.cend();
   digest_match = true;
+  eversion_t auth_version;
 
-  for (auto &s : shards) {
+  for (auto& s : shards) {
 
     const auto shard_s_map = maps.find(s);
-    const auto& [jshard, jmap] = *shard_s_map;
-    auto obj_in_smap = jmap->objects.find(obj);
-    if (obj_in_smap == jmap->objects.end())
-      continue;
+    auto [jshard, jmap] = *shard_s_map;
 
-    auto& [ho, smap_obj] = *obj_in_smap;
+    logger().debug("{}: --- obj {} shard:{}: {} {:p}", __func__, obj, s, jshard,
+		   (void*)jmap);
+
+    {
+      // dump the first two entries
+      static int dbg_c{2};
+      if (dbg_c-- > 0) {
+	JSONFormatter f;
+	stringstream lb;
+	lb << " == " << obj << " ==-== ";
+	jmap->dump(&f);
+	f.flush(lb);
+	logger().debug("{}: -v- obj {} shard:{}: {}", __func__, obj, s, lb.str());
+      }
+    }
+
+    auto obj_in_smap = jmap->objects.find(obj);
+    if (obj_in_smap == jmap->objects.end()) {
+      continue;
+    }
+
+    const auto& [ho, smap_obj] = *obj_in_smap;
+
+    {
+      JSONFormatter f;
+      stringstream lb;
+      lb << ho << "===";
+      smap_obj.dump(&f);
+      f.flush(lb);
+      logger().debug("{}: -z- obj {} shard:{}: {} {}", __func__, obj, s, ho, lb.str());
+    }
+
 
     // isn't 's' the same as 'shard_s_map->first' ?
 
     auto& shard_info = shard_map[jshard];
-    if (jshard == pg_shard)
+    if (jshard == pg_shard) {
       shard_info.primary = true;
+    }
+
+    logger().debug("{}: --- obj {} shard:{}: ho:{} shard-info:XX (pr? {})", __func__, obj,
+		   s, ho, /*shard_info,*/ shard_info.primary);
 
 
     bool error{false};
     ostringstream shard_errorstream;
 
     if (auth_object_check(smap_obj.read_error, shard_info,
-    	&shard_info_wrapper::set_read_error, shard_errorstream, "candidate had a read error", error, on_error_fl::cont) &&
+			  &shard_info_wrapper::set_read_error, shard_errorstream,
+			  "candidate had a read error", error, on_error_fl::cont) &&
 
-    auth_object_check(smap_obj.ec_hash_mismatch, shard_info,
-			&shard_info_wrapper::set_ec_hash_mismatch, shard_errorstream, "candidate had an ec hash mismatch", error, on_error_fl::cont) &&
+	auth_object_check(smap_obj.ec_hash_mismatch, shard_info,
+			  &shard_info_wrapper::set_ec_hash_mismatch, shard_errorstream,
+			  "candidate had an ec hash mismatch", error,
+			  on_error_fl::cont) &&
 
-    auth_object_check(smap_obj.ec_size_mismatch, shard_info,
-			&shard_info_wrapper::set_ec_size_mismatch, shard_errorstream, "candidate had an ec size mismatch", error, on_error_fl::cont) &&
+	auth_object_check(smap_obj.ec_size_mismatch, shard_info,
+			  &shard_info_wrapper::set_ec_size_mismatch, shard_errorstream,
+			  "candidate had an ec size mismatch", error,
+			  on_error_fl::cont) &&
 
-    // no further checking if a stat error. We don't need to also see a missing_object_info_attr.
-    auth_object_check(smap_obj.stat_error, shard_info,
-			&shard_info_wrapper::set_stat_error, shard_errorstream, "candidate had a stat error", error, on_error_fl::stop)) {
+	// no further checking if a stat error. We don't need to also see a
+	// missing_object_info_attr.
+	auth_object_check(smap_obj.stat_error, shard_info,
+			  &shard_info_wrapper::set_stat_error, shard_errorstream,
+			  "candidate had a stat error", error, on_error_fl::stop)) {
 
 
-	//  We won't pick an auth copy if the snapset is missing or won't decode.
+      //  We won't pick an auth copy if the snapset is missing or won't decode.
 
-	// RRR complete snapset checks
+#ifdef NOT_YET
+      ceph_assert(!obj.is_snapdir());
+      SnapSet snapset;
+      bufferlist ss_bl;
+      if (obj.is_head()) {
+	auto snap_it = smap_obj.attrs.find(SS_ATTR);
+	if (auth_object_check( (snap_it == smap_obj.attrs.end()), shard_info,
+	                  &shard_info_wrapper::set_snapset_missing, shard_errorstream,
+			   "candidate had a missing snapset key", error, on_error_fl::stop)) {
+	  ss_bl.push_back(snap_it->second);
+	  try {
+	    auto bliter = ss_bl.cbegin();
+	    decode(snapset, bliter);
+	  } catch (...) {
+	    // invalid snapset, probably corrupt
+	    auth_object_check(
+	      true, shard_info, &shard_info_wrapper::set_snapset_corrupted, shard_errorstream,
+	      "candidate had a corrupt snapset", error, on_error_fl::cont);
+	  }
+	}
+      }
+#endif
 
-	// RRR complete erasure-pool-specific checks
+      // RRR complete erasure-pool-specific checks
 
-	// checking the attrs
+      // checking the attrs
 
-      map<string, bufferptr>::iterator k = smap_obj.attrs.find(OI_ATTR);
+      {
+	// dump the first two entries
+	static int dbg_c{20};
+	if (dbg_c-- > 0) {
+	  stringstream lb;
+	  lb << " =at= " << ho << " ==at== ";
+	  for (const auto& [k, v] : smap_obj.attrs) {
+	    lb << "\t\tattr: " << k << " <-> " << v << "\n";
+	  }
+
+	  logger().debug("{}: -v- obj {} shard:{}: {}", __func__, obj, s, lb.str());
+	}
+      }
+
+      auto k = smap_obj.attrs.find(OI_ATTR);
+
+      logger().debug("{}: {} {} oi_attr? {}", __func__, obj, ho,
+		     ((k == smap_obj.attrs.end()) ? "NOATR" : "found"));
+
       if (auth_object_check((k == smap_obj.attrs.end()), shard_info,
-			   &shard_info_wrapper::set_info_missing, shard_errorstream, "candidate had a missing info key", error, on_error_fl::stop)) {
+			    &shard_info_wrapper::set_info_missing, shard_errorstream,
+			    "candidate had a missing info key", error,
+			    on_error_fl::stop)) {
 
+	// decode the object info
+	bufferlist bl;
+	object_info_t oi;
+	bl.push_back(k->second);
 
+	// make the following into an errorator RRR
+	bool should_cont{true};
+	try {
+	  auto bl_iter = bl.cbegin();
+	  decode(oi, bl_iter);
+	} catch (...) {
+	  // invalid object info, probably corrupt
+	  logger().debug(
+	    "select_auth_object(): {}: invalid object info, probably corrupt", obj);
+	  should_cont = auth_object_check(
+	    true, shard_info, &shard_info_wrapper::set_info_corrupted, shard_errorstream,
+	    "candidate had a corrupt info", error, on_error_fl::cont);
+	}
 
+	if (should_cont) {
 
-			   // RRRRRRRRRRRRRRRRRRRRRRR
+	  logger().debug("select_auth_object(): {} should = {}", oi.soid, obj);
 
+	  // RRR do compare sizes
+	  // RRR only handling Replicated pool disk-size for now
+	  // \todo fix to contain the sizes in the message
+	  auth_object_check((smap_obj.size != oi.size), shard_info,
+			    &shard_info_wrapper::set_obj_size_info_mismatch, shard_errorstream,
+			    "candidate size mismatch", error,
+			    on_error_fl::cont);
 
-      }};
+	  // update digest_match
+	  // digest_match will only be true if computed digests are the same
+	  if (auth_version != eversion_t() && auth->second->objects[obj].digest_present &&
+	      smap_obj.digest_present &&
+	      auth->second->objects[obj].digest != smap_obj.digest) {
+	    digest_match = false;
+	  }
+
+	  logger().debug("select_auth_object(): {}: errs:{} auv:{} oiv:{} cnt:{}/{} ",
+	  	obj, shard_info.errors, auth_version, oi.version, dcount(oi), dcount(*auth_oi));
+
+	  if (!shard_info.errors) {
+	    // Otherwise - don't use this particular shard due to previous errors
+	    // XXX: For now we can't pick one shard for repair and another's object info or snapset
+
+	    if (auth_version == eversion_t{} || oi.version > auth_version ||
+		(oi.version == auth_version && dcount(oi) > dcount(*auth_oi))) {
+
+	      logger().debug("select_auth_object(): {}: selected {}", obj, oi.data_digest);
+	      auth = shard_s_map;
+	      *auth_oi = oi;
+	      auth_version = oi.version;
+	    }
+	  }
+	}
+      }
+    }
 
     // finished checking this shard
 
     if (error) {
-    	errorstream << pgid.pgid << " shard " << s << " soid " << obj << " : " << shard_errorstream.str() << "\n";
+      errorstream << pgid.pgid << " shard " << s << " soid " << obj << " : "
+		  << shard_errorstream.str() << "\n";
     }
-
   }
 
-  return ll_read_errorator::make_ready_future<map<pg_shard_t, ScrubMap*>::const_iterator>(auth);
+  return ll_read_errorator::make_ready_future<map<pg_shard_t, ScrubMap*>::const_iterator>(
+    auth);
 }
 
 bool PGBackend::maybe_create_new_object(
@@ -803,7 +1091,7 @@ seastar::future<> PGBackend::write_same(
   maybe_create_new_object(os, txn);
   txn.write(coll->get_cid(), ghobject_t{os.oi.soid},
             op.writesame.offset, len,
-            std::move(repeated_indata), op.flags);
+            /*std::move( no move will occur*/repeated_indata/*)*/, op.flags);
   os.oi.size = len;
   osd_op_params.clean_regions.mark_data_region_dirty(op.writesame.offset, len);
   return seastar::now();
@@ -987,6 +1275,9 @@ PGBackend::list_objects(const hobject_t& start, uint64_t limit) const
   }
 
   auto gstart = start.is_min() ? ghobject_t{} : ghobject_t{start, 0, shard};
+
+  logger().debug("RRR debug {} shard:{} start:{}", __func__, shard, gstart);
+
   return store->list_objects(coll,
                              gstart,
                              ghobject_t::get_max(),
@@ -994,6 +1285,9 @@ PGBackend::list_objects(const hobject_t& start, uint64_t limit) const
     .then([](auto ret) {
       auto& [gobjects, next] = ret;
       std::vector<hobject_t> objects;
+
+      //logger().debug("RRR debug list gobjects #: {}", gobjects.size());
+
       boost::copy(gobjects |
         boost::adaptors::filtered([](const ghobject_t& o) {
           if (o.is_pgmeta()) {
@@ -1008,14 +1302,17 @@ PGBackend::list_objects(const hobject_t& start, uint64_t limit) const
           return o.hobj;
         }),
         std::back_inserter(objects));
+
+      //logger().debug("RRR debug list objects #: {}", objects.size());
       return seastar::make_ready_future<std::tuple<std::vector<hobject_t>, hobject_t>>(
         std::make_tuple(objects, next.hobj));
     });
 }
 
 
-seastar::future<vector<ghobject_t>>
-PGBackend::list_range(const hobject_t& start, const hobject_t& end, vector<hobject_t>& ls ) const
+seastar::future<vector<ghobject_t>> PGBackend::list_range(hobject_t start,
+							  hobject_t end,
+							  vector<hobject_t>& ls) const
 {
   if (__builtin_expect(stopping, false)) {
     throw crimson::common::system_shutdown_exception();
@@ -1025,47 +1322,66 @@ PGBackend::list_range(const hobject_t& start, const hobject_t& end, vector<hobje
   ghobject_t gend{end, 0, shard};
 
 
-  return store->list_objects(coll,
-			     gstart,
-			     gend,
-			     INT_MAX)
-    .then([&](auto ret) {
-      auto& [gobjects, next] = ret;
-      std::vector<ghobject_t> objects;
+  logger().debug("RRR debug #p22 {} {} {} ls{:p}", __func__, gstart, gend, (void*)&ls);
 
-      // RRR fix this to not double-walk
+  return seastar::do_with(
+    //std::move(gstart), ghobject_t{end, 0, shard},
+    (start.is_min() ? ghobject_t{} : ghobject_t{start, 0, shard}), ghobject_t{end, 0, shard},
+    [this, &ls](auto&& gstart, auto&& gend) mutable {
 
-      boost::copy(gobjects |
-		  boost::adaptors::filtered([](const ghobject_t& o) {
-		    if (o.is_pgmeta()) {
-		      return false;
-		    } else if (o.hobj.is_temp()) {
-		      return false;
-		    } else {
-		      return o.is_no_gen();
-		    }
-		  }) |
-		  boost::adaptors::transformed([](const ghobject_t& o) {
-		    return o.hobj;
-		  }),
-		  std::back_inserter(ls));
+      logger().debug("RRR debug #p23 PGBackend::list_range {} {}", gstart, gend);
+      //logger().debug("RRR debug #p233 PGBackend::list_range collection: {} {:p}", coll->get_cid(), (void*)store);
 
-      boost::copy(gobjects |
-		  boost::adaptors::filtered([](const ghobject_t& o) {
-		    if (o.is_pgmeta()) {
-		      return false;
-		    } else if (o.hobj.is_temp()) {
-		      return false;
-		    } else {
-		      return !o.is_no_gen();
-		    }
-		  //}) |
-		  //boost::adaptors::transformed([](const ghobject_t& o) {
-		  //  return o.hobj;
-		  }),
-		  std::back_inserter(objects));
-      return seastar::make_ready_future<std::vector<ghobject_t>>(
-	objects);
+
+      return store->list_objects(coll, gstart, gend, INT_MAX)
+	//    .then_wrapped([=](auto&& f){
+	//      logger().debug("RRR debug 2 in list_range");
+	//      if (f.failed())
+	//      	(void)f.discard_result();
+	//      return std::move(f);
+	//    })
+	.then([&ls](auto&& ret) mutable { // RRR 2.3
+
+	  //auto& [gobjects, next] = ret;
+
+	  logger().debug("RRR debug list_range xxx");
+	  std::vector<ghobject_t>& gobjects = get<0>(ret);
+	  ghobject_t next = get<1>(ret);
+
+	  std::vector<ghobject_t> objects;
+
+	  // RRR fix this to not double-walk
+	  logger().debug("RRR debug list_range xxxx {}", gobjects.size());
+
+	  boost::copy(
+	    gobjects | boost::adaptors::filtered([](const ghobject_t& o) {
+	      if (o.is_pgmeta()) {
+		return false;
+	      } else if (o.hobj.is_temp()) {
+		return false;
+	      } else {
+		return o.is_no_gen();
+	      }
+	    }) |
+	      boost::adaptors::transformed([](const ghobject_t& o) { return o.hobj; }),
+	    std::back_inserter(ls));
+
+	  boost::copy(gobjects | boost::adaptors::filtered([](const ghobject_t& o) {
+			if (o.is_pgmeta()) {
+			  return false;
+			} else if (o.hobj.is_temp()) {
+			  return false;
+			} else {
+			  return !o.is_no_gen();
+			}
+			//}) |
+			// boost::adaptors::transformed([](const ghobject_t& o) {
+			//  return o.hobj;
+		      }),
+		      std::back_inserter(objects));
+	  logger().debug("RRR debug list_range end ls-sz:{} rollbacks#{} ls{:p}", ls.size(), objects.size(), (void*)(&ls));
+	  return seastar::make_ready_future<std::vector<ghobject_t>>(objects);
+	});
     });
 }
 

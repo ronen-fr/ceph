@@ -25,7 +25,6 @@ enum class scrub_prio_t : bool { low_priority = false, high_priority = true };
 
 }  // namespace Scrub
 
-class PgScrubEvent;
 
 /**
  * Flags affecting the scheduling and behaviour of the *next* scrub.
@@ -127,9 +126,11 @@ struct ScrubPgIF {
 
   // --------------- triggering state-machine events:
 
-  virtual void do_scrub_event(const crimson::osd::PgScrubEvent& evt, PeeringCtx& rctx) = 0;
+  //virtual void do_scrub_event(const crimson::osd::PgScrubEvent& evt, PeeringCtx& rctx) = 0;
 
   virtual void initiate_regular_scrub(epoch_t epoch_queued) = 0;
+
+  virtual void queue_regular_scrub() = 0;  // crimson-specific (for now)
 
   virtual void initiate_scrub_after_repair(epoch_t epoch_queued) = 0;
 
@@ -156,6 +157,18 @@ struct ScrubPgIF {
   virtual void send_chunk_free(epoch_t epoch_queued) = 0;  // crimson
 
   virtual void send_chunk_busy(epoch_t epoch_queued) = 0;  // crimson
+
+  virtual void send_requests_sent(epoch_t epoch_queued) = 0; // crimson
+
+  virtual void send_local_map_done(epoch_t epoch_queued) = 0; // crimson
+
+  virtual void send_oninit_done(epoch_t epoch_queued) = 0; // crimson
+
+  virtual void send_get_next_chunk(epoch_t epoch_queued) = 0; // crimson + new in Classic
+
+  virtual void send_scrub_is_finished(epoch_t epoch_queued) = 0; // crimson + new in Classic
+
+  virtual void send_maps_compared(epoch_t epoch_queued) = 0; // crimson
 
   // --------------------------------------------------
 
@@ -293,8 +306,12 @@ struct ScrubPgIF {
   //  virtual void handle_scrub_reserve_reject(crimson::osd::RemoteScrubEvent op,
   //					   pg_shard_t from) = 0;
 
-  virtual void reg_next_scrub(const requested_scrub_t& request_flags) = 0;
-  virtual void unreg_next_scrub() = 0;
+  //virtual void reg_next_scrub(const requested_scrub_t& request_flags) = 0;
+  //virtual void unreg_next_scrub() = 0;
+
+  virtual void register_with_osd() = 0;
+  virtual void unregister_from_osd() = 0;
+
   virtual void scrub_requested(scrub_level_t scrub_level,
 			       scrub_type_t scrub_type,
 			       requested_scrub_t& req_flags) = 0;
