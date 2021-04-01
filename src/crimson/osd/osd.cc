@@ -95,7 +95,7 @@ OSD::OSD(int id, uint32_t nonce,
     tick_timer{[this] {
       update_heartbeat_peers();
       update_stats();
-      // RRR add the scrub_sched loop here
+      sched_scrub();
     }},
     asok{seastar::make_lw_shared<crimson::admin::AdminSocket>()},
     osdmap_gate("OSD::osdmap_gate", std::make_optional(std::ref(shard_services)))
@@ -1299,64 +1299,30 @@ seastar::future<> OSD::handle_peering_op(
   return seastar::now();
 }
 
-// RRR the following 3 functions should be merged (into a templated one?)
-seastar::future<> OSD::handle_scrub_res(
-  crimson::net::ConnectionRef conn, // RRR do I need to maintain the conn alive?
-  Ref<MOSDScrubReserve> m)
+seastar::future<> OSD::handle_scrub_res(crimson::net::ConnectionRef conn,
+					Ref<MOSDScrubReserve> m)
 {
   const int src = m->get_source().num();
   logger().debug("handle_scrub_res on {} from {}", m->get_spg(), src);
 
-  //td::unique_ptr<PgScrubEvent> evt(m->get_map_epoch(), m->get_min_epoch(), m->get_event());
-
-
-  auto pg = get_pg(m->get_spg());
-  auto from = pg_shard_t{src, m->get_spg().shard};
-
-  if (!pg) {
-    logger().debug("{}: {} not found", __func__, m->get_spg().pgid);
-    return seastar::make_ready_future<>();
-  }
-
-  // RRR add the waiting for the map
-
-
-  return pg->do_scrub_request(std::move(m), from);
-
-  /*
-  std::unique_ptr<PGPeeringEvent> evt(m->get_event());
-  (void) shard_services.start_operation<RemotePeeringEvent>(
-    *this,
-    conn,
-    shard_services,
-    pg_shard_t{from, m->get_spg().shard},
-    m->get_spg(),
-    std::move(*evt));
-    */
-  //return seastar::now();
+  (void)shard_services.start_operation<ScrubRequest>(
+    pg_shard_t{src, m->get_spg().shard}, *this, std::move(conn), std::move(m));
+  return seastar::make_ready_future<>();
 }
 
-seastar::future<> OSD::handle_scrub_map_request(
-  crimson::net::ConnectionRef conn, // RRR do I need to maintain the conn alive?
-  Ref<MOSDRepScrub> m)
+seastar::future<> OSD::handle_scrub_map_request(crimson::net::ConnectionRef conn,
+						Ref<MOSDRepScrub> m)
 {
   const int src = m->get_source().num();
   logger().debug("handle_scrub_map_request on {} from {}", m->get_spg(), src);
-  auto pg = get_pg(m->get_spg());
-  auto from = pg_shard_t{src, m->get_spg().shard};
 
-  if (!pg) {
-    logger().debug("{}: {} not found", __func__, m->get_spg().pgid);
-    return seastar::make_ready_future<>();
-  }
-
-  // RRR add the waiting for the map
-
-  return pg->do_scrub_map_request(std::move(m), from);
+  (void)shard_services.start_operation<ScrubRequest>(
+    pg_shard_t{src, m->get_spg().shard}, *this, std::move(conn), std::move(m));
+  return seastar::make_ready_future<>();
 }
 
 seastar::future<> OSD::handle_scrub_map_from_rep(
-  crimson::net::ConnectionRef conn, // RRR do I need to maintain the conn alive?
+  crimson::net::ConnectionRef conn,  // RRR do I need to maintain the conn alive?
   Ref<MOSDRepScrubMap> m)
 {
   const int src = m->get_source().num();
@@ -1364,15 +1330,11 @@ seastar::future<> OSD::handle_scrub_map_from_rep(
   auto pg = get_pg(m->get_spg());
   auto from = pg_shard_t{src, m->get_spg().shard};
 
-  if (!pg) {
-    logger().debug("{}: {} not found", __func__, m->get_spg().pgid);
-    return seastar::make_ready_future<>();
-  }
-
-  // RRR add the waiting for the map
-
-  return pg->do_scrub_map_reply(std::move(m), from);
+  (void)shard_services.start_operation<ScrubRequest>(from, *this, std::move(conn),
+						     std::move(m));
+  return seastar::make_ready_future<>();
 }
+
 
 void OSD::check_osdmap_features()
 {
@@ -1471,11 +1433,16 @@ void OSD::sched_scrub()
 
   for (auto scrub_job : scrub_queuer) {
 
+    logger().debug("{}: testing {}", __func__, scrub_job.pgid);
+
     if (scrub_job.sched_time > now) {
       logger().debug("{}: {} scheduled for {} (which is > now ({})", __func__,
 		     scrub_job.pgid, scrub_job.sched_time, now);
       break;
     }
+
+    logger().debug("scrubber {}: {} scheduled for {} (which is ripe! ({}))", __func__,
+		   scrub_job.pgid, scrub_job.sched_time, now);
 
     if ((scrub_job.deadline.is_zero() || scrub_job.deadline >= now) &&
 	!(time_permit && load_is_low)) {

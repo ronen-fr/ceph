@@ -33,7 +33,7 @@ class PgScrubSched {
 				  bool has_deep_errors,
 				  requested_scrub_t& planned) const;
 
-  double next_deepscrub_interval() const;
+  [[nodiscard]] double next_deepscrub_interval() const;
 
   bool is_time_for_deep(bool allow_deep_scrub,
 			bool allow_scrub,
@@ -54,6 +54,7 @@ class PgScrubSched {
   ScrubPgIF* m_scrubber;
   ShardServices& m_osds;
 
+ public: // RRR for now
   bool scrub_queued{false};
 };
 

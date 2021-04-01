@@ -124,6 +124,7 @@ PG::PG(
   osdmap_gate.got_map(osdmap->get_epoch());
   m_scrubber = make_unique<PgScrubber>(this);
   m_scrub_sched = make_unique<PgScrubSched>(*this);
+  m_scrubber->register_with_osd();
 }
 
 PG::~PG() {}
@@ -368,7 +369,7 @@ void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
 // consider moving to pg_scrub_sched_t
 bool PG::sched_scrub()
 {
-  return m_scrub_sched.sched_scrub();
+  return m_scrub_sched->sched_scrub();
 }
 
 void PG::log_state_enter(const char *state) {
@@ -498,29 +499,18 @@ void PG::do_peering_event(
   }
 }
 
-// RRR bookmark
 /*
-void PG::do_scrub_event(
-  const boost::statechart::event_base &evt,
-  PeeringCtx &rctx)
-{
-  peering_state.handle_event(
-    evt,
-    &rctx);
-  peering_state.write_if_dirty(rctx.transaction);
-}
- */
-
 void PG::do_scrub_event(
   PgScrubEvent& evt, PeeringCtx &rctx)
 {
   if (m_scrubber && !peering_state.pg_has_reset_since(evt.get_epoch_requested())) {
     logger().debug("{} handling {} for pg: {}", __func__, evt.get_desc(), pgid);
-    m_scrubber->do_scrub_event(evt.get_event(), rctx);
+    m_scrubber->do_scrub_event(evt, rctx);
   } else {
     logger().debug("{} ignoring {} -- pg has reset", __func__, evt.get_desc());
   }
 }
+ */
 
 seastar::future<> PG::do_scrub_request(Ref<MOSDScrubReserve> req, pg_shard_t from)
 {
@@ -543,7 +533,7 @@ seastar::future<> PG::do_scrub_map_request(Ref<MOSDRepScrub> req, pg_shard_t fro
 
 seastar::future<> PG::do_scrub_map_reply(Ref<MOSDRepScrubMap> msg, pg_shard_t from)
 {
-  if (m_scrubber) {
+  if (m_scrubber && m_scrubber->is_scrub_active()) {
     m_scrubber->map_from_replica(*msg, from);
   }
 
@@ -687,15 +677,18 @@ seastar::future<> PG::submit_transaction(const OpInfo& op_info,
     logger().debug("{} op_returns: {}",
                    __func__, log_entries.back().op_returns);
   }
-  log_entries.back().clean_regions = osd_op_p.clean_regions;
+  //log_entries.back().clean_regions = osd_op_p.clean_regions;
+  log_entries.back().clean_regions = std::move(osd_op_p.clean_regions);
   peering_state.pre_submit_op(obc->obs.oi.soid, log_entries, osd_op_p.at_version);
-  peering_state.append_log_with_trim_to_updated(std::forward<std::vector<pg_log_entry_t>>(log_entries), osd_op_p.at_version,
+  //peering_state.append_log_with_trim_to_updated(std::forward<std::vector<pg_log_entry_t>>(log_entries), osd_op_p.at_version,
+  //						txn, true, false);
+  peering_state.append_log_with_trim_to_updated(std::move(log_entries), osd_op_p.at_version,
 						txn, true, false);
 
   return backend->mutate_object(peering_state.get_acting_recovery_backfill(),
 				std::move(obc),
 				std::move(txn),
-				osd_op_p,
+				std::move(osd_op_p),
 				peering_state.get_last_peering_reset(),
 				map_epoch,
 				std::move(log_entries)).then(
@@ -988,7 +981,7 @@ PG::with_clone_obc(hobject_t oid, with_obc_func_t&& func)
     return clone->template with_lock<State>(
       [coid=*coid, existed=existed,
        head=std::move(head), clone=std::move(clone),
-       func=func, this]() -> load_obc_ertr::future<> {
+       func=std::move(func), this]() -> load_obc_ertr::future<> {
       auto loaded = load_obc_ertr::make_ready_future<ObjectContextRef>(clone);
       if (existed) {
         logger().debug("with_clone_obc: found {} in cache", coid);

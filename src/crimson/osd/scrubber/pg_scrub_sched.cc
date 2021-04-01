@@ -23,7 +23,8 @@ PgScrubSched::PgScrubSched(PG& pg)
     , m_pg_id{pg.get_pgid()}
     , m_scrubber{m_pg.m_scrubber.get()}
     , m_osds{m_pg.get_shard_services()}
-{}
+{
+}
 
 
 bool PgScrubSched::forced_scrub(Formatter* f, scrub_level_t depth)
@@ -88,7 +89,7 @@ bool PgScrubSched::sched_scrub()
     // only applicable to the very first time a scrub event is queued
     // (until handled and posted to the scrub FSM)
     logger().warn("{}: already queued", __func__);
-    return false;
+    // for now RRR // return false;
   }
 
   // analyse the combination of the requested scrub flags, the osd/pool configuration
@@ -128,9 +129,11 @@ bool PgScrubSched::sched_scrub()
 
   // the following works, but then the process_event() is done in-place. We'd like
   // to go thru the queue here RRR
-  std::ignore = m_osds.start_operation<LocalScrubEvent>(&m_pg, m_osds, m_pg.get_pg_whoami(),
-  		m_pg_id, m_pg.get_osdmap_epoch(), m_pg.get_osdmap_epoch(),
-		  crimson::osd::Scrub::StartScrub{});
+//  std::ignore = m_osds.start_operation<LocalScrubEvent>(
+//    &m_pg, m_osds, m_pg.get_pg_whoami(), m_pg_id, m_pg.get_osdmap_epoch(),
+//    m_pg.get_osdmap_epoch(), crimson::osd::Scrub::StartScrub{});
+
+  m_scrubber->queue_regular_scrub();
   return true;
 }
 
