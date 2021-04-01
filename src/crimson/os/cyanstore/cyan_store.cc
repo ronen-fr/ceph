@@ -29,7 +29,9 @@ using ObjectRef = boost::intrusive_ptr<Object>;
 
 CyanStore::CyanStore(const std::string& path)
   : path{path}
-{}
+{
+  logger().warn("CYAN: {} {:p}", path, (void*)(this));
+}
 
 CyanStore::~CyanStore() = default;
 
@@ -131,11 +133,15 @@ CyanStore::list_objects(CollectionRef ch,
                         const ghobject_t& end,
                         uint64_t limit) const
 {
+  //logger().debug("{}",
+  //		 __func__);
+
+  try {
   auto c = static_cast<Collection*>(ch.get());
-  logger().debug("{} {} {} {} {}",
-                 __func__, c->get_cid(), start, end, limit);
+  //logger().debug("cyan store {} {} {} {} {}",
+  //               __func__, c->get_cid(), start, end, limit);
   std::vector<ghobject_t> objects;
-  objects.reserve(limit);
+  objects.reserve(std::min(limit, (uint64_t)100));
   ghobject_t next = ghobject_t::get_max();
   for (const auto& [oid, obj] :
          boost::make_iterator_range(c->object_map.lower_bound(start),
@@ -149,6 +155,13 @@ CyanStore::list_objects(CollectionRef ch,
   }
   return seastar::make_ready_future<std::tuple<std::vector<ghobject_t>, ghobject_t>>(
     std::make_tuple(std::move(objects), next));
+  } catch (...) {
+    std::vector<ghobject_t> objects_dum;
+    ghobject_t next_dum = ghobject_t::get_max();
+    logger().warn("{}: FAILED RRR", __func__);
+    return seastar::make_ready_future<std::tuple<std::vector<ghobject_t>, ghobject_t>>(
+      std::make_tuple(std::move(objects_dum), next_dum));
+  }
 }
 
 seastar::future<CollectionRef> CyanStore::create_new_collection(const coll_t& cid)
@@ -313,6 +326,8 @@ CyanStore::omap_get_header(CollectionRef ch,
 seastar::future<> CyanStore::do_transaction(CollectionRef ch,
                                             ceph::os::Transaction&& t)
 {
+  logger().debug("{} RRR-scrub", __func__);
+
   using ceph::os::Transaction;
   int r = 0;
   try {
@@ -370,6 +385,7 @@ seastar::future<> CyanStore::do_transaction(CollectionRef ch,
       break;
       case Transaction::OP_SETATTR:
       {
+	logger().debug("{} RRR-scrub setattr", __func__);
         coll_t cid = i.get_cid(op->cid);
         ghobject_t oid = i.get_oid(op->oid);
         std::string name = i.decode_string();

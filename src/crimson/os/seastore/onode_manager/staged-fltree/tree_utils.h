@@ -275,7 +275,7 @@ class TreeBuilder {
       auto [key, value] = kv_iter.get_kv();
       logger().debug("[{}] {} -> {}", kv_iter.index(), key_hobj_t{key}, value);
       return tree->insert(t, key, value.get_config()
-      ).safe_then([&t, this, cursors, value](auto ret) {
+      ).safe_then([&t, this, cursors, value=value](auto ret) {
         auto& [cursor, success] = ret;
         assert(success == true);
         Values::initialize_cursor(t, cursor, value);

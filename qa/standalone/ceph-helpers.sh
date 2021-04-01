@@ -636,19 +636,21 @@ function run_osd() {
     local osd_data=$dir/$id
 
     local ceph_args="$CEPH_ARGS"
+    ceph_args+=" --nodaemon"
+    ceph_args+=" --redirect-output"    
     ceph_args+=" --osd-failsafe-full-ratio=.99"
     ceph_args+=" --osd-journal-size=100"
     ceph_args+=" --osd-scrub-load-threshold=2000"
     ceph_args+=" --osd-data=$osd_data"
     ceph_args+=" --osd-journal=${osd_data}/journal"
-    ceph_args+=" --chdir="
+    ceph_args+=" --chdir=."
     ceph_args+=$EXTRA_OPTS
     ceph_args+=" --run-dir=$dir"
     ceph_args+=" --admin-socket=$(get_asok_path)"
     ceph_args+=" --debug-osd=20"
     ceph_args+=" --debug-ms=1"
     ceph_args+=" --debug-monc=20"
-    ceph_args+=" --log-file=$dir/\$name.log"
+    #ceph_args+=" --log-file=$dir/\$name.log"
     ceph_args+=" --pid-file=$dir/\$name.pid"
     ceph_args+=" --osd-max-object-name-len=460"
     ceph_args+=" --osd-max-object-namespace-len=64"
@@ -663,6 +665,9 @@ function run_osd() {
     echo "{\"cephx_secret\": \"$OSD_SECRET\"}" > $osd_data/new.json
     ceph osd new $uuid -i $osd_data/new.json
     rm $osd_data/new.json
+
+    echo "================================== OSD cmd: " -i $id $ceph_args --mkfs --key $OSD_SECRET --osd-uuid $uuid >> /tmp/cmd1
+    
     ceph-osd -i $id $ceph_args --mkfs --key $OSD_SECRET --osd-uuid $uuid
 
     local key_fn=$osd_data/keyring

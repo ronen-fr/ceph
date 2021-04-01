@@ -934,7 +934,7 @@ int PgScrubber::build_replica_map_chunk()
     // finished!
     // In case we restarted smaller chunk, clear old data
 
-    m_cleaned_meta_map.clear_from(m_start);
+    m_cleaned_meta_map.clear_from(m_start); // RRR don't think that makes sense now
     m_cleaned_meta_map.insert(replica_scrubmap);
     auto for_meta_scrub = clean_meta_map();
     _scan_snaps(for_meta_scrub);

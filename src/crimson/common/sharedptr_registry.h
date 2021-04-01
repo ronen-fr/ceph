@@ -91,7 +91,7 @@ template <class K, class V, class C = std::less<K>> class SharedPtrRegistry {
   }
 
   // a 'pipelined-versioned' get_next()
-  auto get_next(const K& key) -> std::optional<std::pair<K, V>>
+  auto get_next(const K& key) -> std::optional<std::pair<K, V>> const
   {
     VPtr next_val;
     auto i = contents.upper_bound(key);

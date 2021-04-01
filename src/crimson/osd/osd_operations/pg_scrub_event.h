@@ -81,6 +81,7 @@ MEV(IntLocalMapDone)
 MEV(DigestUpdate)  ///< external. called upon success of a MODIFY op. See
 ///< scrub_snapshot_metadata()
 MEV(AllChunksDone)
+MEV(MapsCompared) ///< (Crimson) maps_compare_n_cleanup() transactions are done
 
 MEV(StartReplica)  ///< initiating replica scrub.
 MEV(StartReplicaNoWait)	 ///< 'start replica' when there are no pending updates
@@ -91,9 +92,12 @@ MEV(ReplicaPushesUpd)  ///< Update to active_pushes. 'active_pushes' represents 
 
 MEV(FullReset)	///< guarantee that the FSM is in the quiescent state (i.e. NotActive)
 
+MEV(NextChunk)  ///< finished handling this chunk. Go get the next one
+MEV(ScrubFinished) ///< all chunks handled
+
 }  // namespace Scrub
 
-
+#if 0
 class PgScrubEvent {
 
   epoch_t epoch_sent;
@@ -158,6 +162,6 @@ typedef std::unique_ptr<PgScrubEvent> PgScrubEventURef;
 
 // test:
 static inline PgScrubEvent a_demo_sevt{epoch_t{}, epoch_t{}, Scrub::OnInitDone{}};
-
+#endif
 
 }  // namespace crimson::osd

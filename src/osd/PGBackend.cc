@@ -776,6 +776,7 @@ bool PGBackend::be_compare_scrub_objects(
       }
     }
   }
+
   uint64_t oi_size = be_get_ondisk_size(auth_oi.size);
   if (oi_size != candidate.size) {
     if (error != CLEAN)
