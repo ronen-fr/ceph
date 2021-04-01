@@ -63,6 +63,7 @@ add_library(crimson-common STATIC
   ${PROJECT_SOURCE_DIR}/src/common/perf_histogram.cc
   ${PROJECT_SOURCE_DIR}/src/common/page.cc
   ${PROJECT_SOURCE_DIR}/src/common/pick_address.cc
+  ${PROJECT_SOURCE_DIR}/src/common/scrub_types.cc
   ${PROJECT_SOURCE_DIR}/src/common/snap_types.cc
   ${PROJECT_SOURCE_DIR}/src/common/signal.cc
   ${PROJECT_SOURCE_DIR}/src/common/str_list.cc

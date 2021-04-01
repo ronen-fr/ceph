@@ -90,7 +90,7 @@ class PG : public boost::intrusive_ref_counter<
   PeeringEvent::PGPipeline peering_request_pg_pipeline;
   RepRequest::PGPipeline replicated_request_pg_pipeline;
   ScrubRequest::PGPipeline scrub_request_pg_pipeline; // RRR should probably be merged
-  ScrubEvent::PGPipeline scrub_event_pg_pipeline; // RRR should probably be merged
+  //ScrubEvent::PGPipeline scrub_event_pg_pipeline; // RRR should probably be merged
   ScrubEvent2::PGPipeline scrub_event2_pg_pipeline; // RRR should probably be merged
 
   spg_t pgid;
@@ -495,8 +495,8 @@ public:
   void do_peering_event(
     PGPeeringEvent& evt, PeeringCtx &rctx);
 
-  void do_scrub_event(
-    PgScrubEvent& evt, PeeringCtx &rctx);
+//  void do_scrub_event(
+//    PgScrubEvent& evt, PeeringCtx &rctx);
 
   seastar::future<> do_scrub_request(Ref<MOSDScrubReserve> req, pg_shard_t from);
   seastar::future<> do_scrub_map_request(Ref<MOSDRepScrub> req, pg_shard_t from);
@@ -720,7 +720,7 @@ private:
   friend class PGAdvanceMap;
   friend class PeeringEvent;
   friend class RepRequest;
-  friend class ScrubEvent;
+  friend class ScrubEvent2;
   friend class BackfillRecovery;
   friend struct PGFacade;
 private:

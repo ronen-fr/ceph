@@ -9,8 +9,6 @@
 #include <boost/core/demangle.hpp>
 
 #include "crimson/osd/osd.h"
-// RRR #include "OpRequest.h"
-//#include "crimson/osd/scrub_store.h"
 #include "crimson/osd/scrubber/scrub_machine_lstnr_cr.h"
 
 #if 0
@@ -77,7 +75,6 @@ bool ScrubMachine::is_reserving() const
 #define dout_prefix _prefix(_dout, this->context<ScrubMachine>().m_pg)
 template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
 {
-  return t->gen_prefix(*_dout) << " scrubberFSM pg(" << t->pg_id << ") ";
   return t->gen_prefix(*_dout) << " scrubberFSM pg(" << t->pg_id << ") ";
 }
 #endif
@@ -189,7 +186,7 @@ PendingTimer::PendingTimer(my_context ctx) : my_base(ctx)
   logger().debug("scrubberFSM -- state -->> Act/PendingTimer");
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
 
-  std::ignore = scrbr->add_delayed_scheduling();
+  scrbr->add_delayed_scheduling();
 }
 
 // ----------------------- NewChunk -----------------------------------
@@ -229,7 +226,7 @@ sc::result NewChunk::react(const SelectedChunkFree&)
 WaitPushes::WaitPushes(my_context ctx) : my_base(ctx)
 {
   logger().debug("scrubberFSM -- state -->> Act/WaitPushes");
-  post_event(boost::intrusive_ptr<ActivePushesUpd>(new ActivePushesUpd{}));
+  post_event(ActivePushesUpd{});
 }
 
 /*
@@ -255,7 +252,7 @@ sc::result WaitPushes::react(const ActivePushesUpd&)
 WaitLastUpdate::WaitLastUpdate(my_context ctx) : my_base(ctx)
 {
   logger().debug("scrubberFSM -- state -->> Act/WaitLastUpdate");
-  post_event(boost::intrusive_ptr<UpdatesApplied>(new UpdatesApplied{}));
+  post_event(UpdatesApplied{});
 }
 
 void WaitLastUpdate::on_new_updates(const UpdatesApplied&)
@@ -264,7 +261,7 @@ void WaitLastUpdate::on_new_updates(const UpdatesApplied&)
   logger().debug("WaitLastUpdate::on_new_updates(const UpdatesApplied&)");
 
   if (scrbr->has_pg_marked_new_updates()) {
-    post_event(boost::intrusive_ptr<InternalAllUpdates>(new InternalAllUpdates{}));
+    post_event(InternalAllUpdates{});
   } else {
     // will be requeued by op_applied
     logger().debug("{}: wait for EC read/modify/writes to queue", __func__);
@@ -301,7 +298,7 @@ BuildMap::BuildMap(my_context ctx) : my_base(ctx)
     // we were preempted, either directly or by a replica
     logger().debug("{}:  preempted!!!", __func__);
     scrbr->mark_local_map_ready();
-    post_event(boost::intrusive_ptr<IntBmPreempted>(new IntBmPreempted{}));
+    post_event(IntBmPreempted{});
 
   } else {
 
@@ -343,9 +340,8 @@ sc::result BuildMap::react(const IntLocalMapDone&)
 DrainReplMaps::DrainReplMaps(my_context ctx) : my_base(ctx)
 {
   logger().debug("scrubberFSM -- state -->> Act/DrainReplMaps");
-  // we may have received all maps already. Send the event that will make us
-  // check.
-  post_event(boost::intrusive_ptr<GotReplicas>(new GotReplicas{}));
+  // we may have received all maps already. Send the event that will make us check.
+  post_event(GotReplicas{});
 }
 
 sc::result DrainReplMaps::react(const GotReplicas&)
@@ -370,27 +366,37 @@ sc::result DrainReplMaps::react(const GotReplicas&)
 WaitReplicas::WaitReplicas(my_context ctx) : my_base(ctx)
 {
   logger().debug("scrubberFSM -- state -->> Act/WaitReplicas");
-  post_event(boost::intrusive_ptr<GotReplicas>(new GotReplicas{}));
+  post_event(GotReplicas{});
 }
+
+// note: now that maps_compare_n_cleanup() is "futurized", and we remain in this state
+//  for a while even after we got all our maps, we must prevent are_all_maps_available()
+//  from being called more than once.
+// This is basically a separate state, but it's too transitory and artificial to justify
+//  the cost of a separate state.
 
 sc::result WaitReplicas::react(const GotReplicas&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("WaitReplicas::react(const GotReplicas&)");
 
-  if (scrbr->are_all_maps_available()) {
-    logger().debug("{}: WaitReplicas::react(const GotReplicas&) got all", __func__);
+  if (!all_maps_already_called && scrbr->are_all_maps_available()) {
+    logger().debug("scrubberFSM: {}: WaitReplicas::react(const GotReplicas&) got all", __func__);
+
+    all_maps_already_called = true;
 
     // were we preempted?
     if (scrbr->get_preemptor().disable_and_test()) {  // a test&set
 
-      logger().debug("{}: WaitReplicas::react(const GotReplicas&) PREEMPTED!", __func__);
+      logger().debug("scrubberFSM: {}: WaitReplicas::react(const GotReplicas&) PREEMPTED!", __func__);
       return transit<PendingTimer>();
 
     } else {
 
+      // maps_compare_n_cleanup() will arrange for MapsCompared event to be sent:
       scrbr->maps_compare_n_cleanup();
-      return transit<WaitDigestUpdate>();
+      return discard_event();
+      // maps_compare...() is futurized, and will send the event when ready: return transit<WaitDigestUpdate>();
     }
   } else {
     return discard_event();
@@ -405,7 +411,7 @@ WaitDigestUpdate::WaitDigestUpdate(my_context ctx) : my_base(ctx)
   // perform an initial check: maybe we already
   // have all the updates we need:
   // (note that DigestUpdate is usually an external event)
-  post_event(boost::intrusive_ptr<DigestUpdate>(new DigestUpdate{}));
+  post_event(DigestUpdate{});
 }
 
 sc::result WaitDigestUpdate::react(const DigestUpdate&)
@@ -419,40 +425,12 @@ sc::result WaitDigestUpdate::react(const DigestUpdate&)
   //  - send NextChunk, or
   //  - send ScrubFinished
 
-  scrbr->on_digest_updates_v2();
+  scrbr->on_digest_updates();
   return discard_event();
 }
 
-#ifdef OBSOLETE_V0
 
-sc::result WaitDigestUpdate::react(const DigestUpdate&)
-{
-  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
-  logger().debug("WaitDigestUpdate::react(const DigestUpdate&)");
-
-  switch (scrbr->on_digest_updates()) {
-
-    case Scrub::FsmNext::goto_notactive:
-      // scrubbing is done
-      return transit<NotActive>();
-
-    case Scrub::FsmNext::next_chunk:
-      // go get the next chunk
-      return transit<PendingTimer>();
-
-    case Scrub::FsmNext::do_discard:
-      // still waiting for more updates
-      return discard_event();
-  }
-  __builtin_unreachable();  // Prevent a gcc warning.
-			    // Adding a phony 'default:' above is wrong: (a)
-			    // prevents a warning if FsmNext is extended, and (b)
-			    // elicits a correct warning from Clang
-}
-
-#endif
-
-ScrubMachine::ScrubMachine(crimson::osd::PG* pg, ScrubMachineListener* pg_scrub)
+ScrubMachine::ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub)
     : m_pg{pg}, m_pg_id{pg->get_pgid()}, m_scrbr{pg_scrub}
 {
   logger().debug("ScrubMachine created {}", m_pg_id);
@@ -505,7 +483,7 @@ ActiveReplica::ActiveReplica(my_context ctx) : my_base(ctx)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("scrubberFSM -- state -->> ActiveReplica");
   scrbr->on_replica_init();  // as we might have skipped ReplicaWaitUpdates
-  post_event(boost::intrusive_ptr<SchedReplica>(new SchedReplica{}));
+  post_event(SchedReplica{});
 }
 
 sc::result ActiveReplica::react(const SchedReplica&)

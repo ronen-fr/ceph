@@ -16,9 +16,6 @@ namespace crimson::osd {
 
 namespace Scrub {
 
-/// used when PgScrubber is called by the scrub-machine, to tell the FSM
-/// how to continue
-enum class FsmNext { do_discard, next_chunk, goto_notactive };
 enum class PreemptionNoted { no_preemption, preempted };
 
 /// the interface exposed by the PgScrubber into its internal
@@ -69,10 +66,9 @@ struct ScrubMachineListener {
 
   virtual void build_replica_map_chunk() = 0;
 
-  virtual void scrub_compare_maps() = 0;
+  //virtual seastar::future<> scrub_compare_maps() = 0;
 
   virtual void on_init() = 0;
-  virtual void on_init_immediate() = 0;
 
   virtual void on_replica_init() = 0;
 
@@ -84,7 +80,11 @@ struct ScrubMachineListener {
   /// (thus can be called from FSM reactions)
   virtual void clear_pgscrub_state() = 0;
 
-  virtual seastar::future<bool> add_delayed_scheduling() = 0;
+  /*
+   * Send an 'InternalSchedScrub' FSM event either immediately, or - if 'm_need_sleep'
+   * is asserted - after a configuration-dependent timeout.
+   */
+  virtual void add_delayed_scheduling() = 0;
 
   /**
    * @returns have we asked at least one replica?
@@ -98,9 +98,7 @@ struct ScrubMachineListener {
    */
   virtual void get_replicas_maps(bool replica_can_preempt) = 0;
 
-  virtual Scrub::FsmNext on_digest_updates() = 0;
-
-  virtual void on_digest_updates_v2() = 0;
+  virtual void on_digest_updates() = 0;
 
   virtual void send_replica_map(Scrub::PreemptionNoted was_preempted) = 0;
 

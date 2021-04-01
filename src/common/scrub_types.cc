@@ -55,7 +55,7 @@ static void encode(const osd_shard_t& shard, bufferlist& bl) {
 
 void shard_info_wrapper::set_object(const ScrubMap::object& object)
 {
-  for (auto attr : object.attrs) {
+  for (auto& attr : object.attrs) {
     bufferlist bl;
     bl.push_back(attr.second);
     attrs.insert(std::make_pair(attr.first, std::move(bl)));
