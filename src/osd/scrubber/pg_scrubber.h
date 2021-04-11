@@ -19,6 +19,7 @@
 #include "osd_scrub_sched.h"
 
 class Callback;
+class ScrubBackend;
 
 namespace Scrub {
 class ScrubMachine;
@@ -196,6 +197,8 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
  public:
   explicit PgScrubber(PG* pg);
+
+  friend class ScrubBackend; // will be replaced by a limited interface
 
   //  ------------------  the I/F exposed to the PG (ScrubPgIF) -------------
 
@@ -462,7 +465,40 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   ostream& show(ostream& out) const override;
 
  public:
-  // -------------------------------------------------------------------------------------------
+  //  ------------------  the I/F used by the ScrubBackend (not named yet)  -------------
+
+  // note: the reason we must have these forwarders, is because of the
+  //  artificial PG vs. PrimaryLogPG distinction. Some of the services used
+  //  by the scrubber backend are PrimaryLog-specific.
+
+  virtual ObjectContextRef get_object_context(const hobject_t& obj)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+    return nullptr;
+  }
+
+  virtual PrimaryLogPG::OpContextUPtr get_mod_op_context(ObjectContextRef obj_ctx)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+    return nullptr;
+  }
+
+  virtual void simple_opc_submit(PrimaryLogPG::OpContextUPtr&& op_ctx)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+  }
+
+  virtual void finish_ctx(PrimaryLogPG::OpContext* op_ctx, int log_op_type)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+  }
+
+  virtual void add_to_stats(const object_stat_sum_t& stat)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+  }
+
+  // -------------------------------------------------------------------------------------
 
   friend ostream& operator<<(ostream& out, const PgScrubber& scrubber);
 
@@ -484,10 +520,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   bool is_token_current(Scrub::act_token_t received_token);
 
   void requeue_waiting() const { m_pg->requeue_ops(m_pg->waiting_for_scrub); }
-
-  void _scan_snaps(ScrubMap& smap);
-
-  ScrubMap clean_meta_map();
 
   /**
    *  mark down some parameters of the initiated scrub:
@@ -545,13 +577,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   epoch_t m_last_aborted{};  // last time we've noticed a request to abort
 
-  /**
-   * return true if any inconsistency/missing is repaired, false otherwise
-   */
-  [[nodiscard]] bool scrub_process_inconsistent();
-
-  void scrub_compare_maps();
-
   bool m_needs_sleep{true};  ///< should we sleep before being rescheduled? always
 			     ///< 'true', unless we just got out of a sleep period
 
@@ -576,12 +601,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    * the derivative-specific scrub-finishing touches:
    */
   virtual void _scrub_finish() {}
-
-  /**
-   * Validate consistency of the object info and snap sets.
-   */
-  virtual void scrub_snapshot_metadata(ScrubMap& map, const missing_map_t& missing_digest)
-  {}
 
   // common code used by build_primary_map_chunk() and build_replica_map_chunk():
   int build_scrub_map_chunk(ScrubMap& map,  // primary or replica?
@@ -739,13 +758,8 @@ private:
   void message_all_replicas(int32_t opcode, std::string_view op_text);
 
   hobject_t m_max_end;	///< Largest end that may have been sent to replicas
-  ScrubMap m_primary_scrubmap;
+  ScrubMap* m_primary_scrubmap{nullptr}; ///< the map is owned by the ScrubBackend
   ScrubMapBuilder m_primary_scrubmap_pos;
-
-  std::map<pg_shard_t, ScrubMap> m_received_maps;
-
-  /// Cleaned std::map pending snap metadata scrub
-  ScrubMap m_cleaned_meta_map;
 
   void _request_scrub_map(pg_shard_t replica,
 			  eversion_t version,
@@ -771,6 +785,9 @@ private:
 
   ScrubMapBuilder replica_scrubmap_pos;
   ScrubMap replica_scrubmap;
+
+  // the backend, handling the details of comparing maps & fixing objects
+  std::unique_ptr<ScrubBackendIF> m_be;
 
   /**
    * we mark the request priority as it arrived. It influences the queuing priority
