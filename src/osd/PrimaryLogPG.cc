@@ -25,7 +25,16 @@
 #include <boost/intrusive_ptr.hpp>
 #include <boost/tuple/tuple.hpp>
 
+//#include "PG.h"
+//#include "scrubber/pg_scrubber.h"
 #include "PrimaryLogPG.h"
+//#include "OSD.h"
+//#include "scrubber/PrimaryLogScrub.h"
+//#include "OpRequest.h"
+//#include "scrubber/ScrubStore.h"
+//#include "Session.h"
+//#include "objclass/objclass.h"
+//#include "osd/ClassHandler.h"
 
 #include "cls/cas/cls_cas_ops.h"
 #include "common/CDC.h"
@@ -6442,12 +6451,13 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       {
 	uint64_t ver = op.assert_ver.ver;
 	tracepoint(osd, do_osd_op_pre_assert_ver, soid.oid.name.c_str(), soid.snap.val, ver);
-	if (!ver)
+	if (!ver) {
 	  result = -EINVAL;
-        else if (ver < oi.user_version)
+        } else if (ver < oi.user_version) {
 	  result = -ERANGE;
-	else if (ver > oi.user_version)
+        } else if (ver > oi.user_version) {
 	  result = -EOVERFLOW;
+        }
       }
       break;
 
@@ -12277,6 +12287,8 @@ int PrimaryLogPG::recover_missing(
   int priority,
   PGBackend::RecoveryHandle *h)
 {
+  dout(10) << __func__ << " sar: " << scrub_after_recovery << dendl;
+
   if (recovery_state.get_missing_loc().is_unfound(soid)) {
     dout(7) << __func__ << " " << soid
 	    << " v " << v

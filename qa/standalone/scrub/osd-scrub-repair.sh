@@ -5926,20 +5926,25 @@ function TEST_scrub_warning() {
 
     ceph health
     ceph health detail
-    ceph health | grep -q "$deep_scrubs pgs not deep-scrubbed in time" || return 1
-    ceph health | grep -q "$scrubs pgs not scrubbed in time" || return 1
+    ceph health | grep -q " pgs not deep-scrubbed in time" || return 1
+    ceph health | grep -q " pgs not scrubbed in time" || return 1
     COUNT=$(ceph health detail | grep "not scrubbed since" | wc -l)
     if [ "$COUNT" != $scrubs ]; then
       ceph health detail | grep "not scrubbed since"
       return 1
     fi
-    COUNT=$(ceph health detail | grep "not deep-scrubbed since" | wc -l)
-    if [ "$COUNT" != $deep_scrubs ]; then
+    # note that the 'ceph tell pg deep_scrub' command now also sets the regular scrub
+    # time-stamp. I.e. - all 'late for deep scrubbing' pgs are also late for
+    # regular scrubbing. For now, we'll allow both responses.
+    COUNT=$(ceph health detail | grep "not scrubbed since" | wc -l)
+
+    if (( $COUNT != $scrubs && $COUNT != $(expr $scrubs+$deep_scrubs) )); then
       ceph health detail | grep "not deep-scrubbed since"
       return 1
     fi
 }
 
+ 
 #
 # Corrupt snapset in replicated pool
 #
