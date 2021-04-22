@@ -16,6 +16,7 @@
 #include "ScrubStore.h"
 #include "scrub_machine_lstnr.h"
 #include "osd/scrubber_common.h"
+#include "osd_scrub_sched.h"
 
 class Callback;
 
@@ -45,6 +46,7 @@ class ReplicaReservations {
   std::vector<pg_shard_t> m_reserved_peers;
   bool m_had_rejections{false};
   int m_pending{-1};
+  ScrubQueue::ScrubJobRef m_scrub_job; ///< a ref to this PG's scrub job
 
   void release_replica(pg_shard_t peer, epoch_t epoch);
 
@@ -62,7 +64,7 @@ class ReplicaReservations {
    */
   void discard_all();
 
-  ReplicaReservations(PG* pg, pg_shard_t whoami);
+  ReplicaReservations(PG* pg, pg_shard_t whoami, ScrubQueue::ScrubJobRef scrubjob);
 
   ~ReplicaReservations();
 
@@ -130,7 +132,7 @@ class MapsCollectionStatus {
   /// @returns true if indeed waiting for this one. Otherwise: an error string
   auto mark_arriving_map(pg_shard_t from) -> std::tuple<bool, std::string_view>;
 
-  std::vector<pg_shard_t> get_awaited() const { return m_maps_awaited_for; }
+  [[nodiscard]] std::vector<pg_shard_t> get_awaited() const { return m_maps_awaited_for; }
 
   void reset();
 
@@ -253,9 +255,13 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   // managing scrub op registration
 
-  void reg_next_scrub(const requested_scrub_t& request_flags) final;
+  void update_scrub_job(const requested_scrub_t& request_flags) final;
 
-  void unreg_next_scrub() final;
+  void final_rm_from_osd() final;
+
+  void on_primary_change(const requested_scrub_t& request_flags) final;
+
+  void on_maybe_registration_change(const requested_scrub_t& request_flags) final;
 
   void scrub_requested(scrub_level_t scrub_level,
 		       scrub_type_t scrub_type,
@@ -395,6 +401,9 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void reserve_replicas() final;
 
+  void set_reserving_now() final;
+  void clear_reserving_now() final;
+
   [[nodiscard]] bool was_epoch_changed() const final;
 
   void mark_local_map_ready() final;
@@ -415,6 +424,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   virtual void _scrub_clear_state() {}
 
   utime_t m_scrub_reg_stamp;  ///< stamp we registered for
+  ScrubQueue::ScrubJobRef m_scrub_job; ///< the scrub-job used by the OSD to schedule us
 
   ostream& show(ostream& out) const override;
 
@@ -428,10 +438,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   virtual ~PgScrubber();  // must be defined separately, in the .cc file
 
   [[nodiscard]] bool is_scrub_active() const final { return m_active; }
-
-  //[[nodiscard]] bool get_reserve_failed() const final { return m_reserve_failed; }
-  //void set_reserve_failed() final { /* m_reserve_failed = true;*/ }
-  //void clear_reserve_failed() final { /* m_reserve_failed = false;*/ };
 
  private:
   void reset_internal_state();
@@ -597,6 +603,11 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    * initiate a deep-scrub after the current scrub ended with errors.
    */
   void request_rescrubbing(requested_scrub_t& req_flags);
+
+  ScrubQueue::sched_params_t
+  determine_scrub_time(const requested_scrub_t& request_flags);
+
+  void unregister_from_osd();
 
   /*
    * Select a range of objects to scrub.

@@ -225,7 +225,8 @@ void PeeringState::update_history(const pg_history_t& new_history)
 	       << info.history.prior_readable_until_ub << ")" << dendl;
     }
   }
-  pl->on_info_history_change();
+  pl->on_info_history_change(); // RRR understand why
+  //pl->reschedule_scrub();
 }
 
 hobject_t PeeringState::earliest_backfill() const
@@ -656,7 +657,7 @@ void PeeringState::start_peering_interval(
   }
 
   on_new_interval();
-  pl->on_info_history_change();
+  pl->on_info_history_change(); // RRR restored - understand why
 
   psdout(1) << __func__ << " up " << oldup << " -> " << up
 	    << ", acting " << oldacting << " -> " << acting
@@ -700,6 +701,8 @@ void PeeringState::start_peering_interval(
     // did primary change?
     if (was_old_primary != is_primary()) {
       state_clear(PG_STATE_CLEAN);
+      // queue/dequeue the scrubber
+      pl->on_primary_status_change(was_old_primary, is_primary());
     }
 
     pl->on_role_change();
@@ -721,6 +724,10 @@ void PeeringState::start_peering_interval(
 		 << ", replicas changed" << dendl;
       }
     }
+  }
+
+  if (is_primary() && was_old_primary) {
+    pl->reschedule_scrub();
   }
 
   if (acting.empty() && !up.empty() && up_primary == pg_whoami) {
@@ -3962,7 +3969,7 @@ void PeeringState::update_stats(
   if (f(info.history, info.stats)) {
     pl->publish_stats_to_osd();
   }
-  pl->on_info_history_change();
+  pl->reschedule_scrub();
 
   if (t) {
     dirty_info = true;
