@@ -363,7 +363,7 @@ function initiate_and_fetch_state() {
         if [ $((i % 5)) == 4 ] ; then
             echo "loop --------> " $i
             flush_pg_stats
-	else
+        else
             sleep 0.3
         fi
     done
