@@ -17,12 +17,16 @@
 
 #include "PrimaryLogPG.h"
 
+#include <charconv>
+#include <sstream>
+#include <utility>
+
 #include <boost/intrusive_ptr.hpp>
+#include <boost/tuple/tuple.hpp>
 
 #include "cls/cas/cls_cas_ops.h"
-#include "common/EventTrace.h"
-#include "common/ceph_crypto.h"
 #include "common/CDC.h"
+#include "common/ceph_crypto.h"
 #include "common/config.h"
 #include "common/errno.h"
 #include "common/EventTrace.h"
@@ -12850,8 +12854,7 @@ void PrimaryLogPG::on_shutdown()
   }
 
   m_scrubber->scrub_clear_state();
-
-  m_scrubber->unreg_next_scrub();
+  m_scrubber->rm_from_osd_scrubbing();
 
   vector<ceph_tid_t> tids;
   cancel_copy_ops(false, &tids);
