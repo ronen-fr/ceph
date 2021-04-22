@@ -36,8 +36,10 @@ extern "C" {
 
 #include "common/Formatter.h"
 #include "common/StackStringStream.h"
+#include "include/utime_fmt.h"
 #include "OSDMap.h"
 #include "osd_types.h"
+#include "osd_types_fmt.h"
 #include "os/Transaction.h"
 
 using std::list;

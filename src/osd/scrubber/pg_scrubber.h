@@ -739,7 +739,7 @@ private:
    */
   class preemption_data_t : public Scrub::preemption_t {
    public:
-    preemption_data_t(PG* pg);	// the PG access is used for conf access (and logs)
+    explicit preemption_data_t(PG* pg);	// the PG access is used for conf access (and logs)
 
     [[nodiscard]] bool is_preemptable() const final { return m_preemptable; }
 

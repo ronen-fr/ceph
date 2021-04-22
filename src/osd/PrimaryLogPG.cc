@@ -956,7 +956,7 @@ PrimaryLogPG::get_pgls_filter(bufferlist::const_iterator& iter)
   if (type.compare("plain") == 0) {
     filter = std::make_unique<PGLSPlainFilter>();
   } else {
-    std::size_t dot = type.find(".");
+    std::size_t dot = type.find('.');
     if (dot == std::string::npos || dot == 0 || dot == type.size() - 1) {
       return { -EINVAL, nullptr };
     }

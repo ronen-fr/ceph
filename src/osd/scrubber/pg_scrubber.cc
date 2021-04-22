@@ -520,7 +520,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 }
 
 ScrubQueue::sched_params_t
-PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags)
+PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
 {
   ScrubQueue::sched_params_t res;
 
@@ -794,7 +794,7 @@ void PgScrubber::add_delayed_scheduling()
   if (m_needs_sleep) {
     double scrub_sleep =
       1000.0 * m_osds->get_scrub_services().scrub_sleep_time(m_flags.required);
-    sleep_time = milliseconds{long(scrub_sleep)};
+    sleep_time = milliseconds{int64_t(scrub_sleep)};
   }
   dout(15) << __func__ << " sleep: " << sleep_time.count() << "ms. needed? "
 	   << m_needs_sleep << dendl;
@@ -1917,13 +1917,13 @@ void PgScrubber::on_digest_updates()
   }
 }
 
-
 /*
  * note that the flags-set fetched from the PG (m_pg->m_planned_scrub)
  * is cleared once scrubbing starts; Some of the values dumped here are
  * thus transitory.
  */
-void PgScrubber::dump(ceph::Formatter* f) const
+void PgScrubber::dump_scrubber(ceph::Formatter* f,
+			       const requested_scrub_t& request_flags) const
 {
   f->open_object_section("scrubber");
   f->dump_stream("epoch_start") << m_interval_start;
