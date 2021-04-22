@@ -12837,8 +12837,7 @@ void PrimaryLogPG::on_shutdown()
   }
 
   m_scrubber->scrub_clear_state();
-
-  m_scrubber->unreg_next_scrub();
+  m_scrubber->rm_from_osd_scrubbing();
 
   vector<ceph_tid_t> tids;
   cancel_copy_ops(false, &tids);
