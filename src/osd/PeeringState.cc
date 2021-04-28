@@ -895,7 +895,11 @@ static pair<epoch_t, epoch_t> get_required_past_interval_bounds(
   return make_pair(start, end);
 }
 
+/*
+  looking for the most relevant path of the map to work out what
 
+  we know what intervals we have to carry, RRR to complete
+*/
 void PeeringState::check_past_interval_bounds() const
 {
   auto oldest_epoch = pl->oldest_stored_osdmap();
@@ -1463,6 +1467,7 @@ map<pg_shard_t, pg_info_t>::const_iterator PeeringState::find_best_info(
     }
   }
   if (min_last_update_acceptable == eversion_t::max())
+    // a failure (RRR why?)
     return infos.end();
 
   map<pg_shard_t, pg_info_t>::const_iterator best = infos.end();
@@ -2015,6 +2020,7 @@ bool PeeringState::choose_acting(pg_shard_t &auth_log_shard_id,
     }
   }
 
+  // find the most authoritative info source
   map<pg_shard_t, pg_info_t>::const_iterator auth_log_shard =
     find_best_info(all_info, restrict_to_up_acting, history_les_bound);
 
@@ -2325,6 +2331,8 @@ void PeeringState::activate(
     if (acting.size() >= pool.info.min_size) {
       ceph_assert(cct->_conf->osd_find_best_info_ignore_history_les ||
 	     info.last_epoch_started <= activation_epoch);
+      // we are ready to go active. Which means that we have the authoritative
+      // log for this point in time.
       info.last_epoch_started = activation_epoch;
       info.last_interval_started = info.history.same_interval_since;
     }
@@ -2353,6 +2361,7 @@ void PeeringState::activate(
   dirty_info = true;
   dirty_big_info = true; // maybe
 
+  // schedule ActivateCommitted() to be called when all are commited
   pl->schedule_event_on_commit(
     t,
     std::make_shared<PGPeeringEvent>(
@@ -2711,6 +2720,9 @@ void PeeringState::proc_primary_info(
   }
 }
 
+/*
+  Merge the authoritative log with ours, if necessary.
+*/
 void PeeringState::proc_master_log(
   ObjectStore::Transaction& t, pg_info_t &oinfo,
   pg_log_t &olog, pg_missing_t& omissing, pg_shard_t from)
@@ -5424,7 +5436,7 @@ void PeeringState::Recovering::exit()
 
 /*
  RRR Neha: the PG has recovered, and is trying to return to the active set.
- 
+
 */
 PeeringState::Recovered::Recovered(my_context ctx)
   : my_base(ctx),
@@ -6292,6 +6304,9 @@ void PeeringState::Deleting::exit()
 }
 
 /*--------GetInfo---------*/
+/*
+  we look at past intervals. Building PriorSet.
+*/
 PeeringState::GetInfo::GetInfo(my_context ctx)
   : my_base(ctx),
     NamedState(context< PeeringMachine >().state_history, "Started/Primary/Peering/GetInfo")
@@ -6323,6 +6338,9 @@ PeeringState::GetInfo::GetInfo(my_context ctx)
   }
 }
 
+/*
+  send a request to the other OSD, to get the pginfo_t structures from them.
+*/
 void PeeringState::GetInfo::get_infos()
 {
   DECLARE_LOCALS;
@@ -6461,6 +6479,7 @@ PeeringState::GetLog::GetLog(my_context ctx)
 
   DECLARE_LOCALS;
 
+  // perform some sanity checks on the log data. Errors are logged (and that's it)
   ps->log_weirdness();
 
   // adjust acting?
@@ -6850,6 +6869,7 @@ PeeringState::GetMissing::GetMissing(my_context ctx)
 
   if (peer_missing_requested.empty()) {
     if (ps->need_up_thru) {
+      // we want the monitor to update our up_thru
       psdout(10) << " still need up_thru update before going active"
 			 << dendl;
       post_event(NeedUpThru());

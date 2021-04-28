@@ -568,6 +568,10 @@ PGBackend *PGBackend::build_pg_backend(
   }
 }
 
+/* RRR
+  ??
+   complete description
+*/
 int PGBackend::be_scan_list(
   ScrubMap &map,
   ScrubMapBuilder &pos)

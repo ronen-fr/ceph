@@ -2637,7 +2637,13 @@ struct pg_history_t {
   epoch_t epoch_pool_created = 0;  // epoch in which *pool* was created
 			       // (note: may be pg creation epoch for
 			       // pre-luminous clusters)
-  epoch_t last_epoch_started = 0;;  // lower bound on last epoch started (anywhere, not necessarily locally)
+  /*
+    why do we need last_epoch_started here, and the data in pg_info_t is not enough?
+    In pg_info_t the time is updated when the PG is first becoming active. Hee.
+    it is updated only after the primary verifies that all replicas have commited the
+    up-to-date pg_info_t value.
+  */
+  epoch_t last_epoch_started = 0;;  // lower bound on last epoch started (anywhere, not necessarily locally) 
   epoch_t last_interval_started = 0;; // first epoch of last_epoch_started interval
   epoch_t last_epoch_clean = 0;;    // lower bound on last epoch the PG was completely clean.
   epoch_t last_interval_clean = 0;; // first epoch of last_epoch_clean interval
@@ -2818,7 +2824,7 @@ struct pg_info_t {
   spg_t pgid;
   eversion_t last_update;      ///< last object version applied to store.
   eversion_t last_complete;    ///< last version pg was complete through.
-  epoch_t last_epoch_started;  ///< last epoch at which this pg started on this osd
+  epoch_t last_epoch_started;  ///< last epoch at which this pg started on this osd. Last time *this PG* went active.
   epoch_t last_interval_started; ///< first epoch of last_epoch_started interval
   
   version_t last_user_version; ///< last user object version applied to store

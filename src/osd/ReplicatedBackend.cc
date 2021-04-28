@@ -631,7 +631,7 @@ int ReplicatedBackend::be_deep_scrub(
   }
 
   ceph_assert(poid == pos.ls[pos.pos]);
-  if (!pos.data_done()) {
+  if (!pos.data_done()) { // RRR ??
     if (pos.data_pos == 0) {
       pos.data_hash = bufferhash(-1);
     }

@@ -2320,7 +2320,7 @@ int PG::build_scrub_map_chunk(
 	   << dendl;
 
   // start
-  while (pos.empty()) {
+  while (pos.empty()) { // pos.empty() is the same as pos.ls.empty() RRR
     pos.deep = deep;
     map.valid_through = info.last_update;
 
@@ -2347,8 +2347,10 @@ int PG::build_scrub_map_chunk(
   while (!pos.done()) {
     int r = get_pgbackend()->be_scan_list(map, pos);
     if (r == -EINPROGRESS) {
+      // might happen - but only for deep scrub
       return r;
     }
+    // why are we ignoring returned errors?
   }
 
   // finish
@@ -2634,7 +2636,7 @@ void PG::scrub(epoch_t queued, ThreadPool::TPHandle &handle)
 void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 {
   // check for map changes
-  if (scrubber.is_chunky_scrub_active()) {
+  if (scrubber.is_chunky_scrub_active()) { // RRR make sure we do not get here as Replicas
     if (scrubber.epoch_start != info.history.same_interval_since) {
       dout(10) << "scrub  pg changed, aborting" << dendl;
       scrub_clear_state();
@@ -2661,7 +2663,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
         scrubber.active = true;
 
 	{
-          // RRR to explain this
+          // RRR create a new store
 	  ObjectStore::Transaction t;
 	  scrubber.cleanup_store(&t);
 	  scrubber.store.reset(Scrub::Store::create(osd->store, &t,
@@ -2670,10 +2672,11 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 	}
 
         // Don't include temporary objects when scrubbing
-        scrubber.start = info.pgid.pgid.get_hobj_start();
+        scrubber.start = info.pgid.pgid.get_hobj_start(); // RRR diagram for this one
         scrubber.state = PG::Scrubber::NEW_CHUNK;
 
 	{
+          // logging
 	  bool repair = state_test(PG_STATE_REPAIR);
 	  bool deep_scrub = state_test(PG_STATE_DEEP_SCRUB);
 	  const char *mode = (repair ? "repair": (deep_scrub ? "deep-scrub" : "scrub"));
@@ -2783,6 +2786,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 	  }
 	}
 	if (scrubber.subset_last_update == eversion_t()) {
+          // (there was no relevant update entry in the log)
 	  for (list<pg_log_entry_t>::const_reverse_iterator p =
 		 recovery_state.get_pg_log().get_log().log.rbegin();
 	       p != recovery_state.get_pg_log().get_log().log.rend();
@@ -2811,7 +2815,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
         if (recovery_state.get_last_update_applied() <
 	  scrubber.subset_last_update) {
           // will be requeued by op_applied
-          dout(15) << "wait for EC read/modify/writes to queue" << dendl;
+          dout(15) << "wait for EC read/modify/writes to queue" << dendl; // why only EC here?
           done = true;
 	  break;
 	}
