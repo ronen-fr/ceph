@@ -15,10 +15,11 @@
 #include <boost/statechart/transition.hpp>
 
 #include "common/version.h"
-//#include "crimson/osd/osd_operations/pg_scrub_event.h"
+
+#include "include/Context.h"
+
 #include "crimson/osd/scrubber/scrub_machine_lstnr_cr.h"
 #include "crimson/osd/scrubber_common_cr.h"
-#include "include/Context.h"
 
 using namespace std::string_literals;
 
@@ -41,27 +42,21 @@ namespace mpl = ::boost::mpl;
 void on_event_creation(std::string_view nm);
 void on_event_discard(std::string_view nm);
 
-#define MEV(E)                 \
-  struct E : sc::event<E> {    \
-    inline static int actv{0}; \
-    E()                        \
-    {                          \
-      if (!actv++)             \
-	on_event_creation(#E); \
-    }                          \
-    ~E()                       \
-    {                          \
-      if (!--actv)             \
-	on_event_discard(#E);  \
-    }                          \
-    void print(std::ostream* out) const \
-    {                                   \
-      *out << #E;                       \
-    }                                   \
-    std::string_view print() const      \
-    {                                   \
-      return #E;                        \
-    }                                   \
+#define MEV(E)                                          \
+  struct E : sc::event<E> {                             \
+    inline static int actv{0};                          \
+    E()                                                 \
+    {                                                   \
+      if (!actv++)                                      \
+	on_event_creation(#E);                          \
+    }                                                   \
+    ~E()                                                \
+    {                                                   \
+      if (!--actv)                                      \
+	on_event_discard(#E);                           \
+    }                                                   \
+    void print(std::ostream* out) const { *out << #E; } \
+    std::string_view print() const { return #E; }       \
   };
 
 MEV(RemotesReserved)	 ///< all replicas have granted our reserve request
@@ -141,7 +136,7 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   explicit ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub);
   ~ScrubMachine();
 
-  /*crimson::osd::*/ PG* m_pg;	// only used for dout messages
+  PG* m_pg;
   spg_t m_pg_id;
   ScrubMachineListener* m_scrbr;
 
@@ -330,8 +325,7 @@ struct WaitReplicas : sc::state<WaitReplicas, ActiveScrubbing> {
 struct WaitDigestUpdate : sc::state<WaitDigestUpdate, ActiveScrubbing> {
   explicit WaitDigestUpdate(my_context ctx);
 
-  using reactions = mpl::list<sc::custom_reaction<DigestUpdate>	 // version "0"
-			      ,
+  using reactions = mpl::list<sc::custom_reaction<DigestUpdate>,
 			      sc::transition<NextChunk, PendingTimer>,
 			      sc::transition<ScrubFinished, NotActive>>;
   sc::result react(const DigestUpdate&);
@@ -358,8 +352,9 @@ struct ReplicaWaitUpdates : sc::state<ReplicaWaitUpdates, ScrubMachine> {
 
 struct ActiveReplica : sc::state<ActiveReplica, ScrubMachine> {
   explicit ActiveReplica(my_context ctx);
-  using reactions =
-    mpl::list<sc::custom_reaction<SchedReplica>, sc::custom_reaction<FullReset>>;
+  using reactions = mpl::list<sc::custom_reaction<SchedReplica>,
+			      sc::custom_reaction<FullReset>,
+			      sc::transition<ScrubFinished, NotActive>>;
 
   sc::result react(const SchedReplica&);
   sc::result react(const FullReset&);

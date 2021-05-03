@@ -203,12 +203,10 @@ NewChunk::NewChunk(my_context ctx) : my_base(ctx)
 
   scrbr->get_preemptor().adjust_parameters();
 
-  // choose range to work on.
-
-  //  choose range to work on.
-  //  select_range_n_notify() will either signal SelectedChunkFree or
-  //  ChunkIsBusy
-
+  //  choose range to work on
+  //  select_range_n_notify() will signal either SelectedChunkFree or
+  //  ChunkIsBusy. If 'busy', we transition to Blocked, and wait for the
+  //  range to become available.
   scrbr->select_range_n_notify();
 }
 
@@ -495,7 +493,7 @@ sc::result ActiveReplica::react(const SchedReplica&)
   if (scrbr->get_preemptor().was_preempted()) {
     logger().debug("ScrubberFSM: ActiveReplica::react(SchedReplica): replica scrub job preempted");
 
-    scrbr->send_replica_map(PreemptionNoted::preempted);
+    scrbr->send_preempted_replica();
     scrbr->replica_handling_done();
     return transit<NotActive>();
   }
@@ -503,36 +501,6 @@ sc::result ActiveReplica::react(const SchedReplica&)
   scrbr->build_replica_map_chunk();
   logger().debug("ScrubberFSM: ActiveReplica::react(SchedReplica): after calling build_replica_map");
   return discard_event();
-
-#if 0
-  // start or check progress of build_replica_map_chunk()
-
-  auto ret = scrbr->build_replica_map_chunk();
-  logger().debug("ScrubberFSM: ActiveReplica::react(const SchedReplica&) Ret: {}", ret);
-
-  if (ret == -EINPROGRESS) {
-    // must wait for the backend to finish. No external event source.
-    // build_replica_map_chunk() has already requeued a SchedReplica
-    // event.
-
-    logger().debug("ScrubberFSM: waiting for the backend...");
-    return discard_event();
-  }
-
-  if (ret < 0) {
-    //  the existing code ignores this option, treating an error
-    //  report as a success.
-    logger().debug("ScrubberFSM: Error! Aborting. ActiveReplica::react(SchedReplica) Ret: {}", ret
-	   );
-    scrbr->replica_handling_done();
-    return transit<NotActive>();
-  }
-
-  // the local map was created. Send it to the primary.
-  scrbr->send_replica_map(PreemptionNoted::no_preemption);
-  scrbr->replica_handling_done();
-  return transit<NotActive>();
-#endif
 }
 
 /**

@@ -94,10 +94,7 @@ class LocalReservation {
  public:
   LocalReservation(crimson::osd::PG* pg, ScrubQueue& osds);
   ~LocalReservation();
-  [[nodiscard]] bool is_reserved() const
-  {
-    return m_holding_local_reservation;
-  }
+  bool is_reserved() const { return m_holding_local_reservation; }
 };
 
 /**
@@ -392,7 +389,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   // -------------------------------------------------------------------------------------------
   // the I/F used by the state-machine (i.e. the implementation of ScrubMachineListener)
 
-  seastar::future<bool> select_range() final;
   void select_range_n_notify() final;
 
   /// walk the log to find the latest update that affects our chunk
@@ -429,7 +425,12 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void on_digest_updates() final;
 
-  void send_replica_map(Scrub::PreemptionNoted was_preempted) final;
+  ScrubMachineListener::MsgAndEpoch
+  prep_replica_map_msg(Scrub::PreemptionNoted was_preempted) final;
+
+  void send_replica_map(const ScrubMachineListener::MsgAndEpoch& preprepared) final;
+
+  void send_preempted_replica() final;
 
   void send_remotes_reserved(epoch_t epoch_queued) final;
   void send_reservation_failure(epoch_t epoch_queued) final;
@@ -679,6 +680,19 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    * initiate a deep-scrub after the current scrub ended with errors.
    */
   void request_rescrubbing(requested_scrub_t& req_flags);
+
+  /*
+   * Select a range of objects to scrub.
+   *
+   * By:
+   * - setting tentative range based on conf and divisor
+   * - requesting a partial list of elements from the backend;
+   * - handling some head/clones issues
+   *
+   * The selected range is set directly into 'm_start' and 'm_end'
+   */
+
+  seastar::future<bool> select_range();
 
   std::list<Context*> m_callbacks;
 

@@ -660,7 +660,6 @@ ScrubQueue::sched_params_t PgScrubber::determine_scrub_time(const requested_scru
       m_pg->get_pool().info.opts.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
   }
 
-  res.ok_to_scrub = true;
   return res;
 }
 
@@ -1377,6 +1376,7 @@ seastar::future<> PgScrubber::build_replica_map_chunk()
 }
 #endif
 
+// clang-format off
 void PgScrubber::build_replica_map_chunk()
 {
   logger().debug("{}: interval start: {} epoch: {} deep: {}", __func__, m_interval_start,
@@ -1386,37 +1386,44 @@ void PgScrubber::build_replica_map_chunk()
     build_scrub_map_chunk(replica_scrubmap, replica_scrubmap_pos, m_start, m_end,
 			  m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow)
       .then([this]() {
-	logger().debug("PgScrubber::build_replica_map_chunk(): map built s1");
-	cleaned_meta_map.clear_from(m_start);
-	cleaned_meta_map.insert(replica_scrubmap);
-	auto for_meta_scrub = ScrubberBE::clean_meta_map(cleaned_meta_map, m_end.is_max());
-	return _scan_snaps(for_meta_scrub);
-      })
-      .then([this]() {
-	logger().debug("PgScrubber::build_replica_map_chunk(): map built s2");
-	// the local map was created. Send it to the primary.
-	send_replica_map(PreemptionNoted::no_preemption);
-	replica_handling_done();
-	logger().debug("build_replica_map_chunk(): map built");
+	   logger().debug("PgScrubber::build_replica_map_chunk(): map built s1");
+	   cleaned_meta_map.clear_from(m_start);
+	   cleaned_meta_map.insert(replica_scrubmap);
+	   auto for_meta_scrub = ScrubberBE::clean_meta_map(cleaned_meta_map, m_end.is_max());
+	   return _scan_snaps(for_meta_scrub);
 
-	queue_local_trigger(&ScrubPgIF::send_full_reset, m_interval_start, 0ms,
-			    "ReplicaFinalReset");
+   }).then([this]() {
 
-	return seastar::make_ready_future<>();
-      })
-      .then_wrapped([](auto&& f) {
-	if (f.failed()) {
-	  logger().warn("scrubber: build_replica_map_chunk() failed!!");
-	  (void)f.discard_result();
-  	queue_local_trigger(&ScrubPgIF::send_full_reset, m_interval_start, 0ms,
-	  		    "ReplicaFinalReset");
-	}
-	return seastar::make_ready_future<>();
-      });
+	   logger().debug("PgScrubber::build_replica_map_chunk(): map built s2");
+
+     // the local map has been created. Send it to the primary.
+     // Note: once the message reaches the Primary, it may ask us for another
+     // chunk - and we better be done with the current scrub. Thus - the preparation of
+     // the reply message is separate, and we clear the scrub state before actually
+     // sending it.
+
+     auto reply = prep_replica_map_msg(PreemptionNoted::no_preemption);
+ 	   replica_handling_done();
+	   queue_local_trigger(&ScrubPgIF::send_full_reset, m_interval_start, 0ms,"ReplicaFinalReset");
+	   logger().debug("build_replica_map_chunk(): map built");
+     send_replica_map(reply);
+
+  	 return seastar::make_ready_future<>();
+
+  }).then_wrapped([this](auto&& f) {
+
+	  if (f.failed()) {
+	    logger().warn("scrubber: build_replica_map_chunk() failed!!");
+	    (void)f.discard_result();
+  	  queue_local_trigger(&ScrubPgIF::send_full_reset, m_interval_start, 0ms,
+	  	    	    "ReplicaFinalReset");
+	  }
+	  return seastar::make_ready_future<>();
+  });
 
   //     requeue_replica(m_replica_request_priority);
 }
-
+// clang-format on
 
 /*
  * Look for backup versions of modified objects, that should have been removed
@@ -1732,7 +1739,40 @@ void PgScrubber::set_op_parameters(requested_scrub_t& request)
   request = requested_scrub_t{};
 }
 
+ScrubMachineListener::MsgAndEpoch PgScrubber::prep_replica_map_msg(
+  PreemptionNoted was_preempted)
+{
+  logger().debug("{}: min epoch: {}", __func__, m_replica_min_epoch);
 
+  auto reply =
+    make_message<MOSDRepScrubMap>(spg_t(m_pg->get_info().pgid.pgid, m_pg->get_primary().shard),
+				  m_replica_min_epoch, m_pg_whoami);
+
+  reply->preempted = (was_preempted == PreemptionNoted::preempted);
+  ::encode(replica_scrubmap, reply->get_data());
+
+  return ScrubMachineListener::MsgAndEpoch{reply, m_replica_min_epoch};
+}
+
+void PgScrubber::send_replica_map(const MsgAndEpoch& preprepared)
+{
+  m_pg->send_cluster_message(m_pg->get_primary().osd, preprepared.m_msg,
+			     preprepared.m_epoch, false);
+}
+
+void PgScrubber::send_preempted_replica()
+{
+  auto reply =
+    make_message<MOSDRepScrubMap>(spg_t{m_pg->get_info().pgid.pgid, m_pg->get_primary().shard},
+				  m_replica_min_epoch, m_pg_whoami);
+
+  reply->preempted = true;
+  ::encode(replica_scrubmap, reply->get_data());  // can we skip this? RRR
+  m_pg->send_cluster_message(m_pg->get_primary().osd, reply, m_replica_min_epoch, false);
+}
+
+
+#if 0
 /**
  * Send the requested map back to the primary (or - if we
  * were preempted - let the primary know).
@@ -1749,6 +1789,7 @@ void PgScrubber::send_replica_map(::crimson::osd::Scrub::PreemptionNoted was_pre
   m_pg->send_cluster_message(m_pg->get_primary().osd, std::move(reply),
 			     get_osdmap_epoch() /*m_replica_min_epoch*/);
 }
+#endif
 
 /*
  *  - if the replica lets us know it was interrupted, we mark the chunk as

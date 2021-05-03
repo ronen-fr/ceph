@@ -36,11 +36,6 @@ class ScrubQueue {
 
   struct ScrubJob {
 
-    CephContext* cct;
-
-    /// pg to be scrubbed
-    spg_t pgid;
-
     /// a time scheduled for scrub. but the scrub could be delayed if system
     /// load is too high or it fails to fall in the scrub hours
     utime_t sched_time;
@@ -52,6 +47,11 @@ class ScrubQueue {
     /// \todo handle value changes
     double pool_scrub_min_interval{0.0};		// change to ms or seconds
     double pool_scrub_max_interval{1'000'000.0};
+
+    CephContext* cct;
+
+    /// pg to be scrubbed
+    spg_t pgid;
 
     ScrubJob() : cct(nullptr) {} // needed?
 
@@ -166,7 +166,7 @@ class ScrubQueue {
     double min_interval{0.0};
     double max_interval{0.0};
     must_scrub_t is_must{ScrubQueue::must_scrub_t::not_mandatory};
-    bool ok_to_scrub{false};
+    //bool ok_to_scrub{false};
   };
 
   using urgency_manip_t = std::function<sched_params_t ()>;

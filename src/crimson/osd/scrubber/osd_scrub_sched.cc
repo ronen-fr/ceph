@@ -4,7 +4,6 @@
 #include "crimson/osd/scrubber/osd_scrub_sched.h"
 
 #include "crimson/osd/osd.h"
-//#include "crimson/osd/pg.h"
 #include "crimson/osd/scrubber/scrubber.h"
 
 

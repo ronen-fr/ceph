@@ -48,11 +48,17 @@ struct preemption_t {
 
 struct ScrubMachineListener {
 
-  virtual ~ScrubMachineListener()= default;;
+  struct MsgAndEpoch {
+    MessageRef m_msg;
+    epoch_t m_epoch;
+  };
 
-  virtual seastar::future<bool> select_range() = 0;
+  virtual ~ScrubMachineListener() = default;
+
+//  virtual seastar::future<bool> select_range() = 0;
 
   virtual void select_range_n_notify() = 0;
+
   virtual void initiate_primary_map_build() = 0;
 
   /// walk the log to find the latest update that affects our chunk
@@ -100,7 +106,25 @@ struct ScrubMachineListener {
 
   virtual void on_digest_updates() = 0;
 
-  virtual void send_replica_map(Scrub::PreemptionNoted was_preempted) = 0;
+  /**
+   * Prepare a MOSDRepScrubMap message carrying the requested scrub map
+   * @param was_preempted - were we preempted?
+   * @return the message, and the current value of 'm_replica_min_epoch' (which is
+   *     used when sending the message, but will be overwritten before that).
+   */
+  [[nodiscard]] virtual MsgAndEpoch prep_replica_map_msg(
+    Scrub::PreemptionNoted was_preempted) = 0;
+
+  /**
+   * Send to the primary the pre-prepared message containing the requested map
+   */
+  virtual void send_replica_map(const MsgAndEpoch& preprepared) = 0;
+
+  /**
+   * Let the primary know that we were preempted while trying to build the
+   * requested map.
+   */
+  virtual void send_preempted_replica() = 0;
 
   [[nodiscard]] virtual bool has_pg_marked_new_updates() const = 0;
 
@@ -115,7 +139,7 @@ struct ScrubMachineListener {
    *  rep maps are available:
    *  - the maps are compared
    *  - the scrub region markers (start_ & end_) are advanced
-   *  - callbacks and ops that were pending are free to run
+   *  - callbacks and ops that were pending are allowed to run
    */
   virtual void maps_compare_n_cleanup() = 0;
 

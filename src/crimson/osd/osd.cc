@@ -1431,7 +1431,7 @@ void OSD::sched_scrub()
   logger().debug("{}: sched_scrub load_is_low? {}", __func__,
 		 load_is_low ? "low" : "high!");
 
-  for (auto scrub_job : scrub_queuer) {
+  for (const auto& scrub_job : scrub_queuer) {
 
     logger().debug("{}: testing {}", __func__, scrub_job.pgid);
 

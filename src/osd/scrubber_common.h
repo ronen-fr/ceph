@@ -108,7 +108,7 @@ ostream& operator<<(ostream& out, const requested_scrub_t& sf);
  */
 struct ScrubPgIF {
 
-  virtual ~ScrubPgIF(){};
+  virtual ~ScrubPgIF() = default;
 
   friend ostream& operator<<(ostream& out, const ScrubPgIF& s) { return s.show(out); }
 
