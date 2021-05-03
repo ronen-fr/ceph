@@ -60,7 +60,6 @@ class ScrubQueue {
 
     // last scrub attempt failed in securing replica resources
     bool m_resources_failure{false};
-    //std::atomic_bool m_resources_failure{false};
 
     /// m_updated is a temporary flag, used to create a barrier after sched_time
     /// and 'deadline', and possibly other job entries, were modified by a possibly
@@ -163,27 +162,6 @@ class ScrubQueue {
    */
   void update_scrub_job(ceph::ref_t<ScrubJob> sjob, const sched_params_t& suggested);
 
-  /**
-   * Add/modify the scrub-job of a specific PG
-   *
-   * The (possibly modified) scrub-job is added to the list of PGs to be periodically
-   * scrubbed by the OSD.
-   * The registration is active as long as the PG exists and the OSD is its primary.
-   *
-   * There are 3 argument combinations to consider:
-   * - 'must' is asserted, and the suggested time is 'scrub_must_stamp':
-   *   the registration will be with "beginning of time" target, making the
-   *   PG eligible to immediate scrub (given that external conditions do not
-   *   prevent scrubbing)
-   *
-   * - 'must' is asserted, and the suggested time is 'now':
-   *   This happens if our stats are unknown. The results is similar to the previous
-   *   scenario.
-   *
-   * - not a 'must': we take the suggested time as a basis, and add to it some
-   *   configuration / random delays.
-   */
-  //void update_scrub_job(ceph::ref_t<ScrubJob> sjob, const sched_params_t& suggested);
 
  private:
   /**
@@ -229,7 +207,6 @@ class ScrubQueue {
   /// job queues lock
   //mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
   mutable std::timed_mutex jobs_lock; // = ceph::make_mutex("ScrubQueue::jobs_lock");
-
 
   ScrubQContainer to_scrub;   ///< scrub-jobs (i.e. PGs) to scrub
   ScrubQContainer penalized;  ///< those that failed to reserve resources

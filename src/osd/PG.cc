@@ -1541,7 +1541,7 @@ void PG::on_info_history_change()
 {
   dout(20) << __func__ << " for a " << (is_primary() ? "Primary" : "replica") <<dendl;
 
-  if (/*is_primary() &&*/ m_scrubber) {
+  if (m_scrubber) {
     m_scrubber->on_maybe_registration_change(m_planned_scrub);
   }
 }

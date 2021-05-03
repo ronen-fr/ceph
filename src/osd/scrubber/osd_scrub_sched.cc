@@ -101,7 +101,7 @@ void ScrubQueue::remove_from_osd_queue(ceph::ref_t<ScrubJob> scrub_job)
 void ScrubQueue::register_with_osd(ceph::ref_t<ScrubJob> scrub_job,
 				   const ScrubQueue::sched_params_t& suggested)
 {
-  // a temporary work-around until I figure why we had to call on_maybe_registration_change()
+  // a temporary work-around until I figure out why we had to call on_maybe_registration_change()
   if (scrub_job->m_in_queue) {
     // must not lock
     dout(10) << "called while already queued" << dendl;
@@ -200,8 +200,7 @@ Scrub::attempt_t ScrubQueue::select_pg_and_scrub(Scrub::ScrubPreconds& preconds)
   preconds.load_is_low = scrub_load_below_threshold();
   preconds.only_deadlined = !preconds.time_permit || !preconds.load_is_low;
 
-  // std::lock_guard l(jobs_lock);
-  std::unique_lock l(jobs_lock, 100ms);
+  std::unique_lock l(jobs_lock, 200ms);
   ceph_assert(l.owns_lock());
 
   // pardon all penalized jobs that have deadlined (or were updated)
@@ -464,8 +463,7 @@ ScrubQueue::ScrubQContainer ScrubQueue::list_all_valid() const
   ScrubQueue::ScrubQContainer all_jobs;
   all_jobs.reserve(to_scrub.size() + penalized.size());
 
-  // lock_guard l{jobs_lock};
-  std::unique_lock l(jobs_lock, 100ms);
+  std::unique_lock l(jobs_lock, 200ms);
   ceph_assert(l.owns_lock());
 
   std::copy_if(to_scrub.begin(), to_scrub.end(), std::back_inserter(all_jobs), valid_job);

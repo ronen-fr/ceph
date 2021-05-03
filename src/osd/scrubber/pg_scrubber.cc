@@ -567,7 +567,6 @@ void PgScrubber::scrub_requested(scrub_level_t scrub_level,
   dout(10) << __func__ << (scrub_level == scrub_level_t::deep ? " deep " : " shallow ")
 	   << (scrub_type == scrub_type_t::do_repair ? " repair-scrub " : " not-repair ")
 	   << " prev stamp: " << m_scrub_job->get_sched_time()
-	   //<< " prev stamp: " << m_scrub_reg_stamp << " " << is_scrub_registered()
 	   << dendl;
 
   req_flags.must_scrub = true;
@@ -1933,11 +1932,9 @@ PgScrubber::~PgScrubber()
 {
   if (m_scrub_job) {
     // make sure the OSD won't try to scrub this one just now
-    // RRR consider atomic flag here
     m_scrub_job->m_pg_being_removed = true;
 
     final_rm_from_osd();
-    //m_scrub_job.reset();
   }
 }
 
@@ -1948,7 +1945,6 @@ PgScrubber::PgScrubber(PG* pg)
     , m_pg_whoami{pg->pg_whoami}
     , preemption_data{pg}
 {
-  //dout(20) << " creating PgScrubber for " << pg->pg_id << " / " << m_pg_whoami << dendl;
   m_fsm = std::make_unique<ScrubMachine>(m_pg, this);
   m_fsm->initiate();
 

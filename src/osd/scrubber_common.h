@@ -19,13 +19,13 @@ enum class scrub_prio_t : bool { low_priority = false, high_priority = true };
 
 // possible outcome when trying to select a PG and scrub it
 enum class attempt_t {
-	scrubbing,  // successfully started a scrub
-	none_ready, // no pg to scrub
-	local_resources, // failure to secure local OSD scrub resource
-	already_started,  // already started scrubbing this pg
-	no_pg,	     // can't find this pg
-	pg_state,     // pg state (clean, active, etc.)
-	preconditions // time, configuration, etc.
+  scrubbing,	    // successfully started a scrub
+  none_ready,	    // no pg to scrub
+  local_resources,  // failure to secure local OSD scrub resource
+  already_started,  // already started scrubbing this pg
+  no_pg,	    // can't find this pg
+  pg_state,	    // pg state (clean, active, etc.)
+  preconditions	    // time, configuration, etc.
 };
 
 /// "environment" preconditions affecting which PGs are eligible for scrubbing
