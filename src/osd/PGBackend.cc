@@ -404,48 +404,44 @@ int PGBackend::objects_list_partial(
   return r;
 }
 
-int PGBackend::objects_list_range(
-  const hobject_t &start,
-  const hobject_t &end,
-  vector<hobject_t> *ls,
-  vector<ghobject_t> *gen_obs)
+int PGBackend::objects_list_range(const hobject_t& start,
+				  const hobject_t& end,
+				  vector<hobject_t>* ls,
+				  vector<ghobject_t>* gen_obs)
 {
   ceph_assert(ls);
   vector<ghobject_t> objects;
-  int r;
-  if (HAVE_FEATURE(parent->min_upacting_features(),
-                   OSD_FIXED_COLLECTION_LIST)) {
-    r = store->collection_list(
-      ch,
-      ghobject_t(start, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-      ghobject_t(end, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-      INT_MAX,
-      &objects,
-      NULL);
-  } else {
-    r = store->collection_list_legacy(
-      ch,
-      ghobject_t(start, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-      ghobject_t(end, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-      INT_MAX,
-      &objects,
-      NULL);
-  }
-  ls->reserve(objects.size());
-  for (vector<ghobject_t>::iterator i = objects.begin();
-       i != objects.end();
-       ++i) {
-    if (i->is_pgmeta() || i->hobj.is_temp()) {
-      continue;
-    }
-    if (i->is_no_gen()) {
-      ls->push_back(i->hobj);
-    } else if (gen_obs) {
-      gen_obs->push_back(*i);
+
+  // determine how to collect the objects, based on cluster capabilities
+  const auto store_access =
+    (HAVE_FEATURE(parent->min_upacting_features(), OSD_FIXED_COLLECTION_LIST))
+      ? &ObjectStore::collection_list
+      : &ObjectStore::collection_list_legacy;
+
+  const int ret =
+    std::invoke(store_access, *store, ch,
+		ghobject_t{start, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard},
+		ghobject_t{end, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard},
+		INT_MAX, &objects, nullptr);
+
+  if (!ret) {
+    // success
+    ls->reserve(objects.size());
+    for (const auto& o : objects) {
+      if (o.is_pgmeta() || o.hobj.is_temp()) {
+        continue;
+      }
+      if (o.is_no_gen()) {
+	ls->push_back(o.hobj);
+      } else if (gen_obs) {
+	gen_obs->push_back(o);
+      }
     }
   }
-  return r;
+
+  return ret;
 }
+
 
 int PGBackend::objects_get_attr(
   const hobject_t &hoid,

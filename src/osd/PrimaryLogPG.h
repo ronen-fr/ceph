@@ -1156,7 +1156,16 @@ protected:
   // Cancels/resets pulls from peer
   void check_recovery_sources(const OSDMapRef& map) override ;
 
-  int recover_missing(
+
+  /*
+   * Pull action reported:
+   *  NONE  - didn't pull anything
+   *  YES   - pulled what the caller wanted
+   *  HEAD  - needed to pull head first
+   */
+  enum class pull_action { PULL_NONE, PULL_HEAD, PULL_YES };
+
+  pull_action recover_missing(
     const hobject_t& oid,
     eversion_t v,
     int priority,

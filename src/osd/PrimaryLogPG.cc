@@ -11491,15 +11491,7 @@ void PrimaryLogPG::put_snapset_context(SnapSetContext *ssc)
   }
 }
 
-/*
- * Return values:
- *  NONE  - didn't pull anything
- *  YES   - pulled what the caller wanted
- *  HEAD  - needed to pull head first
- */
-enum { PULL_NONE, PULL_HEAD, PULL_YES };
-
-int PrimaryLogPG::recover_missing(
+PrimaryLogPG::pull_action PrimaryLogPG::recover_missing(
   const hobject_t &soid, eversion_t v,
   int priority,
   PGBackend::RecoveryHandle *h)
@@ -11508,7 +11500,7 @@ int PrimaryLogPG::recover_missing(
     dout(7) << __func__ << " " << soid
 	    << " v " << v
 	    << " but it is unfound" << dendl;
-    return PULL_NONE;
+    return PrimaryLogPG::pull_action::PULL_NONE;
   }
 
   if (recovery_state.get_missing_loc().is_deleted(soid)) {
@@ -11543,7 +11535,7 @@ int PrimaryLogPG::recover_missing(
 	 }
        }
      }));
-    return PULL_YES;
+    return PrimaryLogPG::pull_action::PULL_YES;
   }
 
   // is this a snapped object?  if so, consult the snapset.. we may not need the entire object!
@@ -11555,14 +11547,14 @@ int PrimaryLogPG::recover_missing(
     if (recovery_state.get_pg_log().get_missing().is_missing(head)) {
       if (recovering.count(head)) {
 	dout(10) << " missing but already recovering head " << head << dendl;
-	return PULL_NONE;
+	return PrimaryLogPG::pull_action::PULL_NONE;
       } else {
-	int r = recover_missing(
+	auto r = recover_missing(
 	  head, recovery_state.get_pg_log().get_missing().get_items().find(head)->second.need, priority,
 	  h);
-	if (r != PULL_NONE)
-	  return PULL_HEAD;
-	return PULL_NONE;
+	if (r != PrimaryLogPG::pull_action::PULL_NONE)
+	  return PrimaryLogPG::pull_action::PULL_HEAD;
+	return PrimaryLogPG::pull_action::PULL_NONE;
       }
     }
     head_obc = get_object_context(
@@ -11582,7 +11574,7 @@ int PrimaryLogPG::recover_missing(
     h);
   // This is only a pull which shouldn't return an error
   ceph_assert(r >= 0);
-  return PULL_YES;
+  return PrimaryLogPG::pull_action::PULL_YES;
 }
 
 void PrimaryLogPG::remove_missing_object(const hobject_t &soid,
@@ -12685,15 +12677,17 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
       if (recovering.count(head)) {
 	++skipped;
       } else {
-	int r = recover_missing(
+	auto r = recover_missing(
 	  soid, need, get_recovery_op_priority(), h);
 	switch (r) {
-	case PULL_YES:
+	case PrimaryLogPG::pull_action::PULL_YES:
 	  ++started;
 	  break;
-	case PULL_HEAD:
+	case PrimaryLogPG::pull_action::PULL_HEAD:
 	  ++started;
-	case PULL_NONE:
+	  ++skipped;
+	  break;
+	case PrimaryLogPG::pull_action::PULL_NONE:
 	  ++skipped;
 	  break;
 	default:
@@ -12777,10 +12771,10 @@ int PrimaryLogPG::prep_object_replica_pushes(
 	dout(10) << " missing but already recovering head " << head << dendl;
 	return 0;
       } else {
-	int r = recover_missing(
+	auto r = recover_missing(
 	    head, recovery_state.get_pg_log().get_missing().get_items().find(head)->second.need,
 	    get_recovery_op_priority(), h);
-	if (r != PULL_NONE)
+	if (r != PrimaryLogPG::pull_action::PULL_NONE)
 	  return 1;
 	return 0;
       }
