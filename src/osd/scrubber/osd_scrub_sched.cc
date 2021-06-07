@@ -70,67 +70,35 @@ std::optional<double> ScrubQueue::update_load_average()
 }
 
 /*
- * The possibe scenarios regarding the job's state:
+ * Modify the scrub-job state:
+ * - if 'registsred' (as expected): mark as 'unregistering'. The job will be
+ *   dequeued the next time sched_scrub() is called.
+ * - if already 'not_registered': shouldn't really happen, but not a problem.
+ *   The state will not be modified.
+ * - same for 'unregistering'.
  *
- *   registered -> unregistering (will be changed to not-registered later on, under lock
- *
- * Will not modify (but are possible):
- *
- *  'created' (if we were never a Primary here
- *  not_registered
- *
- * Should not appear, but are harmless (here):
- *  unregistering
- *  pg_deleted
+ * Note: not holding the jobs lock
  */
 void ScrubQueue::remove_from_osd_queue(ceph::ref_t<ScrubJob> scrub_job)
 {
-  dout(10) << " removing pg(" << scrub_job->pgid << ") from OSD scrub queue" << dendl;
+  dout(10) << "removing pg(" << scrub_job->pgid << ") from OSD scrub queue" << dendl;
 
   qu_state_t expected_state{qu_state_t::registered};
   auto ret =
     scrub_job->m_state.compare_exchange_strong(expected_state, qu_state_t::unregistering);
-  scrub_job->m_sched_time = {};	 // appearing in logs/asok
 
-  if (!ret && (expected_state != qu_state_t::created)) {
-    // job wasn't in state 'registered' (or 'created') coming in
+  if (ret) {
 
-    dout(5) << " removing pg(" << scrub_job->pgid
+    dout(10) << "pg(" << scrub_job->pgid << ") sched-state changed from "
+	     << qu_state_text(expected_state) << " to "
+	     << qu_state_text(scrub_job->m_state) << dendl;
+
+  } else {
+
+    // job wasn't in state 'registered' coming in
+    dout(5) << "removing pg(" << scrub_job->pgid
 	    << ") failed. State was: " << qu_state_text(expected_state) << dendl;
   }
-
-  dout(10) << " pg(" << scrub_job->pgid << ") sched-state changed from "
-	   << qu_state_text(expected_state) << " to " << qu_state_text(scrub_job->m_state)
-	   << dendl;
-}
-
-// used upon scrubber/PG destruction
-void ScrubQueue::final_rm_from_osd(ceph::ref_t<ScrubJob> scrub_job)
-{
-  dout(10) << " marking scrub job for  pg(" << scrub_job->pgid << ") for destruction"
-	   << dendl;
-
-  std::unique_lock l(jobs_lock, 2'000ms);
-  ceph_assert(l.owns_lock());
-
-  scrub_job->m_state = qu_state_t::pg_deleted;
-
-  // find the job in one of the queues, and delete it
-  auto in_main_group =
-    std::find_if(to_scrub.begin(), to_scrub.end(),
-		 [&scrub_job](auto const& jb) { return jb->pgid == scrub_job->pgid; });
-  if (in_main_group != to_scrub.end()) {
-    to_scrub.erase(in_main_group);
-  } else {
-    auto in_penal_group =
-      std::find_if(penalized.begin(), penalized.end(),
-		   [&scrub_job](auto const& jb) { return jb->pgid == scrub_job->pgid; });
-    if (in_penal_group != penalized.end()) {
-      penalized.erase(in_penal_group);
-    }
-  }
-
-  scrub_job->m_in_queues = false;
 }
 
 void ScrubQueue::register_with_osd(ceph::ref_t<ScrubJob> scrub_job,
@@ -142,23 +110,18 @@ void ScrubQueue::register_with_osd(ceph::ref_t<ScrubJob> scrub_job,
     case qu_state_t::registered:
       // just updating the schedule?
       update_job(scrub_job, suggested);
-      scrub_job->m_updated = true;
       break;
 
-
-    case qu_state_t::pg_deleted:
-      // RRR understand why the PG wasn't fully removed
-      dout(5) << " Restoring a scrub job" << dendl;
-      // fall through
-
-    case qu_state_t::created:
     case qu_state_t::not_registered:
       // insertion under lock
       {
 	std::unique_lock l(jobs_lock, 2'000ms);
 	ceph_assert(l.owns_lock());
 	if (verif != scrub_job->m_state) {
+	  l.unlock();
 	  dout(5) << " scrub-job state changed" << dendl;
+	  // retry
+	  register_with_osd(scrub_job, suggested);
 	  break;
 	}
 
@@ -186,8 +149,6 @@ void ScrubQueue::register_with_osd(ceph::ref_t<ScrubJob> scrub_job,
 	scrub_job->m_state = qu_state_t::registered;
       }
       break;
-
-      break;
   }
 
   dout(10) << "pg(" << scrub_job->pgid << ") sched-state changed from "
@@ -213,7 +174,7 @@ void ScrubQueue::update_job(ceph::ref_t<ScrubJob> scrub_job,
 
   // m_updated is changed here while not holding jobs_lock. That's OK, as
   // the (atomic) flag will only be cleared by select_pg_and_scrub() after
-  // scan_penalized is called and the job was moved to the to_scrub queue.
+  // scan_penalized() is called and the job was moved to the to_scrub queue.
   scrub_job->m_updated = true;
 }
 
@@ -231,7 +192,7 @@ void ScrubQueue::move_failed_pgs(utime_t now_is)
       // last time it was scheduled for a scrub, this PG failed in securing remote
       // resources. Move it to the secondary scrub queue.
 
-      dout(15) << " moving " << sjob->pgid
+      dout(15) << "moving " << sjob->pgid
 	       << " state: " << ScrubQueue::qu_state_text(sjob->m_state) << dendl;
 
       // determine the penalty time, after which the job should be reinstated
@@ -280,17 +241,13 @@ string_view ScrubQueue::attempt_res_text(Scrub::attempt_t v)
   // g++ (unlike CLANG), requires an extra 'return' here
   return "(unknown)"sv;
 }
-// clang-format on
 
-// clang-format off
 string_view ScrubQueue::qu_state_text(qu_state_t st)
 {
   switch (st) {
-    case qu_state_t::created: return "initializing"sv;
+    case qu_state_t::not_registered: return "not registered w/ OSD"sv;
     case qu_state_t::registered: return "registered"sv;
     case qu_state_t::unregistering: return "unregistering"sv;
-    case qu_state_t::not_registered: return "not registered w/ OSD"sv;
-    case qu_state_t::pg_deleted: return "PG removed"sv;
   }
   // g++ (unlike CLANG), requires an extra 'return' here
   return "(unknown)"sv;
@@ -359,8 +316,7 @@ void ScrubQueue::clear_dead_jobs(ScrubQContainer& group)
     if (jb->m_state == qu_state_t::unregistering) {
       jb->m_in_queues = false;
       jb->m_state = qu_state_t::not_registered;
-    } else if (jb->m_state == qu_state_t::pg_deleted ||
-	       jb->m_state == qu_state_t::not_registered) {
+    } else if (jb->m_state == qu_state_t::not_registered) {
       jb->m_in_queues = false;
     }
   });
@@ -401,7 +357,7 @@ Scrub::attempt_t ScrubQueue::select_from_group(ScrubQContainer& group,
 					       const Scrub::ScrubPreconds& preconds,
 					       utime_t now_is)
 {
-  dout(15) << " sz: " << group.size() << dendl;
+  dout(15) << "sz: " << group.size() << dendl;
 
   for (auto& candidate : group) {
 
@@ -430,24 +386,24 @@ Scrub::attempt_t ScrubQueue::select_from_group(ScrubQContainer& group,
       case Scrub::attempt_t::preconditions:
       case Scrub::attempt_t::pg_state:
 	// continue with the next job
-	dout(20) << " failed (state/cond/started) " << candidate->pgid << dendl;
+	dout(20) << "failed (state/cond/started) " << candidate->pgid << dendl;
 	break;
 
       case Scrub::attempt_t::no_pg:
-	// Couldn't lock the pg. Shouldn't really happen
-	dout(20) << " failed (no pg) " << candidate->pgid << dendl;
+	// The pg is no longer there
+	dout(20) << "failed (no pg) " << candidate->pgid << dendl;
 	break;
 
       case Scrub::attempt_t::local_resources:
 	// failure to secure local resources. No point in trying the other
 	// PGs at this time. Note that this is not the same as replica resources
 	// failure!
-	dout(20) << " failed (local) " << candidate->pgid << dendl;
+	dout(20) << "failed (local) " << candidate->pgid << dendl;
 	return Scrub::attempt_t::local_resources;
 
       case Scrub::attempt_t::none_ready:
 	// can't happen. Just for the compiler.
-	dout(20) << " failed !!! " << candidate->pgid << dendl;
+	dout(5) << "failed !!! " << candidate->pgid << dendl;
 	return Scrub::attempt_t::none_ready;
     }
   }
@@ -461,14 +417,14 @@ ScrubQueue::TimeAndDeadline ScrubQueue::adjust_target_time(
 {
   ScrubQueue::TimeAndDeadline sched_n_dead{times.suggested_stamp, times.suggested_stamp};
 
-  {
+  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
     // debug
-    dout(17) << __func__ << " min t: " << times.min_interval
+    dout(20) << "min t: " << times.min_interval
 	     << " osd: " << m_cct->_conf->osd_scrub_min_interval
 	     << " max t: " << times.max_interval
 	     << " osd: " << m_cct->_conf->osd_scrub_max_interval << dendl;
 
-    dout(17) << __func__ << " at " << sched_n_dead.scheduled_at << " ratio "
+    dout(20) << "at " << sched_n_dead.scheduled_at << " ratio "
 	     << m_cct->_conf->osd_scrub_interval_randomize_ratio << dendl;
   }
 
@@ -493,8 +449,8 @@ ScrubQueue::TimeAndDeadline ScrubQueue::adjust_target_time(
     }
   }
 
-  dout(17) << __func__ << " at (final) " << sched_n_dead.scheduled_at << " - "
-	   << sched_n_dead.deadline << dendl;
+  dout(17) << "at (final) " << sched_n_dead.scheduled_at << " - " << sched_n_dead.deadline
+	   << dendl;
   return sched_n_dead;
 }
 
@@ -509,7 +465,7 @@ double ScrubQueue::scrub_sleep_time(bool must_scrub) const
   // relevant if scrubbing started during allowed time, but continued into forbidden
   // hours
   double extended_sleep = m_cct->_conf->osd_scrub_extended_sleep;
-  dout(20) << __func__ << " w/ extended sleep (" << extended_sleep << ")" << dendl;
+  dout(20) << "w/ extended sleep (" << extended_sleep << ")" << dendl;
   return std::max(extended_sleep, regular_sleep_period);
 }
 
@@ -525,19 +481,19 @@ bool ScrubQueue::scrub_load_below_threshold() const
   long cpus = sysconf(_SC_NPROCESSORS_ONLN);
   double loadavg_per_cpu = cpus > 0 ? loadavgs[0] / cpus : loadavgs[0];
   if (loadavg_per_cpu < m_cct->_conf->osd_scrub_load_threshold) {
-    dout(20) << __func__ << " loadavg per cpu " << loadavg_per_cpu << " < max "
+    dout(20) << "loadavg per cpu " << loadavg_per_cpu << " < max "
 	     << m_cct->_conf->osd_scrub_load_threshold << " = yes" << dendl;
     return true;
   }
 
   // allow scrub if below daily avg and currently decreasing
   if (loadavgs[0] < daily_loadavg && loadavgs[0] < loadavgs[2]) {
-    dout(20) << __func__ << " loadavg " << loadavgs[0] << " < daily_loadavg "
-	     << daily_loadavg << " and < 15m avg " << loadavgs[2] << " = yes" << dendl;
+    dout(20) << "loadavg " << loadavgs[0] << " < daily_loadavg " << daily_loadavg
+	     << " and < 15m avg " << loadavgs[2] << " = yes" << dendl;
     return true;
   }
 
-  dout(20) << __func__ << " loadavg " << loadavgs[0] << " >= max "
+  dout(20) << "loadavg " << loadavgs[0] << " >= max "
 	   << m_cct->_conf->osd_scrub_load_threshold << " and ( >= daily_loadavg "
 	   << daily_loadavg << " or >= 15m avg " << loadavgs[2] << ") = no" << dendl;
   return false;
@@ -586,17 +542,16 @@ bool ScrubQueue::scrub_time_permit(utime_t now) const
   bool day_permit = isbetween_modulo(m_cct->_conf->osd_scrub_begin_week_day,
 				     m_cct->_conf->osd_scrub_end_week_day, bdt.tm_wday);
   if (!day_permit) {
-    dout(20) << __func__ << " should run between week day "
-	     << m_cct->_conf->osd_scrub_begin_week_day << " - "
-	     << m_cct->_conf->osd_scrub_end_week_day << " now " << bdt.tm_wday << " - no"
-	     << dendl;
+    dout(20) << "should run between week day " << m_cct->_conf->osd_scrub_begin_week_day
+	     << " - " << m_cct->_conf->osd_scrub_end_week_day << " now " << bdt.tm_wday
+	     << " - no" << dendl;
     return false;
   }
 
   bool time_permit = isbetween_modulo(m_cct->_conf->osd_scrub_begin_hour,
 				      m_cct->_conf->osd_scrub_end_hour, bdt.tm_hour);
-  dout(20) << __func__ << " should run between " << m_cct->_conf->osd_scrub_begin_hour
-	   << " - " << m_cct->_conf->osd_scrub_end_hour << " now (" << bdt.tm_hour
+  dout(20) << "should run between " << m_cct->_conf->osd_scrub_begin_hour << " - "
+	   << m_cct->_conf->osd_scrub_end_hour << " now (" << bdt.tm_hour
 	   << ") = " << (time_permit ? "yes" : "no") << dendl;
   return time_permit;
 }
@@ -635,9 +590,10 @@ ScrubQueue::ScrubQContainer ScrubQueue::list_all_valid() const
   std::unique_lock l(jobs_lock, 2'000ms);
   ceph_assert(l.owns_lock());
 
-  std::copy_if(to_scrub.begin(), to_scrub.end(), std::back_inserter(all_jobs), valid_job);
+  std::copy_if(to_scrub.begin(), to_scrub.end(), std::back_inserter(all_jobs),
+	       registered_job);
   std::copy_if(penalized.begin(), penalized.end(), std::back_inserter(all_jobs),
-	       valid_job);
+	       registered_job);
 
   return all_jobs;
 }
@@ -655,7 +611,7 @@ bool ScrubQueue::can_inc_scrubs() const
     return true;
   }
 
-  dout(20) << __func__ << " == false " << m_scrubs_local << " local + " << m_scrubs_remote
+  dout(20) << " == false. " << m_scrubs_local << " local + " << m_scrubs_remote
 	   << " remote >= max " << m_cct->_conf->osd_max_scrubs << dendl;
   return false;
 }
@@ -669,16 +625,16 @@ bool ScrubQueue::inc_scrubs_local()
     return true;
   }
 
-  dout(20) << __func__ << " " << m_scrubs_local << " local + " << m_scrubs_remote
+  dout(20) << ": " << m_scrubs_local << " local + " << m_scrubs_remote
 	   << " remote >= max " << m_cct->_conf->osd_max_scrubs << dendl;
   return false;
 }
 
 void ScrubQueue::dec_scrubs_local()
 {
-  dout(20) << __func__ << " " << m_scrubs_local << " -> " << (m_scrubs_local - 1)
-	   << " (max " << m_cct->_conf->osd_max_scrubs << ", remote " << m_scrubs_remote
-	   << ")" << dendl;
+  dout(20) << ": " << m_scrubs_local << " -> " << (m_scrubs_local - 1) << " (max "
+	   << m_cct->_conf->osd_max_scrubs << ", remote " << m_scrubs_remote << ")"
+	   << dendl;
 
   std::lock_guard l{resource_lock};
   --m_scrubs_local;
@@ -690,23 +646,23 @@ bool ScrubQueue::inc_scrubs_remote()
   std::lock_guard l{resource_lock};
 
   if (m_scrubs_local + m_scrubs_remote < m_cct->_conf->osd_max_scrubs) {
-    dout(20) << __func__ << " " << m_scrubs_remote << " -> " << (m_scrubs_remote + 1)
-	     << " (max " << m_cct->_conf->osd_max_scrubs << ", local " << m_scrubs_local
-	     << ")" << dendl;
+    dout(20) << ": " << m_scrubs_remote << " -> " << (m_scrubs_remote + 1) << " (max "
+	     << m_cct->_conf->osd_max_scrubs << ", local " << m_scrubs_local << ")"
+	     << dendl;
     ++m_scrubs_remote;
     return true;
   }
 
-  dout(20) << __func__ << " " << m_scrubs_local << " local + " << m_scrubs_remote
+  dout(20) << ": " << m_scrubs_local << " local + " << m_scrubs_remote
 	   << " remote >= max " << m_cct->_conf->osd_max_scrubs << dendl;
   return false;
 }
 
 void ScrubQueue::dec_scrubs_remote()
 {
-  dout(20) << __func__ << " " << m_scrubs_remote << " -> " << (m_scrubs_remote - 1)
-	   << " (max " << m_cct->_conf->osd_max_scrubs << ", local " << m_scrubs_local
-	   << ")" << dendl;
+  dout(20) << ": " << m_scrubs_remote << " -> " << (m_scrubs_remote - 1) << " (max "
+	   << m_cct->_conf->osd_max_scrubs << ", local " << m_scrubs_local << ")"
+	   << dendl;
   std::lock_guard l{resource_lock};
   --m_scrubs_remote;
   ceph_assert(m_scrubs_remote >= 0);

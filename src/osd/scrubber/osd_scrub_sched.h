@@ -46,11 +46,10 @@ class ScrubQueue {
   enum class must_scrub_t { not_mandatory, mandatory };
 
   enum class qu_state_t {
-    created,	    // the scrubber and its scrub-job were just created
-    registered,     // in either of the two queues ('to_scrub' or 'penalized')
-    unregistering,  // in the process of being unregistered. Will be finalized under lock
-    not_registered, // not a primary, thus not considered for scrubbing by this OSD
-    pg_deleted      // temporary state. Used when removing the PG.
+    not_registered,  // not a primary, thus not considered for scrubbing by this OSD (also
+		     // the temporary state when just created)
+    registered,	     // in either of the two queues ('to_scrub' or 'penalized')
+    unregistering    // in the process of being unregistered. Will be finalized under lock
   };
 
   ScrubQueue(CephContext* cct, OSDService& osds);
@@ -84,10 +83,12 @@ class ScrubQueue {
     /// the OSD id (for the log)
     int whoami;
 
-    std::atomic<qu_state_t> m_state{qu_state_t::created};
+    std::atomic<qu_state_t> m_state{qu_state_t::not_registered};
 
-    /// the old 'is_registered'. Set whenever the job is registered with the OSD, i.e.
-    /// is in either the 'to_scrub' or the 'penalized' vectors.
+    /**
+     * the old 'is_registered'. Set whenever the job is registered with the OSD, i.e.
+     * is in either the 'to_scrub' or the 'penalized' vectors.
+     */
     std::atomic_bool m_in_queues{false};
 
     /// last scrub attempt failed in securing replica resources
@@ -106,9 +107,7 @@ class ScrubQueue {
 
     CephContext* cct;
 
-    ScrubJob(CephContext* cct,
-	     const spg_t& pg,
-	     int node_id);  // used when a PgScrubber is created
+    ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
 
     void set_time_n_deadline(TimeAndDeadline ts)
     {
@@ -125,7 +124,8 @@ class ScrubQueue {
      */
     std::string_view registration_state() const
     {
-      return m_in_queues.load(std::memory_order_relaxed) ? " in-queue"sv : " not-queued"sv;
+      return m_in_queues.load(std::memory_order_relaxed) ? " in-queue"sv
+							 : " not-queued"sv;
     }
 
     FRIEND_MAKE_REF(ScrubJob);
@@ -165,8 +165,6 @@ class ScrubQueue {
    * To be used if we are no longer the PG's primary, or if the PG is removed.
    */
   void remove_from_osd_queue(ceph::ref_t<ScrubJob> sjob);
-
-  void final_rm_from_osd(ceph::ref_t<ScrubJob> scrub_job);
 
   /**
    * @return the list (not std::set!) of all scrub-jobs registered
@@ -271,12 +269,12 @@ class ScrubQueue {
     }
   };
 
-  static inline constexpr auto valid_job = [](const auto& jobref) -> bool {
+  static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
     return jobref->m_state == qu_state_t::registered;
   };
 
   static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
-    return jobref->m_state == qu_state_t::pg_deleted || jobref->m_state == qu_state_t::not_registered;
+    return jobref->m_state == qu_state_t::not_registered;
   };
 
   static inline constexpr auto clear_upd_flag = [](const auto& jobref) -> void {
