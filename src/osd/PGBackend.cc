@@ -656,6 +656,7 @@ int PGBackend::be_scan_list(
   return 0;
 }
 
+#if 0
 bool PGBackend::be_compare_scrub_objects(
   pg_shard_t auth_shard,
   const ScrubMap::object &auth,
@@ -854,6 +855,8 @@ static int dcount(const object_info_t &oi)
   return count;
 }
 
+// RRR to be moved to the scrubber BE
+
 map<pg_shard_t, ScrubMap *>::const_iterator
   PGBackend::be_select_auth_object(
   const hobject_t &obj,
@@ -869,8 +872,8 @@ map<pg_shard_t, ScrubMap *>::const_iterator
   // Create list of shards with primary first so it will be auth copy all
   // other things being equal.
   list<pg_shard_t> shards;
-  for (map<pg_shard_t, ScrubMap *>::const_iterator j = maps.begin();
-       j != maps.end();
+  for (auto j = as_const(maps).cbegin();
+       j != maps.cend();
        ++j) {
     if (j->first == get_parent()->whoami_shard())
       continue;
@@ -972,7 +975,6 @@ map<pg_shard_t, ScrubMap *>::const_iterator
 	  auto bliter = hk_bl.cbegin();
 	  decode(hi, bliter);
         } catch (...) {
-	  // invalid snapset, probably corrupt
 	  shard_info.set_hinfo_corrupted();
           if (error)
             shard_errorstream << ", ";
@@ -1006,7 +1008,7 @@ map<pg_shard_t, ScrubMap *>::const_iterator
       goto out;
     }
 
-    // This is automatically corrected in PG::_repair_oinfo_oid()
+    // This is automatically corrected in repair_oinfo_oid()
     ceph_assert(oi.soid == obj);
 
     if (i->second.size != be_get_ondisk_size(oi.size)) {
@@ -1053,7 +1055,9 @@ out:
 	   << dendl;
   return auth;
 }
+#endif
 
+#if 0
 void PGBackend::be_compare_scrubmaps(
   const map<pg_shard_t,ScrubMap*> &maps,
   const set<hobject_t> &master_set,
@@ -1277,50 +1281,51 @@ out:
     }
   }
 }
+#endif
 
-void PGBackend::be_omap_checks(const map<pg_shard_t,ScrubMap*> &maps,
-  const set<hobject_t> &master_set,
-  omap_stat_t& omap_stats,
-  ostream &warnstream) const
-{
-  bool needs_omap_check = false;
-  for (const auto& map : maps) {
-    if (map.second->has_large_omap_object_errors || map.second->has_omap_keys) {
-      needs_omap_check = true;
-      break;
-    }
-  }
-
-  if (!needs_omap_check) {
-    return; // Nothing to do
-  }
-
-  // Iterate through objects and update omap stats
-  for (const auto& k : master_set) {
-    for (const auto& map : maps) {
-      if (map.first != get_parent()->primary_shard()) {
-        // Only set omap stats for the primary
-        continue;
-      }
-      auto it = map.second->objects.find(k);
-      if (it == map.second->objects.end())
-        continue;
-      ScrubMap::object& obj = it->second;
-      omap_stats.omap_bytes += obj.object_omap_bytes;
-      omap_stats.omap_keys += obj.object_omap_keys;
-      if (obj.large_omap_object_found) {
-        pg_t pg;
-        auto osdmap = get_osdmap();
-        osdmap->map_to_pg(k.pool, k.oid.name, k.get_key(), k.nspace, &pg);
-        pg_t mpg = osdmap->raw_pg_to_pg(pg);
-        omap_stats.large_omap_objects++;
-        warnstream << "Large omap object found. Object: " << k
-                   << " PG: " << pg << " (" << mpg << ")"
-                   << " Key count: " << obj.large_omap_object_key_count
-                   << " Size (bytes): " << obj.large_omap_object_value_size
-                   << '\n';
-        break;
-      }
-    }
-  }
-}
+//void PGBackend::be_omap_checks(const map<pg_shard_t,ScrubMap*> &maps,
+//  const set<hobject_t> &master_set,
+//  omap_stat_t& omap_stats,
+//  ostream &warnstream) const
+//{
+//  bool needs_omap_check = false;
+//  for (const auto& map : maps) {
+//    if (map.second->has_large_omap_object_errors || map.second->has_omap_keys) {
+//      needs_omap_check = true;
+//      break;
+//    }
+//  }
+//
+//  if (!needs_omap_check) {
+//    return; // Nothing to do
+//  }
+//
+//  // Iterate through objects and update omap stats
+//  for (const auto& k : master_set) {
+//    for (const auto& map : maps) {
+//      if (map.first != get_parent()->primary_shard()) {
+//        // Only set omap stats for the primary
+//        continue;
+//      }
+//      auto it = map.second->objects.find(k);
+//      if (it == map.second->objects.end())
+//        continue;
+//      ScrubMap::object& obj = it->second;
+//      omap_stats.omap_bytes += obj.object_omap_bytes;
+//      omap_stats.omap_keys += obj.object_omap_keys;
+//      if (obj.large_omap_object_found) {
+//        pg_t pg;
+//        auto osdmap = get_osdmap();
+//        osdmap->map_to_pg(k.pool, k.oid.name, k.get_key(), k.nspace, &pg);
+//        pg_t mpg = osdmap->raw_pg_to_pg(pg);
+//        omap_stats.large_omap_objects++;
+//        warnstream << "Large omap object found. Object: " << k
+//                   << " PG: " << pg << " (" << mpg << ")"
+//                   << " Key count: " << obj.large_omap_object_key_count
+//                   << " Size (bytes): " << obj.large_omap_object_value_size
+//                   << '\n';
+//        break;
+//      }
+//    }
+//  }
+//}

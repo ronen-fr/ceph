@@ -509,7 +509,8 @@ function TEST_auto_repair_bluestore_scrub() {
     run_mgr $dir x || return 1
     local ceph_osd_args="--osd-scrub-auto-repair=true \
             --osd_deep_scrub_randomize_ratio=0 \
-            --osd-scrub-interval-randomize-ratio=0"
+            --osd-scrub-interval-randomize-ratio=0 \
+            --osd-scrub-backoff-ratio=0"
     for id in $(seq 0 2) ; do
         run_osd $dir $id $ceph_osd_args || return 1
     done
