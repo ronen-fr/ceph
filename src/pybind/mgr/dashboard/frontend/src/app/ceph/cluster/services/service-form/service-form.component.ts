@@ -235,7 +235,7 @@ export class ServiceFormComponent extends CdForm implements OnInit {
       // Remove service types:
       // osd       - This is deployed a different way.
       // container - This should only be used in the CLI.
-      this.hiddenServices.push('osd', 'container');
+      this.hiddenServices.push('osd', 'container', 'ha-rgw');
 
       this.serviceTypes = _.difference(resp, this.hiddenServices).sort();
     });
