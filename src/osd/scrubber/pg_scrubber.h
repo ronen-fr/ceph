@@ -13,12 +13,16 @@
 #include <vector>
 
 #include "osd/PG.h"
-#include "ScrubStore.h"
-#include "scrub_machine_lstnr.h"
+#include "osd/PrimaryLogPG.h" // only used to forward PrimaryLogScrub-only methods
 #include "osd/scrubber_common.h"
+
+#include "ScrubStore.h"
 #include "osd_scrub_sched.h"
+#include "scrub_backend_if.h"
+#include "scrub_machine_lstnr.h"
 
 class Callback;
+class ScrubBackend;
 
 namespace Scrub {
 class ScrubMachine;
@@ -190,6 +194,8 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
  public:
   explicit PgScrubber(PG* pg);
 
+  friend class ScrubBackend; // will be replaced by a limited interface
+
   //  ------------------  the I/F exposed to the PG (ScrubPgIF) -------------
 
   /// are we waiting for resource reservation grants form our replicas?
@@ -265,7 +271,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void update_scrub_job(const requested_scrub_t& request_flags) final;
 
-  void final_rm_from_osd() final;
+  void rm_from_osd_scrubbing() final;
 
   void on_primary_change(const requested_scrub_t& request_flags) final;
 
@@ -317,7 +323,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   /**
    *  add to scrub statistics, but only if the soid is below the scrub start
    */
-  virtual void stats_of_handled_objects(const object_stat_sum_t& delta_stats,
+  void stats_of_handled_objects(const object_stat_sum_t& delta_stats,
 					const hobject_t& soid) override
   {
     ceph_assert(false);
@@ -438,7 +444,40 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   ostream& show(ostream& out) const override;
 
  public:
-  // -------------------------------------------------------------------------------------------
+  //  ------------------  the I/F used by the ScrubBackend (not named yet)  -------------
+
+  // note: the reason we must have these forwarders, is because of the
+  //  artificial PG vs. PrimaryLogPG distinction. Some of the services used
+  //  by the scrubber backend are PrimaryLog-specific.
+
+  virtual ObjectContextRef get_object_context(const hobject_t& obj)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+    return nullptr;
+  }
+
+  virtual PrimaryLogPG::OpContextUPtr get_mod_op_context(ObjectContextRef obj_ctx)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+    return nullptr;
+  }
+
+  virtual void simple_opc_submit(PrimaryLogPG::OpContextUPtr&& op_ctx)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+  }
+
+  virtual void finish_ctx(PrimaryLogPG::OpContext* op_ctx, int log_op_type)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+  }
+
+  virtual void add_to_stats(const object_stat_sum_t& stat)
+  {
+    ceph_assert(0 && "expecting a PrimaryLogScrub object");
+  }
+
+  // -------------------------------------------------------------------------------------
 
   friend ostream& operator<<(ostream& out, const PgScrubber& scrubber);
 
@@ -453,6 +492,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void requeue_waiting() const { m_pg->requeue_ops(m_pg->waiting_for_scrub); }
 
+  // for the replicas, and only for now. The Primary handles that thru ScrubBackend
   void _scan_snaps(ScrubMap& smap);
 
   ScrubMap clean_meta_map();
@@ -510,13 +550,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   epoch_t m_last_aborted{};  // last time we've noticed a request to abort
 
-  /**
-   * return true if any inconsistency/missing is repaired, false otherwise
-   */
-  [[nodiscard]] bool scrub_process_inconsistent();
-
-  void scrub_compare_maps();
-
   bool m_needs_sleep{true};  ///< should we sleep before being rescheduled? always
 			     ///< 'true', unless we just got out of a sleep period
 
@@ -545,12 +578,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    */
   virtual void _scrub_finish() {}
 
-  /**
-   * Validate consistency of the object info and snap sets.
-   */
-  virtual void scrub_snapshot_metadata(ScrubMap& map, const missing_map_t& missing_digest)
-  {}
-
   // common code used by build_primary_map_chunk() and build_replica_map_chunk():
   int build_scrub_map_chunk(ScrubMap& map,  // primary or replica?
 			    ScrubMapBuilder& pos,
@@ -578,7 +605,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   std::unique_ptr<Scrub::Store> m_store;
 
-  int num_digest_updates_pending{0};
+  //int num_digest_updates_pending{0};
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
   /// Returns reference to current osdmap
@@ -700,6 +727,9 @@ private:
 
   ScrubMapBuilder replica_scrubmap_pos;
   ScrubMap replica_scrubmap;
+
+  // the backend, handling the details of comparing maps & fixing objects
+  std::unique_ptr<ScrubBackendIF> m_be;
 
   /**
    * we mark the request priority as it arrived. It influences the queuing priority
