@@ -12299,6 +12299,8 @@ int PrimaryLogPG::recover_missing(
   int priority,
   PGBackend::RecoveryHandle *h)
 {
+  dout(10) << __func__ << " sar: " << scrub_after_recovery << dendl;
+
   if (recovery_state.get_missing_loc().is_unfound(soid)) {
     dout(7) << __func__ << " " << soid
 	    << " v " << v
