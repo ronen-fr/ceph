@@ -19,6 +19,8 @@
 
 #include <netinet/in.h>
 
+#include <fmt/format.h>
+
 #include "include/ceph_features.h"
 #include "include/types.h"
 #include "include/blobhash.h"
@@ -110,6 +112,22 @@ inline std::ostream& operator<<(std::ostream& out, const entity_name_t& addr) {
 inline std::ostream& operator<<(std::ostream& out, const ceph_entity_name& addr) {
   return out << entity_name_t{addr.type, static_cast<int64_t>(addr.num)};
 }
+
+template <> struct fmt::formatter<entity_name_t> {
+  constexpr auto parse(format_parse_context& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(entity_name_t const& addr, FormatContext& ctx)
+  {
+    if (addr.is_new() || addr.num() < 0) {
+      return fmt::format_to(ctx.out(), "{}.?", addr.type_str());
+    }
+    return fmt::format_to(ctx.out(), "{}.{}", addr.type_str(), addr.num());
+  }
+};
 
 namespace std {
   template<> struct hash< entity_name_t >

@@ -29,6 +29,8 @@
 #include <boost/variant.hpp>
 #include <boost/smart_ptr/local_shared_ptr.hpp>
 
+#include <fmt/format.h>
+
 #include "include/rados/rados_types.hpp"
 #include "include/mempool.h"
 
@@ -176,6 +178,19 @@ struct osd_reqid_t {
 WRITE_CLASS_DENC(osd_reqid_t)
 
 
+template <> struct fmt::formatter<osd_reqid_t> {
+  constexpr auto parse(format_parse_context& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(osd_reqid_t const& req_id, FormatContext& ctx)
+  {
+    return fmt::format_to(ctx.out(), "{}.{}:{}", req_id.name, req_id.inc, req_id.tid);
+  }
+};
+
 
 struct pg_shard_t {
   static const int32_t NO_OSD = 0x7fffffff;
@@ -203,6 +218,25 @@ WRITE_CMP_OPERATORS_2(pg_shard_t, osd, shard)
 std::ostream& operator<<(std::ostream &lhs, const pg_shard_t &rhs);
 
 using HobjToShardSetMapping = std::map<hobject_t, std::set<pg_shard_t>>;
+
+template <> struct fmt::formatter<pg_shard_t> {
+  constexpr auto parse(format_parse_context& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(pg_shard_t const& shrd, FormatContext& ctx)
+  {
+    if (shrd.is_undefined()) {
+      return fmt::format_to(ctx.out(), "?");
+    }
+    if (shrd.shard == shard_id_t::NO_SHARD) {
+      return fmt::format_to(ctx.out(), "{}", shrd.get_osd());
+    }
+    return fmt::format_to(ctx.out(), "{}({})", shrd.get_osd(), shrd.shard);
+  }
+};
 
 class IsPGRecoverablePredicate {
 public:
@@ -969,6 +1003,18 @@ inline bool operator>=(const eversion_t& l, const eversion_t& r) {
 inline std::ostream& operator<<(std::ostream& out, const eversion_t& e) {
   return out << e.epoch << "'" << e.version;
 }
+
+template <> struct fmt::formatter<eversion_t> {
+  constexpr auto parse(format_parse_context& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext> auto format(eversion_t const& ev, FormatContext& ctx)
+  {
+    return fmt::format_to(ctx.out(), "{}'{}", ev.epoch, ev.version);
+  }
+};
 
 /**
  * objectstore_perf_stat_t
@@ -5771,6 +5817,25 @@ struct object_manifest_t {
 WRITE_CLASS_ENCODER(object_manifest_t)
 std::ostream& operator<<(std::ostream& out, const object_manifest_t& oi);
 
+template <> struct fmt::formatter<object_manifest_t> {
+  constexpr auto parse(format_parse_context& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(object_manifest_t const& om, FormatContext& ctx)
+  {
+    fmt::format_to(ctx.out(), "manifest({}", om.get_type_name());
+    if (om.is_redirect()) {
+      fmt::format_to(ctx.out(), " {}", om.redirect_target);
+    } else if (om.is_chunked()) {
+      fmt::format_to(ctx.out(), " {}", om.chunk_map);
+    }
+    return fmt::format_to(ctx.out(), ")");
+  }
+};
+
 struct object_info_t {
   hobject_t soid;
   eversion_t version, prior_version;
@@ -5940,6 +6005,34 @@ WRITE_CLASS_ENCODER_FEATURES(object_info_t)
 
 std::ostream& operator<<(std::ostream& out, const object_info_t& oi);
 
+template <> struct fmt::formatter<object_info_t> {
+  constexpr auto parse(format_parse_context& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(object_info_t const& oi, FormatContext& ctx)
+  {
+    fmt::format_to(ctx.out(), "{}({} {} {} s {} uv {}", oi.soid, oi.version,
+		   oi.last_reqid, (oi.flags ? oi.get_flag_string() : ""), oi.size,
+		   oi.user_version);
+    if (oi.is_data_digest()) {
+      fmt::format_to(ctx.out(), " dd {:x}", oi.data_digest);
+    }
+    if (oi.is_omap_digest()) {
+      fmt::format_to(ctx.out(), " od {:x}", oi.omap_digest);
+    }
+
+    fmt::format_to(ctx.out(), " alloc_hint [{} {} {}]", oi.expected_object_size,
+		   oi.expected_write_size, oi.alloc_hint_flags);
+
+    if (oi.has_manifest()) {
+      fmt::format_to(ctx.out(), " {}", oi.manifest);
+    }
+    return fmt::format_to(ctx.out(), ")");
+  }
+};
 
 
 // Object recovery

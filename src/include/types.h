@@ -42,6 +42,7 @@ extern "C" {
 }
 
 #include <string>
+#include <string_view>
 #include <list>
 #include <set>
 #include <boost/container/flat_set.hpp>
@@ -52,6 +53,7 @@ extern "C" {
 #include <ostream>
 #include <iomanip>
 
+#include <fmt/format.h>
 
 #include "include/unordered_map.h"
 
@@ -234,6 +236,8 @@ inline std::ostream& operator<<(std::ostream& out, const std::map<A,B,Comp,Alloc
   return out;
 }
 
+
+
 template<class A, class B, class Comp, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::multimap<A,B,Comp,Alloc>& m)
 {
@@ -249,6 +253,27 @@ inline std::ostream& operator<<(std::ostream& out, const std::multimap<A,B,Comp,
 }
 
 } // namespace std
+
+
+
+template<class A, class B, class Comp, class Alloc>
+struct fmt::formatter<std::map<A,B,Comp,Alloc>> {
+  constexpr auto parse(format_parse_context& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(std::map<A,B,Comp,Alloc> const& m, FormatContext& ctx)
+  {
+    auto sep = "{"sv;
+    for (const auto& [k, v] : m) {
+      fmt::format_to(ctx.out(), "{}{}={}", sep, k, v);
+      sep=","sv;
+    }
+    return fmt::format_to(ctx.out(), "}}");
+  }
+};
 
 namespace boost {
 namespace tuples {

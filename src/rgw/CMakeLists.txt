@@ -256,6 +256,7 @@ target_link_libraries(rgw_a
   ${CURL_LIBRARIES}
   ${EXPAT_LIBRARIES}
   ${OPENLDAP_LIBRARIES} ${CRYPTO_LIBS}
+  fmt::fmt
   ICU::uc
   OATH::OATH)
 

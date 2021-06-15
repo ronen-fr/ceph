@@ -15,6 +15,8 @@
 #ifndef __CEPH_OS_HOBJECT_H
 #define __CEPH_OS_HOBJECT_H
 
+#include <fmt/format.h>
+
 #include "include/types.h"
 #include "include/cmp.h"
 
@@ -326,6 +328,22 @@ template<> struct hash<hobject_t> {
 } // namespace std
 
 std::ostream& operator<<(std::ostream& out, const hobject_t& o);
+
+template <> struct fmt::formatter<hobject_t> {
+  constexpr auto parse(format_parse_context& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext> auto format(hobject_t const& ho, FormatContext& ctx)
+  {
+    // for now - just use the existing operator
+    stringstream sst;
+    sst << ho;
+    return fmt::format_to(ctx.out(), "{}", sst.str());
+  }
+};
+
 
 WRITE_EQ_OPERATORS_7(hobject_t, hash, oid, get_key(), snap, pool, max, nspace)
 
