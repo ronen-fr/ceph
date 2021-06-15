@@ -175,8 +175,6 @@ struct osd_reqid_t {
 };
 WRITE_CLASS_DENC(osd_reqid_t)
 
-
-
 struct pg_shard_t {
   static const int32_t NO_OSD = 0x7fffffff;
   int32_t osd;
@@ -5939,8 +5937,6 @@ struct object_info_t {
 WRITE_CLASS_ENCODER_FEATURES(object_info_t)
 
 std::ostream& operator<<(std::ostream& out, const object_info_t& oi);
-
-
 
 // Object recovery
 struct ObjectRecoveryInfo {
