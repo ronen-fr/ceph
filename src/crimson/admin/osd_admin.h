@@ -1,10 +1,10 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
-
 #pragma once
 
 #include <memory>
-#include "common/ceph_context.h"
+
+#include "crimson/common/config_proxy.h"
 
 class CephContext;
 namespace crimson::osd {
@@ -26,8 +26,8 @@ class OsdAdmin {
   std::unique_ptr<crimson::admin::OsdAdminImp> m_imp;
 
  public:
-  OsdAdmin(crimson::osd::OSD*            osd,
-           CephContext*                  cct,
+  OsdAdmin(crimson::osd::OSD* osd,
+           CephContext* cct,
            crimson::common::ConfigProxy& conf);
   ~OsdAdmin();
   seastar::future<> register_admin_commands();

@@ -1,16 +1,18 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "common/version.h"
-#include "crimson/net/Socket.h"
 #include "crimson/admin/admin_socket.h"
-#include "crimson/common/log.h"
-#include "seastar/net/api.hh"
-#include "seastar/net/inet_address.hh"
-#include "seastar/core/reactor.hh"
-#include "seastar/core/thread.hh"
-#include "seastar/util/std-compat.hh"
+
 #include <boost/algorithm/string.hpp>
+#include <seastar/net/api.hh>
+#include <seastar/net/inet_address.hh>
+#include <seastar/core/reactor.hh>
+#include <seastar/core/thread.hh>
+#include <seastar/util/std-compat.hh>
+
+#include "common/version.h"
+#include "crimson/common/log.h"
+#include "crimson/net/Socket.h"
 
 /**
   A Crimson-wise version of the admin socket - implementation file
@@ -83,9 +85,9 @@ AdminHooksIter& AdminHooksIter::operator++()
 
   Note that we never throw or return a failed future.
  */
-seastar::future<bool> AdminSocketHook::call(std::string_view  command,
-                                            const cmdmap_t&   cmdmap,
-                                            std::string_view  format,
+seastar::future<bool> AdminSocketHook::call(std::string_view command,
+                                            const cmdmap_t& cmdmap,
+                                            std::string_view format,
                                             ceph::bufferlist& out) const
 {
   unique_ptr<Formatter> f{ Formatter::create(format, "json-pretty"sv,
@@ -104,7 +106,7 @@ seastar::future<bool> AdminSocketHook::call(std::string_view  command,
 
   /*
     call the command-specific hook.
-    A note re error handling:
+    A note regarding error handling:
         - will be modified to use the new 'erroretor'. For now:
         - exec_command() may throw or return an exceptional future. We return an
            error message on both failure scenarios.
@@ -112,7 +114,7 @@ seastar::future<bool> AdminSocketHook::call(std::string_view  command,
   return seastar::do_with(
     std::move(f), std::move(bres),
     [this, &command, &cmdmap, &format, &out](unique_ptr<Formatter>& ftr,
-                                             bool&                  br) {
+                                             bool& br) {
       return seastar::futurize_apply(
                [this, &command, &cmdmap, &format, &out, f = ftr.get()] {
                  return exec_command(f, command, cmdmap, format, out);
@@ -141,10 +143,10 @@ seastar::future<bool> AdminSocketHook::call(std::string_view  command,
 
 AdminSocket::AdminSocket(CephContext* cct) : m_cct(cct) {}
 
-AdminSocket::~AdminSocket() {}
+AdminSocket::~AdminSocket() = default;
 
 AsokRegistrationRes AdminSocket::server_registration(
-  AdminSocket::hook_server_tag       server_tag,
+  AdminSocket::hook_server_tag server_tag,
   const std::vector<AsokServiceDef>& apis_served)
 {
   auto ne = servers.try_emplace(server_tag, apis_served);
@@ -192,7 +194,7 @@ seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag)
     });
 }
 
-seastar::future<> AdminSocket::unregister_server(hook_server_tag  server_tag,
+seastar::future<> AdminSocket::unregister_server(hook_server_tag server_tag,
                                                  AdminSocketRef&& server_ref)
 {
   // reducing the ref-count on us (the ASOK server) by discarding server_ref:
@@ -241,7 +243,7 @@ AdminSocket::maybe_service_def_t AdminSocket::locate_subcmd(
 /*
   Note: parse_cmd() is executed with servers_tbl_rwlock held as shared
 */
-AdminSocket::Maybe_parsed AdminSocket::parse_cmd(std::string       command_text,
+AdminSocket::Maybe_parsed AdminSocket::parse_cmd(std::string command_text,
                                                  ceph::bufferlist& out)
 {
   /*
@@ -250,9 +252,9 @@ AdminSocket::Maybe_parsed AdminSocket::parse_cmd(std::string       command_text,
       - locate the "op-code" string (the 'prefix' segment)
       - prepare for command parameters extraction via cmdmap_t
   */
-  cmdmap_t       cmdmap;
+  cmdmap_t cmdmap;
   vector<string> cmdvec;
-  stringstream   errss;
+  stringstream errss;
 
   cmdvec.push_back(command_text);  // as cmdmap_from_json() likes
                                    // the input in this format
@@ -272,8 +274,8 @@ AdminSocket::Maybe_parsed AdminSocket::parse_cmd(std::string       command_text,
     return Maybe_parsed{ std::nullopt };
   }
 
-  string      format;
-  string      match;
+  string format;
+  string match;
   std::size_t full_command_seq;  // the full sequence, before we start chipping
                                  // away the end
   try {
@@ -317,8 +319,8 @@ AdminSocket::Maybe_parsed AdminSocket::parse_cmd(std::string       command_text,
   Note: validate_command() is executed with servers_tbl_rwlock held as shared
 */
 bool AdminSocket::validate_command(const parsed_command_t& parsed,
-                                   const std::string&      command_text,
-                                   ceph::bufferlist&       out) const
+                                   const std::string& command_text,
+                                   ceph::bufferlist& out) const
 {
   // did we receive any arguments apart from the command word(s)?
   if (parsed.m_cmd_seq_len == parsed.m_cmd.length())
@@ -365,7 +367,7 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline,
   return seastar::with_shared(
     servers_tbl_rwlock, [this, cmdline, &out]() mutable {
       ceph::bufferlist msgs;
-      Maybe_parsed     oparsed;
+      Maybe_parsed oparsed;
 
       bool ok_to_execute{ false };
       try {
@@ -400,11 +402,10 @@ seastar::future<> AdminSocket::execute_line(std::string cmdline,
     });
 }
 
-seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>&  inp,
+seastar::future<> AdminSocket::handle_client(seastar::input_stream<char>& inp,
                                              seastar::output_stream<char>& out)
 {
-  //  RRR \todo handle old protocol (see original code) - is still
-  //  needed?
+  // \todo handle old protocol (see original code) 
 
   return inp.read()
     .then([&out, this](auto full_cmd) {
@@ -438,9 +439,7 @@ seastar::future<> do_until_gate(seastar::gate& gt, AsyncAction action)
       return seastar::make_ready_future<>();
     return with_gate(gt, [act = std::move(act)]() {
       return act().handle_exception([](auto e) {
-        // std::cerr << "do_until_gate" << std::endl;
         // logger().warn("do_until_gate");
-        // return seastar::now();
       });
     });
   } };
@@ -496,8 +495,6 @@ seastar::future<> AdminSocket::stop()
 {
   // RF Dec-2019: abort_accept(), at least when applied to a UNIX-domain socket
   // with an 'epoll' backend, will not correctly abort a Seastar accept():
-  // epoll_wait() will signal EPOLLRDHUP+EPOLLIN, and that would be handled
-  // incorrectly.
 
   if (m_server_sock && !arrivals_gate.is_closed()) {
     // note that we check 'is_closed()' as if already closed - the server-sock
@@ -546,9 +543,9 @@ class VersionHook : public AdminSocketHook {
  public:
   explicit VersionHook(AdminSocket* as) : m_as{ as } {}
 
-  seastar::future<> exec_command(ceph::Formatter*                  f,
+  seastar::future<> exec_command(ceph::Formatter* f,
                                  [[maybe_unused]] std::string_view command,
-                                 [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                 [[maybe_unused]] const cmdmap_t& cmdmap,
                                  [[maybe_unused]] std::string_view format,
                                  [[maybe_unused]] bufferlist& out) const final
   {
@@ -574,9 +571,9 @@ class GitVersionHook : public AdminSocketHook {
     return "version"s;
   }
 
-  seastar::future<> exec_command(ceph::Formatter*                  f,
+  seastar::future<> exec_command(ceph::Formatter* f,
                                  [[maybe_unused]] std::string_view command,
-                                 [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                 [[maybe_unused]] const cmdmap_t& cmdmap,
                                  [[maybe_unused]] std::string_view format,
                                  [[maybe_unused]] bufferlist& out) const final
   {
@@ -591,9 +588,9 @@ class HelpHook : public AdminSocketHook {
  public:
   explicit HelpHook(AdminSocket* as) : m_as{ as } {}
 
-  seastar::future<> exec_command(ceph::Formatter*                  f,
+  seastar::future<> exec_command(ceph::Formatter* f,
                                  [[maybe_unused]] std::string_view command,
-                                 [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                 [[maybe_unused]] const cmdmap_t& cmdmap,
                                  [[maybe_unused]] std::string_view format,
                                  [[maybe_unused]] bufferlist& out) const final
   {
@@ -619,9 +616,9 @@ class GetdescsHook : public AdminSocketHook {
     return "command_descriptions"s;
   }
 
-  seastar::future<> exec_command(ceph::Formatter*                  f,
+  seastar::future<> exec_command(ceph::Formatter* f,
                                  [[maybe_unused]] std::string_view command,
-                                 [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                 [[maybe_unused]] const cmdmap_t& cmdmap,
                                  [[maybe_unused]] std::string_view format,
                                  [[maybe_unused]] bufferlist& out) const final
   {
@@ -647,8 +644,8 @@ class TestThrowHook : public AdminSocketHook {
   explicit TestThrowHook(AdminSocket* as) : m_as{ as } {}
 
   seastar::future<> exec_command([[maybe_unused]] ceph::Formatter* f,
-                                 std::string_view                  command,
-                                 [[maybe_unused]] const cmdmap_t&  cmdmap,
+                                 std::string_view command,
+                                 [[maybe_unused]] const cmdmap_t& cmdmap,
                                  [[maybe_unused]] std::string_view format,
                                  [[maybe_unused]] bufferlist& out) const final
   {
@@ -666,11 +663,11 @@ class TestThrowHook : public AdminSocketHook {
 /// the hooks that are served directly by the admin_socket server
 seastar::future<AsokRegistrationRes> AdminSocket::internal_hooks()
 {
-  version_hook    = std::make_unique<VersionHook>(this);
-  git_ver_hook    = std::make_unique<GitVersionHook>(this);
-  the0_hook       = std::make_unique<The0Hook>();
-  help_hook       = std::make_unique<HelpHook>(this);
-  getdescs_hook   = std::make_unique<GetdescsHook>(this);
+  version_hook = std::make_unique<VersionHook>(this);
+  git_ver_hook = std::make_unique<GitVersionHook>(this);
+  the0_hook = std::make_unique<The0Hook>();
+  help_hook = std::make_unique<HelpHook>(this);
+  getdescs_hook = std::make_unique<GetdescsHook>(this);
   test_throw_hook = std::make_unique<TestThrowHook>(this);
 
   // clang-format off

@@ -7,15 +7,17 @@
 
   Note: assumed to be running on a single core.
 */
+#include <map>
 #include <string>
 #include <string_view>
-#include <map>
-#include "seastar/core/future.hh"
-#include "seastar/core/shared_ptr.hh"
-#include "seastar/core/shared_mutex.hh"
-#include "seastar/core/gate.hh"
-#include "seastar/core/iostream.hh"
-#include "seastar/net/api.hh"
+
+#include <seastar/core/future.hh>
+#include <seastar/core/gate.hh>
+#include <seastar/core/iostream.hh>
+#include <seastar/core/shared_mutex.hh>
+#include <seastar/core/shared_ptr.hh>
+#include <seastar/net/api.hh>
+
 #include "common/cmdparse.h"
 
 class CephContext;
@@ -46,18 +48,18 @@ class AdminSocketHook {
       \retval 'false' for hook execution errors
   */
   virtual seastar::future<bool> call(std::string_view command,
-                                     const cmdmap_t&  cmdmap,
+                                     const cmdmap_t& cmdmap,
                                      std::string_view format,
-                                     bufferlist&      out) const;
+                                     bufferlist& out) const;
 
   virtual ~AdminSocketHook() {}
 
  protected:
   virtual seastar::future<> exec_command(ceph::Formatter* f,
                                          std::string_view command,
-                                         const cmdmap_t&  cmdmap,
+                                         const cmdmap_t& cmdmap,
                                          std::string_view format,
-                                         bufferlist&      out) const
+                                         bufferlist& out) const
   {
     return seastar::now();
   }
@@ -87,7 +89,7 @@ struct AsokServiceDef {
   const std::string command;  ///< the sequence of words that should be used
   const std::string cmddesc;  ///< the command syntax
   const AdminSocketHook* hook;
-  const std::string      help;  ///< help message
+  const std::string help;  ///< help message
 };
 
 class AdminHooksIter;  ///< an iterator over all APIs in all server blocks
@@ -107,7 +109,7 @@ class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
 
   AdminSocket(const AdminSocket&) = delete;
   AdminSocket& operator=(const AdminSocket&) = delete;
-  AdminSocket(AdminSocket&&)                 = delete;
+  AdminSocket(AdminSocket&&) = delete;
   AdminSocket& operator=(AdminSocket&&) = delete;
 
   using hook_server_tag = const void*;
@@ -138,8 +140,8 @@ class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
      \param apis_served a vector of the commands served by this server. Each
             command registration includes its identifying command string, the
             expected call syntax, and some help text.
-            A note re the help text: if empty, command will not be included in
-            'help' output.
+            A note regarding the help text: if empty, command will not be
+     included in 'help' output.
 
      \retval a shared ptr to the asok server itself, or nullopt if
              a block with same tag is already registered.
@@ -152,7 +154,7 @@ class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
      gives up on its shared-ownership of the asok server once the deregistration
      is complete.
   */
-  seastar::future<> unregister_server(hook_server_tag  server_tag,
+  seastar::future<> unregister_server(hook_server_tag server_tag,
                                       AdminSocketRef&& server_ref);
 
  private:
@@ -161,10 +163,10 @@ class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
      the registered APIs collection.
   */
   struct parsed_command_t {
-    std::string            m_cmd;
-    cmdmap_t               m_parameters;
-    std::string            m_format;
-    const AsokServiceDef*  m_api;
+    std::string m_cmd;
+    cmdmap_t m_parameters;
+    std::string m_format;
+    const AsokServiceDef* m_api;
     const AdminSocketHook* m_hook;
     /**
         the length of the whole command-sequence under the 'prefix' header
@@ -191,18 +193,18 @@ class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
    */
   seastar::future<> unregister_server(hook_server_tag server_tag);
 
-  seastar::future<> handle_client(seastar::input_stream<char>&  inp,
+  seastar::future<> handle_client(seastar::input_stream<char>& inp,
                                   seastar::output_stream<char>& out);
 
-  seastar::future<> execute_line(std::string                   cmdline,
+  seastar::future<> execute_line(std::string cmdline,
                                  seastar::output_stream<char>& out);
 
   seastar::future<> finalyze_response(seastar::output_stream<char>& out,
-                                      ceph::bufferlist&&            msgs);
+                                      ceph::bufferlist&& msgs);
 
   bool validate_command(const parsed_command_t& parsed,
-                        const std::string&      command_text,
-                        ceph::bufferlist&       out) const;
+                        const std::string& command_text,
+                        ceph::bufferlist& out) const;
 
   CephContext* m_cct;
 
@@ -238,14 +240,14 @@ class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
 
   // \todo possible improvement: cache all available commands, from all servers,
   // in one vector.
-  //  Recreate the list every register/unreg request.
+  // Recreate the list every register/unreg request.
 
   /**
     The servers table is protected by a rw-lock, to be acquired exclusively only
     when registering or removing a server.
     The lock is locked-shared when executing any hook.
    */
-  seastar::shared_mutex                   servers_tbl_rwlock;
+  seastar::shared_mutex servers_tbl_rwlock;
   std::map<hook_server_tag, server_block> servers;
 
   using maybe_service_def_t = std::optional<const AsokServiceDef*>;
@@ -266,7 +268,7 @@ class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
   AdminHooksIter end();
 
   using ServersListIt = std::map<hook_server_tag, server_block>::iterator;
-  using ServerApiIt   = std::vector<AsokServiceDef>::const_iterator;
+  using ServerApiIt = std::vector<AsokServiceDef>::const_iterator;
 
   friend class AdminSocketTest;
   friend class HelpHook;
@@ -300,10 +302,10 @@ struct AdminHooksIter
   AdminHooksIter& operator++();
 
  private:
-  AdminSocket&               m_master;
+  AdminSocket& m_master;
   AdminSocket::ServersListIt m_miter;
-  AdminSocket::ServerApiIt   m_siter;
-  bool                       m_end_marker;
+  AdminSocket::ServerApiIt m_siter;
+  bool m_end_marker;
 
   friend class AdminSocket;
 };
