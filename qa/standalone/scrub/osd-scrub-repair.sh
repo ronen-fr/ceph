@@ -337,7 +337,7 @@ function initiate_and_fetch_state() {
     env CEPH_ARGS= ceph --format json daemon $(get_asok_path $the_osd) scrub "$pgid"
 
     # wait for 'scrubbing' to appear
-    for ((i=0; i < 40; i++)); do
+    for ((i=0; i < 200; i++)); do
 
         st=`ceph pg $pgid query --format json | jq '.state' `
         echo $i ") state now: " $st
@@ -346,15 +346,14 @@ function initiate_and_fetch_state() {
             *scrubbing*repair* ) echo "found scrub+repair"; return 1;; # PR #41258 should have prevented this
             *scrubbing* ) echo "found scrub"; return 0;;
             *inconsistent* ) echo "Got here too late. Scrub has already finished"; return 1;;
+            *recovery* ) echo "Got here too late. Scrub has already finished."; return 1;;
             * ) echo $st;;
         esac
 
-        if [ $((i % 5)) == 4 ] ; then
+        if [ $((i % 10)) == 4 ] ; then
             echo "loop --------> " $i
-            flush_pg_stats
-	else
-            sleep 0.3
         fi
+	sleep 0.3
     done
 
     echo "Timeout waiting for deep-scrub of " $pgid " on " $the_osd " to start"
