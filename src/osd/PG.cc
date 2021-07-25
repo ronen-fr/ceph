@@ -1331,8 +1331,13 @@ Scrub::schedule_result_t PG::sched_scrub()
 	  << (is_clean() ? " <clean>" : " <not-clean>") << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
 
-  if (!is_primary() || !is_active() || !is_clean()) {
+  if (!is_primary() || !is_active() || !is_clean() || !m_scrubber) {
     return Scrub::schedule_result_t::bad_pg_state;
+  }
+
+  if (m_scrubber->is_scrub_active()) {
+    dout(15) << __func__ << ": already scrubbing" << dendl;
+    return Scrub::schedule_result_t::already_started;;
   }
 
   if (scrub_queued) {
