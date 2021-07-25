@@ -39,6 +39,7 @@ class ReplicaReservations {
   using OrigSet = decltype(std::declval<PG>().get_actingset());
 
   PG* m_pg;
+  spg_t m_pg_id;	///< a local copy of m_pg->pg_id
   OrigSet m_acting_set;
   OSDService* m_osds;
   std::vector<pg_shard_t> m_waited_for_peers;
@@ -54,6 +55,8 @@ class ReplicaReservations {
   void send_reject();
 
  public:
+  std::string m_log_msg_prefix;
+
   /**
    *  quietly discard all knowledge about existing reservations. No messages
    *  are sent to peers.
@@ -69,6 +72,8 @@ class ReplicaReservations {
   void handle_reserve_grant(OpRequestRef op, pg_shard_t from);
 
   void handle_reserve_reject(OpRequestRef op, pg_shard_t from);
+
+  std::ostream& gen_prefix(std::ostream& out) const;
 };
 
 /**
@@ -77,12 +82,15 @@ class ReplicaReservations {
 class LocalReservation {
   PG* m_pg;
   OSDService* m_osds;
+  spg_t m_pg_id;	///< a local copy of m_pg->pg_id
   bool m_holding_local_reservation{false};
 
  public:
   LocalReservation(PG* pg, OSDService* osds);
   ~LocalReservation();
   bool is_reserved() const { return m_holding_local_reservation; }
+
+  std::ostream& gen_prefix(std::ostream& out) const;
 };
 
 /**
@@ -91,6 +99,7 @@ class LocalReservation {
 class ReservedByRemotePrimary {
   PG* m_pg;
   OSDService* m_osds;
+  spg_t m_pg_id;	///< a local copy of m_pg->pg_id
   bool m_reserved_by_remote_primary{false};
   const epoch_t m_reserved_at;
 
@@ -101,6 +110,8 @@ class ReservedByRemotePrimary {
 
   /// compare the remembered reserved-at epoch to the current interval
   [[nodiscard]] bool is_stale() const;
+
+  std::ostream& gen_prefix(std::ostream& out) const;
 };
 
 /**
@@ -437,6 +448,8 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   virtual ~PgScrubber();  // must be defined separately, in the .cc file
 
   [[nodiscard]] bool is_scrub_active() const final { return m_active; }
+
+  std::string m_log_msg_prefix;
 
  private:
   void reset_internal_state();

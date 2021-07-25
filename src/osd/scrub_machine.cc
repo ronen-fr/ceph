@@ -62,10 +62,12 @@ bool ScrubMachine::is_reserving() const
 
 // for the rest of the code in this file - we know what PG we are dealing with:
 #undef dout_prefix
-#define dout_prefix _prefix(_dout, this->context<ScrubMachine>().m_pg)
-template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
+#define dout_prefix _prefix(_dout, this->context<ScrubMachine>())
+
+template <class T>
+static ostream& _prefix(std::ostream* _dout, T& t)
 {
-  return t->gen_prefix(*_dout) << " scrubberFSM pg(" << t->pg_id << ") ";
+  return *_dout << t.m_log_msg_prefix;
 }
 
 // ////////////// the actual actions
@@ -414,10 +416,15 @@ sc::result WaitDigestUpdate::react(const DigestUpdate&)
   return discard_event();
 }
 
-ScrubMachine::ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub)
-    : m_pg{pg}, m_pg_id{pg->pg_id}, m_scrbr{pg_scrub}
+ScrubMachine::ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub, int osd_num)
+    : m_pg_id{pg->pg_id}, m_scrbr{pg_scrub}
 {
-  dout(15) << "ScrubMachine created " << m_pg_id << dendl;
+  std::stringstream prefix;
+  prefix << "osd." << osd_num << " scrubberFSM pg(" << m_pg_id
+	 << "): ";
+  m_log_msg_prefix = prefix.str();
+
+  dout(15) << "ScrubMachine created" << dendl;
 }
 
 ScrubMachine::~ScrubMachine() = default;

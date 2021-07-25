@@ -23,15 +23,27 @@ using namespace Scrub;
 using namespace std::chrono;
 using namespace std::chrono_literals;
 
-
-#define dout_context (m_pg->cct)
+#define dout_context (m_osds->cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
-#define dout_prefix _prefix(_dout, this->m_pg)
+#define dout_prefix _prefix(_dout, this)
 
-template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
+template <class T>
+static ostream& _prefix(std::ostream* _dout, T* t)
 {
-  return t->gen_prefix(*_dout) << " scrubber pg(" << t->pg_id << ") ";
+  return t->gen_prefix(*_dout);
+}
+
+template <>
+ostream& _prefix<PgScrubber>(std::ostream* _dout, PgScrubber* t)
+{
+  return *_dout << t->m_log_msg_prefix;
+}
+
+template <>
+ostream& _prefix<const PgScrubber>(std::ostream* _dout, const PgScrubber* t)
+{
+  return *_dout << t->m_log_msg_prefix;
 }
 
 ostream& operator<<(ostream& out, const scrub_flags_t& sf)
@@ -1889,7 +1901,11 @@ PgScrubber::PgScrubber(PG* pg)
     , m_pg_whoami{pg->pg_whoami}
     , preemption_data{pg}
 {
-  m_fsm = std::make_unique<ScrubMachine>(m_pg, this);
+  std::stringstream prefix;
+  prefix << "osd." << m_osds->whoami << " scrubber pg(" << m_pg_id << "): ";
+  m_log_msg_prefix = prefix.str();
+
+  m_fsm = std::make_unique<ScrubMachine>(m_pg, this, m_osds->whoami);
   m_fsm->initiate();
 }
 
@@ -2068,11 +2084,19 @@ void ReplicaReservations::release_replica(pg_shard_t peer, epoch_t epoch)
 
 ReplicaReservations::ReplicaReservations(PG* pg, pg_shard_t whoami)
     : m_pg{pg}
+    , m_pg_id{pg->pg_id}
     , m_acting_set{pg->get_actingset()}
     , m_osds{m_pg->osd}
     , m_pending{static_cast<int>(m_acting_set.size()) - 1}
 {
   epoch_t epoch = m_pg->get_osdmap_epoch();
+
+  {
+    std::stringstream prefix;
+    prefix << "osd." << m_osds->whoami << " ep: " << epoch
+	   << " scrubber::ReplicaReservations pg(" << m_pg_id << "): ";
+    m_log_msg_prefix = prefix.str();
+  }
 
   // handle the special case of no replicas
   if (m_pending <= 0) {
@@ -2088,7 +2112,7 @@ ReplicaReservations::ReplicaReservations(PG* pg, pg_shard_t whoami)
 				    MOSDScrubReserve::REQUEST, m_pg->pg_whoami);
       m_osds->send_message_osd_cluster(p.osd, m, epoch);
       m_waited_for_peers.push_back(p);
-      dout(10) << __func__ << " <ReplicaReservations> reserve<-> " << p.osd << dendl;
+      dout(10) << __func__ << ": reserve " << p.osd << dendl;
     }
   }
 }
@@ -2105,7 +2129,7 @@ void ReplicaReservations::send_reject()
 
 void ReplicaReservations::discard_all()
 {
-  dout(10) << __func__ << " " << m_reserved_peers << dendl;
+  dout(10) << __func__ << ": " << m_reserved_peers << dendl;
 
   m_had_rejections = true;  // preventing late-coming responses from triggering events
   m_reserved_peers.clear();
@@ -2141,7 +2165,7 @@ ReplicaReservations::~ReplicaReservations()
  */
 void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
 {
-  dout(10) << __func__ << " <ReplicaReservations> granted-> " << from << dendl;
+  dout(10) << __func__ << ": granted by " << from << dendl;
   op->mark_started();
 
   {
@@ -2154,17 +2178,19 @@ void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
   // are we forced to reject the reservation?
   if (m_had_rejections) {
 
-    dout(10) << " rejecting late-coming reservation from " << from << dendl;
+    dout(10) << __func__ << ": rejecting late-coming reservation from "
+	     << from << dendl;
     release_replica(from, m_pg->get_osdmap_epoch());
 
   } else if (std::find(m_reserved_peers.begin(), m_reserved_peers.end(), from) !=
 	     m_reserved_peers.end()) {
 
-    dout(10) << " already had osd." << from << " reserved" << dendl;
+    dout(10) << __func__ << ": already had osd." << from << " reserved" << dendl;
 
   } else {
 
-    dout(10) << " osd." << from << " scrub reserve = success" << dendl;
+    dout(10) << __func__ << ": osd." << from << " scrub reserve = success"
+	     << dendl;
     m_reserved_peers.push_back(from);
     if (--m_pending == 0) {
       send_all_done();
@@ -2174,8 +2200,8 @@ void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
 
 void ReplicaReservations::handle_reserve_reject(OpRequestRef op, pg_shard_t from)
 {
-  dout(10) << __func__ << " <ReplicaReservations> rejected-> " << from << dendl;
-  dout(10) << __func__ << " " << *op->get_req() << dendl;
+  dout(10) << __func__ << ": rejected by " << from << dendl;
+  dout(15) << __func__ << ": " << *op->get_req() << dendl;
   op->mark_started();
 
   {
@@ -2188,27 +2214,33 @@ void ReplicaReservations::handle_reserve_reject(OpRequestRef op, pg_shard_t from
   if (m_had_rejections) {
 
     // our failure was already handled when the first rejection arrived
-    dout(15) << " ignoring late-coming rejection from " << from << dendl;
+    dout(15) << __func__ << ": ignoring late-coming rejection from "
+	     << from << dendl;
 
   } else if (std::find(m_reserved_peers.begin(), m_reserved_peers.end(), from) !=
 	     m_reserved_peers.end()) {
 
-    dout(10) << " already had osd." << from << " reserved" << dendl;
+    dout(10) << __func__ << ": already had osd." << from << " reserved" << dendl;
 
   } else {
 
-    dout(10) << " osd." << from << " scrub reserve = fail" << dendl;
+    dout(10) << __func__ << ": osd." << from << " scrub reserve = fail" << dendl;
     m_had_rejections = true;  // preventing any additional notifications
     send_reject();
   }
 }
 
+std::ostream& ReplicaReservations::gen_prefix(std::ostream& out) const
+{
+  return out << m_log_msg_prefix;
+}
 
 // ///////////////////// LocalReservation //////////////////////////////////
 
 LocalReservation::LocalReservation(PG* pg, OSDService* osds)
     : m_pg{pg}	// holding the "whole PG" for dout() sake
     , m_osds{osds}
+    , m_pg_id{pg->pg_id}
 {
   if (!m_osds->inc_scrubs_local()) {
     dout(10) << __func__ << ": failed to reserve locally " << dendl;
@@ -2228,11 +2260,18 @@ LocalReservation::~LocalReservation()
   }
 }
 
+std::ostream& LocalReservation::gen_prefix(std::ostream& out) const
+{
+  return out << "osd." << m_osds->whoami << " scrubber::LocalReservation pg("
+	     << m_pg_id << ") ";
+}
 
 // ///////////////////// ReservedByRemotePrimary ///////////////////////////////
 
-ReservedByRemotePrimary::ReservedByRemotePrimary(PG* pg, OSDService* osds, epoch_t epoch)
-    : m_pg{pg}, m_osds{osds}, m_reserved_at{epoch}
+ReservedByRemotePrimary::ReservedByRemotePrimary(PG* pg,
+						 OSDService* osds,
+						 epoch_t epoch)
+    : m_pg{pg}, m_osds{osds}, m_pg_id{pg->pg_id}, m_reserved_at{epoch}
 {
   if (!m_osds->inc_scrubs_remote()) {
     dout(10) << __func__ << ": failed to reserve at Primary request" << dendl;
@@ -2240,7 +2279,8 @@ ReservedByRemotePrimary::ReservedByRemotePrimary(PG* pg, OSDService* osds, epoch
     return;
   }
 
-  dout(20) << __func__ << ": scrub resources reserved at Primary request" << dendl;
+  dout(20) << __func__ << ": scrub resources reserved at Primary request"
+	   << dendl;
   m_reserved_by_remote_primary = true;
 }
 
@@ -2255,6 +2295,12 @@ ReservedByRemotePrimary::~ReservedByRemotePrimary()
     m_reserved_by_remote_primary = false;
     m_osds->dec_scrubs_remote();
   }
+}
+
+std::ostream& ReservedByRemotePrimary::gen_prefix(std::ostream& out) const
+{
+  return out << "osd." << m_osds->whoami
+	     << " scrubber::ReservedByRemotePrimary pg(" << m_pg_id << ") ";
 }
 
 // ///////////////////// MapsCollectionStatus ////////////////////////////////
