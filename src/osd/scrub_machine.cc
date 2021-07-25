@@ -25,7 +25,7 @@ namespace sc = boost::statechart;
 #define DECLARE_LOCALS                                           \
   ScrubMachineListener* scrbr = context<ScrubMachine>().m_scrbr; \
   std::ignore = scrbr;                                           \
-  auto pg_id = context<ScrubMachine>().m_pg_id;                  \
+  auto pg_id = outermost_context().m_pg_id;                  \
   std::ignore = pg_id;
 
 namespace Scrub {
@@ -42,13 +42,34 @@ void on_event_discard(std::string_view nm)
   dout(20) << " event: --^^^^---- " << nm << dendl;
 }
 
-void ScrubMachine::my_states() const
+// void ScrubMachine::my_states() const
+// {
+//   for (auto si = state_begin(); si != state_end(); ++si) {
+//     const auto& siw{*si};  // prevents a warning re side-effects
+//     dout(20) << " state: " << boost::core::demangle(typeid(siw).name()) << dendl;
+//   }
+// }
+// 
+std::string ScrubMachine::current_states_desc() const
 {
+  std::string sts{"<"};
   for (auto si = state_begin(); si != state_end(); ++si) {
-    const auto& siw{*si};  // prevents a warning re side-effects
-    dout(20) << " state: " << boost::core::demangle(typeid(siw).name()) << dendl;
+    const auto& siw{ *si };  // prevents a warning re side-effects
+    // the '7' is the size of the 'scrub::'
+    sts += boost::core::demangle(typeid(siw).name()).substr(7, std::string::npos) + "/";
   }
+  return sts + ">";
 }
+
+// std::string ScrubMachine::state_for_dout() const
+// {
+//   std::string sts;
+//   for (auto si = state_begin(); si != state_end(); ++si) {
+//     const auto& siw{*si};  // prevents a warning re side-effects
+//     sts += "." + boost::core::demangle(typeid(siw).name()) + ".";
+//   }
+//   return sts;
+// }
 
 void ScrubMachine::assert_not_active() const
 {
@@ -70,10 +91,14 @@ bool ScrubMachine::is_accepting_updates() const
 
 // for the rest of the code in this file - we know what PG we are dealing with:
 #undef dout_prefix
-#define dout_prefix _prefix(_dout, this->context<ScrubMachine>().m_pg)
-template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
+#define dout_prefix _prefix(_dout, this->context<ScrubMachine>())
+
+template <class T>
+static ostream& _prefix(std::ostream* _dout, T& t)
 {
-  return t->gen_prefix(*_dout) << " scrubberFSM pg(" << t->pg_id << ") ";
+  //return t->gen_prefix(*_dout);
+
+  return *_dout << t.m_log_msg_prefix;
 }
 
 // ////////////// the actual actions
@@ -431,10 +456,15 @@ sc::result WaitDigestUpdate::react(const DigestUpdate&)
   return discard_event();
 }
 
-ScrubMachine::ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub)
-    : m_pg{pg}, m_pg_id{pg->pg_id}, m_scrbr{pg_scrub}
+ScrubMachine::ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub, int osd_num)
+    : m_pg_id{pg->pg_id}, m_scrbr{pg_scrub}
 {
-  dout(15) << "ScrubMachine created " << m_pg_id << dendl;
+  std::stringstream prefix;
+  prefix << "osd." << osd_num << " scrubberFSM pg[" << m_pg_id
+	 << "]: ";
+  m_log_msg_prefix = prefix.str();
+
+  dout(15) << "ScrubMachine created" << dendl;
 }
 
 ScrubMachine::~ScrubMachine() = default;

@@ -1331,11 +1331,11 @@ bool PG::sched_scrub()
 	  << (is_clean() ? " <clean>" : " <not-clean>") << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
 
-  if (m_scrubber && m_scrubber->is_scrub_active()) {
+  if (!is_primary() || !is_active() || !is_clean() || !m_scrubber) {
     return false;
   }
-  
-  if (!is_primary() || !is_active() || !is_clean()) {
+
+  if (m_scrubber->is_scrub_active()) {
     return false;
   }
 

@@ -121,14 +121,14 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   friend class PgScrubber;
 
  public:
-  explicit ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub);
+  explicit ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub, int osd_num);
   ~ScrubMachine();
 
-  PG* m_pg;  // only used for dout messages
   spg_t m_pg_id;
   ScrubMachineListener* m_scrbr;
+  std::string m_log_msg_prefix;
 
-  void my_states() const;
+  std::string current_states_desc() const;
   void assert_not_active() const;
   [[nodiscard]] bool is_reserving() const;
   [[nodiscard]] bool is_accepting_updates() const;
