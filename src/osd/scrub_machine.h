@@ -42,7 +42,7 @@ void on_event_discard(std::string_view nm);
     E()                                                 \
     {                                                   \
       if (!actv++)                                      \
-	on_event_creation(#E);                          \
+        on_event_creation(#E);                          \
     }                                                   \
     ~E()                                                \
     {                                                   \
