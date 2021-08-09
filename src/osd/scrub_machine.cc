@@ -75,6 +75,8 @@ template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
 NotActive::NotActive(my_context ctx) : my_base(ctx)
 {
   dout(10) << "-- state -->> NotActive" << dendl;
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  scrbr->clear_being_scrubbed();
 }
 
 // ----------------------- ReservingReplicas ---------------------------------
@@ -122,6 +124,7 @@ ActiveScrubbing::~ActiveScrubbing()
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(15) << __func__ << dendl;
   scrbr->unreserve_replicas();
+  scrbr->clear_being_scrubbed();
 }
 
 /*

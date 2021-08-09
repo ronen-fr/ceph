@@ -139,7 +139,6 @@ class MapsCollectionStatus {
   friend ostream& operator<<(ostream& out, const MapsCollectionStatus& sf);
 };
 
-
 }  // namespace Scrub
 
 
@@ -311,6 +310,8 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void scrub_clear_state() final;
 
+  bool is_being_scrubbed() const final;
+
   /**
    *  add to scrub statistics, but only if the soid is below the scrub start
    */
@@ -405,6 +406,9 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   void reserve_replicas() final;
 
   [[nodiscard]] bool was_epoch_changed() const final;
+
+  void set_being_scrubbed() final;
+  void clear_being_scrubbed() final;
 
   void mark_local_map_ready() final;
 
@@ -554,6 +558,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   const pg_shard_t m_pg_whoami;	 ///< a local copy of m_pg->pg_whoami;
 
   epoch_t m_interval_start{0};  ///< interval's 'from' of when scrubbing was first scheduled
+
   /*
    * the exact epoch when the scrubbing actually started (started here - cleared checks
    *  for no-scrub conf). Incoming events are verified against this, with stale events
@@ -563,6 +568,26 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   scrub_flags_t m_flags;
 
   bool m_active{false};
+
+  /**
+   * a flag designed to prevent the initiation of a second scrub on a PG for which scrubbing
+   * has been initiated.
+   *
+   * set once scrubbing was initiated (i.e. - even before the FSM event that
+   * will trigger a state-change out of Inactive was handled), and only reset
+   * once the FSM is back in Inactive.
+   * In other words - encompasses:
+   *   - the time period covered today by 'queued', and
+   *   - the time when m_active is set, and
+   *   - all the time from scrub_finish() calling update_stats() till the
+   *     FSM handles the 'finished' event
+   *
+   * Compared with 'm_active', this flag is asserted earlier (immediatly when queuing a scrub
+   * op), and remains ON for longer (until the scrubber's FSM is back to Inactive).
+   *
+   * Note: PR #40984 relocates this flag to ScrubJob.
+   */
+  std::atomic_bool m_being_scrubbed{false};
 
   eversion_t m_subset_last_update{};
 
