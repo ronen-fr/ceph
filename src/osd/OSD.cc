@@ -7770,7 +7770,7 @@ void OSD::sched_scrub()
       }
 
       // This has already started, so go on to the next scrub job
-      if (pg->is_scrub_active()) {
+      if (pg->is_being_scrubbed()) {
 	pg->unlock();
 	dout(20) << __func__ << ": already in progress pgid " << scrub_job.pgid << dendl;
 	continue;

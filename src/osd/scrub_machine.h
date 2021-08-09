@@ -92,7 +92,7 @@ MEV(DigestUpdate)  ///< external. called upon success of a MODIFY op. See
 
 MEV(AllChunksDone)
 
-MEV(MapsCompared)  ///< (Crimson) maps_compare_n_cleanup() transactions are done
+MEV(MapsCompared)  ///< maps_compare_n_cleanup() transactions are done
 
 MEV(StartReplica)  ///< initiating replica scrub.
 
@@ -310,8 +310,11 @@ struct WaitDigestUpdate : sc::state<WaitDigestUpdate, ActiveScrubbing> {
 
   using reactions = mpl::list<sc::custom_reaction<DigestUpdate>,
 			      sc::transition<NextChunk, PendingTimer>,
-			      sc::transition<ScrubFinished, NotActive>>;
+			      sc::custom_reaction<ScrubFinished>>;
   sc::result react(const DigestUpdate&);
+  sc::result react(const ScrubFinished&);
+
+  //bool finish_sequence_started{false};	// see comment in react code
 };
 
 // ----------------------------- the "replica active" states -----------------------
