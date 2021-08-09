@@ -433,19 +433,20 @@ void PG::queue_scrub_after_repair()
   m_planned_scrub.check_repair = true;
   m_planned_scrub.must_scrub = true;
 
-  if (is_scrubbing()) {
-    dout(10) << __func__ << ": scrubbing already" << dendl;
+  if (m_scrubber->is_being_scrubbed()) {
+    dout(5) << __func__ << ": scrubbing already "
+            << " is_scrubbing/queued " << is_scrubbing() << " / "
+            << scrub_queued << dendl;
     return;
   }
-  if (scrub_queued) {
-    dout(10) << __func__ << ": already queued" << dendl;
-    return;
-  }
+
+  ceph_assert(!scrub_queued); // RRR to be removed
 
   m_scrubber->set_op_parameters(m_planned_scrub);
   dout(15) << __func__ << ": queueing" << dendl;
 
   scrub_queued = true;
+  m_scrubber->set_being_scrubbed();
   osd->queue_scrub_after_repair(this, Scrub::scrub_prio_t::high_priority);
 }
 
@@ -633,8 +634,8 @@ void PG::release_backoffs(const hobject_t& begin, const hobject_t& end)
       auto q = p->second.begin();
       while (q != p->second.end()) {
 	dout(20) << __func__ << " checking  " << *q << dendl;
-	int r = cmp((*q)->begin, begin);
-	if (r == 0 || (r > 0 && (*q)->end < end)) {
+	int rr = cmp((*q)->begin, begin);
+	if (rr == 0 || (rr > 0 && (*q)->end < end)) {
 	  bv.push_back(*q);
 	  q = p->second.erase(q);
 	} else {
@@ -760,7 +761,7 @@ void PG::set_probe_targets(const set<pg_shard_t> &probe_set)
 
 void PG::send_cluster_message(
   int target, MessageRef m,
-  epoch_t epoch, bool share_map_update=false)
+  epoch_t epoch, bool share_map_update)
 {
   ConnectionRef con = osd->get_con_osd_cluster(
     target, get_osdmap_epoch());
@@ -1331,18 +1332,13 @@ bool PG::sched_scrub()
 	  << (is_clean() ? " <clean>" : " <not-clean>") << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
 
-  if (m_scrubber && m_scrubber->is_scrub_active()) {
-    return false;
-  }
-  
-  if (!is_primary() || !is_active() || !is_clean()) {
+  if (!m_scrubber || m_scrubber->is_being_scrubbed()) {
     return false;
   }
 
-  if (scrub_queued) {
-    // only applicable to the very first time a scrub event is queued
-    // (until handled and posted to the scrub FSM)
-    dout(10) << __func__ << ": already queued" << dendl;
+  ceph_assert(!scrub_queued); // RRR to be removed
+
+  if (!is_primary() || !is_active() || !is_clean()) {
     return false;
   }
 
@@ -1378,6 +1374,7 @@ bool PG::sched_scrub()
   dout(10) << __func__ << ": queueing" << dendl;
 
   scrub_queued = true;
+  m_scrubber->set_being_scrubbed();
   osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
   return true;
 }
@@ -1513,6 +1510,7 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
       verify_periodic_scrub_mode(allow_deep_scrub, try_to_auto_repair,
 				 allow_regular_scrub, has_deep_errors, upd_flags);
     if (!can_start_periodic) {
+      dout(20) << __func__ << ": no periodic scrubs allowed" << dendl;
       return std::nullopt;
     }
   }
@@ -1534,7 +1532,9 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
 
 void PG::reg_next_scrub()
 {
-  m_scrubber->reg_next_scrub(m_planned_scrub);
+  if (m_scrubber) {
+    m_scrubber->reg_next_scrub(m_planned_scrub);
+  }
 }
 
 void PG::on_info_history_change()
@@ -2073,6 +2073,9 @@ void PG::forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view
   if (is_active() && m_scrubber) {
     ((*m_scrubber).*fn)(epoch_queued);
   } else {
+    if (m_scrubber) {
+      m_scrubber->clear_being_scrubbed(); // RRR rethink: we are not resetting the scrubber here. Is that a problem?
+    }
     // pg might be in the process of being deleted
     dout(5) << __func__ << " refusing to forward. " << (is_clean() ? "(clean) " : "(not clean) ") <<
 	      (is_active() ? "(active) " : "(not active) ") <<  dendl;
@@ -2539,7 +2542,7 @@ std::pair<ghobject_t, bool> PG::do_delete_work(
       epoch_t e = get_osdmap()->get_epoch();
       PGRef pgref(this);
       auto delete_requeue_callback = new LambdaContext([this, pgref, e](int r) {
-        dout(20) << __func__ << " wake up at "
+        dout(20) << "do_delete_work() [cb] wake up at "
                  << ceph_clock_now()
 	         << ", re-queuing delete" << dendl;
         std::scoped_lock locker{*this};
