@@ -201,7 +201,6 @@ PG::PG(OSDService *o, OSDMapRef curmap,
   info_struct_v(0),
   pgmeta_oid(p.make_pgmeta_oid()),
   stat_queue_item(this),
-  scrub_queued(false),
   recovery_queued(false),
   recovery_ops_active(0),
   backfill_reserving(false),
@@ -433,19 +432,16 @@ void PG::queue_scrub_after_repair()
   m_planned_scrub.check_repair = true;
   m_planned_scrub.must_scrub = true;
 
-  if (is_scrubbing()) {
-    dout(10) << __func__ << ": scrubbing already" << dendl;
-    return;
-  }
-  if (scrub_queued) {
-    dout(10) << __func__ << ": already queued" << dendl;
+  if (m_scrubber->is_being_scrubbed()) {
+    dout(10) << __func__ << ": scrubbing already "
+            << " is_scrubbing: " << is_scrubbing()<< dendl;
     return;
   }
 
   m_scrubber->set_op_parameters(m_planned_scrub);
   dout(15) << __func__ << ": queueing" << dendl;
 
-  scrub_queued = true;
+  m_scrubber->set_being_scrubbed();
   osd->queue_scrub_after_repair(this, Scrub::scrub_prio_t::high_priority);
 }
 
@@ -633,8 +629,8 @@ void PG::release_backoffs(const hobject_t& begin, const hobject_t& end)
       auto q = p->second.begin();
       while (q != p->second.end()) {
 	dout(20) << __func__ << " checking  " << *q << dendl;
-	int r = cmp((*q)->begin, begin);
-	if (r == 0 || (r > 0 && (*q)->end < end)) {
+	int rr = cmp((*q)->begin, begin);
+	if (rr == 0 || (rr > 0 && (*q)->end < end)) {
 	  bv.push_back(*q);
 	  q = p->second.erase(q);
 	} else {
@@ -760,7 +756,7 @@ void PG::set_probe_targets(const set<pg_shard_t> &probe_set)
 
 void PG::send_cluster_message(
   int target, MessageRef m,
-  epoch_t epoch, bool share_map_update=false)
+  epoch_t epoch, bool share_map_update)
 {
   ConnectionRef con = osd->get_con_osd_cluster(
     target, get_osdmap_epoch());
@@ -1331,15 +1327,12 @@ Scrub::schedule_result_t PG::sched_scrub()
 	  << (is_clean() ? " <clean>" : " <not-clean>") << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
 
-  if (!is_primary() || !is_active() || !is_clean()) {
-    return Scrub::schedule_result_t::bad_pg_state;
+  if (!m_scrubber || m_scrubber->is_being_scrubbed()) {
+    return Scrub::schedule_result_t::already_started;;
   }
 
-  if (scrub_queued) {
-    // only applicable to the very first time a scrub event is queued
-    // (until handled and posted to the scrub FSM)
-    dout(10) << __func__ << ": already queued" << dendl;
-    return Scrub::schedule_result_t::already_started;
+  if (!is_primary() || !is_active() || !is_clean()) {
+    return Scrub::schedule_result_t::bad_pg_state;
   }
 
   // analyse the combination of the requested scrub flags, the osd/pool configuration
@@ -1372,8 +1365,7 @@ Scrub::schedule_result_t PG::sched_scrub()
   m_scrubber->set_op_parameters(m_planned_scrub);
 
   dout(10) << __func__ << ": queueing" << dendl;
-
-  scrub_queued = true;
+  m_scrubber->set_being_scrubbed();
   osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
   return Scrub::schedule_result_t::scrub_initiated;
 }
@@ -1509,6 +1501,8 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
       verify_periodic_scrub_mode(allow_deep_scrub, try_to_auto_repair,
 				 allow_regular_scrub, has_deep_errors, upd_flags);
     if (!can_start_periodic) {
+      // "I don't want no scrub"
+      dout(20) << __func__ << ": no periodic scrubs allowed" << dendl;
       return std::nullopt;
     }
   }
@@ -1587,8 +1581,14 @@ void PG::on_role_change() {
 }
 
 void PG::on_new_interval() {
-  dout(20) << __func__ << " scrub_queued was " << scrub_queued << " flags: " << m_planned_scrub << dendl;
-  scrub_queued = false;
+  // log some scrub data before we react to the interval
+  if (m_scrubber) {
+    dout(20) << __func__ << (m_scrubber->is_being_scrubbed() ? " scrubbing " : " ")
+             << "flags: " << m_planned_scrub << dendl;
+  } else {
+    dout(20) << __func__ << dendl;
+  }
+
   projected_last_update = eversion_t();
   cancel_recovery();
   if (m_scrubber) {
@@ -2092,6 +2092,9 @@ void PG::forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view
   if (is_active() && m_scrubber) {
     ((*m_scrubber).*fn)(epoch_queued);
   } else {
+    if (m_scrubber) {
+      m_scrubber->clear_being_scrubbed();
+    }
     // pg might be in the process of being deleted
     dout(5) << __func__ << " refusing to forward. " << (is_clean() ? "(clean) " : "(not clean) ") <<
 	      (is_active() ? "(active) " : "(not active) ") <<  dendl;
@@ -2128,7 +2131,6 @@ void PG::replica_scrub(epoch_t epoch_queued,
 {
   dout(10) << __func__ << " queued at: " << epoch_queued
 	   << (is_primary() ? " (primary)" : " (replica)") << dendl;
-  scrub_queued = false;
   forward_scrub_event(&ScrubPgIF::send_start_replica, epoch_queued, act_token,
 		      "StartReplica/nw");
 }
