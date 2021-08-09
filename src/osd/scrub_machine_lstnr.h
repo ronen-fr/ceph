@@ -103,6 +103,9 @@ struct ScrubMachineListener {
 
   virtual void on_digest_updates() = 0;
 
+  /// the part that actually finalizes a scrub
+  virtual void scrub_finish() = 0;
+
   /**
    * Prepare a MOSDRepScrubMap message carrying the requested scrub map
    * @param was_preempted - were we preempted?
@@ -147,6 +150,21 @@ struct ScrubMachineListener {
   virtual void reserve_replicas() = 0;
 
   virtual void unreserve_replicas() = 0;
+
+  /**
+   * Manipulate the 'I am being scrubbed now' flag in the Scrubber's
+   * scubr-job.
+   */
+  virtual void set_being_scrubbed() = 0;
+  virtual void clear_being_scrubbed() = 0;
+
+  /**
+   *  manipulating scrubber's m_finish_sequence_started (signaling a
+   *  sub-state of WaitDigestUpdate, when waiting is done with).
+   */
+  virtual void set_finishing_flag() = 0;
+  virtual void clear_finishing_flag() = 0;
+  [[nodiscard]] virtual bool is_finishing_flag_set() const = 0;
 
   /**
    * the FSM interface into the "are we waiting for maps, either our own or from
