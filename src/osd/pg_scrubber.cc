@@ -179,6 +179,8 @@ void PgScrubber::initiate_regular_scrub(epoch_t epoch_queued)
     m_fsm->my_states();
     m_fsm->process_event(StartScrub{});
     dout(10) << "scrubber event --<< StartScrub" << dendl;
+  } else {
+    clear_being_scrubbed();
   }
 }
 
@@ -192,6 +194,8 @@ void PgScrubber::initiate_scrub_after_repair(epoch_t epoch_queued)
     m_fsm->my_states();
     m_fsm->process_event(AfterRepairScrub{});
     dout(10) << "scrubber event --<< AfterRepairScrub" << dendl;
+  } else {
+    clear_being_scrubbed();
   }
 }
 
@@ -1212,6 +1216,24 @@ void PgScrubber::replica_scrub_op(OpRequestRef op)
     return;
   }
 
+  if (is_being_scrubbed()) {
+    // this is bug!
+    // Somehow, we have received a new scrub request from our Primary, before having finished
+    // with the previous one. Did we go through an interval change without reseting the FSM?
+    // Possible responses:
+    // - crashing (the original assert_not_active() implemented that one), or
+    // - trying to recover:
+    //  - (logging enough information to debug this scenario)
+    //  - reset the FSM.
+    dout(1) << __func__ << " error: a second scrub-op received while handling the previous one"
+            << dendl;
+
+    scrub_clear_state();
+    dout(1) << __func__ << " after a reset. Now handling the new OP " << dendl;
+  }
+  // make sure the FSM is at NotActive
+  m_fsm->assert_not_active();
+
   replica_scrubmap = ScrubMap{};
   replica_scrubmap_pos = ScrubMapBuilder{};
 
@@ -1230,9 +1252,7 @@ void PgScrubber::replica_scrub_op(OpRequestRef op)
 
   replica_scrubmap_pos.reset();
 
-  // make sure the FSM is at NotActive
-  m_fsm->assert_not_active();
-
+  set_being_scrubbed();
   m_osds->queue_for_rep_scrub(m_pg, m_replica_request_priority, m_flags.priority);
 }
 
@@ -1584,6 +1604,21 @@ void PgScrubber::unreserve_replicas()
   m_reservations.reset();
 }
 
+void PgScrubber::set_being_scrubbed()
+{
+  m_being_scrubbed = true;
+}
+
+void PgScrubber::clear_being_scrubbed()
+{
+    m_being_scrubbed = false;
+}
+
+bool PgScrubber::is_being_scrubbed() const
+{
+  return m_being_scrubbed;
+}
+
 [[nodiscard]] bool PgScrubber::scrub_process_inconsistent()
 {
   dout(10) << __func__ << ": checking authoritative (mode="
@@ -1635,6 +1670,7 @@ void PgScrubber::scrub_finish()
 	   << ". deep_scrub_on_error: " << m_flags.deep_scrub_on_error << dendl;
 
   ceph_assert(m_pg->is_locked());
+  ceph_assert(is_being_scrubbed()); // RRR to be removed
 
   m_pg->m_planned_scrub = requested_scrub_t{};
 
@@ -1783,6 +1819,8 @@ void PgScrubber::scrub_finish()
     request_rescrubbing(m_pg->m_planned_scrub);
   }
 
+  ceph_assert(is_being_scrubbed()); // RRR to be removed
+
   if (m_pg->is_active() && m_pg->is_primary()) {
     m_pg->recovery_state.share_pg_info();
   }
@@ -1798,6 +1836,8 @@ void PgScrubber::on_digest_updates()
     // do nothing for now. We will be called again when new updates arrive
     return;
   }
+
+  ceph_assert(is_being_scrubbed()); // RRR to be removed
 
   // got all updates, and finished with this chunk. Any more?
   if (m_end.is_max()) {
@@ -2002,6 +2042,7 @@ void PgScrubber::reset_internal_state()
   m_sleep_started_at = utime_t{};
 
   m_active = false;
+  clear_being_scrubbed();
 }
 
 const OSDMapRef& PgScrubber::get_osdmap() const

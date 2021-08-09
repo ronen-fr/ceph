@@ -139,7 +139,6 @@ class MapsCollectionStatus {
   friend ostream& operator<<(ostream& out, const MapsCollectionStatus& sf);
 };
 
-
 }  // namespace Scrub
 
 
@@ -311,6 +310,8 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void scrub_clear_state() final;
 
+  bool is_being_scrubbed() const final;
+
   /**
    *  add to scrub statistics, but only if the soid is below the scrub start
    */
@@ -406,6 +407,9 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   [[nodiscard]] bool was_epoch_changed() const final;
 
+  void set_being_scrubbed() final;
+  void clear_being_scrubbed() final;
+
   void mark_local_map_ready() final;
 
   [[nodiscard]] bool are_all_maps_available() const final;
@@ -459,7 +463,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   // -----     methods used to verify the relevance of incoming events:
 
   /**
-   *  is the incoming event still relevant, and should be processed?
+   *  is the incoming event still relevant and should be forwarded to the FSM?
    *
    *  It isn't if:
    *  - (1) we are no longer 'actively scrubbing'; or
@@ -468,7 +472,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    *  - (3) the message epoch is from a previous interval; or
    *  - (4) the 'abort' configuration flags were set.
    *
-   *  For (1) & (2) - teh incoming message is discarded, w/o further action.
+   *  For (1) & (2) - the incoming message is discarded, w/o further action.
    *
    *  For (3): (see check_interval() for a full description) if we have not reacted yet
    *  to this specific new interval, we do now:
@@ -554,6 +558,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   const pg_shard_t m_pg_whoami;	 ///< a local copy of m_pg->pg_whoami;
 
   epoch_t m_interval_start{0};  ///< interval's 'from' of when scrubbing was first scheduled
+
   /*
    * the exact epoch when the scrubbing actually started (started here - cleared checks
    *  for no-scrub conf). Incoming events are verified against this, with stale events
@@ -563,6 +568,25 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   scrub_flags_t m_flags;
 
   bool m_active{false};
+
+  /**
+   * a flag designed to prevent the initiation of a second scrub on a PG for which scrubbing
+   * has been initiated.
+   *
+   * set once scrubbing was initiated (i.e. - even before the FSM event that
+   * will trigger a state-change out of Inactive was handled), and only reset
+   * once the FSM is back in Inactive.
+   * In other words - its ON period encompasses:
+   *   - the time period covered today by 'queued', and
+   *   - the time when m_active is set, and
+   *   - all the time from scrub_finish() calling update_stats() till the
+   *     FSM handles the 'finished' event
+   *
+   * Compared with 'm_active', this flag is asserted earlier  and remains ON for longer.
+   *
+   * Note: PR #40984 relocates this flag to ScrubJob.
+   */
+  bool m_being_scrubbed{false};
 
   eversion_t m_subset_last_update{};
 
