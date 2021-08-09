@@ -166,6 +166,22 @@ struct ScrubPgIF {
    */
   [[nodiscard]] virtual bool is_scrub_active() const = 0;
 
+  /**
+   * 'false' until after the FSM processes the 'scrub-finished' event,
+   * and scrubbing is completely cleaned-up.
+   *
+   * In other words - holds longer than is_scrub_active(), thus preventing
+   * a rescrubbing of the same PG while the previous scrub has not fully
+   * terminated.
+   */
+  [[nodiscard]] virtual bool is_being_scrubbed() const = 0;
+  /**
+   * Manipulate the 'I am being scrubbed now' flag in the Scrubber's
+   * scubr-job.
+   */
+  virtual void set_being_scrubbed() = 0;
+  virtual void clear_being_scrubbed() = 0;
+
   /// are we waiting for resource reservation grants form our replicas?
   [[nodiscard]] virtual bool is_reserving() const = 0;
 
