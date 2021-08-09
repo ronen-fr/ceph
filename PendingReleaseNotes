@@ -422,6 +422,9 @@
   multisite configuration beforehand--cephadm no longer attempts to
   create missing realms or zones.
 
+* The ``min_size`` and ``max_size`` CRUSH rule properties have been removed.  Older
+  CRUSH maps will still compile but Ceph will issue a warning that these fields are
+  ignored.
 * The cephadm NFS support has been simplified to no longer allow the
   pool and namespace where configuration is stored to be customized.
   As a result, the ``ceph orch apply nfs`` command no longer has
@@ -431,3 +434,8 @@
   from Octopus) will be automatically migrated when the cluster is
   upgraded.  Note that the NFS ganesha daemons will be redeployed and
   it is possible that their IPs will change.
+
+* RGW now requires a secure connection to the monitor by default
+  (``auth_client_required=cephx`` and ``ms_mon_client_mode=secure``).
+  If you have cephx authentication disabled on your cluster, you may
+  need to adjust these settings for RGW.
