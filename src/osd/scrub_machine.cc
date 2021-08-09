@@ -63,7 +63,6 @@ bool ScrubMachine::is_reserving() const
 bool ScrubMachine::is_accepting_updates() const
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
-  ceph_assert(scrbr->is_primary());
 
   return state_cast<const WaitLastUpdate*>();
 }
