@@ -290,16 +290,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   /// handle a message carrying a replica map
   void map_from_replica(OpRequestRef op) final;
 
-  /**
-   *  should we requeue blocked ops?
-   *  Applicable to the PrimaryLogScrub derived class.
-   */
-  [[nodiscard]] virtual bool should_requeue_blocked_ops(
-    eversion_t last_recovery_applied) const override
-  {
-    return false;
-  }
-
   void scrub_clear_state() final;
 
   /**
@@ -398,7 +388,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   void state_set(uint64_t m) { m_pg->state_set(m); }
   void state_clear(uint64_t m) { m_pg->state_clear(m); }
 
-  [[nodiscard]] bool is_primary() const { return m_pg->recovery_state.is_primary(); }
+  [[nodiscard]] bool is_primary() const final { return m_pg->recovery_state.is_primary(); }
 
   [[nodiscard]] bool is_scrub_registered() const;
 
