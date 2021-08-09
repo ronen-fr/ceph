@@ -75,6 +75,8 @@ template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
 NotActive::NotActive(my_context ctx) : my_base(ctx)
 {
   dout(10) << "-- state -->> NotActive" << dendl;
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  scrbr->clear_being_scrubbed();
 }
 
 // ----------------------- ReservingReplicas ---------------------------------
@@ -122,6 +124,7 @@ ActiveScrubbing::~ActiveScrubbing()
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(15) << __func__ << dendl;
   scrbr->unreserve_replicas();
+  scrbr->clear_being_scrubbed();
 }
 
 /*
@@ -392,7 +395,10 @@ sc::result WaitReplicas::react(const GotReplicas&)
 
 WaitDigestUpdate::WaitDigestUpdate(my_context ctx) : my_base(ctx)
 {
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "-- state -->> Act/WaitDigestUpdate" << dendl;
+
+  scrbr->clear_finishing_flag();
   // perform an initial check: maybe we already
   // have all the updates we need:
   // (note that DigestUpdate is usually an external event)
@@ -410,8 +416,20 @@ sc::result WaitDigestUpdate::react(const DigestUpdate&)
   //  - send NextChunk, or
   //  - send ScrubFinished
 
-  scrbr->on_digest_updates();
+  if (!scrbr->is_finishing_flag_set()) {
+    scrbr->on_digest_updates();
+  }
   return discard_event();
+}
+
+sc::result WaitDigestUpdate::react(const ScrubFinished&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  dout(10) << "WaitDigestUpdate::react(const ScrubFinished&)" << dendl;
+
+  scrbr->scrub_finish();
+
+  return transit<NotActive>();
 }
 
 ScrubMachine::ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub)

@@ -181,6 +181,8 @@ public:
   /// scrubbing state for both Primary & replicas
   bool is_scrub_active() const { return m_scrubber->is_scrub_active(); }
 
+  bool is_being_scrubbed() const { return m_scrubber->is_being_scrubbed(); }
+
 public:
   // -- members --
   const coll_t coll;
