@@ -242,6 +242,8 @@ void PgScrubber::send_start_replica(epoch_t epoch_queued)
       m_fsm->process_event(StartReplica{});
     else
       m_fsm->process_event(StartReplicaNoWait{});
+  } else {
+    clear_being_scrubbed();
   }
   dout(10) << "scrubber event --<< " << __func__ << dendl;
 }
@@ -1233,6 +1235,8 @@ void PgScrubber::replica_scrub_op(OpRequestRef op)
     return;
   }
 
+  ceph_assert(!is_primary());
+
   if (is_being_scrubbed()) {
     // this is bug!
     // Somehow, we have received a new scrub request from our Primary, before having finished
@@ -1241,12 +1245,14 @@ void PgScrubber::replica_scrub_op(OpRequestRef op)
     // - crashing (the original assert_not_active() implemented that one), or
     // - trying to recover:
     //  - (logging enough information to debug this scenario)
-    //  - reset the FSM.
+    //  - reseting the FSM.
     dout(1) << __func__ << " error: a second scrub-op received while handling the previous one"
             << dendl;
+    dout(1) << __func__ << " epoch_start: " << m_interval_start
+	    << " pg data: " << m_pg->get_history().same_interval_since << dendl;
 
     scrub_clear_state();
-    dout(1) << __func__ << " after a reset. Now handling the new OP " << dendl;
+    dout(5) << __func__ << " after a scrub-object reset. Now handling the new OP " << dendl;
   }
   // make sure the FSM is at NotActive
   m_fsm->assert_not_active();
