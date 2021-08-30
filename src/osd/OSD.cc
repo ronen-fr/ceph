@@ -1801,7 +1801,7 @@ void OSDService::queue_scrub_replica_pushes(PG *pg, Scrub::scrub_prio_t with_pri
 void OSDService::queue_scrub_is_finished(PG *pg)
 {
   // Resulting scrub event: 'ScrubFinished'
-  queue_scrub_event_msg<PGScrubScrubFinished>(pg, Scrub::scrub_prio_t::low_priority);
+  queue_scrub_event_msg<PGScrubScrubFinished>(pg, Scrub::scrub_prio_t::high_priority);
 }
 
 void OSDService::queue_scrub_next_chunk(PG *pg, Scrub::scrub_prio_t with_priority)
@@ -7486,17 +7486,17 @@ bool OSD::scrub_random_backoff()
 
 void OSD::sched_scrub()
 {
-  auto& qu_svc = service.get_scrub_services();
+  auto& scrub_scheduler = service.get_scrub_services();
 
   // fail fast if no resources are available
-  if (!qu_svc.can_inc_scrubs()) {
+  if (!scrub_scheduler.can_inc_scrubs()) {
     dout(20) << __func__ << ": OSD cannot inc scrubs" << dendl;
     return;
   }
 
   // if there is a PG that is just now trying to reserve scrub replica resources -
   // we should wait and not initiate a new scrub
-  if (qu_svc.is_reserving_now()) {
+  if (scrub_scheduler.is_reserving_now()) {
     dout(20) << __func__ << ": scrub resources reservation in progress" << dendl;
     return;
   }
@@ -7514,28 +7514,21 @@ void OSD::sched_scrub()
     env_conditions.allow_requested_repair_only = true;
   }
 
-  dout(20) << __func__ << " sched_scrub starts" << dendl;
-  // debug:
-  {
-    auto allj = qu_svc.list_all_valid();
-    for (const auto& sj : allj) {
-      dout(20) << "sched_scrub scrub-queue jobs: " << sj->pgid << ",  "
-	       << sj->m_sched_time << " dead: " << sj->m_deadline << " - "
-	       << sj->registration_state() << "/ n: " << sj->get_nref()
-	       << " / f: " << sj->m_resources_failure
-	       << " / pen.to: " << sj->m_penalty_timeout
-	       << " / qstate: " << ScrubQueue::qu_state_text(sj->m_state)
-	       << dendl;
+  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+    dout(20) << __func__ << " sched_scrub starts" << dendl;
+    auto all_jobs = scrub_scheduler.list_registered_jobs();
+    for (const auto& sj : all_jobs) {
+      dout(20) << "sched_scrub scrub-queue jobs: " << *sj << dendl;
     }
   }
 
-  auto was_started = qu_svc.select_pg_and_scrub(env_conditions);
+  auto was_started = scrub_scheduler.select_pg_and_scrub(env_conditions);
   dout(20) << "sched_scrub done (" << ScrubQueue::attempt_res_text(was_started) << ")"
 	   << dendl;
 }
 
-
-Scrub::attempt_t OSDService::initiate_a_scrub(spg_t pgid, bool allow_requested_repair_only)
+Scrub::schedule_result_t OSDService::initiate_a_scrub(spg_t pgid,
+						      bool allow_requested_repair_only)
 {
   dout(20) << __func__ << " trying " << pgid << dendl;
 
@@ -7544,24 +7537,24 @@ Scrub::attempt_t OSDService::initiate_a_scrub(spg_t pgid, bool allow_requested_r
 
   PGRef pg = osd->lookup_lock_pg(pgid);
   if (!pg) {
-    // shouldn't happen: the scrub job should have been marked as invalid
+    // the PG was dequeued in the short timespan between creating the candidates list
+    // (collect_ripe_jobs()) and here
     dout(5) << __func__ << " pg  " << pgid << " not found" << dendl;
-    return Scrub::attempt_t::no_pg; // shouldn't happen
+    return Scrub::schedule_result_t::no_such_pg;
   }
 
   // This has already started, so go on to the next scrub job
   if (pg->is_scrub_active()) {
     pg->unlock();
     dout(20) << __func__ << ": already in progress pgid " << pgid << dendl;
-    return Scrub::attempt_t::already_started;
+    return Scrub::schedule_result_t::already_started;
   }
   // Skip other kinds of scrubbing if only explicitly requested repairing is allowed
   if (allow_requested_repair_only && !pg->m_planned_scrub.must_repair) {
     pg->unlock();
     dout(10) << __func__ << " skip " << pgid
-	     << " because repairing is not explicitly requested on it"
-	     << dendl;
-    return Scrub::attempt_t::preconditions;
+	     << " because repairing is not explicitly requested on it" << dendl;
+    return Scrub::schedule_result_t::preconditions;
   }
 
   auto scrub_attempt = pg->sched_scrub();
@@ -7572,7 +7565,7 @@ Scrub::attempt_t OSDService::initiate_a_scrub(spg_t pgid, bool allow_requested_r
 void OSD::resched_all_scrubs()
 {
   dout(10) << __func__ << ": start" << dendl;
-  auto all_jobs = service.get_scrub_services().list_all_valid();
+  auto all_jobs = service.get_scrub_services().list_registered_jobs();
   for (auto& e : all_jobs) {
 
     auto& job = *e;
