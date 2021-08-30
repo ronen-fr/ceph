@@ -271,9 +271,9 @@ public:
 
  private:
   /**
-  * The entity that maintains the set of PGs we may scrub (i.e. - those that we are
-  * their primary), and schedules their scrubbing.
-  */
+   * The entity that maintains the set of PGs we may scrub (i.e. - those that we
+   * are their primary), and schedules their scrubbing.
+   */
   ScrubQueue m_scrub_queue;
 
  public:
@@ -282,15 +282,15 @@ public:
   /**
    * A callback used by the ScrubQueue object to initiate a scrub on a specific PG.
    *
-   * The request might fail from multiple reasons, as ScrubQueue cannot by its own
-   * check some of the PG-specific preconditions, and those are checked here. See
+   * The request might fail for multiple reasons, as ScrubQueue cannot by its own
+   * check some of the PG-specific preconditions and those are checked here. See
    * attempt_t definition.
    *
-   * @param pgid
+   * @param pgid to scrub
    * @param allow_requested_repair_only
    * @return a Scrub::attempt_t detailing either a success, or the failure reason.
    */
-  Scrub::attempt_t initiate_a_scrub(spg_t pgid, bool allow_requested_repair_only);
+  Scrub::schedule_result_t initiate_a_scrub(spg_t pgid, bool allow_requested_repair_only);
 
 
  private:
