@@ -514,8 +514,9 @@ bool ScrubQueue::scrub_load_below_threshold() const
 
   // allow scrub if below daily avg and currently decreasing
   if (loadavgs[0] < daily_loadavg && loadavgs[0] < loadavgs[2]) {
-    dout(20) << "loadavg " << loadavgs[0] << " < daily_loadavg " << daily_loadavg
-	     << " and < 15m avg " << loadavgs[2] << " = yes" << dendl;
+    dout(20) << "loadavg " << loadavgs[0] << " < daily_loadavg "
+	     << daily_loadavg << " and < 15m avg " << loadavgs[2] << " = yes"
+	     << dendl;
     return true;
   }
 

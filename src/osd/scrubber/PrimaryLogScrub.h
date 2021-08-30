@@ -51,30 +51,6 @@ class PrimaryLogScrub : public PgScrubber {
   // we know our PG is actually a PrimaryLogPG. Let's alias the pointer to that object:
   PrimaryLogPG* const m_pl_pg;
 
-  /**
-   * Validate consistency of the object info and snap sets.
-   */
-  //void scrub_snapshot_metadata(ScrubMap& map, const missing_map_t& missing_digest) final;
-
-//  void log_missing(int missing,
-//		   const std::optional<hobject_t>& head,
-//		   LogChannelRef clog,
-//		   const spg_t& pgid,
-//		   const char* func,
-//		   const char* mode,
-//		   bool allow_incomplete_clones);
-//
-//  int process_clones_to(const std::optional<hobject_t>& head,
-//			const std::optional<SnapSet>& snapset,
-//			LogChannelRef clog,
-//			const spg_t& pgid,
-//			const char* mode,
-//			bool allow_incomplete_clones,
-//			std::optional<snapid_t> target,
-//			std::vector<snapid_t>::reverse_iterator* curclone,
-//			inconsistent_snapset_wrapper& snap_error);
-
-
   // handle our part in stats collection
   object_stat_collection_t m_scrub_cstat;
   void _scrub_clear_state() final;  // which just clears the stats
