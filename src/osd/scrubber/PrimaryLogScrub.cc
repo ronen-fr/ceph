@@ -1,7 +1,9 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "PrimaryLogScrub.h"
+#include "./PrimaryLogScrub.h"
+
+#include <sstream>
 
 #include "common/scrub_types.h"
 
@@ -9,16 +11,18 @@
 #include "osd/PrimaryLogPG.h"
 #include "scrub_machine.h"
 
-#define dout_context (m_pg->cct)
+#define dout_context (m_osds->cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
-#define dout_prefix _prefix(_dout, this->m_pg)
+#define dout_prefix _prefix(_dout, this)
 
 using std::vector;
 
-template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
+template <class T>
+static ostream& _prefix(std::ostream* _dout, T* t)
 {
-  return t->gen_prefix(*_dout) << " PrimaryLog scrubber pg(" << t->pg_id << ") ";
+  return t->gen_prefix(*_dout);
+  //return t->gen_prefix(*_dout) << " PrimaryLog scrubber pg(" << t->pg_id << ") ";
 }
 
 using namespace Scrub;
@@ -74,7 +78,7 @@ void PrimaryLogScrub::add_to_stats(const object_stat_sum_t& stat)
 
 void PrimaryLogScrub::_scrub_finish()
 {
-  auto& info = m_pg->info;  ///< a temporary alias
+  const auto& info = m_pg->info;  ///< a temporary alias
 
   dout(10) << __func__
 	   << " info stats: " << (info.stats.stats_invalid ? "invalid" : "valid")
@@ -175,11 +179,11 @@ void PrimaryLogScrub::_scrub_finish()
     m_pl_pg->object_contexts.clear();
 }
 
-static bool doing_clones(const std::optional<SnapSet>& snapset,
-			 const vector<snapid_t>::reverse_iterator& curclone)
-{
-  return snapset && curclone != snapset->clones.rend();
-}
+// static bool doing_clones(const std::optional<SnapSet>& snapset,
+// 			 const vector<snapid_t>::reverse_iterator& curclone)
+// {
+//   return snapset && curclone != snapset->clones.rend();
+// }
 
 PrimaryLogScrub::PrimaryLogScrub(PrimaryLogPG* pg) : PgScrubber{pg}, m_pl_pg{pg} {}
 
@@ -196,8 +200,6 @@ void PrimaryLogScrub::stats_of_handled_objects(const object_stat_sum_t& delta_st
   // scrubbed and their stats have already been added to the scrubber. Objects after that
   // point haven't been included in the scrubber's stats accounting yet, so they will be
   // included when the scrubber gets to that object.
-  dout(15) << __func__ << " soid: " << soid << " scrub is active? " << is_scrub_active()
-	   << dendl;
   if (is_primary() && is_scrub_active()) {
     if (soid < m_start) {
       dout(20) << __func__ << " " << soid << " < [" << m_start << "," << m_end << ")"
