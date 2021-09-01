@@ -39,7 +39,7 @@ template <> struct fmt::formatter<hobject_t> {
       return fmt::format_to(ctx.out(), "MAX");
     }
 
-    string v;
+    std::string v;
     append_out_escaped(ho.nspace, &v);
     v.push_back(':');
     append_out_escaped(ho.get_key(), &v);

@@ -10,6 +10,8 @@
 
 #include "include/types.h"
 
+using namespace std::literals;
+
 template <class A, class B, class Comp, class Alloc>
 struct fmt::formatter<std::map<A, B, Comp, Alloc>> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }

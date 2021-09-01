@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "common/debug.h"
+#include "osd/osd_types_fmt.h"
 
 #include "messages/MOSDRepScrubMap.h"
 #include "osd/ECUtil.h"
@@ -28,7 +29,6 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 using namespace std::literals;
 
-//#define dout_context (m_scrubber.get_pg_cct())
 #define dout_context (m_scrubber.m_osds->cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
@@ -37,158 +37,9 @@ using namespace std::literals;
 
 std::ostream& ScrubBackend::logger_prefix(std::ostream* out, ScrubBackend* t)
 {
-  return t->m_scrubber.gen_prefix(*out) << " be: ";
+  return t->m_scrubber.gen_prefix(*out) << " b.e.: ";
   //return t->m_pg.gen_prefix(*_dout) << "scrubber-be pg(" << t->m_pg_id << ") ";
 }
-
-
-// ////////////////////////////////////////////////////////////////////////// //
-
-template <> struct fmt::formatter<pg_shard_t> {
-  template <typename ParseContext> constexpr auto parse(ParseContext& ctx)
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto format(pg_shard_t const& shrd, FormatContext& ctx)
-  {
-    if (shrd.is_undefined()) {
-      return fmt::format_to(ctx.out(), "?");
-    }
-    if (shrd.shard == shard_id_t::NO_SHARD) {
-      return fmt::format_to(ctx.out(), "{}", shrd.get_osd());
-    }
-    return fmt::format_to(ctx.out(), "{}({})", shrd.get_osd(), shrd.shard);
-  }
-};
-
-
-// ---------------------  hobject_t  ------------------------------------
-
-template <> struct fmt::formatter<hobject_t> {
-  template <typename ParseContext> constexpr auto parse(ParseContext& ctx)
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext> auto format(hobject_t const& ho, FormatContext& ctx)
-  {
-    // for now - just use the existing operator RRR
-    stringstream sst;
-    sst << ho;
-    return fmt::format_to(ctx.out(), "{}", sst.str());
-  }
-};
-
-
-
-// ---------------------  entity_name_t  ------------------------------------
-
-template <> struct fmt::formatter<entity_name_t> {
-  template <typename ParseContext> constexpr auto parse(ParseContext& ctx)
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto format(entity_name_t const& addr, FormatContext& ctx)
-  {
-    if (addr.is_new() || addr.num() < 0) {
-      return fmt::format_to(ctx.out(), "{}.?", addr.type_str());
-    }
-    return fmt::format_to(ctx.out(), "{}.{}", addr.type_str(), addr.num());
-  }
-};
-
-
-// ---------------------  osd_reqid_t  ------------------------------------
-
-template <> struct fmt::formatter<osd_reqid_t> {
-  template <typename ParseContext> constexpr auto parse(ParseContext& ctx)
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto format(osd_reqid_t const& req_id, FormatContext& ctx)
-  {
-    return fmt::format_to(ctx.out(), "{}.{}:{}", req_id.name, req_id.inc, req_id.tid);
-  }
-};
-
-
-
-template <> struct fmt::formatter<object_manifest_t> {
-  template <typename ParseContext> constexpr auto parse(ParseContext& ctx)
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto format(object_manifest_t const& om, FormatContext& ctx)
-  {
-    fmt::format_to(ctx.out(), "manifest({}", om.get_type_name());
-    if (om.is_redirect()) {
-      fmt::format_to(ctx.out(), " {}", om.redirect_target);
-    } else if (om.is_chunked()) {
-      // for now - just use the existing operator RRR
-      stringstream sst;
-      sst << om.chunk_map;
-      fmt::format_to(ctx.out(), " {}", sst.str());
-    }
-    return fmt::format_to(ctx.out(), ")");
-  }
-};
-
-
-
-// ---------------------  eversion_t  ------------------------------------
-
-template <> struct fmt::formatter<eversion_t> {
-  template <typename ParseContext> constexpr auto parse(ParseContext& ctx)
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext> auto format(eversion_t const& ev, FormatContext& ctx)
-  {
-    return fmt::format_to(ctx.out(), "{}'{}", ev.epoch, ev.version);
-  }
-};
-
-
-// ---------------------  object_info_t  ------------------------------------
-
-template <> struct fmt::formatter<object_info_t> {
-  template <typename ParseContext> constexpr auto parse(ParseContext& ctx)
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto format(object_info_t const& oi, FormatContext& ctx)
-  {
-    fmt::format_to(ctx.out(), "{}({} {} {} s {} uv {}", oi.soid, oi.version,
-		   oi.last_reqid, (oi.flags ? oi.get_flag_string() : ""), oi.size,
-		   oi.user_version);
-    if (oi.is_data_digest()) {
-      fmt::format_to(ctx.out(), " dd {:x}", oi.data_digest);
-    }
-    if (oi.is_omap_digest()) {
-      fmt::format_to(ctx.out(), " od {:x}", oi.omap_digest);
-    }
-
-    fmt::format_to(ctx.out(), " alloc_hint [{} {} {}]", oi.expected_object_size,
-		   oi.expected_write_size, oi.alloc_hint_flags);
-
-    if (oi.has_manifest()) {
-      fmt::format_to(ctx.out(), " {}", oi.manifest);
-    }
-    return fmt::format_to(ctx.out(), ")");
-  }
-};
-
 
 // ---------------------  auth_selection_t  ------------------------------------
 
@@ -209,7 +60,6 @@ template <> struct fmt::formatter<auth_selection_t> {
 };
 
 // ////////////////////////////////////////////////////////////////////////// //
-
 
 inline static const char* sep(bool& prev_err)
 {
@@ -833,7 +683,7 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
 		      &shard_info_wrapper::set_obj_size_info_mismatch)) {
 
     errstream << sep(err) << "candidate size " << smap_obj.size << " info size "
-	      << m_pgbe.be_get_ondisk_size(oi.size) << " mismatch";
+	      << m_pgbe.be_get_ondisk_size(oi.size) << " mismatch"; // RRR diff from orig (oi_size)
   }
 
   std::optional<uint32_t> digest;
@@ -909,7 +759,6 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho, stringstream& errstr
   ScrubMap::object& auth_object = auth->second->objects[ho];
   this_chunk->fix_digest = false;  // RRR needed?
 
-  // RRR verify copy/move here
   auto [auths, objerrs] = match_in_shards(ho, auth_res, object_error, errstream);
 
   auto opt_ers =
@@ -952,7 +801,7 @@ std::optional<ScrubBackend::AuthAndObjErrors> ScrubBackend::for_empty_auth_list(
       return std::nullopt;
     }
     // Object errors exist and nothing in auth_list
-    // Prefer the auth shard otherwise take first from list.
+    // Prefer the auth shard, otherwise take first from list.
     pg_shard_t shard;
     if (obj_errors.count(auth->first)) {
       shard = auth->first;
@@ -1002,7 +851,7 @@ void ScrubBackend::inconsistents(const hobject_t& ho,
     if (auth_object.omap_digest_present) {
       omap_digest = auth_object.omap_digest;
     }
-    this_chunk->missing_digest[ho] = make_pair(data_digest, omap_digest);
+    this_chunk->missing_digest[ho] = make_pair(data_digest, omap_digest); // RRR veify which missing_digest
   }
 
   if (!this_chunk->cur_inconsistent.empty() || !this_chunk->cur_missing.empty()) {
@@ -1204,135 +1053,6 @@ ScrubBackend::AuthAndObjErrors ScrubBackend::match_in_shards(
   //	 auth_list.size(), object_errors.size());
   return {auth_list, object_errors};
 }
-
-#if 0
-ScrubBackend::AuthAndObjErrors ScrubBackend::match_in_shards(
-  IterToSMap auth,
-  const hobject_t& ho,
-  object_info_t& auth_oi,
-  inconsistent_obj_wrapper& obj_result,
-  map<pg_shard_t, shard_info_wrapper>& shard_map,
-  bool digest_match,
-  stringstream& errstream)
-{
-  std::list<pg_shard_t> auth_list;     // to be returned
-  std::set<pg_shard_t> object_errors;  // to be returned
-
-  for (auto j = this_chunk->maps.cbegin(); j != this_chunk->maps.cend(); ++j) {
-
-    if (j == auth) {  // why can't I compare the shard # instead of comparing the iter?
-		      // RRR to test in Classic
-      shard_map[auth->first].selected_oi = true;
-    }
-
-    if (j->second->objects.count(ho)) {
-
-      shard_map[j->first].set_object(j->second->objects[ho]);
-
-      // logger().debug("{}: ho: {} ^^^^ {} ^^^^ {}", __func__, ho.to_str(), ho.is_head(),
-      //	     ho.has_snapset());
-
-      dout(9) << __func__ << " ho: " << ho << " RRR candidate address "
-	      << (uint64_t)(&(j->second->objects[ho])) << "  j f: " << j->first
-	      << "  a f: " << auth->first << dendl;
-
-      // Compare
-      stringstream ss;
-      auto& auth_object = auth->second->objects[ho];
-      const bool discrep_found =
-	compare_obj_details(auth->first, auth_object, auth_oi, j->second->objects[ho],
-			    shard_map[j->first], obj_result, ss, ho.has_snapset());
-
-      dout(20) << __func__ << (m_repair ? " repair " : " ")
-	       << (m_is_replicated ? "replicated " : "") << (j == auth ? "auth" : "")
-	       << " shards " << shard_map.size()
-	       << (digest_match ? " digest_match " : " ")
-	       << (shard_map[j->first].only_data_digest_mismatch_info()
-		     ? "'info mismatch info'"
-		     : "")
-	       << dendl;
-
-
-      // debuging a problem:
-      errstream << m_pg_id << " shard " << j->first << " soid " << ho << " : " << ss.str()
-		<< "\n";
-
-      //      logger().debug(
-      //	"{}: {} {} {} shards {}{}{}", __func__, (m_repair ? "repair" : " "),
-      //	(m_is_replicated ? "replicated" : ""), (j == auth ? "auth" : ""),
-      //	shard_map.size(), (digest_match ? " digest_match " : " "),
-      //	(shard_map[j->first].only_data_digest_mismatch_info() ? "'info mismatch
-      // info'" 							      : ""));
-
-      // If all replicas match, but they don't match object_info we can
-      // repair it by using missing_digest mechanism
-      if (m_repair && m_is_replicated && j == auth && shard_map.size() > 1 &&
-	  digest_match && shard_map[j->first].only_data_digest_mismatch_info() &&
-	  auth_object.digest_present) {
-	// Set in missing_digests
-	this_chunk->fix_digest = true;
-	// Clear the error
-	shard_map[j->first].clear_data_digest_mismatch_info();
-	errstream << m_pg_id << " soid " << ho << " : repairing object info data_digest"
-		  << "\n";
-      }
-
-      // Some errors might have already been set in select_auth_object()
-      if (shard_map[j->first].errors != 0) {  // l.1143
-
-	this_chunk->cur_inconsistent.insert(j->first);
-	if (shard_map[j->first].has_deep_errors())
-	  ++m_scrubber.m_deep_errors;
-	else
-	  ++m_scrubber.m_shallow_errors;
-
-	if (discrep_found) {
-	  // Only true if compare_obj_details() found errors and put something
-	  // in ss.
-	  errstream << m_pg_id << " shard " << j->first << " soid " << ho << " : "
-		    << ss.str() << "\n";
-	}
-
-      } else if (discrep_found) {
-
-	// Track possible shards to use as authoritative, if needed
-
-	// There are errors, without identifying the shard
-	object_errors.insert(j->first);
-	errstream << m_pg_id << " soid " << ho << " : " << ss.str() << "\n";
-
-      } else {
-
-	// XXX: The auth shard might get here that we don't know
-	// that it has the "correct" data.
-	auth_list.push_back(j->first);
-      }
-
-    } else {
-
-      this_chunk->cur_missing.insert(j->first);
-      shard_map[j->first].set_missing();
-      // shard_map[j->first].primary = (j->first == get_parent()->whoami_shard());
-      shard_map[j->first].primary = (j->first == m_pg_whoami);
-
-      // Can't have any other errors if there is no information available
-      ++m_scrubber.m_shallow_errors;
-      errstream << m_pg_id << " shard " << j->first << " " << ho << " : missing\n";
-    }
-    obj_result.add_shard(j->first, shard_map[j->first]);
-
-    dout(20) << __func__ << ": RRR soid " << ho << " : " << errstream.str() << dendl;
-  }
-
-
-
-  dout(15) << __func__ << ": auth_list: " << auth_list << " #: " << auth_list.size()
-	   << "; obj-errs#: " << object_errors.size() << dendl;
-  // logger().debug("{}: auth_list:{} #:{}; obj-errs#:{}", __func__, auth_list,
-  //	 auth_list.size(), object_errors.size());
-  return {auth_list, object_errors};
-}
-#endif
 
 // == PGBackend::be_compare_scrub_objects()
 bool ScrubBackend::compare_obj_details(pg_shard_t auth_shard,

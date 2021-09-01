@@ -15,7 +15,8 @@ struct fmt::formatter<osd_reqid_t> {
   template <typename FormatContext>
   auto format(const osd_reqid_t& req_id, FormatContext& ctx)
   {
-    return fmt::format_to(ctx.out(), "{}.{}:{}", req_id.name, req_id.inc, req_id.tid);
+    return fmt::format_to(ctx.out(), "{}.{}:{}", req_id.name, req_id.inc,
+			  req_id.tid);
   }
 };
 
@@ -46,6 +47,20 @@ struct fmt::formatter<eversion_t> {
     return fmt::format_to(ctx.out(), "{}'{}", ev.epoch, ev.version);
   }
 };
+
+template <>
+struct fmt::formatter<chunk_info_t> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const chunk_info_t& ci, FormatContext& ctx)
+  {
+    return fmt::format_to(ctx.out(), "(len: {} oid: {} offset: {} flags: {})",
+			  ci.length, ci.oid, ci.offset,
+			  ci.get_flag_string(ci.flags));
+  }
+};
+
 
 template <>
 struct fmt::formatter<object_manifest_t> {
