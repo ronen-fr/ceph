@@ -46,7 +46,7 @@ using shard_info_map_t = std::map<pg_shard_t, shard_info_wrapper>;
 
 using shard_to_smap_t = std::map<pg_shard_t, ScrubMap*>;
 
-using IterToSMap = map<pg_shard_t, ScrubMap*>::const_iterator;
+using IterToSMap = std::map<pg_shard_t, ScrubMap*>::const_iterator;
 
 /**
  * A structure used internally by select_auth_object()
@@ -110,7 +110,7 @@ struct ScrubBeChunk {
   std::map<hobject_t, data_omap_digests_t> missing_digest;
 
   // Map from object with errors to good peers
-  std::map<hobject_t, list<pg_shard_t>> authoritative;
+  std::map<hobject_t, std::list<pg_shard_t>> authoritative;
 
 
   // these must be reset for each element:
@@ -207,7 +207,7 @@ class ScrubBackend : public ScrubBackendIF {
   omap_stat_t m_omap_stats = (const struct omap_stat_t){0};
 
  private:
-  using IterToSMap = map<pg_shard_t, ScrubMap*>::const_iterator;
+  using IterToSMap = std::map<pg_shard_t, ScrubMap*>::const_iterator;
 
   using AuthAndObjErrors = std::tuple<std::list<pg_shard_t>,  ///< the auth-list
 				      std::set<pg_shard_t>    ///< object_errors
@@ -231,9 +231,9 @@ class ScrubBackend : public ScrubBackendIF {
 
   void merge_to_master_set();
 
-  void compare_smaps(stringstream& errstream);
+  void compare_smaps(std::stringstream& errstream);
 
-  void compare_obj_in_maps(const hobject_t& ho, stringstream& errstream);
+  void compare_obj_in_maps(const hobject_t& ho, std::stringstream& errstream);
 
   void omap_checks();
 
@@ -241,13 +241,13 @@ class ScrubBackend : public ScrubBackendIF {
 						      std::set<pg_shard_t>&& obj_errors,
 						      IterToSMap auth,
 						      const hobject_t& ho,
-						      stringstream& errstream);
+						      std::stringstream& errstream);
 
   // RRR to rename
   AuthAndObjErrors match_in_shards(  const hobject_t& ho,
 				     auth_selection_t& auth_sel,
 				     inconsistent_obj_wrapper& obj_result,
-				     stringstream& errstream);
+				     std::stringstream& errstream);
 
   // returns: true if a discrepancy was found
   bool compare_obj_details(pg_shard_t auth_shard,
@@ -256,13 +256,13 @@ class ScrubBackend : public ScrubBackendIF {
 			   const ScrubMap::object& candidate,
 			   shard_info_wrapper& shard_result,
 			   inconsistent_obj_wrapper& obj_result,
-			   stringstream& errorstream,
+			   std::stringstream& errorstream,
 			   bool has_snapset);
 
 
   void repair_object(const hobject_t& soid,
-		     const list<pair<ScrubMap::object, pg_shard_t>>& ok_peers,
-		     const set<pg_shard_t>& bad_peers);
+		     const std::list<std::pair<ScrubMap::object, pg_shard_t>>& ok_peers,
+		     const std::set<pg_shard_t>& bad_peers);
 
   /**
    * An auxiliary used by select_auth_object() to test a specific shard
@@ -276,7 +276,7 @@ class ScrubBackend : public ScrubBackendIF {
 				      pg_shard_t& srd,
 				      shard_info_map_t& shard_map);
 
-  auth_selection_t select_auth_object(const hobject_t& ho, stringstream& errstream);
+  auth_selection_t select_auth_object(const hobject_t& ho, std::stringstream& errstream);
 
 
   enum class digest_fixing_t { no, if_aged, force };
@@ -288,13 +288,13 @@ class ScrubBackend : public ScrubBackendIF {
 						  const ScrubMap::object& auth_object,
 						  const object_info_t& auth_oi,
 						  bool repair_flag,
-						  stringstream& errstream);
+						  std::stringstream& errstream);
 
   void inconsistents(const hobject_t& ho,
 		     ScrubMap::object& auth_object,
 		     object_info_t& auth_oi,  // RRR move to object?
 		     AuthAndObjErrors&& auth_n_errs,
-		     stringstream& errstream);
+		     std::stringstream& errstream);
 
   int process_clones_to(const std::optional<hobject_t>& head,
 			const std::optional<SnapSet>& snapset,
@@ -303,7 +303,7 @@ class ScrubBackend : public ScrubBackendIF {
 			// const char* mode,   // RRR
 			bool allow_incomplete_clones,
 			std::optional<snapid_t> target,
-			vector<snapid_t>::reverse_iterator* curclone,
+			std::vector<snapid_t>::reverse_iterator* curclone,
 			inconsistent_snapset_wrapper& e);
 
   /**
@@ -315,7 +315,7 @@ class ScrubBackend : public ScrubBackendIF {
 			     std::optional<uint32_t> data_digest,
 			     std::optional<uint32_t> omap_digest);
 
-  void update_authoritative(stringstream& errstream);
+  void update_authoritative(std::stringstream& errstream);
 
   void log_missing(int missing,
 		   const std::optional<hobject_t>& head,

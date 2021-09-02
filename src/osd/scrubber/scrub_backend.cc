@@ -18,17 +18,27 @@
 
 #include "pg_scrubber.h"
 
+using std::list;
+using std::pair;
+using std::set;
+using std::stringstream;
+using std::vector;
+using namespace Scrub;
+using namespace std::chrono;
+using namespace std::chrono_literals;
+using namespace std::literals;
 
-
-#define dout_context (m_scrubber.get_pg_cct())
+//#define dout_context (m_scrubber.get_pg_cct())
+#define dout_context (m_scrubber.m_osds->cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 
 #define dout_prefix ScrubBackend::logger_prefix(_dout, this)
 
-std::ostream& ScrubBackend::logger_prefix(std::ostream* _dout, ScrubBackend* t)
+std::ostream& ScrubBackend::logger_prefix(std::ostream* out, ScrubBackend* t)
 {
-  return t->m_pg.gen_prefix(*_dout) << "scrubber-be pg(" << t->m_pg_id << ") ";
+  return t->m_scrubber.gen_prefix(*out) << " be: ";
+  //return t->m_pg.gen_prefix(*_dout) << "scrubber-be pg(" << t->m_pg_id << ") ";
 }
 
 
@@ -964,8 +974,8 @@ void ScrubBackend::inconsistents(const hobject_t& ho,
 				 AuthAndObjErrors&& auth_n_errs,
 				 stringstream& errstream)
 {
-  auto& object_errors = get<1>(auth_n_errs);
-  auto& auth_list = get<0>(auth_n_errs);
+  auto& object_errors = std::get<1>(auth_n_errs);
+  auto& auth_list = std::get<0>(auth_n_errs);
 
   this_chunk->cur_inconsistent.insert(object_errors.begin(),
 				      object_errors.end());  // merge?
