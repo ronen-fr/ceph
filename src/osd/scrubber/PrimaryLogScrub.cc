@@ -9,16 +9,18 @@
 #include "osd/PrimaryLogPG.h"
 #include "scrub_machine.h"
 
-#define dout_context (m_pg->cct)
+#define dout_context (m_osds->cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
-#define dout_prefix _prefix(_dout, this->m_pg)
+#define dout_prefix _prefix(_dout, this)
 
 using std::vector;
 
-template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
+template <class T>
+static ostream& _prefix(std::ostream* _dout, T* t)
 {
-  return t->gen_prefix(*_dout) << " PrimaryLog scrubber pg(" << t->pg_id << ") ";
+  return t->gen_prefix(*_dout);
+  //return t->gen_prefix(*_dout) << " PrimaryLog scrubber pg(" << t->pg_id << ") ";
 }
 
 using namespace Scrub;
@@ -196,8 +198,6 @@ void PrimaryLogScrub::stats_of_handled_objects(const object_stat_sum_t& delta_st
   // scrubbed and their stats have already been added to the scrubber. Objects after that
   // point haven't been included in the scrubber's stats accounting yet, so they will be
   // included when the scrubber gets to that object.
-  dout(15) << __func__ << " soid: " << soid << " scrub is active? " << is_scrub_active()
-	   << dendl;
   if (is_primary() && is_scrub_active()) {
     if (soid < m_start) {
       dout(20) << __func__ << " " << soid << " < [" << m_start << "," << m_end << ")"

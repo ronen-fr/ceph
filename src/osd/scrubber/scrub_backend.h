@@ -213,11 +213,6 @@ class ScrubBackend : public ScrubBackendIF {
 				      std::set<pg_shard_t>    ///< object_errors
 				      >;
 
-  //  struct auth_n_objerrs_t {
-  //    std::list<pg_shard_t>;  ///< the auth-list
-  //    std::set<pg_shard_t>;   ///< object_errors
-  //  };
-
   std::optional<ScrubBeChunk> this_chunk;
 
   /// Maps from objects with errors to missing peers
