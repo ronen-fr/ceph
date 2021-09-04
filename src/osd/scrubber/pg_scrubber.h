@@ -298,7 +298,10 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void handle_query_state(ceph::Formatter* f) final;
 
-  void dump(ceph::Formatter* f) const override;
+  pg_scrubbing_status_t get_schedule() const final;
+
+  void dump_scrubber(ceph::Formatter* f,
+		     const requested_scrub_t& request_flags) const final;
 
   // used if we are a replica
 
@@ -528,6 +531,9 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void run_callbacks();
 
+  // 'query' command data for an active scrub
+  void dump_active_scrubber(ceph::Formatter* f, bool is_deep) const;
+
   // -----     methods used to verify the relevance of incoming events:
 
   /**
@@ -699,8 +705,8 @@ private:
    */
   void request_rescrubbing(requested_scrub_t& req_flags);
 
-  ScrubQueue::sched_params_t
-  determine_scrub_time(const requested_scrub_t& request_flags);
+  ScrubQueue::sched_params_t determine_scrub_time(
+    const requested_scrub_t& request_flags) const;
 
   void unregister_from_osd();
 

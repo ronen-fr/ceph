@@ -211,17 +211,6 @@ void ScrubQueue::update_job(ScrubJobRef scrub_job,
   // adjust the suggested scrub time according to OSD-wide status
   auto adjusted = adjust_target_time(suggested);
   scrub_job->update_schedule(adjusted);
-//   scrub_job->set_time_n_deadline(adjusted);
-// 
-//   dout(10) << " pg(" << scrub_job->pgid << ") adjusted: " << scrub_job->m_sched_time
-// 	   << "  " << scrub_job->registration_state() << dendl;
-// 
-//   scrub_job->m_penalty_timeout = utime_t(0, 0);	 // helps with debugging
-// 
-//   // m_updated is changed here while not holding jobs_lock. That's OK, as
-//   // the (atomic) flag will only be cleared by select_pg_and_scrub() after
-//   // scan_penalized() is called and the job was moved to the to_scrub queue.
-//   scrub_job->m_updated = true;
 }
 
 // used under jobs_lock
@@ -369,12 +358,49 @@ void ScrubQueue::rm_unregistered_jobs(ScrubQContainer& group)
   std::for_each(group.begin(), group.end(), [](auto& job) {
     if (job->state == qu_state_t::unregistering) {
       job->in_queues = false;
-    if (jb->m_state == qu_state_t::unregistering) {
-      jb->m_in_queues = false;
-	      group.end());
-  }
+      job->state = qu_state_t::not_registered;
+    } else if (job->state == qu_state_t::not_registered) {
+      job->in_queues = false;
+    }
+  });
 
+  group.erase(std::remove_if(group.begin(), group.end(), invalid_state),
+	      group.end());
+}
+
+namespace {
+struct cmp_sched_time_t {
+  bool operator()(const ScrubQueue::ScrubJobRef& lhs,
+		  const ScrubQueue::ScrubJobRef& rhs) const
+  {
+    return lhs->schedule.scheduled_at < rhs->schedule.scheduled_at;
+  }
+};
+}  // namespace
+
+// called under lock
+ScrubQueue::ScrubQContainer ScrubQueue::collect_ripe_jobs(ScrubQContainer& group,
+							  utime_t time_now)
+{
+  rm_unregistered_jobs(group);
+
+  // copy ripe jobs
+  ScrubQueue::ScrubQContainer ripes;
+  ripes.reserve(group.size());
+
+  std::copy_if(group.begin(), group.end(), std::back_inserter(ripes),
+	       [time_now](const auto& jobref) -> bool {
+		 return jobref->schedule.scheduled_at <= time_now;
+	       });
   std::sort(ripes.begin(), ripes.end(), cmp_sched_time_t{});
+
+  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+    for (const auto& jobref : group) {
+      if (jobref->schedule.scheduled_at > time_now) {
+	dout(20) << " not ripe: " << jobref->pgid << " @ "
+		 << jobref->schedule.scheduled_at << dendl;
+      }
+    }
   }
 
   return ripes;
@@ -456,7 +482,11 @@ ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
     dout(20) << "at " << sched_n_dead.scheduled_at << " ratio "
 	     << cct->_conf->osd_scrub_interval_randomize_ratio << dendl;
   }
+
   if (times.is_must == ScrubQueue::must_scrub_t::not_mandatory) {
+
+    // if not explicitly requested, postpone the scrub with a random delay
+    double scrub_min_interval = times.min_interval > 0
 				  ? times.min_interval
 				  : cct->_conf->osd_scrub_min_interval;
     double scrub_max_interval = times.max_interval > 0
@@ -514,9 +544,8 @@ bool ScrubQueue::scrub_load_below_threshold() const
 
   // allow scrub if below daily avg and currently decreasing
   if (loadavgs[0] < daily_loadavg && loadavgs[0] < loadavgs[2]) {
-    dout(20) << "loadavg " << loadavgs[0] << " < daily_loadavg "
-	     << daily_loadavg << " and < 15m avg " << loadavgs[2] << " = yes"
-	     << dendl;
+    dout(20) << "loadavg " << loadavgs[0] << " < daily_loadavg " << daily_loadavg
+	     << " and < 15m avg " << loadavgs[2] << " = yes" << dendl;
     return true;
   }
 

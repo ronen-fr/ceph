@@ -183,7 +183,11 @@ class ScrubQueue {
    * To be used if we are no longer the PG's primary, or if the PG is removed.
    */
   void remove_from_osd_queue(ScrubJobRef sjob);
+
   /**
+   * @return the list (not std::set!) of all scrub jobs registered
+   *   (apart from PGs in the process of being removed)
+   */
   ScrubQContainer list_registered_jobs() const;
 
   /**
