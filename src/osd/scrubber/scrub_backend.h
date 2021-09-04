@@ -16,7 +16,8 @@ class PG;
 
   What does a replica needs of the ScrubBackend, and should we use a separate ctor?
 
-  Note that the bulk of work performed by the replica, is done in build_replica_map_chunk:
+  Note that the bulk of work performed by the replica, is done in
+ build_replica_map_chunk:
   - we call build_scrub_map_chunk(), then
   - play around w/ cleaned_meta_map & replica_scrubmap, and
   - ** call the backend's clean_meta_map
@@ -40,7 +41,8 @@ class PG;
 
  */
 
-using data_omap_digests_t = std::pair<std::optional<uint32_t>, std::optional<uint32_t>>;
+using data_omap_digests_t =
+  std::pair<std::optional<uint32_t>, std::optional<uint32_t>>;
 
 using shard_info_map_t = std::map<pg_shard_t, shard_info_wrapper>;
 
@@ -56,19 +58,31 @@ struct shard_as_auth_t {
 
   // the ctor used when the shard should not be considered as auth
   explicit shard_as_auth_t(std::string err_msg)
-      : possible_auth{usable_t::not_usable}, error_text{err_msg}, oi{}, auth_iter{},
-	digest{std::nullopt}
+      : possible_auth{usable_t::not_usable}
+      , error_text{err_msg}
+      , oi{}
+      , auth_iter{}
+      , digest{std::nullopt}
   {}
 
   shard_as_auth_t(std::string err_msg, std::optional<uint32_t> data_digest)
-    : possible_auth{usable_t::not_usable}, error_text{err_msg}, oi{}, auth_iter{},
-      digest{data_digest}
+      : possible_auth{usable_t::not_usable}
+      , error_text{err_msg}
+      , oi{}
+      , auth_iter{}
+      , digest{data_digest}
   {}
 
   // possible auth candidate
-  shard_as_auth_t(const object_info_t& anoi, IterToSMap it, std::string err_msg, std::optional<uint32_t> data_digest)
-    : possible_auth{usable_t::usable}, error_text{err_msg}, oi{anoi}, auth_iter{it},
-      digest{data_digest}
+  shard_as_auth_t(const object_info_t& anoi,
+		  IterToSMap it,
+		  std::string err_msg,
+		  std::optional<uint32_t> data_digest)
+      : possible_auth{usable_t::usable}
+      , error_text{err_msg}
+      , oi{anoi}
+      , auth_iter{it}
+      , digest{data_digest}
   {}
 
 
@@ -82,12 +96,12 @@ struct shard_as_auth_t {
 };
 
 struct auth_selection_t {
-  IterToSMap auth;  // an iter into one of this_chunk->maps
-  pg_shard_t auth_shard; // set to auth->first
+  IterToSMap auth;	  // an iter into one of this_chunk->maps
+  pg_shard_t auth_shard;  // set to auth->first
   object_info_t auth_oi;
   shard_info_map_t shard_map;
-  bool is_auth_available{false}; // true if we've managed to select an auth' source
-  bool digest_match{true};  // true if all (existing) digests match
+  bool is_auth_available{false};  // true if we've managed to select an auth' source
+  bool digest_match{true};	  // true if all (existing) digests match
 };
 
 /**
@@ -168,7 +182,10 @@ class ScrubBackend : public ScrubBackendIF {
 
   void scrub_compare_maps(bool max_reached) final;
 
-  int get_num_digest_updates_pending() const final { return num_digest_updates_pending; }
+  int get_num_digest_updates_pending() const final
+  {
+    return num_digest_updates_pending;
+  }
 
   void scan_snaps(ScrubMap& smap) final;
 
@@ -232,17 +249,18 @@ class ScrubBackend : public ScrubBackendIF {
 
   void omap_checks();
 
-  std::optional<AuthAndObjErrors> for_empty_auth_list(std::list<pg_shard_t>&& auths,
-						      std::set<pg_shard_t>&& obj_errors,
-						      IterToSMap auth,
-						      const hobject_t& ho,
-						      std::stringstream& errstream);
+  std::optional<AuthAndObjErrors> for_empty_auth_list(
+    std::list<pg_shard_t>&& auths,
+    std::set<pg_shard_t>&& obj_errors,
+    IterToSMap auth,
+    const hobject_t& ho,
+    std::stringstream& errstream);
 
   // RRR to rename
-  AuthAndObjErrors match_in_shards(  const hobject_t& ho,
-				     auth_selection_t& auth_sel,
-				     inconsistent_obj_wrapper& obj_result,
-				     std::stringstream& errstream);
+  AuthAndObjErrors match_in_shards(const hobject_t& ho,
+				   auth_selection_t& auth_sel,
+				   inconsistent_obj_wrapper& obj_result,
+				   std::stringstream& errstream);
 
   // returns: true if a discrepancy was found
   bool compare_obj_details(pg_shard_t auth_shard,
@@ -255,23 +273,26 @@ class ScrubBackend : public ScrubBackendIF {
 			   bool has_snapset);
 
 
-  void repair_object(const hobject_t& soid,
-		     const std::list<std::pair<ScrubMap::object, pg_shard_t>>& ok_peers,
-		     const std::set<pg_shard_t>& bad_peers);
+  void repair_object(
+    const hobject_t& soid,
+    const std::list<std::pair<ScrubMap::object, pg_shard_t>>& ok_peers,
+    const std::set<pg_shard_t>& bad_peers);
 
   /**
    * An auxiliary used by select_auth_object() to test a specific shard
    * as a possible auth candidate.
    * @param ho        the hobject for which we are looking for an auth source
    * @param srd       the candidate shard
-   * @param shard_map [out] a collection of shard_info-s per shard. possible_auth_shard()
-   *                  might set error flags in the relevant (this shard's) entry.
+   * @param shard_map [out] a collection of shard_info-s per shard.
+   * possible_auth_shard() might set error flags in the relevant (this shard's)
+   * entry.
    */
   shard_as_auth_t possible_auth_shard(const hobject_t& ho,
 				      pg_shard_t& srd,
 				      shard_info_map_t& shard_map);
 
-  auth_selection_t select_auth_object(const hobject_t& ho, std::stringstream& errstream);
+  auth_selection_t select_auth_object(const hobject_t& ho,
+				      std::stringstream& errstream);
 
 
   enum class digest_fixing_t { no, if_aged, force };
@@ -279,11 +300,12 @@ class ScrubBackend : public ScrubBackendIF {
   /*
    *  an aux used by inconsistents() to determine whether to fix the digest
    */
-  [[nodiscard]] digest_fixing_t should_fix_digest(const hobject_t& ho,
-						  const ScrubMap::object& auth_object,
-						  const object_info_t& auth_oi,
-						  bool repair_flag,
-						  std::stringstream& errstream);
+  [[nodiscard]] digest_fixing_t should_fix_digest(
+    const hobject_t& ho,
+    const ScrubMap::object& auth_object,
+    const object_info_t& auth_oi,
+    bool repair_flag,
+    std::stringstream& errstream);
 
   void inconsistents(const hobject_t& ho,
 		     ScrubMap::object& auth_object,

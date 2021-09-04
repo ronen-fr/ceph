@@ -1,7 +1,9 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "PrimaryLogScrub.h"
+#include "./PrimaryLogScrub.h"
+
+#include <sstream>
 
 #include "common/scrub_types.h"
 
@@ -76,7 +78,7 @@ void PrimaryLogScrub::add_to_stats(const object_stat_sum_t& stat)
 
 void PrimaryLogScrub::_scrub_finish()
 {
-  auto& info = m_pg->info;  ///< a temporary alias
+  const auto& info = m_pg->info;  ///< a temporary alias
 
   dout(10) << __func__
 	   << " info stats: " << (info.stats.stats_invalid ? "invalid" : "valid")
@@ -177,11 +179,11 @@ void PrimaryLogScrub::_scrub_finish()
     m_pl_pg->object_contexts.clear();
 }
 
-static bool doing_clones(const std::optional<SnapSet>& snapset,
-			 const vector<snapid_t>::reverse_iterator& curclone)
-{
-  return snapset && curclone != snapset->clones.rend();
-}
+// static bool doing_clones(const std::optional<SnapSet>& snapset,
+// 			 const vector<snapid_t>::reverse_iterator& curclone)
+// {
+//   return snapset && curclone != snapset->clones.rend();
+// }
 
 PrimaryLogScrub::PrimaryLogScrub(PrimaryLogPG* pg) : PgScrubber{pg}, m_pl_pg{pg} {}
 

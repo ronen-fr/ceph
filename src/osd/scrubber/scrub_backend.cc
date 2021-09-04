@@ -1,6 +1,8 @@
 // -*- m_mode_desc:C++; tab-width:8; c-basic-offset:2; indent-tabs-m_mode_desc:t -*-
 // vim: ts=2 sw=2 smarttab
 
+#include "./scrub_backend.h"
+
 #include <fmt/core.h>
 #include <fmt/format.h>
 
@@ -16,7 +18,6 @@
 #include "osd/osd_types_fmt.h"
 
 #include "pg_scrubber.h"
-#include "scrub_backend.h"
 
 using std::list;
 using std::pair;
@@ -717,6 +718,10 @@ void ScrubBackend::compare_smaps(stringstream& errstream)
 {
   dout(10) << __func__ << ": master-set #: " << this_chunk->master_set.size()
 	   << dendl;
+
+  // RRR in 's2' I had here:
+  // errstream.str("");
+  // errstream.clear();
 
   std::for_each(
     this_chunk->master_set.begin(), this_chunk->master_set.end(),

@@ -1,16 +1,15 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 #pragma once
-
 /**
  * \file fmtlib formatters for some types.h classes
  */
 
 #include <fmt/format.h>
 
-#include "include/types.h"
+#include <string_view>
 
-using namespace std::literals;
+#include "include/types.h"
 
 template <class A, class B, class Comp, class Alloc>
 struct fmt::formatter<std::map<A, B, Comp, Alloc>> {
@@ -19,10 +18,10 @@ struct fmt::formatter<std::map<A, B, Comp, Alloc>> {
   template <typename FormatContext>
   auto format(const std::map<A, B, Comp, Alloc>& m, FormatContext& ctx)
   {
-    auto sep = "{"sv;
+    std::string_view sep = "{";
     for (const auto& [k, v] : m) {
       fmt::format_to(ctx.out(), "{}{}={}", sep, k, v);
-      sep = ","sv;
+      sep = ",";
     }
     return fmt::format_to(ctx.out(), "}}");
   }

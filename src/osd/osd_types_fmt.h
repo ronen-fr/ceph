@@ -61,7 +61,6 @@ struct fmt::formatter<chunk_info_t> {
   }
 };
 
-
 template <>
 struct fmt::formatter<object_manifest_t> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
