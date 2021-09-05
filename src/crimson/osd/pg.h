@@ -40,6 +40,8 @@ class OSDMap;
 class PGBackend;
 class PGPeeringEvent;
 class osd_op_params_t;
+class PgScrubber;
+class ScrubBackend;
 
 namespace recovery {
   class Context;
@@ -47,6 +49,14 @@ namespace recovery {
 
 namespace crimson::net {
   class Messenger;
+}
+
+namespace Scrub {
+  class Store;
+  class ReplicaReservations;
+  class LocalReservation;
+  class ReservedByRemotePrimary;
+  enum class schedule_result_t;
 }
 
 namespace crimson::os {
@@ -740,6 +750,7 @@ private:
   friend struct PGFacade;
   friend class InternalClientRequest;
   friend class WatchTimeoutRequest;
+  friend PgScrubber;
 private:
   seastar::future<bool> find_unfound() {
     return seastar::make_ready_future<bool>(true);

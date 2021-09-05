@@ -36,6 +36,8 @@
 #include "crimson/osd/osd_operations/peering_event.h"
 #include "crimson/osd/pg_recovery.h"
 #include "crimson/osd/replicated_recovery_backend.h"
+#include "crimson/osd/scrubber/scrub_store.h"
+#include "crimson/osd/scrubber/scrubber.h"
 
 using std::ostream;
 using std::set;
