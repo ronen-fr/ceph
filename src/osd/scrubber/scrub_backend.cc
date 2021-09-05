@@ -82,7 +82,7 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
 			   bool repair,
 			   scrub_level_t shallow_or_deep,
 			   ScrubMap* primary_map,
-			   std::set<pg_shard_t> acting)
+			   /* for now*/ std::set<pg_shard_t> acting)
     : m_scrubber{scrubber}
     , m_pgbe{backend}
     , m_pg{pg}
@@ -96,9 +96,9 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
 {
   {
     // create the formatted ID string
+    // (RRR copied - and I don't like the orig:)
     char buf[spg_t::calc_name_buf_size];
-    buf[spg_t::calc_name_buf_size - 1] =
-      '\0';  // RRR copied - and I don't like the orig
+    buf[spg_t::calc_name_buf_size - 1] = '\0';
     m_formatted_id = m_pg_id.calc_name(buf + spg_t::calc_name_buf_size - 1, "");
   }
 
