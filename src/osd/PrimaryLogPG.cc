@@ -1030,7 +1030,7 @@ void PrimaryLogPG::do_command(
     f->close_section();
 
     if (is_primary() && is_active() && m_scrubber) {
-      m_scrubber->dump(f.get());
+      m_scrubber->dump_scrubber(f.get(), m_planned_scrub);
     }
 
     f->open_object_section("agent_state");
@@ -1176,9 +1176,8 @@ void PrimaryLogPG::do_command(
       stamp -= 100.0;  // push back last scrub more for good measure
       if (deep) {
         set_last_deep_scrub_stamp(stamp);
-      } else {
-        set_last_scrub_stamp(stamp);
       }
+      set_last_scrub_stamp(stamp); // also for 'deep', as we use this value to order scrubs
       f->open_object_section("result");
       f->dump_bool("deep", deep);
       f->dump_stream("stamp") << stamp;
