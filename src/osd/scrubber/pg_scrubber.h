@@ -288,6 +288,12 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void dump(ceph::Formatter* f) const override;
 
+  /**
+   *  convey the scrub scheduling state: are we ripe for scrubbing
+   *  or deep scrubbing? were we marked for a mandatory scrub?
+   */
+  void sched_info(ceph::Formatter* f, const requested_scrub_t& request_flags) const final;
+
   // used if we are a replica
 
   void replica_scrub_op(OpRequestRef op) final;
@@ -659,8 +665,8 @@ private:
    */
   void request_rescrubbing(requested_scrub_t& req_flags);
 
-  ScrubQueue::sched_params_t
-  determine_scrub_time(const requested_scrub_t& request_flags);
+  ScrubQueue::sched_params_t determine_scrub_time(
+    const requested_scrub_t& request_flags) const;
 
   void unregister_from_osd();
 

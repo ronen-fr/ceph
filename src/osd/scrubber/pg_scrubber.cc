@@ -520,7 +520,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 }
 
 ScrubQueue::sched_params_t
-PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags)
+PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
 {
   ScrubQueue::sched_params_t res;
 
@@ -1934,16 +1934,18 @@ void PgScrubber::dump(ceph::Formatter* f) const
     f->dump_stream("m_max_end") << m_max_end;
     f->dump_stream("subset_last_update") << m_subset_last_update;
     f->dump_bool("deep", m_is_deep);
+  }
     f->dump_bool("must_scrub", (m_pg->m_planned_scrub.must_scrub || m_flags.required));
     f->dump_bool("must_deep_scrub", m_pg->m_planned_scrub.must_deep_scrub);
     f->dump_bool("must_repair", m_pg->m_planned_scrub.must_repair);
     f->dump_bool("need_auto", m_pg->m_planned_scrub.need_auto);
-    f->dump_bool("req_scrub", m_flags.required);
     f->dump_bool("time_for_deep", m_pg->m_planned_scrub.time_for_deep);
+    f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time();  // utime_t
+  if (m_active) {
+    f->dump_bool("req_scrub", m_flags.required);
     f->dump_bool("auto_repair", m_flags.auto_repair);
     f->dump_bool("check_repair", m_flags.check_repair);
     f->dump_bool("deep_scrub_on_error", m_flags.deep_scrub_on_error);
-    f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time();  // utime_t
     f->dump_unsigned("priority", m_flags.priority);
     f->dump_int("shallow_errors", m_shallow_errors);
     f->dump_int("deep_errors", m_deep_errors);
@@ -1981,6 +1983,29 @@ void PgScrubber::handle_query_state(ceph::Formatter* f)
   }
 
   f->dump_string("comment", "DEPRECATED - may be removed in the next release");
+
+  f->close_section();
+}
+
+// note: only called when Primary
+void PgScrubber::sched_info(ceph::Formatter* f, const requested_scrub_t& request_flags) const
+{
+  f->open_object_section("scrubschedule");
+
+  if (m_active) { // replace with the fuller test after PR# 42780 is merged
+    f->dump_bool("scrubbing", true);
+  } else {
+    // are we marked for a 'must' scrub?
+    f->dump_bool("must_scrub", request_flags.must_scrub);
+    f->dump_bool("must_deep_scrub", m_pg->m_planned_scrub.must_deep_scrub);
+    f->dump_bool("must_repair", m_pg->m_planned_scrub.must_repair);
+    f->dump_bool("need_auto", m_pg->m_planned_scrub.need_auto);
+
+    f->dump_bool("time_for_deep", m_pg->m_planned_scrub.time_for_deep); // RRR is it already known here?
+
+    auto sched_state = m_scrub_job->scheduling_state(ceph_clock_now());
+    f->dump_string("schedule", sched_state);
+  }
 
   f->close_section();
 }

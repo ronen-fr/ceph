@@ -2,8 +2,9 @@
 // vim: ts=8 sw=2 smarttab
 #include "./osd_scrub_sched.h"
 
-#include "include/utime.h"
+#include "include/utime_fmt.h"
 #include "osd/OSD.h"
+#include "osd/osd_types_fmt.h"
 
 #include "pg_scrubber.h"
 
@@ -47,6 +48,26 @@ void ScrubQueue::ScrubJob::update_schedule(
   dout(10) << " pg[" << pgid << "] adjusted: " << schedule.scheduled_at << "  "
 	   << registration_state() << dendl;
 }
+
+/*
+ * process: RRR TBD - deep or shallow?
+ */
+std::string ScrubQueue::ScrubJob::scheduling_state(utime_t now_is) const
+{
+  // if not in the OSD scheduling queues, not a candidate for scrubbing
+  if (state != qu_state_t::registered) {
+    return "no scrub is scheduled";
+  }
+
+  // if the time has passed, we are surely in the queue
+  // (note that for now we do not tell client if 'penalized')
+  if (now_is > schedule.scheduled_at) {
+    return "in OSD scrub queue";
+  }
+
+  return fmt::format("scrub scheduled @ {}", schedule.scheduled_at);//
+}
+
 
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubQueue

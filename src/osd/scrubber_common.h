@@ -194,6 +194,8 @@ struct ScrubPgIF {
 
   virtual void dump(ceph::Formatter* f) const = 0;
 
+  virtual void sched_info(ceph::Formatter* f, const requested_scrub_t& request_flags) const = 0;
+
   /**
    * Return true if soid is currently being scrubbed and pending IOs should block.
    * May have a side effect of preempting an in-progress scrub -- will return false
