@@ -520,7 +520,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 }
 
 ScrubQueue::sched_params_t
-PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags)
+PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
 {
   ScrubQueue::sched_params_t res;
 
@@ -1917,52 +1917,74 @@ void PgScrubber::on_digest_updates()
   }
 }
 
-
 /*
  * note that the flags-set fetched from the PG (m_pg->m_planned_scrub)
  * is cleared once scrubbing starts; Some of the values dumped here are
  * thus transitory.
  */
-void PgScrubber::dump(ceph::Formatter* f) const
+void PgScrubber::dump_scrubber(ceph::Formatter* f,
+			       const requested_scrub_t& request_flags) const
 {
   f->open_object_section("scrubber");
-  f->dump_stream("epoch_start") << m_interval_start;
-  f->dump_bool("active", m_active);
-  if (m_active) {
-    f->dump_stream("start") << m_start;
-    f->dump_stream("end") << m_end;
-    f->dump_stream("m_max_end") << m_max_end;
-    f->dump_stream("subset_last_update") << m_subset_last_update;
-    f->dump_bool("deep", m_is_deep);
-    f->dump_bool("must_scrub", (m_pg->m_planned_scrub.must_scrub || m_flags.required));
-    f->dump_bool("must_deep_scrub", m_pg->m_planned_scrub.must_deep_scrub);
-    f->dump_bool("must_repair", m_pg->m_planned_scrub.must_repair);
-    f->dump_bool("need_auto", m_pg->m_planned_scrub.need_auto);
-    f->dump_bool("req_scrub", m_flags.required);
-    f->dump_bool("time_for_deep", m_pg->m_planned_scrub.time_for_deep);
-    f->dump_bool("auto_repair", m_flags.auto_repair);
-    f->dump_bool("check_repair", m_flags.check_repair);
-    f->dump_bool("deep_scrub_on_error", m_flags.deep_scrub_on_error);
-    f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time();  // utime_t
-    f->dump_unsigned("priority", m_flags.priority);
-    f->dump_int("shallow_errors", m_shallow_errors);
-    f->dump_int("deep_errors", m_deep_errors);
-    f->dump_int("fixed", m_fixed_count);
-    {
-      f->open_array_section("waiting_on_whom");
-      for (const auto& p : m_maps_status.get_awaited()) {
-	f->dump_stream("shard") << p;
-      }
-      f->close_section();
-    }
+
+  if (m_active) {  // TBD replace with PR#42780's test
+    f->dump_bool("active", true);
+    dump_active_scrubber(f, state_test(PG_STATE_DEEP_SCRUB));
+  } else {
+    f->dump_bool("active", false);
+    f->dump_bool("must_scrub",
+		 (m_pg->m_planned_scrub.must_scrub || m_flags.required));
+    f->dump_bool("must_deep_scrub", request_flags.must_deep_scrub);
+    f->dump_bool("must_repair", request_flags.must_repair);
+    f->dump_bool("need_auto", request_flags.need_auto);
+
+    f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time();
+
+    // note that we are repeating logic that is coded elsewhere (currently PG.cc).
+    // This is not optimal.
+    bool deep_expected = (ceph_clock_now() >= m_pg->next_deepscrub_interval()) or
+			 request_flags.must_deep_scrub || request_flags.need_auto;
+    auto sched_state =
+      m_scrub_job->scheduling_state(ceph_clock_now(), deep_expected);
+    f->dump_string("schedule", sched_state);
   }
+
   f->close_section();
 }
 
+void PgScrubber::dump_active_scrubber(ceph::Formatter* f, bool is_deep) const
+{
+  f->dump_stream("epoch_start") << m_interval_start;
+  f->dump_stream("start") << m_start;
+  f->dump_stream("end") << m_end;
+  f->dump_stream("m_max_end") << m_max_end;
+  f->dump_stream("subset_last_update") << m_subset_last_update;
+  // note that m_is_deep will be set some time after PG_STATE_DEEP_SCRUB is
+  // asserted. Thus, using the latter.
+  f->dump_bool("deep", is_deep);
+
+  // dump the scrub-type flags
+  f->dump_bool("req_scrub", m_flags.required);
+  f->dump_bool("auto_repair", m_flags.auto_repair);
+  f->dump_bool("check_repair", m_flags.check_repair);
+  f->dump_bool("deep_scrub_on_error", m_flags.deep_scrub_on_error);
+  f->dump_unsigned("priority", m_flags.priority);
+
+  f->dump_int("shallow_errors", m_shallow_errors);
+  f->dump_int("deep_errors", m_deep_errors);
+  f->dump_int("fixed", m_fixed_count);
+  {
+    f->open_array_section("waiting_on_whom");
+    for (const auto& p : m_maps_status.get_awaited()) {
+      f->dump_stream("shard") << p;
+    }
+    f->close_section();
+  }
+}
 
 void PgScrubber::handle_query_state(ceph::Formatter* f)
 {
-  dout(10) << __func__ << dendl;
+  dout(15) << __func__ << dendl;
 
   f->open_object_section("scrub");
   f->dump_stream("scrubber.epoch_start") << m_interval_start;
