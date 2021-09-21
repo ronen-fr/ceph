@@ -947,7 +947,7 @@ PrimaryLogPG::get_pgls_filter(bufferlist::const_iterator& iter)
   if (type.compare("plain") == 0) {
     filter = std::make_unique<PGLSPlainFilter>();
   } else {
-    std::size_t dot = type.find(".");
+    std::size_t dot = type.find('.');
     if (dot == std::string::npos || dot == 0 || dot == type.size() - 1) {
       return { -EINVAL, nullptr };
     }
@@ -1032,7 +1032,7 @@ void PrimaryLogPG::do_command(
     f->close_section();
 
     if (is_primary() && is_active() && m_scrubber) {
-      m_scrubber->dump(f.get());
+      m_scrubber->dump_scrubber(f.get(), m_planned_scrub);
     }
 
     f->open_object_section("agent_state");

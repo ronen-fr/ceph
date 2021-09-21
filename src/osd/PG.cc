@@ -818,6 +818,12 @@ void PG::publish_stats_to_osd()
   if (!is_primary())
     return;
 
+  if (m_scrubber) {
+    recovery_state.update_stats_wo_resched([scrubber = m_scrubber.get()](pg_history_t& hist, pg_stat_t& info) mutable -> void {
+      info.scrub_sched_status = scrubber->get_schedule();
+    });
+  }
+
   std::lock_guard l{pg_stats_publish_lock};
   auto stats = recovery_state.prepare_stats_for_publish(
     pg_stats_publish,
@@ -2533,12 +2539,6 @@ void PG::handle_query_state(Formatter *f)
   dout(10) << "handle_query_state" << dendl;
   PeeringState::QueryState q(f);
   recovery_state.handle_event(q, 0);
-
-  // This code has moved to after the close of recovery_state array.
-  // I don't think that scrub is a recovery state
-  if (is_primary() && is_active() && m_scrubber && m_scrubber->is_scrub_active()) {
-    m_scrubber->handle_query_state(f);
-  }
 }
 
 void PG::init_collection_pool_opts()
@@ -2753,6 +2753,14 @@ void PG::dump_missing(Formatter *f)
 void PG::with_pg_stats(std::function<void(const pg_stat_t&, epoch_t lec)>&& f)
 {
   std::lock_guard l{pg_stats_publish_lock};
+  if (pg_stats_publish) {
+    f(*pg_stats_publish, pg_stats_publish->get_effective_last_epoch_clean());
+  }
+}
+
+void PG::modify_pg_stats(std::function<void(pg_stat_t&, epoch_t lec)>&& f)
+{
+  // might be called with pg_stats_publish_lock locked!
   if (pg_stats_publish) {
     f(*pg_stats_publish, pg_stats_publish->get_effective_last_epoch_clean());
   }

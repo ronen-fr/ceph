@@ -791,6 +791,8 @@ protected:
 protected:
   void requeue_map_waiters();
 
+  void modify_pg_stats(std::function<void(pg_stat_t&, epoch_t lec)>&& f);
+
 protected:
 
   ZTracer::Endpoint trace_endpoint;
