@@ -794,7 +794,7 @@ void PgScrubber::add_delayed_scheduling()
   if (m_needs_sleep) {
     double scrub_sleep =
       1000.0 * m_osds->get_scrub_services().scrub_sleep_time(m_flags.required);
-    sleep_time = milliseconds{long(scrub_sleep)};
+    sleep_time = milliseconds{int64_t(scrub_sleep)};
   }
   dout(15) << __func__ << " sleep: " << sleep_time.count() << "ms. needed? "
 	   << m_needs_sleep << dendl;
@@ -1942,7 +1942,7 @@ void PgScrubber::dump_scrubber(ceph::Formatter* f,
 
     // note that we are repeating logic that is coded elsewhere (currently PG.cc).
     // This is not optimal.
-    bool deep_expected = (ceph_clock_now() >= m_pg->next_deepscrub_interval()) or
+    bool deep_expected = (ceph_clock_now() >= m_pg->next_deepscrub_interval()) ||
 			 request_flags.must_deep_scrub || request_flags.need_auto;
     auto sched_state =
       m_scrub_job->scheduling_state(ceph_clock_now(), deep_expected);
@@ -1957,7 +1957,7 @@ void PgScrubber::dump_active_scrubber(ceph::Formatter* f, bool is_deep) const
   f->dump_stream("epoch_start") << m_interval_start;
   f->dump_stream("start") << m_start;
   f->dump_stream("end") << m_end;
-  f->dump_stream("m_max_end") << m_max_end;
+  f->dump_stream("max_end") << m_max_end;
   f->dump_stream("subset_last_update") << m_subset_last_update;
   // note that m_is_deep will be set some time after PG_STATE_DEEP_SCRUB is
   // asserted. Thus, using the latter.
@@ -1982,6 +1982,57 @@ void PgScrubber::dump_active_scrubber(ceph::Formatter* f, bool is_deep) const
   }
 }
 
+pg_scrubbing_status_t PgScrubber::get_schedule() const
+{
+  dout(25) << __func__ << dendl;
+
+  if (!m_scrub_job) {
+    return pg_scrubbing_status_t{};
+  }
+
+  auto now_is = ceph_clock_now();
+
+  if (m_active) {
+    // report current scrub info, including updated duration
+
+    // todo: change to calculate in chrono spans
+    int32_t duration = (utime_t{now_is} - scrub_begin_stamp).sec();
+
+    return pg_scrubbing_status_t{
+      utime_t{}, duration,  pg_scrub_sched_status_t::active,
+      true,	 m_is_deep, false /* unknown, actually */};
+  }
+  if (m_scrub_job->state != ScrubQueue::qu_state_t::registered) {
+    return pg_scrubbing_status_t{
+      utime_t{}, 0, pg_scrub_sched_status_t::not_queued, false, false, false};
+  }
+
+  // Will next scrub surely be a deep one? note that deep-scrub might be selected
+  // even if we report a regular scrub here.
+  bool deep_expected = (now_is >= m_pg->next_deepscrub_interval()) ||
+		       m_pg->m_planned_scrub.must_deep_scrub ||
+		       m_pg->m_planned_scrub.need_auto;
+
+  bool periodic = !m_pg->m_planned_scrub.must_scrub &&
+		  !m_pg->m_planned_scrub.need_auto &&
+		  !m_pg->m_planned_scrub.must_deep_scrub;
+
+  // are we ripe for scrubbing?
+  if (now_is > m_scrub_job->schedule.scheduled_at) {
+    // we are waiting for our turn at the OSD.
+    return pg_scrubbing_status_t{
+      utime_t{},     0,	      pg_scrub_sched_status_t::queued, false,
+      deep_expected, periodic};
+  }
+
+  return pg_scrubbing_status_t{m_scrub_job->schedule.scheduled_at,
+			       0,
+			       pg_scrub_sched_status_t::scheduled,
+			       false,
+			       deep_expected,
+			       periodic};
+}
+
 void PgScrubber::handle_query_state(ceph::Formatter* f)
 {
   dout(15) << __func__ << dendl;
@@ -1991,8 +2042,8 @@ void PgScrubber::handle_query_state(ceph::Formatter* f)
   f->dump_bool("scrubber.active", m_active);
   f->dump_stream("scrubber.start") << m_start;
   f->dump_stream("scrubber.end") << m_end;
-  f->dump_stream("scrubber.m_max_end") << m_max_end;
-  f->dump_stream("scrubber.m_subset_last_update") << m_subset_last_update;
+  f->dump_stream("scrubber.max_end") << m_max_end;
+  f->dump_stream("scrubber.subset_last_update") << m_subset_last_update;
   f->dump_bool("scrubber.deep", m_is_deep);
   {
     f->open_array_section("scrubber.waiting_on_whom");
@@ -2034,14 +2085,14 @@ void PgScrubber::set_scrub_begin_time() {
   scrub_begin_stamp = ceph_clock_now();
 }
 
-void PgScrubber::set_scrub_duration() {
-   utime_t stamp = ceph_clock_now();
-   utime_t duration = stamp - scrub_begin_stamp;
-   m_pg->recovery_state.update_stats(
-      [=](auto &history, auto &stats) {
-       stats.scrub_duration = double(duration);
-  return true;
-    });
+void PgScrubber::set_scrub_duration()
+{
+  utime_t stamp = ceph_clock_now();
+  utime_t duration = stamp - scrub_begin_stamp;
+  m_pg->recovery_state.update_stats([=](auto& history, auto& stats) {
+    stats.last_scrub_duration = duration.sec();
+    return true;
+  });
 }
 
 void PgScrubber::reserve_replicas()

@@ -192,6 +192,8 @@ struct ScrubPgIF {
 
   virtual void handle_query_state(ceph::Formatter* f) = 0;
 
+  virtual pg_scrubbing_status_t get_schedule() const = 0;
+
   virtual void dump_scrubber(ceph::Formatter* f,
 			     const requested_scrub_t& request_flags) const = 0;
 

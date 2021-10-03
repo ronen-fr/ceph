@@ -7618,7 +7618,9 @@ MPGStats* OSD::collect_pg_stats()
       continue;
     }
     pg->with_pg_stats([&](const pg_stat_t& s, epoch_t lec) {
-	m->pg_stat[pg->pg_id.pgid] = s;
+        pg_stat_t s_copy = s;
+        s_copy.scrub_sched_status = pg->m_scrubber->get_schedule(); /// perform directly in array
+	m->pg_stat[pg->pg_id.pgid] = s_copy;
 	min_last_epoch_clean = std::min(min_last_epoch_clean, lec);
 	min_last_epoch_clean_pgs.push_back(pg->pg_id.pgid);
       });
