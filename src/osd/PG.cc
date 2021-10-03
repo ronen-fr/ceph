@@ -2761,6 +2761,14 @@ void PG::with_pg_stats(std::function<void(const pg_stat_t&, epoch_t lec)>&& f)
   }
 }
 
+void PG::modify_pg_stats(std::function<void(pg_stat_t&, epoch_t lec)>&& f)
+{
+  // might be called with pg_stats_publish_lock locked!
+  if (pg_stats_publish) {
+    f(*pg_stats_publish, pg_stats_publish->get_effective_last_epoch_clean());
+  }
+}
+
 void PG::with_heartbeat_peers(std::function<void(int)>&& f)
 {
   std::lock_guard l{heartbeat_peer_lock};

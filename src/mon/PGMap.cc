@@ -1608,7 +1608,7 @@ void PGMap::dump_osd_stats(ceph::Formatter *f, bool with_net) const
 void PGMap::dump_osd_ping_times(ceph::Formatter *f) const
 {
   f->open_array_section("osd_ping_times");
-  for (auto& [osd, stat] : osd_stat) {
+  for (const auto& [osd, stat] : osd_stat) {
     f->open_object_section("osd_ping_time");
     f->dump_int("osd", osd);
     stat.dump_ping_time(f);
@@ -1617,10 +1617,11 @@ void PGMap::dump_osd_ping_times(ceph::Formatter *f) const
   f->close_section();
 }
 
+// note: dump_pg_stats_plain() is static
 void PGMap::dump_pg_stats_plain(
   ostream& ss,
   const mempool::pgmap::unordered_map<pg_t, pg_stat_t>& pg_stats,
-  bool brief) const
+  bool brief)
 {
   TextTable tab;
 
@@ -1658,13 +1659,12 @@ void PGMap::dump_pg_stats_plain(
     tab.define_column("DEEP_SCRUB_STAMP", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("SNAPTRIMQ_LEN", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("SCRUB_DURATION", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("SCRUB_SCHEDULING", TextTable::LEFT, TextTable::LEFT);
   }
 
-  for (auto i = pg_stats.begin();
-       i != pg_stats.end(); ++i) {
-    const pg_stat_t &st(i->second);
+  for (const auto& [pg, st] : pg_stats) {
     if (brief) {
-      tab << i->first
+      tab << pg
           << pg_state_string(st.state)
           << st.up
           << st.up_primary
@@ -1675,7 +1675,7 @@ void PGMap::dump_pg_stats_plain(
       ostringstream reported;
       reported << st.reported_epoch << ":" << st.reported_seq;
 
-      tab << i->first
+      tab << pg
           << st.stats.sum.num_objects
           << st.stats.sum.num_objects_missing_on_primary
           << st.stats.sum.num_objects_degraded
@@ -1700,6 +1700,7 @@ void PGMap::dump_pg_stats_plain(
           << st.last_deep_scrub_stamp
           << st.snaptrimq_len
           << st.scrub_duration
+          << st.dump_scrub_schedule()
           << TextTable::endrow;
     }
   }

@@ -36,8 +36,10 @@ extern "C" {
 
 #include "common/Formatter.h"
 #include "common/StackStringStream.h"
+#include "include/utime_fmt.h"
 #include "OSDMap.h"
 #include "osd_types.h"
+#include "osd_types_fmt.h"
 #include "os/Transaction.h"
 
 using std::list;
@@ -2856,6 +2858,7 @@ void pg_stat_t::dump(Formatter *f) const
   f->dump_bool("manifest_stats_invalid", manifest_stats_invalid);
   f->dump_unsigned("snaptrimq_len", snaptrimq_len);
   f->dump_float("scrub_duration", scrub_duration);
+  f->dump_string("scrub_schedule", dump_scrub_schedule());
   stats.dump(f);
   f->open_array_section("up");
   for (auto p = up.cbegin(); p != up.cend(); ++p)
@@ -2906,6 +2909,49 @@ void pg_stat_t::dump_brief(Formatter *f) const
   f->close_section();
   f->dump_int("up_primary", up_primary);
   f->dump_int("acting_primary", acting_primary);
+}
+
+std::string pg_stat_t::dump_scrub_schedule() const
+{
+  if (scrub_sched_status.m_is_active) {
+    return fmt::format("{}scrubbing for {}s",
+		       (scrub_sched_status.m_is_deep ? "deep " : ""),
+		       scrub_sched_status.m_duration_seconds);
+  }
+  if (scrub_sched_status.m_sched_status == pg_scrub_sched_status_t::active) {
+    return fmt::format("BUGBUG scrubbing for {}s",
+		       scrub_sched_status.m_duration_seconds);
+  }
+  switch (scrub_sched_status.m_sched_status) {
+    case pg_scrub_sched_status_t::unknown:
+      // no reported scrub schedule yet
+      return "-"s;
+    case pg_scrub_sched_status_t::not_queued:
+      return "no scrub is scheduled"s;
+    case pg_scrub_sched_status_t::scheduled:
+      return fmt::format(
+	"{} {}scrub scheduled @ {}",
+	(scrub_sched_status.m_is_periodic ? "periodic" : "forced"),
+	(scrub_sched_status.m_is_deep ? "deep " : ""),
+	scrub_sched_status.m_scheduled_at);
+    case pg_scrub_sched_status_t::queued:
+      return fmt::format("queued for {}scrub",
+			 (scrub_sched_status.m_is_deep ? "deep " : ""));
+    default:
+      // a bug!
+      return "xxxxx";
+  }
+}
+
+bool operator==(const pg_scrubbing_status_t& l, const pg_scrubbing_status_t& r)
+{
+  return
+    l.m_sched_status == r.m_sched_status &&
+    l.m_scheduled_at == r.m_scheduled_at &&
+    l.m_duration_seconds == r.m_duration_seconds &&
+    l.m_is_active == r.m_is_active &&
+    l.m_is_deep == r.m_is_deep &&
+    l.m_is_periodic == r.m_is_periodic;
 }
 
 void pg_stat_t::encode(ceph::buffer::list &bl) const
@@ -2959,6 +3005,12 @@ void pg_stat_t::encode(ceph::buffer::list &bl) const
   encode(avail_no_missing, bl);
   encode(object_location_counts, bl);
   encode(scrub_duration, bl);
+  encode(scrub_sched_status.m_scheduled_at, bl);
+  encode(scrub_sched_status.m_duration_seconds, bl);
+  encode((__u16)scrub_sched_status.m_sched_status, bl);
+  encode(scrub_sched_status.m_is_active, bl);
+  encode(scrub_sched_status.m_is_deep, bl);
+  encode(scrub_sched_status.m_is_periodic, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -3035,6 +3087,17 @@ void pg_stat_t::decode(ceph::buffer::list::const_iterator &bl)
     }
     if (struct_v >= 27) {
       decode(scrub_duration, bl);
+      decode(scrub_sched_status.m_scheduled_at, bl);
+      decode(scrub_sched_status.m_duration_seconds, bl);
+      __u16 scrub_sched_as_u16;
+      decode(scrub_sched_as_u16, bl);
+      scrub_sched_status.m_sched_status = (pg_scrub_sched_status_t)(scrub_sched_as_u16);
+      decode(tmp, bl);
+      scrub_sched_status.m_is_active = tmp;
+      decode(tmp, bl);
+      scrub_sched_status.m_is_deep = tmp;
+      decode(tmp, bl);
+      scrub_sched_status.m_is_periodic = tmp;
     }
   }
   DECODE_FINISH(bl);
@@ -3143,7 +3206,8 @@ bool operator==(const pg_stat_t& l, const pg_stat_t& r)
     l.manifest_stats_invalid == r.manifest_stats_invalid &&
     l.purged_snaps == r.purged_snaps &&
     l.snaptrimq_len == r.snaptrimq_len &&
-    l.scrub_duration == r.scrub_duration;
+    l.scrub_duration == r.scrub_duration &&
+    l.scrub_sched_status == r.scrub_sched_status;
 }
 
 // -- store_statfs_t --
