@@ -286,8 +286,10 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void handle_query_state(ceph::Formatter* f) final;
 
+  pg_scrubbing_status_t get_schedule() const final;
+
   void dump_scrubber(ceph::Formatter* f,
-		     const requested_scrub_t& request_flags) const override;
+		     const requested_scrub_t& request_flags) const final;
 
   // used if we are a replica
 
@@ -743,7 +745,7 @@ private:
    */
   class preemption_data_t : public Scrub::preemption_t {
    public:
-    preemption_data_t(PG* pg);	// the PG access is used for conf access (and logs)
+    explicit preemption_data_t(PG* pg);	// the PG access is used for conf access (and logs)
 
     [[nodiscard]] bool is_preemptable() const final { return m_preemptable; }
 

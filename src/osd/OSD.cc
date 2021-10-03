@@ -7592,6 +7592,7 @@ void OSD::resched_all_scrubs()
 
 MPGStats* OSD::collect_pg_stats()
 {
+  dout(15) << __func__ << dendl;
   // This implementation unconditionally sends every is_primary PG's
   // stats every time we're called.  This has equivalent cost to the
   // previous implementation's worst case where all PGs are busy and
@@ -7618,7 +7619,10 @@ MPGStats* OSD::collect_pg_stats()
       continue;
     }
     pg->with_pg_stats([&](const pg_stat_t& s, epoch_t lec) {
+	//pg_stat_t s_copy = s;
+	//s_copy.scrub_sched_status = pg->m_scrubber->get_schedule();
 	m->pg_stat[pg->pg_id.pgid] = s;
+	//m->pg_stat[pg->pg_id.pgid].scrub_sched_status = pg->m_scrubber->get_schedule();
 	min_last_epoch_clean = std::min(min_last_epoch_clean, lec);
 	min_last_epoch_clean_pgs.push_back(pg->pg_id.pgid);
       });
