@@ -1177,7 +1177,7 @@ void PrimaryLogPG::do_command(
       if (deep) {
         set_last_deep_scrub_stamp(stamp);
       } else {
-        set_last_scrub_stamp(stamp); // also for 'deep', as we use this value to order scrubs
+        set_last_scrub_stamp(stamp);
       }
       f->open_object_section("result");
       f->dump_bool("deep", deep);
