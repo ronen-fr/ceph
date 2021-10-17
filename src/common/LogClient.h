@@ -39,16 +39,19 @@ namespace logging {
 }
 }
 
-int parse_log_client_options(CephContext *cct,
-			     std::map<std::string,std::string> &log_to_monitors,
-			     std::map<std::string,std::string> &log_to_syslog,
-			     std::map<std::string,std::string> &log_channels,
-			     std::map<std::string,std::string> &log_prios,
-			     std::map<std::string,std::string> &log_to_graylog,
-			     std::map<std::string,std::string> &log_to_graylog_host,
-			     std::map<std::string,std::string> &log_to_graylog_port,
-			     uuid_d &fsid,
-			     std::string &host);
+struct clog_targets_conf_t {
+  std::string log_to_monitors;
+  std::string log_to_syslog;
+  std::string log_channels;
+  std::string log_prios;
+  std::string log_to_graylog;
+  std::string log_to_graylog_host;
+  std::string log_to_graylog_port;
+  uuid_d fsid; // only 16B. Simpler as a copy.
+  std::string host;
+};
+
+clog_targets_conf_t parse_log_client_options(CephContext* cct, std::string channel_name);
 
 /** Manage where we output to and at which priority
  *
@@ -167,6 +170,7 @@ public:
 		     uuid_d &fsid,
 		     std::string &host);
 
+  void update_config(const clog_targets_conf_t& conf_strings);
   void do_log(clog_type prio, std::stringstream& ss);
   void do_log(clog_type prio, const std::string& s);
 
