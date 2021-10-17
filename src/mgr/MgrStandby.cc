@@ -375,29 +375,10 @@ void MgrStandby::respawn()
 
 void MgrStandby::_update_log_config()
 {
-  map<string,string> log_to_monitors;
-  map<string,string> log_to_syslog;
-  map<string,string> log_channel;
-  map<string,string> log_prio;
-  map<string,string> log_to_graylog;
-  map<string,string> log_to_graylog_host;
-  map<string,string> log_to_graylog_port;
-  uuid_d fsid;
-  string host;
-
-  if (parse_log_client_options(cct, log_to_monitors, log_to_syslog,
-			       log_channel, log_prio, log_to_graylog,
-			       log_to_graylog_host, log_to_graylog_port,
-			       fsid, host) == 0) {
-    clog->update_config(log_to_monitors, log_to_syslog,
-			log_channel, log_prio, log_to_graylog,
-			log_to_graylog_host, log_to_graylog_port,
-			fsid, host);
-    audit_clog->update_config(log_to_monitors, log_to_syslog,
-			      log_channel, log_prio, log_to_graylog,
-			      log_to_graylog_host, log_to_graylog_port,
-			      fsid, host);
-  }
+  auto parsed_options = parse_log_client_options(cct, clog->get_log_channel());
+  clog->update_config(parsed_options);
+  auto audit_options = parse_log_client_options(cct, audit_clog->get_log_channel());
+  audit_clog->update_config(audit_options);
 }
 
 void MgrStandby::handle_mgr_map(ref_t<MMgrMap> mmap)
