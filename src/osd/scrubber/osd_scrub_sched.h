@@ -9,6 +9,7 @@
 #include <optional>
 #include <vector>
 
+#include "common/ceph_atomic.h"
 #include "common/RefCountedObj.h"
 #include "osd/osd_types.h"
 #include "osd/scrubber_common.h"
@@ -26,7 +27,7 @@ enum class schedule_result_t {
   scrub_initiated,     // successfully started a scrub
   none_ready,	       // no pg to scrub
   no_local_resources,  // failure to secure local OSD scrub resource
-  already_started,     // already started scrubbing this pg
+  already_started,     // failed, as already started scrubbing this pg
   no_such_pg,	       // can't find this pg
   bad_pg_state,	       // pg state (clean, active, etc.)
   preconditions	       // time, configuration, etc.
@@ -87,7 +88,7 @@ class ScrubQueue {
     /// the OSD id (for the log)
     const int whoami;
 
-    std::atomic<qu_state_t> state{qu_state_t::not_registered};
+    ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
 
     /**
      * the old 'is_registered'. Set whenever the job is registered with the OSD,
@@ -223,7 +224,7 @@ class ScrubQueue {
   void dump_scrubs(ceph::Formatter* f) const;
 
   /**
-   * No new scrub session will start while a scrub was initiate on a PG,
+   * No new scrub session will start while a scrub was initiated on a PG,
    * and that PG is trying to acquire replica resources.
    */
   void set_reserving_now() { a_pg_is_reserving = true; }

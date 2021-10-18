@@ -90,11 +90,11 @@ std::optional<double> ScrubQueue::update_load_average()
   }
 
   // get CPU load avg
-  double loadavgs[1];
-  if (getloadavg(loadavgs, 1) == 1) {
-    daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavgs[0]) / n_samples;
+  double loadavg;
+  if (getloadavg(&loadavg, 1) == 1) {
+    daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavg) / n_samples;
     dout(17) << "heartbeat: daily_loadavg " << daily_loadavg << dendl;
-    return 100 * loadavgs[0];
+    return 100 * loadavg;
   }
 
   return std::nullopt;
