@@ -3,6 +3,7 @@
 
 #include "./pg_scrubber.h"  // the '.' notation used to affect clang-format order
 
+#include <cmath>
 #include <iostream>
 #include <vector>
 
@@ -2090,7 +2091,7 @@ void PgScrubber::set_scrub_duration()
   utime_t stamp = ceph_clock_now();
   utime_t duration = stamp - scrub_begin_stamp;
   m_pg->recovery_state.update_stats([=](auto& history, auto& stats) {
-    stats.last_scrub_duration = duration.sec();
+    stats.last_scrub_duration = ceill(duration.to_msec()/1000.0);
     return true;
   });
 }

@@ -2190,7 +2190,7 @@ enum class pg_scrub_sched_status_t : uint16_t {
 
 struct pg_scrubbing_status_t {
   utime_t m_scheduled_at{};
-  // the following is only relevant when scrubbing.
+  // the following is only relevant when scrubbing:
   int32_t m_duration_seconds{0};
   pg_scrub_sched_status_t m_sched_status{pg_scrub_sched_status_t::unknown};
   bool m_is_active{false};
