@@ -3,6 +3,7 @@
 
 #include "./pg_scrubber.h"  // the '.' notation used to affect clang-format order
 
+#include <cmath>
 #include <iostream>
 #include <vector>
 
@@ -578,6 +579,7 @@ void PgScrubber::scrub_requested(scrub_level_t scrub_level,
   dout(20) << __func__ << " pg(" << m_pg_id << ") planned:" << req_flags << dendl;
 
   update_scrub_job(req_flags);
+  m_pg->publish_stats_to_osd();
 }
 
 
@@ -978,6 +980,7 @@ void PgScrubber::on_init()
 
   m_start = m_pg->info.pgid.pgid.get_hobj_start();
   m_active = true;
+  m_pg->publish_stats_to_osd();
 }
 
 void PgScrubber::on_replica_init()
@@ -1346,7 +1349,7 @@ void PgScrubber::set_op_parameters(requested_scrub_t& request)
     // not calling update_op_mode_text() yet, as m_is_deep not set yet
   }
 
-  // the publishing here seems to be required for tests synchronization
+  // the publishing here is required for tests synchronization
   m_pg->publish_stats_to_osd();
   m_flags.deep_scrub_on_error = request.deep_scrub_on_error;
 }
@@ -1980,7 +1983,7 @@ void PgScrubber::dump_active_scrubber(ceph::Formatter* f, bool is_deep) const
     }
     f->close_section();
   }
-  f->dump_string("schedule", "scrubbing"); // RRR
+  f->dump_string("schedule", "scrubbing");
 }
 
 pg_scrubbing_status_t PgScrubber::get_schedule() const
@@ -1998,12 +2001,20 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
     int32_t duration = (utime_t{now_is} - scrub_begin_stamp).sec();
 
     return pg_scrubbing_status_t{
-      utime_t{}, duration,  pg_scrub_sched_status_t::active,
-      true,      m_is_deep, false /* unknown, actually */};
+      utime_t{},
+      duration,
+      pg_scrub_sched_status_t::active,
+      true,  // active
+      (m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow),
+      false /* is periodic? unknown, actually */};
   }
   if (m_scrub_job->state != ScrubQueue::qu_state_t::registered) {
-    return pg_scrubbing_status_t{
-      utime_t{}, 0, pg_scrub_sched_status_t::not_queued, false, false, false};
+    return pg_scrubbing_status_t{utime_t{},
+                                 0,
+                                 pg_scrub_sched_status_t::not_queued,
+                                 false,
+                                 scrub_level_t::shallow,
+                                 false};
   }
 
   // Will next scrub surely be a deep one? note that deep-scrub might be
@@ -2011,6 +2022,8 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
   bool deep_expected = (now_is >= m_pg->next_deepscrub_interval()) ||
                        m_pg->m_planned_scrub.must_deep_scrub ||
                        m_pg->m_planned_scrub.need_auto;
+  scrub_level_t expected_level =
+    deep_expected ? scrub_level_t::deep : scrub_level_t::shallow;
   bool periodic = !m_pg->m_planned_scrub.must_scrub &&
                   !m_pg->m_planned_scrub.need_auto &&
                   !m_pg->m_planned_scrub.must_deep_scrub;
@@ -2018,16 +2031,19 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
   // are we ripe for scrubbing?
   if (now_is > m_scrub_job->schedule.scheduled_at) {
     // we are waiting for our turn at the OSD.
-    return pg_scrubbing_status_t{
-      utime_t{},     0,       pg_scrub_sched_status_t::queued, false,
-      deep_expected, periodic};
+    return pg_scrubbing_status_t{m_scrub_job->schedule.scheduled_at,
+                                 0,
+                                 pg_scrub_sched_status_t::queued,
+                                 false,
+                                 expected_level,
+                                 periodic};
   }
 
   return pg_scrubbing_status_t{m_scrub_job->schedule.scheduled_at,
                                0,
                                pg_scrub_sched_status_t::scheduled,
                                false,
-                               deep_expected,
+                               expected_level,
                                periodic};
 }
 
@@ -2089,7 +2105,7 @@ void PgScrubber::set_scrub_duration()
   utime_t stamp = ceph_clock_now();
   utime_t duration = stamp - scrub_begin_stamp;
   m_pg->recovery_state.update_stats([=](auto& history, auto& stats) {
-    stats.last_scrub_duration = duration.sec();
+    stats.last_scrub_duration = ceill(duration.to_msec()/1000.0);
     return true;
   });
 }
@@ -2163,8 +2179,6 @@ void PgScrubber::replica_handling_done()
   state_clear(PG_STATE_DEEP_SCRUB);
 
   reset_internal_state();
-
-  m_pg->publish_stats_to_osd();
 }
 
 /*
