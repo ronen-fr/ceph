@@ -2179,6 +2179,9 @@ inline bool operator==(const object_stat_collection_t& l,
   return l.sum == r.sum;
 }
 
+enum class scrub_level_t : bool { shallow = false, deep = true };
+enum class scrub_type_t : bool { not_repair = false, do_repair = true };
+
 /// is there a scrub in our future?
 enum class pg_scrub_sched_status_t : uint16_t {
   unknown,         ///< status not reported yet
@@ -2190,11 +2193,10 @@ enum class pg_scrub_sched_status_t : uint16_t {
 
 struct pg_scrubbing_status_t {
   utime_t m_scheduled_at{};
-  // the following is only relevant when scrubbing.
-  int32_t m_duration_seconds{0};
+  int32_t m_duration_seconds{0}; // relevant when scrubbing
   pg_scrub_sched_status_t m_sched_status{pg_scrub_sched_status_t::unknown};
   bool m_is_active{false};
-  bool m_is_deep{false};
+  scrub_level_t m_is_deep{scrub_level_t::shallow};
   bool m_is_periodic{true};
 };
 
@@ -6102,9 +6104,6 @@ struct PushOp {
 };
 WRITE_CLASS_ENCODER_FEATURES(PushOp)
 std::ostream& operator<<(std::ostream& out, const PushOp &op);
-
-enum class scrub_level_t : bool { shallow = false, deep = true };
-enum class scrub_type_t : bool { not_repair = false, do_repair = true };
 
 /*
  * summarize pg contents for purposes of a scrub
