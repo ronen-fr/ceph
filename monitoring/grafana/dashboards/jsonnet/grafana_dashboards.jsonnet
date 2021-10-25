@@ -82,7 +82,14 @@ local addStyle(alias, colorMode, colors, dateFormat, decimals, mappingType, patt
       HostsOverviewSingleStatPanel(
         'none', 'Physical IOPS', 'IOPS Load at the device as reported by the OS on all OSD hosts', 'current', 'sum ((irate(node_disk_reads_completed{instance=~\"($osd_hosts).*\"}[5m]) or irate(node_disk_reads_completed_total{instance=~\"($osd_hosts).*\"}[5m]) )  + \n(irate(node_disk_writes_completed{instance=~\"($osd_hosts).*\"}[5m]) or irate(node_disk_writes_completed_total{instance=~\"($osd_hosts).*\"}[5m])))', 'time_series', 12, 0, 4, 5),
       HostsOverviewSingleStatPanel(
-        'percent', 'AVG Disk Utilization', 'Average Disk utilization for all OSD data devices (i.e. excludes journal/WAL)', 'current', 'avg (\n  label_replace((irate(node_disk_io_time_ms[5m]) / 10 ) or\n   (irate(node_disk_io_time_seconds_total[5m]) * 100), \"instance\", \"$1\", \"instance\", \"([^.:]*).*\"\n  ) *\n  on(instance, device, ceph_daemon) label_replace(label_replace(ceph_disk_occupation{instance=~\"($osd_hosts).*\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^.:]*).*\")\n)', 'time_series', 16, 0, 4, 5),
+        'percent',
+        'AVG Disk Utilization',
+        'Average Disk utilization for all OSD data devices (i.e. excludes journal/WAL)',
+        'current',
+        'avg (\n  label_replace((irate(node_disk_io_time_ms[5m]) / 10 ) or\n   (irate(node_disk_io_time_seconds_total[5m]) * 100), "instance", "$1", "instance", "([^.:]*).*"\n  ) *\n  on(instance, device) group_left(ceph_daemon) label_replace(label_replace(ceph_disk_occupation_human{instance=~"($osd_hosts).*"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^.:]*).*")\n)',
+        'time_series',
+        16, 0, 4, 5
+        ),
       HostsOverviewSingleStatPanel(
         'bytes', 'Network Load', 'Total send/receive network load across all hosts in the ceph cluster', 'current', |||
 		sum (
@@ -192,22 +199,68 @@ local addStyle(alias, colorMode, colors, dateFormat, decimals, mappingType, patt
       ),
       addRowSchema(false, true, 'OSD Disk Performance Statistics') + {gridPos: {x: 0, y: 11, w: 24, h: 1}},
       HostDetailsGraphPanel(
-        {},'$ceph_hosts Disk IOPS', 'For any OSD devices on the host, this chart shows the iops per physical device. Each device is shown by it\'s name and corresponding OSD id value', 'connected', 'ops', 'Read (-) / Write (+)', 'label_replace(\n  (\n    irate(node_disk_writes_completed{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]) or\n    irate(node_disk_writes_completed_total{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m])\n  ),\n  \"instance\",\n  \"$1\",\n  \"instance\",\n  \"([^:.]*).*\"\n)\n* on(instance, device, ceph_daemon) group_left\n  label_replace(\n    label_replace(\n      ceph_disk_occupation,\n      \"device\",\n      \"$1\",\n      \"device\",\n      \"/dev/(.*)\"\n    ),\n    \"instance\",\n    \"$1\",\n    \"instance\",\n    \"([^:.]*).*\"\n  )', '{{device}}({{ceph_daemon}}) writes', 0, 12, 11, 9)
+        {},
+        '$ceph_hosts Disk IOPS',
+        'For any OSD devices on the host, this chart shows the iops per physical device. Each device is shown by it\'s name and corresponding OSD id value',
+        'connected',
+        'ops',
+        'Read (-) / Write (+)',
+        'label_replace(\n  (\n    irate(node_disk_writes_completed{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]) or\n    irate(node_disk_writes_completed_total{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m])\n  ),\n  "instance",\n  "$1",\n  "instance",\n  "([^:.]*).*"\n)\n* on(instance, device) group_left(ceph_daemon)\n  label_replace(\n    label_replace(\n      ceph_disk_occupation_human,\n      "device",\n      "$1",\n      "device",\n      "/dev/(.*)"\n    ),\n    "instance",\n    "$1",\n    "instance",\n    "([^:.]*).*"\n  )',
+        '{{device}}({{ceph_daemon}}) writes',
+        0, 12, 11, 9
+        )
       .addTargets(
-        [addTargetSchema('label_replace(\n    (irate(node_disk_reads_completed{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]) or irate(node_disk_reads_completed_total{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m])),\n    \"instance\",\n    \"$1\",\n    \"instance\",\n    \"([^:.]*).*\"\n)\n* on(instance, device, ceph_daemon) group_left\n  label_replace(\n    label_replace(\n      ceph_disk_occupation,\n      \"device\",\n      \"$1\",\n      \"device\",\n      \"/dev/(.*)\"\n    ),\n    \"instance\",\n    \"$1\",\n    \"instance\",\n    \"([^:.]*).*\"\n  )', 1, 'time_series', '{{device}}({{ceph_daemon}}) reads')])
+        [
+        addTargetSchema(
+          'label_replace(\n    (irate(node_disk_reads_completed{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]) or irate(node_disk_reads_completed_total{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m])),\n    "instance",\n    "$1",\n    "instance",\n    "([^:.]*).*"\n)\n* on(instance, device) group_left(ceph_daemon)\n  label_replace(\n    label_replace(\n      ceph_disk_occupation_human,\n      "device",\n      "$1",\n      "device",\n      "/dev/(.*)"\n    ),\n    "instance",\n    "$1",\n    "instance",\n    "([^:.]*).*"\n  )',
+          1,
+          'time_series',
+          '{{device}}({{ceph_daemon}}) reads'
+          )])
       .addSeriesOverride({"alias": "/.*reads/","transform": "negative-Y"}
       ),
       HostDetailsGraphPanel(
-        {},'$ceph_hosts Throughput by Disk', 'For OSD hosts, this chart shows the disk bandwidth (read bytes/sec + write bytes/sec) of the physical OSD device. Each device is shown by device name, and corresponding OSD id', 'connected', 'Bps', 'Read (-) / Write (+)', 'label_replace((irate(node_disk_bytes_written{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]) or irate(node_disk_written_bytes_total{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m])), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") * on(instance, device, ceph_daemon) group_left label_replace(label_replace(ceph_disk_occupation, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")', '{{device}}({{ceph_daemon}}) write', 12, 12, 11, 9)
+        {},
+        '$ceph_hosts Throughput by Disk',
+        'For OSD hosts, this chart shows the disk bandwidth (read bytes/sec + write bytes/sec) of the physical OSD device. Each device is shown by device name, and corresponding OSD id',
+        'connected',
+        'Bps',
+        'Read (-) / Write (+)',
+        'label_replace((irate(node_disk_bytes_written{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]) or irate(node_disk_written_bytes_total{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m])), "instance", "$1", "instance", "([^:.]*).*") * on(instance, device) group_left(ceph_daemon) label_replace(label_replace(ceph_disk_occupation_human, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*")',
+        '{{device}}({{ceph_daemon}}) write',
+        12, 12, 11, 9
+        )
       .addTargets(
-        [addTargetSchema('label_replace((irate(node_disk_bytes_read{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]) or irate(node_disk_read_bytes_total{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m])), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") * on(instance, device, ceph_daemon) group_left label_replace(label_replace(ceph_disk_occupation, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")', 1, 'time_series', '{{device}}({{ceph_daemon}}) read')])
+        [
+        addTargetSchema(
+        'label_replace((irate(node_disk_bytes_read{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]) or irate(node_disk_read_bytes_total{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m])), "instance", "$1", "instance", "([^:.]*).*") * on(instance, device) group_left(ceph_daemon) label_replace(label_replace(ceph_disk_occupation_human, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*")',
+        1,
+        'time_series',
+        '{{device}}({{ceph_daemon}}) read'
+        )])
       .addSeriesOverride({"alias": "/.*read/","transform": "negative-Y"}
       ),
       HostDetailsGraphPanel(
-        {},'$ceph_hosts Disk Latency', 'For OSD hosts, this chart shows the latency at the physical drive. Each drive is shown by device name, with it\'s corresponding OSD id', 'null as zero', 's', '', 'max by(instance,device) (label_replace((irate(node_disk_write_time_seconds_total{ instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]) )  / clamp_min(irate(node_disk_writes_completed_total{ instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]), 0.001) or   (irate(node_disk_read_time_seconds_total{ instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]) )  / clamp_min(irate(node_disk_reads_completed_total{ instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]), 0.001), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")) *  on(instance, device, ceph_daemon) group_left label_replace(label_replace(ceph_disk_occupation{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")', '{{device}}({{ceph_daemon}})', 0, 21, 11, 9
+        {},
+        '$ceph_hosts Disk Latency',
+        'For OSD hosts, this chart shows the latency at the physical drive. Each drive is shown by device name, with it\'s corresponding OSD id',
+        'null as zero',
+        's',
+        '',
+        'max by(instance,device) (label_replace((irate(node_disk_write_time_seconds_total{ instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]) )  / clamp_min(irate(node_disk_writes_completed_total{ instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]), 0.001) or   (irate(node_disk_read_time_seconds_total{ instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]) )  / clamp_min(irate(node_disk_reads_completed_total{ instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]), 0.001), "instance", "$1", "instance", "([^:.]*).*")) *  on(instance, device) group_left(ceph_daemon) label_replace(label_replace(ceph_disk_occupation_human{instance=~"($ceph_hosts)([\\\\.:].*)?"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*")',
+        '{{device}}({{ceph_daemon}})',
+        0, 21, 11, 9
       ),
       HostDetailsGraphPanel(
-        {},'$ceph_hosts Disk utilization', 'Show disk utilization % (util) of any OSD devices on the host by the physical device name and associated OSD id.', 'connected', 'percent', '%Util', 'label_replace(((irate(node_disk_io_time_ms{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]) / 10 ) or  irate(node_disk_io_time_seconds_total{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}[5m]) * 100), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") * on(instance, device, ceph_daemon) group_left label_replace(label_replace(ceph_disk_occupation{instance=~\"($ceph_hosts)([\\\\.:].*)?\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")', '{{device}}({{ceph_daemon}})', 12, 21, 11, 9
+        {},
+        '$ceph_hosts Disk utilization',
+        'Show disk utilization % (util) of any OSD devices on the host by the physical device name and associated OSD id.',
+        'connected',
+        'percent',
+        '%Util',
+        'label_replace(((irate(node_disk_io_time_ms{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]) / 10 ) or  irate(node_disk_io_time_seconds_total{instance=~"($ceph_hosts)([\\\\.:].*)?"}[5m]) * 100), "instance", "$1", "instance", "([^:.]*).*") * on(instance, device) group_left(ceph_daemon) label_replace(label_replace(ceph_disk_occupation_human{instance=~"($ceph_hosts)([\\\\.:].*)?"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*")',
+        '{{device}}({{ceph_daemon}})',
+        12, 21, 11, 9
       )
     ])
 }
@@ -767,21 +820,54 @@ local addStyle(alias, colorMode, colors, dateFormat, decimals, mappingType, patt
       .addSeriesOverride({"alias": "Read Bytes","transform": "negative-Y"}),
       addRowSchema(false, true, 'Physical Device Performance') + {gridPos: {x: 0, y: 10, w: 24, h: 1}},
       OsdDeviceDetailsPanel(
-        'Physical Device Latency for $osd', '', 's', 'Read (-) / Write (+)', '(label_replace(irate(node_disk_read_time_seconds_total[1m]) / irate(node_disk_reads_completed_total[1m]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") and on (instance, device) label_replace(label_replace(ceph_disk_occupation{ceph_daemon=~\"$osd\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"))', '(label_replace(irate(node_disk_write_time_seconds_total[1m]) / irate(node_disk_writes_completed_total[1m]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") and on (instance, device) label_replace(label_replace(ceph_disk_occupation{ceph_daemon=~\"$osd\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"))', '{{instance}}/{{device}} Reads', '{{instance}}/{{device}} Writes', 0, 11, 6, 9)
+        'Physical Device Latency for $osd',
+        '',
+        's',
+        'Read (-) / Write (+)',
+        '(label_replace(irate(node_disk_read_time_seconds_total[1m]) / irate(node_disk_reads_completed_total[1m]), "instance", "$1", "instance", "([^:.]*).*") and on (instance, device) label_replace(label_replace(ceph_disk_occupation_human{ceph_daemon=~"$osd"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*"))',
+        '(label_replace(irate(node_disk_write_time_seconds_total[1m]) / irate(node_disk_writes_completed_total[1m]), "instance", "$1", "instance", "([^:.]*).*") and on (instance, device) label_replace(label_replace(ceph_disk_occupation_human{ceph_daemon=~"$osd"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*"))',
+        '{{instance}}/{{device}} Reads',
+        '{{instance}}/{{device}} Writes',
+        0, 11, 6, 9
+        )
       .addSeriesOverride({"alias": "/.*Reads/","transform": "negative-Y"}
       ),
       OsdDeviceDetailsPanel(
-        'Physical Device R/W IOPS for $osd', '', 'short', 'Read (-) / Write (+)', 'label_replace(irate(node_disk_writes_completed_total[1m]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") and on (instance, device) label_replace(label_replace(ceph_disk_occupation{ceph_daemon=~\"$osd\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")', 'label_replace(irate(node_disk_reads_completed_total[1m]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") and on (instance, device) label_replace(label_replace(ceph_disk_occupation{ceph_daemon=~\"$osd\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")', '{{device}} on {{instance}} Writes', '{{device}} on {{instance}} Reads', 6, 11, 6, 9)
+        'Physical Device R/W IOPS for $osd',
+        '',
+        'short',
+        'Read (-) / Write (+)',
+        'label_replace(irate(node_disk_writes_completed_total[1m]), "instance", "$1", "instance", "([^:.]*).*") and on (instance, device) label_replace(label_replace(ceph_disk_occupation_human{ceph_daemon=~"$osd"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*")',
+        'label_replace(irate(node_disk_reads_completed_total[1m]), "instance", "$1", "instance", "([^:.]*).*") and on (instance, device) label_replace(label_replace(ceph_disk_occupation_human{ceph_daemon=~"$osd"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*")',
+        '{{device}} on {{instance}} Writes',
+        '{{device}} on {{instance}} Reads',
+        6, 11, 6, 9
+        )
       .addSeriesOverride({"alias": "/.*Reads/","transform": "negative-Y"}
       ),
       OsdDeviceDetailsPanel(
-        'Physical Device R/W Bytes for $osd', '', 'Bps', 'Read (-) / Write (+)', 'label_replace(irate(node_disk_read_bytes_total[1m]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") and on (instance, device) label_replace(label_replace(ceph_disk_occupation{ceph_daemon=~\"$osd\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")', 'label_replace(irate(node_disk_written_bytes_total[1m]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") and on (instance, device) label_replace(label_replace(ceph_disk_occupation{ceph_daemon=~\"$osd\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")', '{{instance}} {{device}} Reads', '{{instance}} {{device}} Writes', 12, 11, 6, 9)
+        'Physical Device R/W Bytes for $osd',
+        '',
+        'Bps',
+        'Read (-) / Write (+)',
+        'label_replace(irate(node_disk_read_bytes_total[1m]), "instance", "$1", "instance", "([^:.]*).*") and on (instance, device) label_replace(label_replace(ceph_disk_occupation_human{ceph_daemon=~"$osd"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*")',
+        'label_replace(irate(node_disk_written_bytes_total[1m]), "instance", "$1", "instance", "([^:.]*).*") and on (instance, device) label_replace(label_replace(ceph_disk_occupation_human{ceph_daemon=~"$osd"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*")',
+        '{{instance}} {{device}} Reads',
+        '{{instance}} {{device}} Writes',
+        12, 11, 6, 9
+        )
       .addSeriesOverride({"alias": "/.*Reads/","transform": "negative-Y"}
       ),
       graphPanelSchema(
         {}, 'Physical Device Util% for $osd', '', 'null', false, 'percentunit', 'short', null, null, null, 1, '$datasource'
       )
-      .addTarget(addTargetSchema('label_replace(irate(node_disk_io_time_seconds_total[1m]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") and on (instance, device) label_replace(label_replace(ceph_disk_occupation{ceph_daemon=~\"$osd\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\")', 1, 'time_series', '{{device}} on {{instance}}')) + {gridPos: {x: 18, y: 11, w: 6, h: 9}},
+      .addTarget(
+       addTargetSchema(
+        'label_replace(irate(node_disk_io_time_seconds_total[1m]), "instance", "$1", "instance", "([^:.]*).*") and on (instance, device) label_replace(label_replace(ceph_disk_occupation_human{ceph_daemon=~"$osd"}, "device", "$1", "device", "/dev/(.*)"), "instance", "$1", "instance", "([^:.]*).*")',
+        1,
+        'time_series',
+        '{{device}} on {{instance}}'
+        )) + {gridPos: {x: 18, y: 11, w: 6, h: 9}},
     ])
 }
 {
