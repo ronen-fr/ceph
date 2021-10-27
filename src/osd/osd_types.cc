@@ -2919,14 +2919,14 @@ std::string pg_stat_t::dump_scrub_schedule() const
 		       (scrub_sched_status.m_is_deep ? "deep " : ""),
 		       scrub_sched_status.m_duration_seconds);
   }
-  if (scrub_sched_status.m_sched_status == pg_scrub_sched_status_t::active) {
-    return fmt::format("xxx scrubbing for {}s",
-		       scrub_sched_status.m_duration_seconds);
-  }
+//   if (scrub_sched_status.m_sched_status == pg_scrub_sched_status_t::active) {
+//     return fmt::format("xxx scrubbing for {}s",
+// 		       scrub_sched_status.m_duration_seconds);
+//   }
   switch (scrub_sched_status.m_sched_status) {
     case pg_scrub_sched_status_t::unknown:
       // no reported scrub schedule yet
-      return "-"s;
+      return "--"s;
     case pg_scrub_sched_status_t::not_queued:
       return "no scrub is scheduled"s;
     case pg_scrub_sched_status_t::scheduled:
@@ -2940,7 +2940,7 @@ std::string pg_stat_t::dump_scrub_schedule() const
 			 (scrub_sched_status.m_is_deep ? "deep " : ""));
     default:
       // a bug!
-      return "xxx"s;
+      return "SCRUB STATE MISMATCH!"s;
   }
 }
 

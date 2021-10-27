@@ -1981,6 +1981,7 @@ void PgScrubber::dump_active_scrubber(ceph::Formatter* f, bool is_deep) const
     }
     f->close_section();
   }
+  f->dump_string("schedule", "scrubbing"); // RRR
 }
 
 pg_scrubbing_status_t PgScrubber::get_schedule() const
@@ -1995,8 +1996,6 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 
   if (m_active) {
     // report current scrub info, including updated duration
-
-    // todo: change to calculate in chrono spans
     int32_t duration = (utime_t{now_is} - scrub_begin_stamp).sec();
 
     return pg_scrubbing_status_t{

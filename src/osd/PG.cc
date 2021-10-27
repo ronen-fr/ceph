@@ -818,6 +818,12 @@ void PG::publish_stats_to_osd()
   if (!is_primary())
     return;
 
+  if (m_scrubber) {
+    recovery_state.update_stats_wo_resched([scrubber = m_scrubber.get()](pg_history_t& hist, pg_stat_t& info) mutable -> void {
+      info.scrub_sched_status = scrubber->get_schedule();
+    });
+  }
+
   std::lock_guard l{pg_stats_publish_lock};
   auto stats = recovery_state.prepare_stats_for_publish(
     pg_stats_publish,
