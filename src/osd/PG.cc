@@ -819,9 +819,11 @@ void PG::publish_stats_to_osd()
     return;
 
   if (m_scrubber) {
-    recovery_state.update_stats_wo_resched([scrubber = m_scrubber.get()](pg_history_t& hist, pg_stat_t& info) mutable -> void {
-      info.scrub_sched_status = scrubber->get_schedule();
-    });
+    recovery_state.update_stats_wo_resched(
+      [scrubber = m_scrubber.get()](pg_history_t& hist,
+                                    pg_stat_t& info) mutable -> void {
+        info.scrub_sched_status = scrubber->get_schedule();
+      });
   }
 
   std::lock_guard l{pg_stats_publish_lock};

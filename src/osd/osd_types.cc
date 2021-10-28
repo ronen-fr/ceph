@@ -2916,7 +2916,7 @@ std::string pg_stat_t::dump_scrub_schedule() const
 {
   if (scrub_sched_status.m_is_active) {
     return fmt::format("{}scrubbing for {}s",
-		       (scrub_sched_status.m_is_deep ? "deep " : ""),
+		       ((scrub_sched_status.m_is_deep == scrub_level_t::deep) ? "deep " : ""),
 		       scrub_sched_status.m_duration_seconds);
   }
 //   if (scrub_sched_status.m_sched_status == pg_scrub_sched_status_t::active) {
@@ -2933,11 +2933,11 @@ std::string pg_stat_t::dump_scrub_schedule() const
       return fmt::format(
 	"{} {}scrub scheduled @ {}",
 	(scrub_sched_status.m_is_periodic ? "periodic" : "operator"),
-	(scrub_sched_status.m_is_deep ? "deep " : ""),
+	((scrub_sched_status.m_is_deep == scrub_level_t::deep) ? "deep " : ""),
 	scrub_sched_status.m_scheduled_at);
     case pg_scrub_sched_status_t::queued:
       return fmt::format("queued for {}scrub",
-			 (scrub_sched_status.m_is_deep ? "deep " : ""));
+			 ((scrub_sched_status.m_is_deep == scrub_level_t::deep) ? "deep " : ""));
     default:
       // a bug!
       return "SCRUB STATE MISMATCH!"s;
@@ -3010,7 +3010,7 @@ void pg_stat_t::encode(ceph::buffer::list &bl) const
   encode(scrub_sched_status.m_duration_seconds, bl);
   encode((__u16)scrub_sched_status.m_sched_status, bl);
   encode(scrub_sched_status.m_is_active, bl);
-  encode(scrub_sched_status.m_is_deep, bl);
+  encode((scrub_sched_status.m_is_deep==scrub_level_t::deep), bl);
   encode(scrub_sched_status.m_is_periodic, bl);
   ENCODE_FINISH(bl);
 }
@@ -3096,7 +3096,7 @@ void pg_stat_t::decode(ceph::buffer::list::const_iterator &bl)
       decode(tmp, bl);
       scrub_sched_status.m_is_active = tmp;
       decode(tmp, bl);
-      scrub_sched_status.m_is_deep = tmp;
+      scrub_sched_status.m_is_deep = tmp ? scrub_level_t::deep : scrub_level_t::shallow;
       decode(tmp, bl);
       scrub_sched_status.m_is_periodic = tmp;
     }

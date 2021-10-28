@@ -504,8 +504,13 @@ function extract_published_sch() {
   local -n dict=$4 # a ref to the in/out dictionary
   local current_time=$2
   local extra_time=$3
+  local extr_dbg=1
 
-  bin/ceph pg dump pgs -f json-pretty >> /tmp/a_dmp$$
+  #turn off '-x' (but remember previous state)
+  local saved_echo_flag=${-//[^x]/}
+  set +x
+
+  (( extr_dbg >= 3 )) && bin/ceph pg dump pgs -f json-pretty >> /tmp/a_dmp$$
 
   from_dmp=`bin/ceph pg dump pgs -f json-pretty | jq -r --arg pgn "$pgn" --arg extra_dt "$extra_time" --arg current_dt "$current_time" '[
     [[.pg_stats[]] | group_by(.pg_stats)][0][0] | 
@@ -526,13 +531,13 @@ function extract_published_sch() {
        dmp_reported_epoch: .reported_epoch
       }] ]][][][]'`
 
-  echo "from pg dump pg:"
-  echo $from_dmp
+  (( extr_dbg >= 2 )) && echo "from pg dump pg:"
+  (( extr_dbg >= 2 )) && echo $from_dmp
 
-  echo "query out==="
-  bin/ceph pg $1 query -f json-pretty | awk -e '/scrubber/,/agent_state/ {print;}'
+  (( extr_dbg >= 2 )) && echo "query out==="
+  (( extr_dbg >= 2 )) && bin/ceph pg $1 query -f json-pretty | awk -e '/scrubber/,/agent_state/ {print;}'
 
-  bin/ceph pg $1 query -f json-pretty >> /tmp/a_qry$$
+  (( extr_dbg >= 3 )) && bin/ceph pg $1 query -f json-pretty >> /tmp/a_qry$$
 
   from_qry=`bin/ceph pg $1 query -f json-pretty |  jq -r --arg extra_dt "$extra_time" --arg current_dt "$current_time"  --arg spt "'" '
     . |
@@ -554,22 +559,26 @@ function extract_published_sch() {
       }
    '`
 
-  # [.][0][][].scrubber | to_entries[] | .key 
-  #echo "from pg x query:"
-  #echo $from_qry
-
-  echo "combined:"
+  (( extr_dbg >= 2 )) && echo "combined:"
   #echo $from_qry " " $from_dmp | jq -s -r 'add | "(",(to_entries | .[] | "["+(.key|@sh)+"]="+(.value|@sh)),")"'
 
   # note that using a ref to an associative array is tricky. Instead - we are copying
-  echo $from_qry " " $from_dmp | jq -s -r 'add | "(",(to_entries | .[] | "["+(.key)+"]="+(.value|@sh)),")"'
+  (( extr_dbg >= 1 )) && echo $from_qry " " $from_dmp | jq -s -r 'add | "(",(to_entries | .[] | "["+(.key)+"]="+(.value|@sh)),")"'
   local -A dict_src=`echo $from_qry " " $from_dmp | jq -s -r 'add | "(",(to_entries | .[] | "["+(.key)+"]="+(.value|@sh)),")"'`
+  dict=()
   for k in "${!dict_src[@]}"; do dict[$k]=${dict_src[$k]}; done
+
+  if [[ -n "$saved_echo_flag" ]]; then set -x; else set +x; fi
 }
 
 function schedule_against_expected() {
   local -n dict=$1 # a ref to the published state
   local -n ep=$2  # the expected results
+  local extr_dbg=1
+
+  #turn off '-x' (but remember previous state)
+  local saved_echo_flag=${-//[^x]/}
+  set +x
 
   #echo "printing the expected values: "
   #for w in "${!ep[@]}"
@@ -577,53 +586,333 @@ function schedule_against_expected() {
   #  echo $w " -> " ${ep[$w]}
   #done
 
-  echo "- - comparing:"
+  (( extr_dbg >= 1 )) && echo "- - comparing:"
   for k_ref in "${!ep[@]}"
   do
     local act_val=${dict[$k_ref]}
     local exp_val=${ep[$k_ref]}
-    echo "key is " $k_ref "  expected: " $exp_val " in actual: " $act_val
+    (( extr_dbg >= 1 )) && echo "key is " $k_ref "  expected: " $exp_val " in actual: " $act_val
     if [[ $exp_val != $act_val ]]
     then
       echo "$3 - '$k_ref' actual value ($act_val) differs from expected ($exp_val)"
       echo '####################################################^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^'
-      #return 1
+
+      if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+      return 1
+      #break
     fi
   done
+
+  if [[ -n "$saved_echo_flag" ]]; then set -x; fi
   return 0
 }
 
-function extract_published_sch__() {
-  # $1 is the pg
-  # $2 is the 'current time' to use as ref
-  declare -A dict=(['last']="17"
-                   ['state']="periodic deep scrub scheduled"
-                   ['active']="False"
-                   ['at']="2021-10-12T20:40:03.393135+0000"
-                   ['at_in_future']="True"
-                   ['is_deep']="True"
-                   ['query_state']="deep scrub scheduled"
-                   ['query_deep']='true'
-                  )
-  sched_dict = dict
-  echo '('
-  for key in  "${!dict[@]}" ; do
-    echo "['$key']='${dict[$key]}'"
-  done
-  echo ')'
-}
 
+# wait for either the value of 'last scrub' or 'last_scrub_duration' to change and
+#
+# $1: pg id
+# $2: timestamp to compare to
+# $3: max retries
+# $4: debug message
 function wait_fut_past_switch() {
-
   # query the PG, until such time that the 'scheduled time' turns from being in the future into
   # a fake date in the past, or for the last_scrub_stamp to change (meaning we've missed the scrub)
-  echo TBD
-
+  echo TBD $4
+  ceph pg scrub $pgid
+  for i in $(seq 1 $3)
+  do
+    exit 1 # not finished RRRR
+    sleep 0.5
+    unset sc_data
+    declare -A sc_data
+    extract_published_sch $pgid $now_is $saved_last_stamp sc_data
+    echo "${sc_data['dmp_last_duration']}"
+    echo "----> loop:  $i  ~ ${sc_data['dmp_last_duration']}  / " ${sc_data['query_vs_date']}
+    #(( ${sc_data['dmp_last_duration']} == 0)) || return 0
+    [[ ${sc_data['dmp_vs_date']} ]] && return 0
+  done
+  echo "$4: wait_fut_past_switch(): failure. ${sc_data['query_last_stamp']}"
+  return 1
 }
 
-# expected results at specific points during the test:
-declare -A expct_starting=( ['query_active']="false" ['query_is_future']="true" ['query_schedule']="scrub scheduled" );
-declare -A expct_cantrun=( ['query_active']="false" ['query_is_future']="false" ['query_schedule']="queued for scrub" );
+ [[ -z $2 ]] || {
+    local -n oa=$2
+  }
+
+# query the PG, until such time that the 'scheduled time' turns from being in the future into
+# a fake date in the past, or for the last_scrub_stamp to change (meaning we've missed the scrub)
+#
+# $1: pg id
+# $2: timestamp to compare to
+# $3: max retries
+# $4: debug message
+# $5: [optional, out] the results array
+function wait_future_past_switch() {
+  #turn off '-x' (but remember previous state)
+  local saved_echo_flag=${-//[^x]/}
+  set +x
+
+  local pgid=$1
+  local cmp_date="$2"
+  local retries=$3
+  [[ -z $5 ]] || {
+    local -n out_array=$5
+  }
+
+  echo " waiting... $4: $retries retries, with timestamp $2"
+  local -A sc_data
+
+  local now_is=`date -I"ns"`
+  for i in $(seq 1 $3)
+  do
+    sleep 2
+    #sc_data=()
+    extract_published_sch $pgid $now_is $cmp_date sc_data
+    echo "${sc_data['dmp_last_duration']}"
+    echo "----> loop:  $i  ~ ${sc_data['dmp_last_duration']}  / " ${sc_data['query_vs_date']} " /   ${sc_data['dmp_future']}"
+    #(( ${sc_data['dmp_last_duration']} == 0)) || break
+    [[ ${sc_data['dmp_future']} ]] || break
+    [[ ${sc_data['dmp_vs_date']} ]] || break
+  done
+
+  if (( $i < $retries )); then
+    # success. Copy the array into the out param, if it's there:
+    [[ -z $5 ]] || {
+      for k in "${!sc_data[@]}"; do out_array[$k]=${sc_data[$k]}; done
+    }
+    if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+    return 0
+  fi
+
+  echo "$4: wait_future_past_switch(): failure. ${sc_data['query_last_stamp']}"
+  if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+  return 1
+}
+
+
+# query the PG, until such time that the 'scheduled time' turns from being in the future into
+# a fake date in the past, or for the last_scrub_stamp to change (meaning we've missed the scrub)
+#
+# $1: pg id
+# $2: previous last_scrub_stamp
+# $3: max retries
+# $4: debug message
+# $5: [out] the results array
+function wait_for_active_scrub() {
+  local pgid="$1"
+  local cmp_date=$2
+  local retries=$3
+  echo " waiting for active... $4: $retries retries"
+  local -n out_array=$5
+  local -A sc_data
+  local extr_dbg=1
+
+  #turn off '-x' (but remember previous state)
+  local saved_echo_flag=${-//[^x]/}
+  set +x
+
+  for i in $(seq 1 $3)
+  do
+    sleep 0.5
+    extract_published_sch $pgid $2 $2 sc_data
+    (( extr_dbg >= 1 )) && echo "${sc_data['dmp_last_duration']}"
+    (( extr_dbg >= 1 )) && echo "----> loop:  $i  ~ ${sc_data['dmp_last_duration']}  / " ${sc_data['query_vs_date']} " /   ${sc_data['dmp_future']}"
+    #(( ${sc_data['dmp_last_duration']} == 0)) || break
+    [[ ${sc_data['query_active']} ]] && break
+    [[ ${sc_data['query_vs_date']} ]] && break
+  done
+
+  if (( $i < retries )); then
+    # success. Copy the array into the 'out' dictionary:
+    for k in "${!sc_data[@]}"; do out_array[$k]=${sc_data[$k]}; done
+    return 0
+  fi
+
+  echo "$4: wait_for_active_scrub(): failure. ${sc_data['query_last_stamp']}"
+  return 1
+}
+
+
+# query the PG, until any of the conditions in the 'expected' array is met
+#
+# $1: pg id
+# $2: max retries
+# $3: a date to use in comparisons
+# $4: set of K/V conditions
+# $5: debug message
+# $6: [out] the results array
+function wait_any_cond() {
+  local pgid="$1"
+  local retries=$2
+  local cmp_date=$3
+  local -n ep=$4
+  local -n out_array=$6
+  local -A sc_data
+  local extr_dbg=1
+
+  (( extr_dbg >= 1 )) && echo " waiting for cond... " "$5 ($retries retries)"
+
+  #turn off '-x' (but remember previous state)
+  local saved_echo_flag=${-//[^x]/}
+  set +x
+
+  for i in $(seq 1 $retries)
+  do
+    sleep 0.5
+    extract_published_sch $pgid 0 0 sc_data
+    (( extr_dbg >= 2 )) && echo "${sc_data['dmp_last_duration']}"
+    (( extr_dbg >= 2 )) && echo "----> loop:  $i  ~ ${sc_data['dmp_last_duration']}  / " ${sc_data['query_vs_date']} " /   ${sc_data['dmp_future']}"
+
+    # perform schedule_against_expected(), but with slightly different out-messages behaviour
+    for k_ref in "${!ep[@]}"
+    do
+      local act_val=${sc_data[$k_ref]}
+      local exp_val=${ep[$k_ref]}
+      (( extr_dbg >= 1 )) && echo "key is " $k_ref "  expected: " $exp_val " in actual: " $act_val
+      if [[ $exp_val == $act_val ]]
+      then
+        echo "$5 - '$k_ref' actual value ($act_val) matches expected ($exp_val)"
+        for k in "${!sc_data[@]}"; do out_array[$k]=${sc_data[$k]}; done
+        if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+        return 0
+      fi
+    done
+  done
+
+  echo "$5: wait_any_cond(): failure. ${sc_data['query_active']}"
+  if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+  return 1
+}
+
+
+# query the PG, until any of the conditions in the 'expected' array is met
+#
+# A condition may be negated by an additional entry in the 'expected' array. Its
+# form should be:
+#  key: the original key, with a "_neg" suffix;
+#  Value: not checked
+#
+#
+# $1: pg id
+# $2: max retries
+# $3: a date to use in comparisons
+# $4: set of K/V conditions
+# $5: debug message
+# $6: [out] the results array
+function wait_any_cond_w_neg() {
+  local pgid="$1"
+  local retries=$2
+  local cmp_date=$3
+  local -n ep=$4
+  local -n out_array=$6
+  local -A sc_data
+  local extr_dbg=3
+
+  echo "waiting for cond+ ($5): pg:$pgid dt:$cmp_date ($retries retries)"
+
+  #turn off '-x' (but remember previous state)
+  local saved_echo_flag=${-//[^x]/}
+  set +x
+  local now_is=`date -I"ns"`
+
+  for i in $(seq 1 $retries)
+  do
+    sleep 0.5
+    extract_published_sch $pgid $now_is $cmp_date sc_data
+    (( extr_dbg >= 4 )) && echo "${sc_data['dmp_last_duration']}"
+    (( extr_dbg >= 4 )) && echo "----> loop:  $i  ~ ${sc_data['dmp_last_duration']}  / " ${sc_data['query_vs_date']} " /   ${sc_data['dmp_future']}"
+    (( extr_dbg >= 2 )) && echo "--> loop:  $i ~ ${sc_data['query_active']} / ${sc_data['query_vs_date']} " \
+                      "/ ${sc_data['query_is_future']} / ${sc_data['query_is_future']} / ${sc_data['query_schedule']}  %%% ${!ep[@]}"
+
+    # perform schedule_against_expected(), but with slightly different out-messages behaviour
+    for k_ref in "${!ep[@]}"
+    do
+      (( extr_dbg >= 2 )) && echo "key is $k_ref"
+      # is this a real key, or just a negation flag for another key??
+      [[ $k_ref =~ "_neg" ]] && continue
+
+      local act_val=${sc_data[$k_ref]}
+      local exp_val=${ep[$k_ref]}
+
+      # possible negation? look for a matching key
+      local neg_key="${k_ref}_neg"
+      (( extr_dbg >= 2 )) && echo "neg-key is $neg_key"
+      if [ -v 'ep[$neg_key]' ]; then
+        is_neg=1
+      else
+        is_neg=0
+      fi
+
+      (( extr_dbg >= 1 )) && echo "key is $k_ref: negation:$is_neg # expected: $exp_val # in actual: $act_val"
+      is_eq=0
+      [[ $exp_val == $act_val ]] && is_eq=1
+      if (($is_eq ^ $is_neg))  
+      then
+        echo "$5 - '$k_ref' actual value ($act_val) matches expected ($exp_val) (negation: $is_neg)"
+        for k in "${!sc_data[@]}"; do out_array[$k]=${sc_data[$k]}; done
+        if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+        return 0
+      fi
+    done
+  done
+
+  echo "$5: wait_any_cond(): failure. ${sc_data['query_active']}"
+  if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+  return 1
+}
+
+
+# query the PG, until such time that the 'scheduled time' turns from being in the future into
+# a fake date in the past, or for the last_scrub_stamp to change (meaning we've missed the scrub)
+#
+# $1: pg id
+# $2: previous last_scrub_stamp
+# $3: max retries
+# $4: debug message
+# $5: [optional, out] the results array
+function wait_for_scrub_done() {
+  local pgid="$1"
+  local saved_last_stamp="$2"
+  local retries=$3
+  local -n dict=$5 # a ref to the in/out dictionary
+  local extr_dbg=1
+
+  #turn off '-x' (but remember previous state)
+  local saved_echo_flag=${-//[^x]/}
+  set +x
+
+  (( extr_dbg >= 2 )) && echo " waiting for completion... " "$4"
+  [[ -z $5 ]] || {
+    local -n out_array=$5
+  }
+  local -A sc_data
+  for i in $(seq 1 $retries)
+  do
+    sleep 3
+    #sc_data=()
+    extract_published_sch $pgid  $saved_last_stamp  $saved_last_stamp sc_data
+    (( extr_dbg >= 2 )) && echo "${sc_data['dmp_last_duration']}"
+    (( extr_dbg >= 1 )) && echo "----> loop:  $i  ~ ${sc_data['dmp_last_duration']}  / " ${sc_data['query_vs_date']} " /   ${sc_data['dmp_future']}"
+    [[ ${sc_data['dmp_future']} ]] && break
+    [[ ${sc_data['dmp_vs_date']} ]] && break
+  done
+
+  if (( $i < $retries )); then
+    # success. Copy the array into the out param, if it's there:
+    [[ -z $5 ]] || {
+      for k in "${!sc_data[@]}"; do out_array[$k]=${sc_data[$k]}; done
+    }
+
+    if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+    return 0
+  fi
+
+  echo "$4: wait_future_past_switch(): failure. ${sc_data['query_last_stamp']}"
+  if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+  return 1
+}
+
+
 
 function TEST_dump_scrub_schedule() {
     local dir=$1
@@ -667,84 +956,84 @@ function TEST_dump_scrub_schedule() {
     local now_is=`date -I"ns"`
 
     # before the scrubbing starts
-    declare -A sched_data
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    schedule_against_expected sched_data expct_starting
-    echo "last-scrub  --- " ${sched_data['query_last_scrub']}
-
-    #for w in "${!sched_data[@]}"
-    #do
-    #  echo $w " -> " ${sched_data[$w]}
-    #done
-
-    #
-    # step 1: scrub once (mainly to ensure there is no urgency to scrub)
-    #
-
-    # verify that we have '0' as the last-scrub-duration value
-    (( ${sched_data['dmp_last_duration']} == 0)) || return 1
-    saved_last_stamp=${sched_data['query_last_stamp']}
-    ceph tell osd.* config set osd_scrub_sleep "0"
-    ceph pg deep-scrub $pgid
-    ceph pg scrub $pgid
-    for i in $(seq 0 10)
-    do
-      sleep 0.5
-      unset sched_data
-      declare -A sched_data
-      extract_published_sch $pgid $now_is saved_last_stamp sched_data
-      echo "${sched_data['dmp_last_duration']}"
-      echo "----> loop:  $i  ~ ${sched_data['dmp_last_duration']}  / " ${sched_data['query_vs_date']}
-      (( ${sched_data['dmp_last_duration']} == 0)) || break
-      [[ ${sched_data['query_vs_date']} ]] && break
-    done
-    echo ${sched_data['query_last_stamp']}
-
-    schedule_against_expected sched_data expct_starting
 
     # last scrub duration should be 0. The scheduling data should show
     # a time in the future:
     # e.g. 'periodic scrub scheduled @ 2021-10-12T20:32:43.645168+0000'
 
-    #local pgid="${poolid}.0"
-    ceph tell osd.* config set osd_scrub_chunk_max "3"
-    ceph tell osd.* config set osd_scrub_sleep "1.0"
+    declare -A expct_starting=( ['query_active']="false" ['query_is_future']="true" ['query_schedule']="scrub scheduled" )
+    declare -A sched_data
+    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
+    schedule_against_expected sched_data expct_starting
+    (( ${sched_data['dmp_last_duration']} == 0)) || return 1
+    echo "last-scrub  --- " ${sched_data['query_last_scrub']}
+# RRR can also check [dmp_schedule]='periodic scrub scheduled'
 
+    #
+    # step 1: scrub once (mainly to ensure there is no urgency to scrub)
+    #
+
+    saved_last_stamp=${sched_data['query_last_stamp']}
+    ceph tell osd.* config set osd_scrub_sleep "0"
+    ceph pg deep-scrub $pgid
+    ceph pg scrub $pgid
+
+    # wait for the 'last duration' entries to change. Note that the 'dump' one will need
+    # up to 5 seconds to sync
+
+    sleep 3
+    sched_data=()
+    declare -A expct_qry_duration=( ['query_last_duration']="0" ['query_last_duration_neg']="not0" )
+    wait_any_cond_w_neg $pgid 10 $saved_last_stamp expct_qry_duration "WaitingAfterScrub " sched_data || return 1
+    # verify that 'pg dump' also shows the change in last_scrub_duration
+    sched_data=()
+    declare -A expct_dmp_duration=( ['dmp_last_duration']="0" ['dmp_last_duration_neg']="not0" )
+    wait_any_cond_w_neg $pgid 10 $saved_last_stamp expct_dmp_duration "WaitingAfterScrub_dmp " sched_data || return 1
+
+    sleep 2
+
+    #
+    # step 2: set noscrub and request a "periodic scrub". Watch for the change in the 'is the scrub
+    #         scheduled for the future' value
+    #
+
+    ceph tell osd.* config set osd_scrub_chunk_max "3" || return 1
+    ceph tell osd.* config set osd_scrub_sleep "1.0" || return 1
     ceph osd set noscrub || return 1
     sleep 2
-    ceph pg scrub $pgid
+    saved_last_stamp=${sched_data['query_last_stamp']}
+    ## RRRRRRRRR  ## ceph pg scrub $pgid || return 1
+
+
+    ceph pg $pgid scrub
     #pg_scrub $pgid || return 1
-    sleep 1
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    schedule_against_expected sched_data expct_cantrun
-    sleep 0.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 2.0
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 10.0
+    sleep 1 # needed?
+    sched_data=()
+    declare -A expct_scrub_peri_sched=( ['query_is_future']="false" )
+    wait_any_cond_w_neg $pgid 10 $saved_last_stamp expct_scrub_peri_sched "waitingBeingScheduled" sched_data || return 1
 
-    ceph pg deep-scrub $pgid
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 0.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
+    # note: the induced change in 'last_scrub_stamp' that we've caused above, is by itself not a publish-stats
+    # trigger. Thus it might happen that the information in 'pg dump' will not get updated here. Do not expect
+    # 'dmp_future' to follow 'query_is_future' without a good reason
+    ## declare -A expct_scrub_peri_sched_dmp=( ['dmp_future']="false" )
+    ## wait_any_cond_w_neg $pgid 15 $saved_last_stamp expct_scrub_peri_sched_dmp "waitingBeingScheduled" sched_data || echo "must be fixed"
 
-    ceph pg scrub $pgid
-    sleep 0.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 2.0
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
+    #
+    # step 3: allow scrubs. Watch for the conditions during the scrubbing
+    #
 
-    ceph pg $pgid query | jq '.info.stats.scrub_duration'
-    test "$(ceph pg $pgid query | jq '.info.stats.scrub_duration')" '>' "0" || return 1
+    saved_last_stamp=${sched_data['query_last_stamp']}
+    ceph osd unset noscrub
+
+    declare -A cond_active=( ['query_active']="true" )
+    sched_data=()
+    wait_any_cond $pgid 10 $saved_last_stamp cond_active "WaitingActive " sched_data || return 1
+
+    # check for pg-dump to show being active. But if we see 'query_active' being reset - we've just
+    # missed it.
+    declare -A cond_active_dmp=( ['dmp_state_has_scrubbing']="true" ['query_active']="false" )
+    sched_data=()
+    wait_any_cond $pgid 10 $saved_last_stamp cond_active_dmp "WaitingActive " sched_data || return 1
 
     teardown $dir || return 1
 }
