@@ -15,6 +15,7 @@
 # GNU Library Public License for more details.
 #
 source $CEPH_ROOT/qa/standalone/ceph-helpers.sh
+source $CEPH_ROOT/qa/standalone/scrub/scrub-helpers.sh
 
 function run() {
     local dir=$1
@@ -454,176 +455,6 @@ function TEST_scrub_permit_time() {
     teardown $dir || return 1
 }
 
-function TEST_pg_dump_scrub_duration() {
-    local dir=$1
-    local poolname=test
-    local OSDS=3
-    local objects=15
-
-    TESTDATA="testdata.$$"
-
-    setup $dir || return 1
-    run_mon $dir a --osd_pool_default_size=$OSDS || return 1
-    run_mgr $dir x || return 1
-    for osd in $(seq 0 $(expr $OSDS - 1))
-    do
-      run_osd $dir $osd || return 1
-    done
-
-    # Create a pool with a single pg
-    create_pool $poolname 1 1
-    wait_for_clean || return 1
-    poolid=$(ceph osd dump | grep "^pool.*[']${poolname}[']" | awk '{ print $2 }')
-
-    dd if=/dev/urandom of=$TESTDATA bs=1032 count=1
-    for i in `seq 1 $objects`
-    do
-        rados -p $poolname put obj${i} $TESTDATA
-    done
-    rm -f $TESTDATA
-
-    local pgid="${poolid}.0"
-    pg_scrub $pgid || return 1
-
-    ceph pg $pgid query | jq '.info.stats.scrub_duration'
-    test "$(ceph pg $pgid query | jq '.info.stats.scrub_duration')" '>' "0" || return 1
-
-    teardown $dir || return 1
-}
-
-# Use the output from both 'ceph pg dump pgs' and 'ceph pg x.x query' commands to determine
-# the published scrub scheduling status of a given PG.
-#
-# arg 1: pg id
-# arg 2: in/out dictionary
-# arg 3: 'current' time to compare to
-# arg 4: an additional time point to compare to
-#
-function extract_published_sch() {
-  local pgn="$1"
-  local -n dict=$4 # a ref to the in/out dictionary
-  local current_time=$2
-  local extra_time=$3
-
-  bin/ceph pg dump pgs -f json-pretty >> /tmp/a_dmp$$
-
-  from_dmp=`bin/ceph pg dump pgs -f json-pretty | jq -r --arg pgn "$pgn" --arg extra_dt "$extra_time" --arg current_dt "$current_time" '[
-    [[.pg_stats[]] | group_by(.pg_stats)][0][0] | 
-    [.[] |
-    select(has("pgid") and .pgid == $pgn) |
-
-        (.dmp_stat_part=(.scrub_schedule | if test(".*@.*") then (split(" @ ")|first) else . end)) |
-        (.dmp_when_part=(.scrub_schedule | if test(".*@.*") then (split(" @ ")|last) else "0" end)) |
-
-     [ {
-       dmp_pg_state: .state,
-       dmp_state_has_scrubbing: (.state | test(".*scrub.*";"i")),
-       dmp_last_duration:.last_scrub_duration,
-       dmp_schedule: .dmp_stat_part,
-       dmp_schedule_at: .dmp_when_part,
-       dmp_future: ( .dmp_when_part > $current_dt ),
-       dmp_vs_date: ( .dmp_when_part > $extra_dt  ),
-       dmp_reported_epoch: .reported_epoch
-      }] ]][][][]'`
-
-  echo "from pg dump pg:"
-  echo $from_dmp
-
-  echo "query out==="
-  bin/ceph pg $1 query -f json-pretty | awk -e '/scrubber/,/agent_state/ {print;}'
-
-  bin/ceph pg $1 query -f json-pretty >> /tmp/a_qry$$
-
-  from_qry=`bin/ceph pg $1 query -f json-pretty |  jq -r --arg extra_dt "$extra_time" --arg current_dt "$current_time"  --arg spt "'" '
-    . |
-        (.q_stat_part=((.scrubber.schedule// "-") | if test(".*@.*") then (split(" @ ")|first) else . end)) |
-        (.q_when_part=((.scrubber.schedule// "0") | if test(".*@.*") then (split(" @ ")|last) else "0" end)) |
-	(.q_when_is_future=(.q_when_part > $current_dt)) |
-	(.q_vs_date=(.q_when_part > $extra_dt)) |	
-      {
-        query_epoch: .epoch,
-        query_active: (.scrubber | if has("active") then .active else "boo" end),
-        query_schedule: .q_stat_part,
-        query_schedule_at: .q_when_part,
-        query_last_duration: .info.stats.last_scrub_duration,
-        query_last_stamp: .info.history.last_scrub_stamp,
-        query_last_scrub: (.info.history.last_scrub| sub($spt;"x") ),
-	query_is_future: .q_when_is_future,
-	query_vs_date: .q_vs_date,
-
-      }
-   '`
-
-  # [.][0][][].scrubber | to_entries[] | .key 
-  #echo "from pg x query:"
-  #echo $from_qry
-
-  echo "combined:"
-  #echo $from_qry " " $from_dmp | jq -s -r 'add | "(",(to_entries | .[] | "["+(.key|@sh)+"]="+(.value|@sh)),")"'
-
-  # note that using a ref to an associative array is tricky. Instead - we are copying
-  echo $from_qry " " $from_dmp | jq -s -r 'add | "(",(to_entries | .[] | "["+(.key)+"]="+(.value|@sh)),")"'
-  local -A dict_src=`echo $from_qry " " $from_dmp | jq -s -r 'add | "(",(to_entries | .[] | "["+(.key)+"]="+(.value|@sh)),")"'`
-  for k in "${!dict_src[@]}"; do dict[$k]=${dict_src[$k]}; done
-}
-
-function schedule_against_expected() {
-  local -n dict=$1 # a ref to the published state
-  local -n ep=$2  # the expected results
-
-  #echo "printing the expected values: "
-  #for w in "${!ep[@]}"
-  #do
-  #  echo $w " -> " ${ep[$w]}
-  #done
-
-  echo "- - comparing:"
-  for k_ref in "${!ep[@]}"
-  do
-    local act_val=${dict[$k_ref]}
-    local exp_val=${ep[$k_ref]}
-    echo "key is " $k_ref "  expected: " $exp_val " in actual: " $act_val
-    if [[ $exp_val != $act_val ]]
-    then
-      echo "$3 - '$k_ref' actual value ($act_val) differs from expected ($exp_val)"
-      echo '####################################################^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^'
-      #return 1
-    fi
-  done
-  return 0
-}
-
-function extract_published_sch__() {
-  # $1 is the pg
-  # $2 is the 'current time' to use as ref
-  declare -A dict=(['last']="17"
-                   ['state']="periodic deep scrub scheduled"
-                   ['active']="False"
-                   ['at']="2021-10-12T20:40:03.393135+0000"
-                   ['at_in_future']="True"
-                   ['is_deep']="True"
-                   ['query_state']="deep scrub scheduled"
-                   ['query_deep']='true'
-                  )
-  sched_dict = dict
-  echo '('
-  for key in  "${!dict[@]}" ; do
-    echo "['$key']='${dict[$key]}'"
-  done
-  echo ')'
-}
-
-function wait_fut_past_switch() {
-
-  # query the PG, until such time that the 'scheduled time' turns from being in the future into
-  # a fake date in the past, or for the last_scrub_stamp to change (meaning we've missed the scrub)
-  echo TBD
-
-}
-
-# expected results at specific points during the test:
-declare -A expct_starting=( ['query_active']="false" ['query_is_future']="true" ['query_schedule']="scrub scheduled" );
-declare -A expct_cantrun=( ['query_active']="false" ['query_is_future']="false" ['query_schedule']="queued for scrub" );
 
 function TEST_dump_scrub_schedule() {
     local dir=$1
@@ -667,84 +498,83 @@ function TEST_dump_scrub_schedule() {
     local now_is=`date -I"ns"`
 
     # before the scrubbing starts
-    declare -A sched_data
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    schedule_against_expected sched_data expct_starting
-    echo "last-scrub  --- " ${sched_data['query_last_scrub']}
-
-    #for w in "${!sched_data[@]}"
-    #do
-    #  echo $w " -> " ${sched_data[$w]}
-    #done
-
-    #
-    # step 1: scrub once (mainly to ensure there is no urgency to scrub)
-    #
-
-    # verify that we have '0' as the last-scrub-duration value
-    (( ${sched_data['dmp_last_duration']} == 0)) || return 1
-    saved_last_stamp=${sched_data['query_last_stamp']}
-    ceph tell osd.* config set osd_scrub_sleep "0"
-    ceph pg deep-scrub $pgid
-    ceph pg scrub $pgid
-    for i in $(seq 0 10)
-    do
-      sleep 0.5
-      unset sched_data
-      declare -A sched_data
-      extract_published_sch $pgid $now_is saved_last_stamp sched_data
-      echo "${sched_data['dmp_last_duration']}"
-      echo "----> loop:  $i  ~ ${sched_data['dmp_last_duration']}  / " ${sched_data['query_vs_date']}
-      (( ${sched_data['dmp_last_duration']} == 0)) || break
-      [[ ${sched_data['query_vs_date']} ]] && break
-    done
-    echo ${sched_data['query_last_stamp']}
-
-    schedule_against_expected sched_data expct_starting
 
     # last scrub duration should be 0. The scheduling data should show
     # a time in the future:
     # e.g. 'periodic scrub scheduled @ 2021-10-12T20:32:43.645168+0000'
 
-    #local pgid="${poolid}.0"
-    ceph tell osd.* config set osd_scrub_chunk_max "3"
-    ceph tell osd.* config set osd_scrub_sleep "1.0"
+    declare -A expct_starting=( ['query_active']="false" ['query_is_future']="true" ['query_schedule']="scrub scheduled" )
+    declare -A sched_data
+    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
+    schedule_against_expected sched_data expct_starting "initial"
+    (( ${sched_data['dmp_last_duration']} == 0)) || return 1
+    echo "last-scrub  --- " ${sched_data['query_last_scrub']}
 
+    #
+    # step 1: scrub once (mainly to ensure there is no urgency to scrub)
+    #
+
+    saved_last_stamp=${sched_data['query_last_stamp']}
+    ceph tell osd.* config set osd_scrub_sleep "0"
+    ceph pg deep-scrub $pgid
+    ceph pg scrub $pgid
+
+    # wait for the 'last duration' entries to change. Note that the 'dump' one will need
+    # up to 5 seconds to sync
+
+    sleep 3
+    sched_data=()
+    declare -A expct_qry_duration=( ['query_last_duration']="0" ['query_last_duration_neg']="not0" )
+    wait_any_cond $pgid 10 $saved_last_stamp expct_qry_duration "WaitingAfterScrub " sched_data || return 1
+    # verify that 'pg dump' also shows the change in last_scrub_duration
+    sched_data=()
+    declare -A expct_dmp_duration=( ['dmp_last_duration']="0" ['dmp_last_duration_neg']="not0" )
+    wait_any_cond $pgid 10 $saved_last_stamp expct_dmp_duration "WaitingAfterScrub_dmp " sched_data || return 1
+
+    sleep 2
+
+    #
+    # step 2: set noscrub and request a "periodic scrub". Watch for the change in the 'is the scrub
+    #         scheduled for the future' value
+    #
+
+    ceph tell osd.* config set osd_scrub_chunk_max "3" || return 1
+    ceph tell osd.* config set osd_scrub_sleep "1.0" || return 1
     ceph osd set noscrub || return 1
     sleep 2
-    ceph pg scrub $pgid
+    saved_last_stamp=${sched_data['query_last_stamp']}
+    ## RRRRRRRRR  ## ceph pg scrub $pgid || return 1
+
+
+    ceph pg $pgid scrub
     #pg_scrub $pgid || return 1
-    sleep 1
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    schedule_against_expected sched_data expct_cantrun
-    sleep 0.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 2.0
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 10.0
+    sleep 1 # needed?
+    sched_data=()
+    declare -A expct_scrub_peri_sched=( ['query_is_future']="false" )
+    wait_any_cond $pgid 10 $saved_last_stamp expct_scrub_peri_sched "waitingBeingScheduled" sched_data || return 1
 
-    ceph pg deep-scrub $pgid
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 0.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
+    # note: the induced change in 'last_scrub_stamp' that we've caused above, is by itself not a publish-stats
+    # trigger. Thus it might happen that the information in 'pg dump' will not get updated here. Do not expect
+    # 'dmp_is_future' to follow 'query_is_future' without a good reason
+    ## declare -A expct_scrub_peri_sched_dmp=( ['dmp_is_future']="false" )
+    ## wait_any_cond $pgid 15 $saved_last_stamp expct_scrub_peri_sched_dmp "waitingBeingScheduled" sched_data || echo "must be fixed"
 
-    ceph pg scrub $pgid
-    sleep 0.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 1.5
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
-    sleep 2.0
-    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
+    #
+    # step 3: allow scrubs. Watch for the conditions during the scrubbing
+    #
 
-    ceph pg $pgid query | jq '.info.stats.scrub_duration'
-    test "$(ceph pg $pgid query | jq '.info.stats.scrub_duration')" '>' "0" || return 1
+    saved_last_stamp=${sched_data['query_last_stamp']}
+    ceph osd unset noscrub
+
+    declare -A cond_active=( ['query_active']="true" )
+    sched_data=()
+    wait_any_cond $pgid 10 $saved_last_stamp cond_active "WaitingActive " sched_data || return 1
+
+    # check for pg-dump to show being active. But if we see 'query_active' being reset - we've just
+    # missed it.
+    declare -A cond_active_dmp=( ['dmp_state_has_scrubbing']="true" ['query_active']="false" )
+    sched_data=()
+    wait_any_cond $pgid 10 $saved_last_stamp cond_active_dmp "WaitingActive " sched_data || return 1
 
     teardown $dir || return 1
 }
