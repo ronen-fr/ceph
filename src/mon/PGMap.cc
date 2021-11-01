@@ -1608,7 +1608,7 @@ void PGMap::dump_osd_stats(ceph::Formatter *f, bool with_net) const
 void PGMap::dump_osd_ping_times(ceph::Formatter *f) const
 {
   f->open_array_section("osd_ping_times");
-  for (auto& [osd, stat] : osd_stat) {
+  for (const auto& [osd, stat] : osd_stat) {
     f->open_object_section("osd_ping_time");
     f->dump_int("osd", osd);
     stat.dump_ping_time(f);
@@ -1617,10 +1617,11 @@ void PGMap::dump_osd_ping_times(ceph::Formatter *f) const
   f->close_section();
 }
 
+// note: dump_pg_stats_plain() is static
 void PGMap::dump_pg_stats_plain(
   ostream& ss,
   const mempool::pgmap::unordered_map<pg_t, pg_stat_t>& pg_stats,
-  bool brief) const
+  bool brief)
 {
   TextTable tab;
 
@@ -2270,7 +2271,7 @@ void PGMap::dump_filtered_pg_stats(ostream& ss, set<pg_t>& pgs) const
 void PGMap::dump_pool_stats_and_io_rate(int64_t poolid, const OSDMap &osd_map,
                                         ceph::Formatter *f,
                                         stringstream *rs) const {
-  string pool_name = osd_map.get_pool_name(poolid);
+  const string& pool_name = osd_map.get_pool_name(poolid);
   if (f) {
     f->open_object_section("pool");
     f->dump_string("pool_name", pool_name.c_str());
