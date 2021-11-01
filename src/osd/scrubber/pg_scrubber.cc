@@ -520,7 +520,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 }
 
 ScrubQueue::sched_params_t
-PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags)
+PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
 {
   ScrubQueue::sched_params_t res;
 
