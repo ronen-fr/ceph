@@ -3990,7 +3990,6 @@ void PeeringState::update_stats_wo_resched(
   f(info.history, info.stats);
 }
 
-
 bool PeeringState::append_log_entries_update_missing(
   const mempool::osd_pglog::list<pg_log_entry_t> &entries,
   ObjectStore::Transaction &t, std::optional<eversion_t> trim_to,
