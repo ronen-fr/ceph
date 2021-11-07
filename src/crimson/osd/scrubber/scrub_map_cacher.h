@@ -50,7 +50,7 @@ class Transaction {
 class StoreDriver {
  public:
   /// Returns requested key values
-  virtual os::FuturizedStore::read_errorator::future<MapCacher::k_to_vlist_t> get_keys(
+  virtual os::FuturizedStore::read_errorator::future<k_to_vlist_t> get_keys(
     const std::set<std::string>& keys /*(,	 ///< [in] keys requested
 std::map<K, ::ceph::bufferlist>* got	 ///< [out] values for keys obtained
 */) = 0;			      ///< @return error value

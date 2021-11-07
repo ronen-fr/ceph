@@ -26,7 +26,7 @@ using namespace std::string_literals;
 // class PG;  // holding a pointer to that one - just for testing
 
 
-namespace crimson::osd {
+//namespace crimson::osd {
 
 class PgScrubber;
 namespace Scrub {
@@ -143,6 +143,7 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   void my_states() const;
   void assert_not_active() const;
   [[nodiscard]] bool is_reserving() const;
+  [[nodiscard]] bool is_accepting_updates() const;
 };
 
 /**
@@ -170,6 +171,7 @@ struct NotActive : sc::state<NotActive, ScrubMachine> {
 struct ReservingReplicas : sc::state<ReservingReplicas, ScrubMachine> {
 
   explicit ReservingReplicas(my_context ctx);
+  ~ReservingReplicas();
   using reactions = mpl::list<sc::custom_reaction<FullReset>,
 			      // all replicas granted our resources request
 			      sc::transition<RemotesReserved, ActiveScrubbing>,
@@ -224,6 +226,8 @@ struct ActStartup : sc::state<ActStartup, ActiveScrubbing> {
 struct RangeBlocked : sc::state<RangeBlocked, ActiveScrubbing> {
   explicit RangeBlocked(my_context ctx);
   using reactions = mpl::list<sc::transition<Unblocked, PendingTimer>>;
+
+  Scrub::BlockedRangeWarning m_timeout;
 };
 
 struct PendingTimer : sc::state<PendingTimer, ActiveScrubbing> {
@@ -361,4 +365,4 @@ struct ActiveReplica : sc::state<ActiveReplica, ScrubMachine> {
 };
 
 }  // namespace Scrub
-}  // namespace crimson::osd
+//}  // namespace crimson::osd

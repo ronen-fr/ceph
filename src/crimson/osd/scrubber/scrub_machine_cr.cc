@@ -35,7 +35,7 @@ seastar::logger& logger()
   auto pg_id = context<ScrubMachine>().m_pg_id;                  \
   std::ignore = pg_id;
 
-namespace crimson::osd {
+//namespace crimson::osd {
 
 namespace Scrub {
 
@@ -69,6 +69,15 @@ bool ScrubMachine::is_reserving() const
   return state_cast<const ReservingReplicas*>();
 }
 
+
+bool ScrubMachine::is_accepting_updates() const
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  ceph_assert(scrbr->is_primary());
+
+  return state_cast<const WaitLastUpdate*>();
+}
+
 #if 0
 // for the rest of the code in this file - we know what PG we are dealing with:
 #undef dout_prefix
@@ -94,7 +103,17 @@ ReservingReplicas::ReservingReplicas(my_context ctx) : my_base(ctx)
 {
   logger().debug("scrubberFSM -- state -->> ReservingReplicas");
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+
+  // prevent the OSD from starting another scrub while we are trying to secure
+  // replicas resources
+  scrbr->set_reserving_now();
   scrbr->reserve_replicas();
+}
+
+ReservingReplicas::~ReservingReplicas()
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  scrbr->clear_reserving_now();
 }
 
 sc::result ReservingReplicas::react(const ReservationFailure&)
@@ -170,10 +189,21 @@ ActStartup::ActStartup(my_context ctx) : my_base(ctx)
 /*
  * Blocked. Will be released by kick_object_context_blocked() (or upon
  * an abort)
+ *
+ * Note: we are never expected to be waiting for long for a blocked object.
+ * Unfortunately we know from experience that a bug elsewhere might result
+ * in an indefinite wait in this state, for an object that is never released.
+ * If that happens, all we can do is to issue a warning message to help
+ * with the debugging.
  */
 RangeBlocked::RangeBlocked(my_context ctx) : my_base(ctx)
 {
   logger().debug("scrubberFSM -- state -->> Act/RangeBlocked");
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+
+  // arrange to have a warning message issued if we are stuck in this
+  // state for longer than some reasonable number of minutes.
+  m_timeout = scrbr->acquire_blocked_alarm();
 }
 
 // ----------------------- PendingTimer -----------------------------------
@@ -253,6 +283,15 @@ WaitLastUpdate::WaitLastUpdate(my_context ctx) : my_base(ctx)
   post_event(UpdatesApplied{});
 }
 
+/**
+ *  Note:
+ *  Updates are locally readable immediately. Thus, on the replicas we do need
+ *  to wait for the update notifications before scrubbing. For the Primary it's
+ *  a bit different: on EC (and only there) rmw operations have an additional
+ *  read roundtrip. That means that on the Primary we need to wait for
+ *  last_update_applied (the replica side, even on EC, is still safe
+ *  since the actual transaction will already be readable by commit time.
+ */
 void WaitLastUpdate::on_new_updates(const UpdatesApplied&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
@@ -514,4 +553,4 @@ sc::result ActiveReplica::react(const FullReset&)
 
 }  // namespace Scrub
 
-}  // namespace crimson::osd
+//}  // namespace crimson::osd

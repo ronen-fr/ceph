@@ -164,7 +164,7 @@ void PgScrubber::queue_local_trigger(ScrubEventFwd trigger,
 {
   logger().debug("{} q-ing func: {} (this:{:p})", __func__, desc, (void*)this);
 
-  std::ignore = m_pg->get_shard_services().start_operation<ScrubEvent2>(
+  std::ignore = m_pg->get_shard_services().start_operation<crimson::osd::ScrubEvent2>(
     m_pg, m_pg->get_shard_services(), m_pg->get_pg_whoami(), m_pg->get_pgid(), delay,
     trigger, epoch_queued, desc);
 }
@@ -285,29 +285,16 @@ bool PgScrubber::should_abort() const
 
 void PgScrubber::initiate_regular_scrub(epoch_t epoch_queued)
 {
-  RRLOG(15, ( (fmt::format("{}:epoch: {}", __func__, epoch) )) );
+  RRLOG(15, ( (fmt::format("{}:epoch: {}", __func__, epoch_queued) )) );
 
   // we may have lost our Primary status while the message languished in the queue
   if (check_interval(epoch_queued)) {
-    dout(10) << "scrubber event -->> StartScrub epoch: " << epoch_queued << dendl;
+    RRLOG(10, ( (fmt::format("{}: scrubber event -->> StartScrub epoch: {}", __func__, epoch_queued)) ));
+    //dout(10) << "scrubber event -->> StartScrub epoch: " << epoch_queued << dendl;
     reset_epoch(epoch_queued);
     m_fsm->process_event(StartScrub{});
-    dout(10) << "scrubber event --<< StartScrub" << dendl;
-  }
-
-
-
-  logger().debug("scrubber: {}: epoch: {}", __func__, epoch_queued);
-  // we may have lost our Primary status while the message languished in the
-  // queue
-  m_pg->m_scrub_sched->scrub_queued = false; // RRR clean up
-  if (check_interval(epoch_queued)) {
-    logger().debug("{}: scrubber event -->> StartScrub epoch: {}", __func__,
-		   epoch_queued);
-    reset_epoch(epoch_queued);
-    m_fsm->my_states();
-    m_fsm->process_event(Scrub::StartScrub{});
-    logger().debug("{}: scrubber event --<< StartScrub", __func__);
+    RRLOG(10, ( (fmt::format("{}: scrubber event --<< StartScrub", __func__)) ));
+    //dout(10) << "scrubber event --<< StartScrub" << dendl;
   }
 }
 
@@ -319,16 +306,18 @@ void PgScrubber::queue_regular_scrub()
 
 void PgScrubber::initiate_scrub_after_repair(epoch_t epoch_queued)
 {
-  logger().debug("scrubber: {} epoch: {}", __func__, epoch_queued);
+  RRLOG(10, ( (fmt::format("{}: scrubber event -->> StartScrub epoch: {}", __func__, epoch_queued)) ));
+
+  //logger().debug("scrubber: {} epoch: {}", __func__, epoch_queued);
+
   // we may have lost our Primary status while the message languished in the
   // queue
   if (check_interval(epoch_queued)) {
     logger().debug("{}: scrubber event -->> AfterRepairScrub epoch: {}", __func__,
 		   epoch_queued);
     reset_epoch(epoch_queued);
-    m_fsm->my_states();
-    m_fsm->process_event(Scrub::AfterRepairScrub{});
-    logger().debug("{}: scrubber event --<< AfterRepairScrub", __func__);
+    m_fsm->process_event(StartScrub{}); // no more 'after repair' shortcut
+    RRLOG(10, ( (fmt::format("{}: scrubber event --<< AfterRepairScrub", __func__)) ));
   }
 }
 
@@ -336,7 +325,6 @@ void PgScrubber::send_scrub_unblock(epoch_t epoch_queued)
 {
   logger().debug("scrubber event -->> {} epoch: {}", __func__, epoch_queued);
   if (is_message_relevant(epoch_queued)) {
-    m_fsm->my_states();
     m_fsm->process_event(Scrub::Unblocked{});
   }
   logger().debug("scrubber event --<< {}", __func__);
