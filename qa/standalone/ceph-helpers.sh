@@ -186,9 +186,14 @@ function teardown() {
 	    done
         fi
     fi
-    if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
+    # RRR keep the logs, and keep them separated
+    if [ "$cores" = "yes" -o "$dumplogs" = "1"  -o "$dumplogs" = "0" ]; then
 	if [ -n "$LOCALRUN" ]; then
-	    display_logs $dir
+	    mkdir -p $TESTDIR/archive/log
+	    echo Dir is RRR $dir
+	    ls $dir
+	    cp $dir/*.log $TESTDIR/archive/log
+	    # display_logs $dir
         else
 	    # Move logs to where Teuthology will archive it
 	    mkdir -p $TESTDIR/archive/log
