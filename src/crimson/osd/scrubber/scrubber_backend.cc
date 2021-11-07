@@ -3,7 +3,6 @@
 
 #include "crimson/osd/scrubber/scrubber_backend.h"
 
-//#include <fmt/core.h>
 #include <fmt/format.h>
 
 #include <algorithm>
@@ -32,6 +31,7 @@ using std::list;
 using std::pair;
 using std::set;
 using std::stringstream;
+using std::ostream;
 using std::vector;
 //using namespace crimson::Scrub;
 using namespace std::chrono;
@@ -154,7 +154,7 @@ void ScrubBackend::decode_received_map(pg_shard_t from,
 
 seastar::future<>  ScrubBackend::scrub_compare_maps(bool max_reached)
 {
-  RRRLOG(10, (fmt::format("{} has maps; analyzing", __func__)) );
+  RRLOG(10, (fmt::format("{} has maps; analyzing", __func__)) );
   //dout(10) << __func__ << " has maps, analyzing" << dendl;
 
   // construct authoritative scrub map for type-specific scrubbing

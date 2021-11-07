@@ -46,7 +46,11 @@
 #include "common/hobject.h"
 #include "common/snap_types.h"
 #include "HitSet.h"
+//#ifdef WITH_SEASTAR
+//#include "crimson/osd/watch.h"
+//#else
 #include "Watch.h"
+//#endif
 #include "include/cmp.h"
 #include "librados/ListObjectImpl.h"
 #include "compressor/Compressor.h"

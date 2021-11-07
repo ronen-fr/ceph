@@ -34,7 +34,7 @@ class Callback;
 
 namespace Scrub {
 class ScrubMachine;
-class ScrubberBE;
+class ScrubBackend;
 struct BuildMap;
 
 /**

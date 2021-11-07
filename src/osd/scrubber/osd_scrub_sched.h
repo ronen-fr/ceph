@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "common/RefCountedObj.h"
+#include "common/ceph_atomic.h"
 #include "osd/osd_types.h"
 #include "osd/scrubber_common.h"
 
@@ -26,7 +27,7 @@ enum class schedule_result_t {
   scrub_initiated,     // successfully started a scrub
   none_ready,	       // no pg to scrub
   no_local_resources,  // failure to secure local OSD scrub resource
-  already_started,     // already started scrubbing this pg
+  already_started,     // failed, as already started scrubbing this pg
   no_such_pg,	       // can't find this pg
   bad_pg_state,	       // pg state (clean, active, etc.)
   preconditions	       // time, configuration, etc.
@@ -56,11 +57,11 @@ class ScrubQueue {
 		     // under lock
   };
 
-  ScrubQueue(CephContext* cct, OSDService& osds);
+  ScrubQueue(crimson::common::CephContext* cct, OSDService& osds);
 
   struct scrub_schedule_t {
-    utime_t scheduled_at;
-    utime_t deadline;
+    utime_t scheduled_at{};
+    utime_t deadline{0, 0};
   };
 
   struct sched_params_t {
@@ -73,13 +74,11 @@ class ScrubQueue {
   struct ScrubJob final : public RefCountedObject {
 
     /**
-     *  a time scheduled for scrub. The scrub could be delayed if system
-     *  load is too high or if trying to scrub out of scrub hours
+     *  a time scheduled for scrub, and a deadline: The scrub could be delayed if
+     * system load is too high (but not if after the deadline),or if trying to
+     * scrub out of scrub hours.
      */
-    utime_t sched_time;
-
-    /// the hard upper bound after which we should not delay the scrub
-    utime_t deadline;
+    scrub_schedule_t schedule;
 
     /// pg to be scrubbed
     const spg_t pgid;
@@ -87,7 +86,7 @@ class ScrubQueue {
     /// the OSD id (for the log)
     const int whoami;
 
-    std::atomic<qu_state_t> state{qu_state_t::not_registered};
+    ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
 
     /**
      * the old 'is_registered'. Set whenever the job is registered with the OSD,
@@ -109,16 +108,16 @@ class ScrubQueue {
 
     utime_t penalty_timeout{0, 0};
 
-    CephContext* cct;
+    crimson::common::CephContext* cct;
 
-    ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
+    ScrubJob(crimson::common::CephContext* cct, const spg_t& pg, int node_id);
 
-    utime_t get_sched_time() const { return sched_time; }
+    utime_t get_sched_time() const { return schedule.scheduled_at; }
 
     /**
-     *  relatively low-cost(*) access to the scrub job's state, to be used in
+     * relatively low-cost(*) access to the scrub job's state, to be used in
      * logging.
-     *  (*) not on x64 architecture
+     *  (*) not a low-cost access on x64 architecture
      */
     std::string_view state_desc() const
     {
@@ -160,7 +159,7 @@ class ScrubQueue {
    * - same for days of the week, and for the system load;
    *
    * @param preconds: what types of scrub are allowed, given system status &
-   *                  config
+   *                  config. Some of the preconditions are calculated here.
    * @return Scrub::attempt_t::scrubbing if a scrub session was successfully
    *         initiated. Otherwise - the failure cause.
    *
@@ -223,7 +222,7 @@ class ScrubQueue {
   void dump_scrubs(ceph::Formatter* f) const;
 
   /**
-   * No new scrub session will start while a scrub was initiate on a PG,
+   * No new scrub session will start while a scrub was initiated on a PG,
    * and that PG is trying to acquire replica resources.
    */
   void set_reserving_now() { a_pg_is_reserving = true; }
@@ -256,7 +255,7 @@ class ScrubQueue {
   [[nodiscard]] std::optional<double> update_load_average();
 
  private:
-  CephContext* cct;
+  crimson::common::CephContext* cct;
   OSDService& osd_service;
 
   /**
@@ -268,8 +267,7 @@ class ScrubQueue {
    *
    *  Note that PG locks should not be acquired while holding jobs_lock.
    */
-  mutable ceph::mutex jobs_lock =
-    ceph::make_mutex("ScrubQueue::jobs_lock");
+  mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
 
   ScrubQContainer to_scrub;   ///< scrub jobs (i.e. PGs) to scrub
   ScrubQContainer penalized;  ///< those that failed to reserve remote resources

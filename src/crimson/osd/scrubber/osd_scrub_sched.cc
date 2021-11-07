@@ -1,23 +1,83 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "osd_scrub_sched.h"
+
+/********************************
+
+
+
+
+
+
+
+
+
+
+  CRIMSON
+
+
+
+
+
+
+
+
+
+
+*/
+#include "crimson/osd/scrubber/osd_scrub_sched.h"
+
+#include <fmt/format.h>
 
 #include "include/utime.h"
-#include "osd/OSD.h"
+#include "crimson/osd/osd.h"
 
-#include "scrubber.h"
+#include "crimson/osd/scrubber/scrubber.h"
 
 using std::cout;
-using namespace ::std::literals;
+using std::list;
+using std::pair;
+using std::set;
+using std::stringstream;
+using std::ostream;
+using std::vector;
+using namespace std::chrono;
+using namespace std::chrono_literals;
+using namespace std::literals;
+
+namespace {
+  seastar::logger& logger() {
+    return crimson::get_logger(ceph_subsys_osd);
+  }
+}
+
+
+#ifdef WITH_SEASTAR
+#define prefix_temp "--prefix-- "
+#define RRLOG(LVL, S) logger().debug("{}", std::string{prefix_temp}+(S))
+#else
+#define RRLOG(LVL, S) { dout << (S) << dendl; }
+#endif
+
+#ifdef WITH_SEASTAR
+static std::stringstream dout_dummy;
+#undef dout(N)
+#define dout(N) dout_dummy
+#undef derr
+#define derr dout_dummy
+#undef dendl
+#define dendl "x"
+#endif
+
+using crimson::common::CephContext;
 
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubJob
 
-#define dout_context (cct)
-#define dout_subsys ceph_subsys_osd
-#undef dout_prefix
-#define dout_prefix *_dout << "osd." << whoami << "  "
+// #define dout_context (cct)
+// #define dout_subsys ceph_subsys_osd
+// #undef dout_prefix
+// #define dout_prefix *_dout << "osd." << whoami << "  "
 
 ScrubQueue::ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
     : RefCountedObject{cct}
@@ -53,21 +113,20 @@ void ScrubQueue::ScrubJob::update_schedule(
   // scan_penalized() is called and the job was moved to the to_scrub queue.
   updated = true;
 
-  dout(10) << " pg[" << pgid << "] adjusted: " << sched_time << "  "
-	   << registration_state() << dendl;
+  RRLOG(10, (fmt::format( "{}: pg[{}] adjusted: {}. Registration state: {}", __func__, pgid, sched_time, registration_state())));
 }
 
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubQueue
 
-#undef dout_context
-#define dout_context (cct)
-#undef dout_prefix
-#define dout_prefix \
-  *_dout << "osd." << osd_service.whoami << " scrub-queue::" << __func__ << " "
+// #undef dout_context
+// #define dout_context (cct)
+// #undef dout_prefix
+// #define dout_prefix \
+//   *_dout << "osd." << osd_service.whoami << " scrub-queue::" << __func__ << " "
 
 
-ScrubQueue::ScrubQueue(CephContext* cct, OSDService& osds)
+ScrubQueue::ScrubQueue(CephContext* cct, OSDSSS& osds)
     : cct{cct}, osd_service{osds}
 {
   // initialize the daily loadavg with current 15min loadavg
@@ -93,7 +152,8 @@ std::optional<double> ScrubQueue::update_load_average()
   double loadavgs[1];
   if (getloadavg(loadavgs, 1) == 1) {
     daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavgs[0]) / n_samples;
-    dout(17) << "heartbeat: daily_loadavg " << daily_loadavg << dendl;
+
+    RRLOG(17, (fmt::format( "{}: heartbeat: daily_loadavg  {}", __func__, daily_loadavg )));
     return 100 * loadavgs[0];
   }
 
@@ -112,25 +172,22 @@ std::optional<double> ScrubQueue::update_load_average()
  */
 void ScrubQueue::remove_from_osd_queue(ScrubJobRef scrub_job)
 {
-  dout(15) << "removing pg[" << scrub_job->pgid << "] from OSD scrub queue"
-	   << dendl;
-
   qu_state_t expected_state{qu_state_t::registered};
   auto ret = scrub_job->state.compare_exchange_strong(
     expected_state, qu_state_t::unregistering);
 
   if (ret) {
 
-    dout(10) << "pg[" << scrub_job->pgid << "] sched-state changed from "
-	     << qu_state_text(expected_state) << " to "
-	     << qu_state_text(scrub_job->state) << dendl;
+    ;//dout(10) << "pg[" << scrub_job->pgid << "] sched-state changed from "
+	//     << qu_state_text(expected_state) << " to "
+	  //   << qu_state_text(scrub_job->state) << dendl;
 
   } else {
 
     // job wasn't in state 'registered' coming in
-    dout(5) << "removing pg[" << scrub_job->pgid
-	    << "] failed. State was: " << qu_state_text(expected_state)
-	    << dendl;
+    //dout(5) << "removing pg[" << scrub_job->pgid
+	//    << "] failed. State was: " << qu_state_text(expected_state)
+	  //  << dendl;
   }
 }
 
@@ -139,8 +196,7 @@ void ScrubQueue::register_with_osd(ScrubJobRef scrub_job,
 {
   qu_state_t state_at_entry = scrub_job->state.load();
 
-  dout(15) << "pg[" << scrub_job->pgid << "] was "
-	   << qu_state_text(state_at_entry) << dendl;
+  RRLOG(15, (fmt::format( "{}: pg[{}] was {}", __func__, scrub_job->pgid, qu_state_text(state_at_entry) )));
 
   switch (state_at_entry) {
     case qu_state_t::registered:
@@ -155,7 +211,7 @@ void ScrubQueue::register_with_osd(ScrubJobRef scrub_job,
 
 	if (state_at_entry != scrub_job->state) {
 	  lck.unlock();
-	  dout(5) << " scrub job state changed" << dendl;
+          RRLOG(5, (fmt::format( "{}: scrub job state changed", __func__) ));
 	  // retry
 	  register_with_osd(scrub_job, suggested);
 	  break;
@@ -178,7 +234,7 @@ void ScrubQueue::register_with_osd(ScrubJobRef scrub_job,
 
 	update_job(scrub_job, suggested);
 	if (scrub_job->state == qu_state_t::not_registered) {
-	  dout(5) << " scrub job state changed to 'not registered'" << dendl;
+          RRLOG(5, (fmt::format( "{}: scrub job state changed to 'not registered'", __func__) ));
 	  to_scrub.push_back(scrub_job);
 	}
 	scrub_job->in_queues = true;
@@ -187,10 +243,9 @@ void ScrubQueue::register_with_osd(ScrubJobRef scrub_job,
       break;
   }
 
-  dout(10) << "pg(" << scrub_job->pgid << ") sched-state changed from "
-	   << qu_state_text(state_at_entry) << " to "
-	   << qu_state_text(scrub_job->state)
-	   << " at: " << scrub_job->sched_time << dendl;
+  RRLOG(10, (fmt::format( "{}: pg[{}] sched-state changed from {} to {} at: {}",\
+        __func__, scrub_job->pgid, qu_state_text(state_at_entry),  qu_state_text(scrub_job->state), \
+        scrub_job->sched_time) ));
 }
 
 // look mommy - no locks!
@@ -241,7 +296,9 @@ void ScrubQueue::move_failed_pgs(utime_t now_is)
   }
 
   if (punished_cnt) {
-    dout(15) << "# of jobs penalized: " << punished_cnt << dendl;
+
+    RRLOG(15, (fmt::format( "{}: # of jobs penalized: {}", __func__, punished_cnt )));
+
   }
 }
 
@@ -291,8 +348,7 @@ std::string_view ScrubQueue::qu_state_text(qu_state_t st)
  */
 Scrub::schedule_result_t ScrubQueue::select_pg_and_scrub(Scrub::ScrubPreconds& preconds)
 {
-  dout(10) << " reg./pen. sizes: " << to_scrub.size() << " / " << penalized.size()
-	   << dendl;
+  RRLOG(10, (fmt::format( "{}: reg./pen. sizes: {} / {}", __func__, to_scrub.size(), penalized.size() )));
 
   utime_t now_is = ceph_clock_now();
 
@@ -397,8 +453,10 @@ ScrubQueue::ScrubQContainer ScrubQueue::collect_ripe_jobs(ScrubQContainer& group
   return ripes;
 }
 
+// RRR must rewrite to seastar
+
 // not holding jobs_lock. 'group' is a copy of the actual list.
-Scrub::schedule_result_t ScrubQueue::select_from_group(ScrubQContainer& group,
+seastar::future<Scrub::schedule_result_t> ScrubQueue::select_from_group(ScrubQContainer& group,
 					       const Scrub::ScrubPreconds& preconds,
 					       utime_t now_is)
 {

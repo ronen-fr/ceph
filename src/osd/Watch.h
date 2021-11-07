@@ -11,8 +11,10 @@
  * Foundation.  See file COPYING.
  * 
  */
+//#ifndef WITH_SEASTAR
 #ifndef CEPH_WATCH_H
 #define CEPH_WATCH_H
+
 
 #include <set>
 #include "msg/Connection.h"
@@ -286,3 +288,4 @@ public:
 };
 
 #endif
+//#endif

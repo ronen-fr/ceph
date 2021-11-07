@@ -9,17 +9,27 @@
 #include <optional>
 #include <vector>
 
+#include "include/common_fwd.h"
+
 #include "common/RefCountedObj.h"
 #include "osd/osd_types.h"
 #include "crimson/osd/scrubber_common_cr.h"
 
 #include "utime.h"
 
+namespace crimson::osd {
 class PG;
+class ShardServices;
+}
 
-namespace crimson::osd::Scrub {
+//using OSDService = crimson::osd::ShardServices;  // fix that RRR
+using OSDSSS = crimson::osd::ShardServices;  // fix that RRR
+
+//namespace crimson::osd::Scrub {
 
 using namespace ::std::literals;
+
+namespace Scrub {
 
 // possible outcome when trying to select a PG and scrub it
 enum class schedule_result_t {
@@ -56,7 +66,7 @@ class ScrubQueue {
 		     // under lock
   };
 
-  ScrubQueue(CephContext* cct, OSDService& osds);
+  ScrubQueue(crimson::common::CephContext* cct, OSDSSS& osds);
 
   struct scrub_schedule_t {
     utime_t scheduled_at;
@@ -109,9 +119,9 @@ class ScrubQueue {
 
     utime_t penalty_timeout{0, 0};
 
-    CephContext* cct;
+    crimson::common::CephContext* cct;
 
-    ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
+    ScrubJob(crimson::common::CephContext* cct, const spg_t& pg, int node_id);
 
     utime_t get_sched_time() const { return sched_time; }
 
@@ -256,8 +266,8 @@ class ScrubQueue {
   [[nodiscard]] std::optional<double> update_load_average();
 
  private:
-  CephContext* cct;
-  OSDService& osd_service;
+  crimson::common::CephContext* cct;
+  OSDSSS& osd_service;
 
   /**
    *  jobs_lock protects the job containers and the relevant scrub-jobs state
@@ -342,7 +352,8 @@ class ScrubQueue {
    */
   void move_failed_pgs(utime_t now_is);
 
-  Scrub::schedule_result_t select_from_group(ScrubQContainer& group,
+  seastar::future<Scrub::schedule_result_t> select_from_group(ScrubQContainer& group,
 				     const Scrub::ScrubPreconds& preconds,
 				     utime_t now_is);
 };
+

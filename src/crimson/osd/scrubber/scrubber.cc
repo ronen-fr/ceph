@@ -292,7 +292,7 @@ void PgScrubber::initiate_regular_scrub(epoch_t epoch_queued)
     RRLOG(10, ( (fmt::format("{}: scrubber event -->> StartScrub epoch: {}", __func__, epoch_queued)) ));
     //dout(10) << "scrubber event -->> StartScrub epoch: " << epoch_queued << dendl;
     reset_epoch(epoch_queued);
-    m_fsm->process_event(StartScrub{});
+    m_fsm->process_event(Scrub::StartScrub{});
     RRLOG(10, ( (fmt::format("{}: scrubber event --<< StartScrub", __func__)) ));
     //dout(10) << "scrubber event --<< StartScrub" << dendl;
   }
@@ -316,7 +316,7 @@ void PgScrubber::initiate_scrub_after_repair(epoch_t epoch_queued)
     logger().debug("{}: scrubber event -->> AfterRepairScrub epoch: {}", __func__,
 		   epoch_queued);
     reset_epoch(epoch_queued);
-    m_fsm->process_event(StartScrub{}); // no more 'after repair' shortcut
+    m_fsm->process_event(Scrub::StartScrub{}); // no more 'after repair' shortcut
     RRLOG(10, ( (fmt::format("{}: scrubber event --<< AfterRepairScrub", __func__)) ));
   }
 }

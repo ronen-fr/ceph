@@ -23,8 +23,12 @@
 
 using namespace std::string_literals;
 
-// class PG;  // holding a pointer to that one - just for testing
+namespace crimson::osd {
+class PG;
+class ShardServices;
+}
 
+using crimson::osd::PG;
 
 //namespace crimson::osd {
 

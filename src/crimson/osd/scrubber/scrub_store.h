@@ -21,7 +21,7 @@ struct object_id_t;
 struct inconsistent_obj_wrapper;
 struct inconsistent_snapset_wrapper;
 
-namespace crimson::osd::Scrub {
+//namespace crimson::osd::Scrub {
 
 /*
  * The scrub store manages two sets of objects-with-errors: one for snap errors, and
@@ -105,4 +105,4 @@ class StoreCreator {
 };
 
 
-}  // namespace crimson::osd::Scrub
+//}  // namespace crimson::osd::Scrub

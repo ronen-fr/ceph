@@ -11,6 +11,7 @@
 #include "msg/MessageRef.h"
 #include "crimson/common/exception.h"
 #include "crimson/os/futurized_collection.h"
+#include "crimson/osd/scrubber/osd_scrub_sched.h"
 #include "osd/PeeringState.h"
 #include "crimson/osd/osdmap_service.h"
 #include "crimson/osd/object_context.h"
@@ -88,6 +89,16 @@ public:
     return osdmap_service;
   }
 
+private:
+  /**
+   * The entity that maintains the set of PGs we may scrub (i.e. - those that we
+   * are their primary), and schedules their scrubbing.
+   */
+  ScrubQueue m_scrub_queue;
+
+public:
+  ScrubQueue& get_scrub_services() { return m_scrub_queue; } // RRR create it
+
   // Op Management
   OSDOperationRegistry registry;
   OperationThrottler throttler;
@@ -138,6 +149,24 @@ public:
     PeeringCtx &&ctx) {
     return dispatch_context({}, std::move(ctx));
   }
+
+  int get_whoami() const { return whoami; }
+
+
+  /**
+   * A callback used by the ScrubQueue object to initiate a scrub on a specific PG.
+   *
+   * The request might fail for multiple reasons, as ScrubQueue cannot by its own
+   * check some of the PG-specific preconditions and those are checked here. See
+   * attempt_t definition.
+   *
+   * @param pgid to scrub
+   * @param allow_requested_repair_only
+   * @return a Scrub::attempt_t detailing either a success, or the failure reason.
+   */
+  seastar::future<Scrub::schedule_result_t> initiate_a_scrub(spg_t pgid, bool allow_requested_repair_only);
+
+
 
   // PG Temp State
 private:
