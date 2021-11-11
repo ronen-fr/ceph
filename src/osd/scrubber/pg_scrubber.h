@@ -503,7 +503,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   // -----     methods used to verify the relevance of incoming events:
 
   /**
-   *  is the incoming event still relevant, and should be processed?
+   *  is the incoming event still relevant and should be forwarded to the FSM?
    *
    *  It isn't if:
    *  - (1) we are no longer 'actively scrubbing'; or
@@ -512,7 +512,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    *  - (3) the message epoch is from a previous interval; or
    *  - (4) the 'abort' configuration flags were set.
    *
-   *  For (1) & (2) - teh incoming message is discarded, w/o further action.
+   *  For (1) & (2) - the incoming message is discarded, w/o further action.
    *
    *  For (3): (see check_interval() for a full description) if we have not reacted yet
    *  to this specific new interval, we do now:
@@ -629,7 +629,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    *   - all the time from scrub_finish() calling update_stats() till the
    *     FSM handles the 'finished' event
    *
-   * Compared with 'm_active', this flag is asserted earlier  and remains ON for longer.
+   * Compared with 'm_active', this flag is asserted earlier and remains ON for longer.
    */
   bool m_queued_or_active{false};
 
