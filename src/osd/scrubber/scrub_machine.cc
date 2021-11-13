@@ -460,9 +460,9 @@ sc::result WaitDigestUpdate::react(const DigestUpdate&)
   //  - send NextChunk, or
   //  - send ScrubFinished
 
-  if (!scrbr->is_finishing_flag_set()) {
+  //if (!scrbr->is_finishing_flag_set()) {
     scrbr->on_digest_updates();
-  }
+  //}
   return discard_event();
 }
 

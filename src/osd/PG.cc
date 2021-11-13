@@ -814,6 +814,8 @@ void PG::publish_stats_to_osd()
   if (!is_primary())
     return;
 
+  ceph_assert(m_scrubber);
+
   if (m_scrubber) {
     recovery_state.update_stats_wo_resched(
       [scrubber = m_scrubber.get()](pg_history_t& hist,
@@ -1333,6 +1335,7 @@ Scrub::schedule_result_t PG::sched_scrub()
 	  << (is_active() ? ") <active>" : ") <not-active>")
 	  << (is_clean() ? " <clean>" : " <not-clean>") << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
+  ceph_assert(m_scrubber);
 
   if (!m_scrubber || m_scrubber->is_being_scrubbed()) {
     return Scrub::schedule_result_t::already_started;;
@@ -2103,7 +2106,8 @@ void PG::repair_object(
 void PG::forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc)
 {
   dout(20) << __func__ << ": " << desc << " queued at: " << epoch_queued << dendl;
-  if (is_active() && m_scrubber) {
+  ceph_assert(m_scrubber);
+  if (is_active()) {
     ((*m_scrubber).*fn)(epoch_queued);
   } else {
     if (m_scrubber) {
@@ -2135,8 +2139,8 @@ void PG::forward_scrub_event(ScrubSafeAPI fn,
 void PG::replica_scrub(OpRequestRef op, ThreadPool::TPHandle& handle)
 {
   dout(10) << __func__ << " (op)" << dendl;
-  if (m_scrubber)
-    m_scrubber->replica_scrub_op(op);
+  ceph_assert(m_scrubber);
+  m_scrubber->replica_scrub_op(op);
 }
 
 void PG::replica_scrub(epoch_t epoch_queued,
