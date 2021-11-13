@@ -814,13 +814,12 @@ void PG::publish_stats_to_osd()
   if (!is_primary())
     return;
 
-  if (m_scrubber) {
-    recovery_state.update_stats_wo_resched(
-      [scrubber = m_scrubber.get()](pg_history_t& hist,
-                                    pg_stat_t& info) mutable -> void {
-        info.scrub_sched_status = scrubber->get_schedule();
-      });
-  }
+  ceph_assert(m_scrubber);
+  recovery_state.update_stats_wo_resched(
+    [scrubber = m_scrubber.get()](pg_history_t& hist,
+                                  pg_stat_t& info) mutable -> void {
+      info.scrub_sched_status = scrubber->get_schedule();
+    });
 
   std::lock_guard l{pg_stats_publish_lock};
   auto stats =
@@ -1333,6 +1332,7 @@ Scrub::schedule_result_t PG::sched_scrub()
 	  << (is_active() ? ") <active>" : ") <not-active>")
 	  << (is_clean() ? " <clean>" : " <not-clean>") << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
+  ceph_assert(m_scrubber);
 
   if (is_scrub_queued_or_active()) {
     return Scrub::schedule_result_t::already_started;;
@@ -1546,9 +1546,8 @@ void PG::on_info_history_change()
 {
   dout(20) << __func__ << " for a " << (is_primary() ? "Primary" : "non-primary") <<dendl;
 
-  if (m_scrubber) {
-    m_scrubber->on_maybe_registration_change(m_planned_scrub);
-  }
+  ceph_assert(m_scrubber);
+  m_scrubber->on_maybe_registration_change(m_planned_scrub);
 }
 
 void PG::reschedule_scrub()
@@ -1556,7 +1555,8 @@ void PG::reschedule_scrub()
   dout(20) << __func__ << " for a " << (is_primary() ? "Primary" : "non-primary") <<dendl;
 
   // we are assuming no change in primary status
-  if (is_primary() && m_scrubber) {
+  if (is_primary()) {
+    ceph_assert(m_scrubber);
     m_scrubber->update_scrub_job(m_planned_scrub);
   }
 }
@@ -1564,18 +1564,17 @@ void PG::reschedule_scrub()
 void PG::on_primary_status_change(bool was_primary, bool now_primary)
 {
   // make sure we have a working scrubber when becoming a primary
-  ceph_assert(m_scrubber || !now_primary);
 
-  if ((was_primary != now_primary) && m_scrubber) {
+  if (was_primary != now_primary) {
+    ceph_assert(m_scrubber);
     m_scrubber->on_primary_change(m_planned_scrub);
   }
 }
 
 void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
 {
-  if (m_scrubber) {
-    m_scrubber->scrub_requested(scrub_level, scrub_type, m_planned_scrub);
-  }
+  ceph_assert(m_scrubber);
+  m_scrubber->scrub_requested(scrub_level, scrub_type, m_planned_scrub);
 }
 
 void PG::clear_ready_to_merge() {
@@ -2101,13 +2100,12 @@ void PG::repair_object(
 void PG::forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc)
 {
   dout(20) << __func__ << ": " << desc << " queued at: " << epoch_queued << dendl;
-  if (is_active() && m_scrubber) {
+  ceph_assert(m_scrubber);
+  if (is_active()) {
     ((*m_scrubber).*fn)(epoch_queued);
   } else {
-    if (m_scrubber) {
-      m_scrubber->clear_queued_or_active();
-    }
     // pg might be in the process of being deleted
+    m_scrubber->clear_queued_or_active();
     dout(5) << __func__ << " refusing to forward. " << (is_clean() ? "(clean) " : "(not clean) ") <<
 	      (is_active() ? "(active) " : "(not active) ") <<  dendl;
   }
@@ -2120,10 +2118,12 @@ void PG::forward_scrub_event(ScrubSafeAPI fn,
 {
   dout(20) << __func__ << ": " << desc << " queued: " << epoch_queued
 	   << " token: " << act_token << dendl;
-  if (is_active() && m_scrubber) {
+  ceph_assert(m_scrubber);
+  if (is_active()) {
     ((*m_scrubber).*fn)(epoch_queued, act_token);
   } else {
     // pg might be in the process of being deleted
+    m_scrubber->clear_queued_or_active();
     dout(5) << __func__ << " refusing to forward. "
 	    << (is_clean() ? "(clean) " : "(not clean) ")
 	    << (is_active() ? "(active) " : "(not active) ") << dendl;
@@ -2133,8 +2133,8 @@ void PG::forward_scrub_event(ScrubSafeAPI fn,
 void PG::replica_scrub(OpRequestRef op, ThreadPool::TPHandle& handle)
 {
   dout(10) << __func__ << " (op)" << dendl;
-  if (m_scrubber)
-    m_scrubber->replica_scrub_op(op);
+  ceph_assert(m_scrubber);
+  m_scrubber->replica_scrub_op(op);
 }
 
 void PG::replica_scrub(epoch_t epoch_queued,
