@@ -441,6 +441,58 @@ function TEST_scrub_permit_time() {
     done
 }
 
+#  a test to recreate the problem described in bug #52901 - setting 'noscrub'
+#  without explicitly preventing deep scrubs made the PG 'unscrubable'.
+#  Fixed by PR#43521
+function TEST_just_deep_scrubs() {
+    local dir=$1
+    local OSDS=3
+    local poolname=test
+    set -x
+
+    standard_scrub_environment $dir $OSDS 4 "$poolname" 0.0
+
+    TESTDATA="testdata.$$"
+    dd if=/dev/urandom of=$TESTDATA bs=1032 count=1
+    for i in `seq 1 $objects`
+    do
+        rados -p $poolname put obj${i} $TESTDATA
+    done
+    rm -f $TESTDATA
+
+    poolid=$(ceph osd dump | grep "^pool.*[']${poolname}[']" | awk '{ print $2 }')
+    echo $poolid
+
+    # set 'no scrub', then request a deep-scrub
+    # we do not expect to see the scrub scheduled.
+
+    ceph osd set noscrub || return 1
+    sleep 8 # the 'noscrub' command takes a long time to reach the OSDs
+    local now_is=`date -I"ns"`
+    declare -A sched_data
+    local pgid="${poolid}.2"
+    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
+    saved_last_stamp=${sched_data['query_last_stamp']}
+    echo "test counter @ start: ${sched_data['query_scrub_seq']}"
+
+    ceph pg $pgid deep_scrub
+    ceph pg $pgid scrub
+
+    sleep 5
+    declare -A sc_data_2
+    extract_published_sch $pgid $now_is $now_is sc_data_2
+    (( ${sc_data_2['dmp_last_duration']} == 0)) || return 1
+    echo "test counter @ should show no change: " ${sc_data_2['query_scrub_seq']}
+
+    # unset the 'no scrub', and expect a deep-scrub to start
+    ceph osd unset noscrub || return 1
+    sleep 5
+    declare -A expct_qry_duration=( ['query_last_duration']="0" ['query_last_duration_neg']="not0" )
+    sc_data_2=()
+    wait_any_cond $pgid 10 $saved_last_stamp expct_qry_duration "WaitingAfterScrub " sc_data_2 || return 1
+    echo "test counter @ should be higher than before the unset: " ${sc_data_2['query_scrub_seq']}
+}
+
 
 function TEST_dump_scrub_schedule() {
     local dir=$1

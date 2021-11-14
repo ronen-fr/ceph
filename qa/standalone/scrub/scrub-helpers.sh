@@ -68,7 +68,7 @@ function extract_published_sch() {
         query_last_scrub: (.info.history.last_scrub| sub($spt;"x") ),
 	query_is_future: .q_when_is_future,
 	query_vs_date: .q_vs_date,
-
+        query_scrub_seq: .scrubber.test_sequence
       }
    '`
   (( extr_dbg >= 1 )) && echo $from_qry " " $from_dmp | jq -s -r 'add | "(",(to_entries | .[] | "["+(.key)+"]="+(.value|@sh)),")"'
@@ -193,4 +193,47 @@ function schedule_against_expected() {
 
   if [[ -n "$saved_echo_flag" ]]; then set -x; fi
   return 0
+}
+
+# RRR
+#
+# Always set the following OSD parameters (aimed to create a stable scrub sequence):
+#  - no scrub randomizations/backoffs
+#  - selecting the wpq scheduler
+#  - ...
+# 
+# $1: the test directory
+# $2: number of OSDs
+# $3: number of PGs in the pool
+# $4: test pool name
+# $5: osd_scrub_sleep
+# $6: extra OSD parameters
+function standard_scrub_environment() {
+    local dir=$1
+    local OSDS=$2
+    local pg_num=$3
+    local poolname="$4"
+    local osd_sleep=$5
+    local extra_pars="$6"
+
+    run_mon $dir a --osd_pool_default_size=$OSDS || return 1
+    run_mgr $dir x || return 1
+
+    # Set scheduler to "wpq" until there's a reliable way to query scrub states
+    # with "--osd-scrub-sleep" set to 0. The "mclock_scheduler" overrides the
+    # scrub sleep to 0 and as a result the checks in the test fail.
+    local ceph_osd_args="--osd_deep_scrub_randomize_ratio=0 \
+            --osd_scrub_interval_randomize_ratio=0 \
+            --osd_scrub_backoff_ratio=0.0 \
+            --osd_pool_default_pg_autoscale_mode=off \
+            --osd_op_queue=wpq \
+            --osd_scrub_sleep=$osd_sleep $extra_pars"
+
+    for osd in $(seq 0 $(expr $OSDS - 1))
+    do
+      run_osd $dir $osd $ceph_osd_args|| return 1
+    done
+
+    create_pool $poolname $pg_num $pg_num
+    wait_for_clean || return 1
 }
