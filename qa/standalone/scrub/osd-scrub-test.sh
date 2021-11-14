@@ -446,11 +446,13 @@ function TEST_scrub_permit_time() {
 #  Fixed by PR#43521
 function TEST_just_deep_scrubs() {
     local dir=$1
-    local OSDS=3
-    local poolname=test
-    set -x
+    local -A cluster_conf=(
+        ['osds_num']="3" 
+        ['pgs_in_pool']="4"
+        ['pool_name']="test"
+    )
 
-    standard_scrub_environment $dir $OSDS 4 "$poolname" 0.0
+    standard_scrub_cluster $dir cluster_conf 0.0
 
     TESTDATA="testdata.$$"
     dd if=/dev/urandom of=$TESTDATA bs=1032 count=1
@@ -460,14 +462,16 @@ function TEST_just_deep_scrubs() {
     done
     rm -f $TESTDATA
 
-    poolid=$(ceph osd dump | grep "^pool.*[']${poolname}[']" | awk '{ print $2 }')
-    echo $poolid
+    poolid=${cluster_conf['pool_id']}
+    poolname=${cluster_conf['pool_name']}
 
-    # set 'no scrub', then request a deep-scrub
+    echo "Pool: $poolname X $poolid"
+
+    # set 'no scrub', then request a deep-scrub.
     # we do not expect to see the scrub scheduled.
 
     ceph osd set noscrub || return 1
-    sleep 8 # the 'noscrub' command takes a long time to reach the OSDs
+    sleep 6 # the 'noscrub' command takes a long time to reach the OSDs
     local now_is=`date -I"ns"`
     declare -A sched_data
     local pgid="${poolid}.2"
@@ -476,23 +480,22 @@ function TEST_just_deep_scrubs() {
     echo "test counter @ start: ${sched_data['query_scrub_seq']}"
 
     ceph pg $pgid deep_scrub
-    ceph pg $pgid scrub
+    ceph pg $pgid scrub # needed until PR#43244 is merged
 
     sleep 5
     declare -A sc_data_2
     extract_published_sch $pgid $now_is $now_is sc_data_2
-    (( ${sc_data_2['dmp_last_duration']} == 0)) || return 1
     echo "test counter @ should show no change: " ${sc_data_2['query_scrub_seq']}
+    (( ${sc_data_2['dmp_last_duration']} == 0)) || return 1
 
-    # unset the 'no scrub', and expect a deep-scrub to start
+    # unset the 'no scrub'. Deep scrubbing should start now.
     ceph osd unset noscrub || return 1
     sleep 5
     declare -A expct_qry_duration=( ['query_last_duration']="0" ['query_last_duration_neg']="not0" )
     sc_data_2=()
-    wait_any_cond $pgid 10 $saved_last_stamp expct_qry_duration "WaitingAfterScrub " sc_data_2 || return 1
     echo "test counter @ should be higher than before the unset: " ${sc_data_2['query_scrub_seq']}
+    wait_any_cond $pgid 10 $saved_last_stamp expct_qry_duration "WaitingAfterScrub " sc_data_2 || return 1
 }
-
 
 function TEST_dump_scrub_schedule() {
     local dir=$1

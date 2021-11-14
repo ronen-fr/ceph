@@ -171,7 +171,7 @@ function schedule_against_expected() {
   local -n ep=$2  # the expected results
   local extr_dbg=1
 
-  #turn off '-x' (but remember previous state)
+  # turn off '-x' (but remember previous state)
   local saved_echo_flag=${-//[^x]/}
   set +x
 
@@ -195,33 +195,51 @@ function schedule_against_expected() {
   return 0
 }
 
-# RRR
+
+
+# Start the cluster "nodes" and create a pool for testing.
 #
-# Always set the following OSD parameters (aimed to create a stable scrub sequence):
+# The OSDs are started with a set of parameters aimed in creating a repeatable
+# and stable scrub sequence:
 #  - no scrub randomizations/backoffs
-#  - selecting the wpq scheduler
-#  - ...
+#  - the wpq scheduler is selected
+#  - no autoscaler
 # 
 # $1: the test directory
-# $2: number of OSDs
-# $3: number of PGs in the pool
-# $4: test pool name
-# $5: osd_scrub_sleep
-# $6: extra OSD parameters
-function standard_scrub_environment() {
+# $2: [in/out] an array of configuration values
+# $3: osd_scrub_sleep
+#
+# The function adds/updates the configuration dictionary with the name of the
+# pool created, and its ID.
+#
+# Argument 2 might look like this:
+#
+#  declare -A example_par2=( ['osds_num']="3"
+#    ['pgs_in_pool']="7"
+#    ['extras']="--extra1 --extra2"
+#    ['pool_name']="testpl"
+#  )
+function standard_scrub_cluster() {
     local dir=$1
-    local OSDS=$2
-    local pg_num=$3
-    local poolname="$4"
-    local osd_sleep=$5
-    local extra_pars="$6"
+    local -n args=$2
+    local osd_sleep=$3
+
+    local OSDS=${args['osds_num']:-"3"}
+    local pg_num=${args['pgs_in_pool']:-"8"}
+    local poolname="${args['pool_name']:-test}"
+    args['pool_name']=$poolname
+    local extra_pars=${args['extras']}
+    local debug_msg=${args['msg']:-"dbg"}
+
+    # turn off '-x' (but remember previous state)
+    local saved_echo_flag=${-//[^x]/}
+    set +x
 
     run_mon $dir a --osd_pool_default_size=$OSDS || return 1
     run_mgr $dir x || return 1
 
-    # Set scheduler to "wpq" until there's a reliable way to query scrub states
-    # with "--osd-scrub-sleep" set to 0. The "mclock_scheduler" overrides the
-    # scrub sleep to 0 and as a result the checks in the test fail.
+    # Set scheduler to "wpq" as otherwise "osd-scrub-sleep" is
+    # ignored, causing some tests to fail
     local ceph_osd_args="--osd_deep_scrub_randomize_ratio=0 \
             --osd_scrub_interval_randomize_ratio=0 \
             --osd_scrub_backoff_ratio=0.0 \
@@ -236,4 +254,12 @@ function standard_scrub_environment() {
 
     create_pool $poolname $pg_num $pg_num
     wait_for_clean || return 1
+
+    # return the pool name and ID
+    sleep 1
+    name_n_id=`ceph osd dump | awk '/^pool.*'$poolname'/ { gsub(/'"'"'/," ",$3); print $3," ", $2}'`
+    echo "standard_scrub_cluster: $debug_msg: test pool is $name_n_id"
+    args['pool_id']="${name_n_id##* }"
+    if [[ -n "$saved_echo_flag" ]]; then set -x; fi
 }
+
