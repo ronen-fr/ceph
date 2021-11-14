@@ -963,12 +963,14 @@ void PgScrubber::on_init()
 
   m_start = m_pg->info.pgid.pgid.get_hobj_start();
   m_active = true;
+  ++m_sessions_counter;
   m_pg->publish_stats_to_osd();
 }
 
 void PgScrubber::on_replica_init()
 {
   m_active = true;
+  ++m_sessions_counter;
 }
 
 void PgScrubber::_scan_snaps(ScrubMap& smap)
@@ -1934,6 +1936,7 @@ void PgScrubber::dump_scrubber(ceph::Formatter* f,
       m_scrub_job->scheduling_state(ceph_clock_now(), deep_expected);
     f->dump_string("schedule", sched_state);
   }
+  f->dump_int("test_sequence", m_sessions_counter);  // an ever-increasing number used by tests
 
   f->close_section();
 }
@@ -2200,6 +2203,7 @@ void PgScrubber::reset_internal_state()
   m_sleep_started_at = utime_t{};
 
   m_active = false;
+  ++m_sessions_counter;
 }
 
 // note that only applicable to the Replica:
