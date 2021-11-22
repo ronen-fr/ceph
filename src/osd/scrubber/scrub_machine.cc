@@ -435,6 +435,12 @@ sc::result WaitReplicas::react(const GotReplicas&)
   }
 }
 
+sc::result WaitReplicas::react(const DigestUpdate&)
+{
+  dout(10) << "WaitReplicas::react(const DigestUpdate&) - too early" << dendl;
+  return discard_event();
+}
+
 // ----------------------- WaitDigestUpdate -----------------------------------
 
 WaitDigestUpdate::WaitDigestUpdate(my_context ctx) : my_base(ctx)
