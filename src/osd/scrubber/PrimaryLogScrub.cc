@@ -23,7 +23,7 @@ template <class T> static ostream& _prefix(std::ostream* _dout, T* t)
 }
 
 using namespace Scrub;
-using Scrub::ScrubMachine;
+//using Scrub::ScrubMachine;
 
 bool PrimaryLogScrub::get_store_errors(const scrub_ls_arg_t& arg,
 				       scrub_ls_result_t& res_inout) const
@@ -49,6 +49,13 @@ void PrimaryLogScrub::_scrub_finish()
   dout(10) << __func__
 	   << " info stats: " << (info.stats.stats_invalid ? "invalid" : "valid")
 	   << dendl;
+
+  if (m_debug_staterr) {
+    dout(7) << fmt::format("{}: DEBUG faking a shallow error! {}", __func__, m_debug_staterr) << dendl;
+    --m_debug_staterr;
+    ++m_shallow_errors;
+    ++m_deep_errors;
+  }
 
   if (info.stats.stats_invalid) {
     m_pl_pg->recovery_state.update_stats([=](auto& history, auto& stats) {
@@ -99,6 +106,7 @@ void PrimaryLogScrub::_scrub_finish()
        !info.stats.manifest_stats_invalid) ||
       m_scrub_cstat.sum.num_whiteouts != info.stats.stats.sum.num_whiteouts ||
       m_scrub_cstat.sum.num_bytes != info.stats.stats.sum.num_bytes) {
+
     m_osds->clog->error() << info.pgid << " " << m_mode_desc << " : stat mismatch, got "
 			  << m_scrub_cstat.sum.num_objects << "/"
 			  << info.stats.stats.sum.num_objects << " objects, "
@@ -571,6 +579,7 @@ void PrimaryLogScrub::_scrub_clear_state()
 void PrimaryLogScrub::stats_of_handled_objects(const object_stat_sum_t& delta_stats,
 					       const hobject_t& soid)
 {
+  usleep(200);
   // We scrub objects in hobject_t order, so objects before m_start have already been
   // scrubbed and their stats have already been added to the scrubber. Objects after that
   // point haven't been included in the scrubber's stats accounting yet, so they will be
@@ -583,7 +592,9 @@ void PrimaryLogScrub::stats_of_handled_objects(const object_stat_sum_t& delta_st
 
     } else {
 
-      dout(25) << fmt::format("{} {} >= [{},{})", __func__, soid, m_start, m_end) << dendl;
+      dout(20) << fmt::format("{} {} >= [{},{})", __func__, soid, m_start, m_end) << dendl;
     }
+  } else {
+    dout(20) << fmt::format("{} not active {} [{},{})", __func__, soid, m_start, m_end) << dendl;
   }
 }

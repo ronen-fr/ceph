@@ -345,6 +345,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 		 Formatter* f,
 		 std::stringstream& ss) override;
   int m_debug_blockrange{0};
+  int m_debug_staterr{1};
 
   // -------------------------------------------------------------------------------------------
   // the I/F used by the state-machine (i.e. the implementation of ScrubMachineListener)

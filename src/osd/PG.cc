@@ -1485,15 +1485,15 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
   bool allow_regular_scrub = !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
 			       pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
   bool has_deep_errors = (info.stats.stats.sum.num_deep_scrub_errors > 0);
-  bool try_to_auto_repair =
-    (cct->_conf->osd_scrub_auto_repair && get_pgbackend()->auto_repair_supported());
+  bool try_to_auto_repair = true;
+    //(cct->_conf->osd_scrub_auto_repair && get_pgbackend()->auto_repair_supported());
 
   auto upd_flags = m_planned_scrub;
 
   upd_flags.time_for_deep = false;
   // Clear these in case user issues the scrub/repair command during
   // the scheduling of the scrub/repair (e.g. request reservation)
-  upd_flags.deep_scrub_on_error = false;
+  upd_flags.deep_scrub_on_error = true; //false;
   upd_flags.auto_repair = false;
 
   if (upd_flags.must_scrub && !upd_flags.must_deep_scrub && has_deep_errors) {

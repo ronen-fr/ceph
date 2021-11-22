@@ -16,6 +16,7 @@
 #include "messages/MOSDScrubReserve.h"
 
 #include "osd/OSD.h"
+#include "osd/osd_types_fmt.h"
 #include "ScrubStore.h"
 #include "scrub_machine.h"
 
@@ -572,7 +573,7 @@ void PgScrubber::scrub_requested(scrub_level_t scrub_level,
     (scrub_level == scrub_level_t::deep) || (scrub_type == scrub_type_t::do_repair);
   req_flags.must_repair = (scrub_type == scrub_type_t::do_repair);
   // User might intervene, so clear this
-  req_flags.need_auto = false;
+  // 1 // req_flags.need_auto = false;
   req_flags.req_scrub = true;
 
   dout(20) << __func__ << " pg(" << m_pg_id << ") planned:" << req_flags << dendl;
@@ -1759,10 +1760,12 @@ void PgScrubber::scrub_finish()
   // if a regular scrub had errors within the limit, do a deep scrub to auto repair
   if (m_flags.deep_scrub_on_error && !m_authoritative.empty() &&
       m_authoritative.size() <= m_pg->cct->_conf->osd_scrub_auto_repair_num_errors) {
-    ceph_assert(!m_is_deep);
+    //ceph_assert(!m_is_deep);
     do_auto_scrub = true;
     dout(15) << __func__ << " Try to auto repair after scrub errors" << dendl;
   }
+
+  dout(9) << fmt::format("{}: do_auto_scrub:{} m_flags.deep_scrub_on_error:{}, m_authoritative:{}", __func__, do_auto_scrub, m_flags.deep_scrub_on_error, m_authoritative.size()) << dendl;
 
   m_flags.deep_scrub_on_error = false;
 
@@ -1884,6 +1887,8 @@ void PgScrubber::scrub_finish()
   }
 
   cleanup_on_finish();
+
+  dout(10) << fmt::format("{}: do_auto_scrub:{} has_error:{}\n", __func__, do_auto_scrub, has_error) << dendl;
   if (do_auto_scrub) {
     request_rescrubbing(m_pg->m_planned_scrub);
   }
@@ -2186,6 +2191,14 @@ int PgScrubber::asok_debug(std::string_view cmd,
     // send an 'unblock' event, as if a blocked range was freed
     m_debug_blockrange = 0;
     m_fsm->process_event(Unblocked{});
+  }
+
+  if (cmd == "stat_err") {
+    // set a flag that will cause stat error on the next scrub
+    m_debug_staterr = 1;
+  } else if (cmd == "unstat_err") {
+    // send an 'unblock' event, as if a blocked range was freed
+    m_debug_staterr = 0;
   }
   return 0;
 }

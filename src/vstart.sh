@@ -526,6 +526,8 @@ if [ "$new" -eq 0 ]; then
 else
     # only delete if -n
     if [ -e "$conf_fn" ]; then
+        #echo "RRRRRRRRRR"
+        #$CEPH_BIN/ceph-conf  -c $conf_fn --show-config-value admin_socket
         asok_dir=`dirname $($CEPH_BIN/ceph-conf  -c $conf_fn --show-config-value admin_socket)`
         rm -- "$conf_fn"
         if [ $asok_dir != /var/run/ceph ]; then
