@@ -18,9 +18,10 @@ using data_omap_digests_t =
 
 using shard_info_map_t = std::map<pg_shard_t, shard_info_wrapper>;
 
-using shard_to_smap_t = std::map<pg_shard_t, ScrubMap*>;
+//using shard_to_smap_t = std::map<pg_shard_t, ScrubMap*>;
 
-using IterToSMap = std::map<pg_shard_t, ScrubMap*>::const_iterator;
+//using IterToSMap = std::map<pg_shard_t, ScrubMap>::const_iterator;
+using IterToSMap = std::map<pg_shard_t, ScrubMap>::iterator;
 
 /**
  * A structure used internally by select_auth_object()
@@ -70,7 +71,7 @@ struct shard_as_auth_t {
 };
 
 struct auth_selection_t {
-  IterToSMap auth;        //< an iter into one of this_chunk->maps
+  IterToSMap auth;        ///< an iter into one of this_chunk->maps
   pg_shard_t auth_shard;  // set to auth->first
   object_info_t auth_oi;
   shard_info_map_t shard_map;
@@ -109,11 +110,17 @@ struct fmt::formatter<auth_selection_t> {
  */
 struct ScrubBeChunk {
 
+  explicit ScrubBeChunk(pg_shard_t i_am)
+  {
+    received_maps[i_am]=ScrubMap{};
+  }
+
+  // including our own scrub map
   std::map<pg_shard_t, ScrubMap> received_maps;
 
   // the working set of maps: pointers into either received_maps or
   // Primary's own map
-  std::map<pg_shard_t, ScrubMap*> maps;
+  //std::map<pg_shard_t, ScrubMap*> maps;
 
   std::set<hobject_t> master_set;
 
@@ -150,7 +157,7 @@ class ScrubBackend : public ScrubBackendIF {
                pg_shard_t i_am,
                bool repair,
                scrub_level_t shallow_or_deep,
-               ScrubMap* primary_map,
+               //ScrubMap* primary_map,
                const std::set<pg_shard_t>& acting);
 
   // Replica constructor: no primary map
@@ -164,10 +171,13 @@ class ScrubBackend : public ScrubBackendIF {
   friend class PgScrubber;
 
   /**
-   * reset the per-chunk data structure (ScrubBeChunk),
-   * and attached the m_primary_map to it.
+   * reset the per-chunk data structure (ScrubberBeChunk).
+   * Create an empty scrub-map for this shard, and place it
+   * in the appropriate entry in 'received_maps'.
+   *
+   * @returns a pointer to the newly created ScrubMap.
    */
-  void new_chunk() final;
+  ScrubMap* new_chunk() final;
 
   /**
    * sets Backend's m_repair flag (setting m_mode_desc to a corresponding
@@ -182,6 +192,9 @@ class ScrubBackend : public ScrubBackendIF {
   void replica_clean_meta(ScrubMap& smap,
                           bool max_reached,
                           const hobject_t& start) final;
+
+  // RRR document
+  ScrubMap& my_map();
 
   /**
    * decode the arriving MOSDRepScrubMap message, placing the replica's
@@ -213,12 +226,12 @@ class ScrubBackend : public ScrubBackendIF {
   // set/constructed at the ctor():
   PgScrubber& m_scrubber;
   PGBackend& m_pgbe;
-  PG& m_pg;  // only used for dout messages
+  PG& m_pg;
   const pg_shard_t m_pg_whoami;
   bool m_repair;
   const scrub_level_t m_depth;
   const spg_t m_pg_id;
-  ScrubMap* m_primary_map;                  // primary only // fix ownership
+  //ScrubMap* m_primary_map;                  // primary only // fix ownership
   std::vector<pg_shard_t> m_acting_but_me;  // primary only
   bool m_is_replicated{true};
   std::string_view m_mode_desc;
@@ -237,7 +250,7 @@ class ScrubBackend : public ScrubBackendIF {
   omap_stat_t m_omap_stats = (const struct omap_stat_t){0};
 
  private:
-  using IterToSMap = std::map<pg_shard_t, ScrubMap*>::const_iterator;
+  using CIterToSMap = std::map<pg_shard_t, ScrubMap*>::const_iterator;
 
   using AuthAndObjErrors = std::tuple<std::list<pg_shard_t>,  ///< the auth-list
                                       std::set<pg_shard_t>    ///< object_errors

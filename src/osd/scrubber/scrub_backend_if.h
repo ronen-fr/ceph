@@ -22,18 +22,21 @@ struct ScrubMap;
  */
 class ScrubBackendIF {
  public:
-  using ObjPeersList =
-    std::map<hobject_t, std::list<std::pair<ScrubMap::object, pg_shard_t>>>;
-
   virtual ~ScrubBackendIF() = default;
 
   /**
-   * reset the per-chunk data structure (ScrubberBeChunk),
-   * and attach the m_primary_map to it.
+   * reset the per-chunk data structure (ScrubberBeChunk).
+   * Create an empty scrub-map for this shard, and place it
+   * in the appropriate entry in 'received_maps'.
+   *
+   * @returns a pointer to the newly created ScrubMap.
    */
-  virtual void new_chunk() = 0;
+  virtual ScrubMap* new_chunk() = 0;
 
-  // RRR complete doc
+  /**
+   * sets Backend's m_repair flag (setting m_mode_desc to a corresponding
+   * string)
+   */
   virtual void update_repair_status(bool should_repair) = 0;
 
   /**
@@ -59,7 +62,9 @@ class ScrubBackendIF {
 
   virtual void scan_snaps(ScrubMap& smap) = 0;
 
-  virtual void replica_clean_meta(ScrubMap& smap, bool max_reached, const hobject_t& start) = 0;
+  virtual void replica_clean_meta(ScrubMap& smap,
+                                  bool max_reached,
+                                  const hobject_t& start) = 0;
 
   // tbd - stats handling
 

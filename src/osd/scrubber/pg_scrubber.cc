@@ -631,8 +631,8 @@ void PgScrubber::on_applied_when_primary(const eversion_t& applied_version)
  */
 bool PgScrubber::select_range()
 {
-  m_primary_scrubmap = ScrubMap{};
-  m_be->new_chunk();
+  //m_primary_scrubmap = ScrubMap{};
+  m_primary_scrubmap = m_be->new_chunk();
 
   /* get the start and end of our scrub chunk
    *
@@ -964,7 +964,6 @@ void PgScrubber::on_init()
     m_pg_whoami,
     m_is_repair,
     m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow,
-    &m_primary_scrubmap,
     m_pg->get_acting_recovery_backfill());
 
   //  create a new store
@@ -998,7 +997,7 @@ int PgScrubber::build_primary_map_chunk()
   epoch_t map_building_since = m_pg->get_osdmap_epoch();
   dout(20) << __func__ << ": initiated at epoch " << map_building_since << dendl;
 
-  auto ret = build_scrub_map_chunk(m_primary_scrubmap, m_primary_scrubmap_pos, m_start,
+  auto ret = build_scrub_map_chunk(*m_primary_scrubmap, m_primary_scrubmap_pos, m_start,
 				   m_end, m_is_deep);
 
   if (ret == -EINPROGRESS) {
@@ -1991,7 +1990,7 @@ void PgScrubber::reset_internal_state()
   m_inconsistent.clear();
   m_missing.clear();
   m_authoritative.clear();
-  m_primary_scrubmap = ScrubMap{};
+  //m_primary_scrubmap = ScrubMap{};
   m_primary_scrubmap_pos.reset();
   replica_scrubmap = ScrubMap{};
   replica_scrubmap_pos.reset();

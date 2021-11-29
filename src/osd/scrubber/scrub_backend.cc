@@ -3,7 +3,6 @@
 
 #include "./scrub_backend.h"
 
-
 #include <algorithm>
 
 #include "common/debug.h"
@@ -61,7 +60,7 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
                            pg_shard_t i_am,
                            bool repair,
                            scrub_level_t shallow_or_deep,
-                           ScrubMap* primary_map,
+                           //ScrubMap* primary_map,
                            const std::set<pg_shard_t>& acting)
     : m_scrubber{scrubber}
     , m_pgbe{backend}
@@ -70,7 +69,6 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
     , m_repair{repair}
     , m_depth{shallow_or_deep}
     , m_pg_id{scrubber.m_pg_id}
-    , m_primary_map{primary_map}
     , m_conf{m_scrubber.get_pg_cct()->_conf}
     , clog{m_scrubber.m_osds->clog}
 {
@@ -102,7 +100,6 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
     , m_repair{repair}
     , m_depth{shallow_or_deep}
     , m_pg_id{scrubber.m_pg_id}
-    , m_primary_map{nullptr}
     , m_conf{m_scrubber.get_pg_cct()->_conf}
     , clog{m_scrubber.m_osds->clog}
 {
@@ -124,11 +121,11 @@ void ScrubBackend::update_repair_status(bool should_repair)
               : (m_depth == scrub_level_t::deep ? "deep-scrub"sv : "scrub"sv));
 }
 
-void ScrubBackend::new_chunk()
+ScrubMap* ScrubBackend::new_chunk()
 {
   dout(15) << __func__ << dendl;
-  this_chunk.emplace();
-  this_chunk->maps[m_pg_whoami] = m_primary_map;
+  this_chunk.emplace(m_pg_whoami);
+  return &this_chunk->received_maps[m_pg_whoami];
 }
 
 
@@ -143,17 +140,21 @@ void ScrubBackend::merge_to_master_set()
     dout(15) << __func__ << ": replica " << i << " has "
              << this_chunk->received_maps[i].objects.size() << " items"
              << dendl;
-    this_chunk->maps[i] = &this_chunk->received_maps[i];
   }
 
   // Construct the master set of objects
-  for (const auto& map : this_chunk->maps) {
+  for (const auto& map : this_chunk->received_maps) {
     std::transform(
-      map.second->objects.begin(),
-      map.second->objects.end(),
+      map.second.objects.begin(),
+      map.second.objects.end(),
       std::inserter(this_chunk->master_set, this_chunk->master_set.end()),
       [](const auto& i) { return i.first; });
   }
+}
+
+ScrubMap& ScrubBackend::my_map()
+{
+  return this_chunk->received_maps[m_pg_whoami];
 }
 
 
@@ -197,7 +198,7 @@ void ScrubBackend::scrub_compare_maps(bool max_reached)
 
   // construct authoritative scrub map for type-specific scrubbing
 
-  m_cleaned_meta_map.insert(*m_primary_map);
+  m_cleaned_meta_map.insert(my_map()); // RRR ??? 
   merge_to_master_set();
 
   // collect some omap statistics into m_omap_stats
@@ -239,10 +240,10 @@ void ScrubBackend::scrub_compare_maps(bool max_reached)
 void ScrubBackend::omap_checks()
 {
   const bool needs_omap_check = std::any_of(
-    this_chunk->maps.begin(),
-    this_chunk->maps.end(),
+    this_chunk->received_maps.begin(),
+    this_chunk->received_maps.end(),
     [](const auto& m) -> bool {
-      return m.second->has_large_omap_object_errors || m.second->has_omap_keys;
+      return m.second.has_large_omap_object_errors || m.second.has_omap_keys;
     });
 
   if (!needs_omap_check) {
@@ -254,17 +255,17 @@ void ScrubBackend::omap_checks()
   // Iterate through objects and update omap stats
   for (const auto& ho : this_chunk->master_set) {
 
-    for (const auto& [srd, smap] : this_chunk->maps) {
+    for (const auto& [srd, smap] : this_chunk->received_maps) {
       if (srd != m_pg.get_primary()) {
         // Only set omap stats for the primary
         continue;
       }
 
-      auto it = smap->objects.find(ho);
-      if (it == smap->objects.end())
+      auto it = smap.objects.find(ho);
+      if (it == smap.objects.end())
         continue;
 
-      ScrubMap::object& smap_obj = it->second;
+      const ScrubMap::object& smap_obj = it->second;
       m_omap_stats.omap_bytes += smap_obj.object_omap_bytes;
       m_omap_stats.omap_keys += smap_obj.object_omap_keys;
       if (smap_obj.large_omap_object_found) {
@@ -305,7 +306,8 @@ void ScrubBackend::update_authoritative()
     return;
   }
 
-  auto errstream = compare_smaps(); // RRR make it return a string / optional string
+  auto errstream =
+    compare_smaps();  // RRR make it return a string / optional string
   if (!errstream.str().empty()) {
     clog->error() << errstream.str();
     dout(5) << __func__ << ": " << errstream.str() << dendl;
@@ -320,7 +322,7 @@ void ScrubBackend::update_authoritative()
     list<pair<ScrubMap::object, pg_shard_t>> good_peers;
 
     for (auto& peer : peers) {
-      good_peers.emplace_back(this_chunk->maps[peer]->objects[obj], peer);
+      good_peers.emplace_back(this_chunk->received_maps[peer].objects[obj], peer);
     }
 
     m_scrubber.m_authoritative.emplace(obj, good_peers);
@@ -329,7 +331,7 @@ void ScrubBackend::update_authoritative()
   for (const auto& [obj, peers] : this_chunk->authoritative) {
     m_cleaned_meta_map.objects.erase(obj);
     m_cleaned_meta_map.objects.insert(
-      *(this_chunk->maps[peers.back()]->objects.find(obj)));
+      *(this_chunk->received_maps[peers.back()].objects.find(obj)));
   }
 }
 
@@ -437,19 +439,24 @@ void ScrubBackend::repair_object(
   const list<pair<ScrubMap::object, pg_shard_t>>& ok_peers,
   const set<pg_shard_t>& bad_peers)
 {
-  set<pg_shard_t> ok_shards;  // the shards from the ok_peers list
-  for (auto&& peer : ok_peers) {
-    ok_shards.insert(peer.second);
-  }
+  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
 
-  // logger().info("{}: repair_object {} bad_peers osd.{{ {} }}, ok_peers osd.{{
-  // {}
-  // }}",
-  //		__func__, soid, bad_peers, ok_shards);
+    // log the good peers
+    set<pg_shard_t> ok_shards;  // the shards from the ok_peers list
+    for (const auto& peer : ok_peers) {
+      ok_shards.insert(peer.second);
+    }
 
-  dout(10) << "repair_object " << soid << " bad_peers osd.{" << bad_peers
+
+    // logger().info("{}: repair_object {} bad_peers osd.{{ {} }}, ok_peers osd.{{
+    // {}
+    // }}",
+    //		__func__, soid, bad_peers, ok_shards);  // RRR add formatting a list
+
+    dout(10) << "repair_object " << soid << " bad_peers osd.{" << bad_peers
            << "},"
            << " ok_peers osd.{" << ok_shards << "}" << dendl;
+  }
 
   const ScrubMap::object& po = ok_peers.back().first;
   object_info_t oi;
@@ -503,7 +510,7 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
   // Create list of shards (with the Primary first, so that it will be
   // auth-copy, all other things being equal)
   std::list<pg_shard_t> shards;
-  for (const auto& [srd, smap] : this_chunk->maps) {
+  for (const auto& [srd, smap] : this_chunk->received_maps) {
     if (srd != m_pg_whoami) {
       shards.push_back(srd);
     }
@@ -511,7 +518,7 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
   shards.push_front(m_pg_whoami);
 
   auth_selection_t ret_auth;
-  ret_auth.auth = this_chunk->maps.end();
+  ret_auth.auth = this_chunk->received_maps.end();
   eversion_t auth_version;
 
   for (auto& l : shards) {
@@ -520,13 +527,13 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
 
     // digest_match will only be true if computed digests are the same
     if (auth_version != eversion_t() &&
-        ret_auth.auth->second->objects[ho].digest_present &&
+        ret_auth.auth->second.objects[ho].digest_present &&
         shard_ret.digest.has_value() &&
-        ret_auth.auth->second->objects[ho].digest != *shard_ret.digest) {
+        ret_auth.auth->second.objects[ho].digest != *shard_ret.digest) {
       ret_auth.digest_match = false;
       dout(10) << __func__ << " digest_match = false, " << ho
                << " data_digest 0x" << std::hex
-               << ret_auth.auth->second->objects[ho].digest
+               << ret_auth.auth->second.objects[ho].digest
                << " != data_digest 0x" << *shard_ret.digest << std::dec
                << dendl;
     }
@@ -612,9 +619,9 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   //     - used to access the 'shard_info'
 
 
-  const auto j = this_chunk->maps.find(srd);  // l.890
+  const auto j = this_chunk->received_maps.find(srd);  // l.890
   const auto& j_shard = j->first;
-  const auto& j_smap = *j->second;
+  const auto& j_smap = j->second;
   auto i = j_smap.objects.find(obj);
   if (i == j_smap.objects.end()) {
     return shard_as_auth_t{""s};  // RRR no message?
@@ -845,7 +852,7 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
     // no auth selected
     object_error.set_version(0);
     object_error.set_auth_missing(ho,
-                                  this_chunk->maps,
+                                  this_chunk->received_maps,
                                   auth_res.shard_map,
                                   m_scrubber.m_shallow_errors,
                                   m_scrubber.m_deep_errors,
@@ -870,7 +877,7 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
   // an auth source was selected
 
   object_error.set_version(auth_res.auth_oi.user_version);
-  ScrubMap::object& auth_object = auth->second->objects[ho];
+  ScrubMap::object& auth_object = auth->second.objects[ho];
   ceph_assert(!this_chunk->fix_digest);
 
   auto [auths, objerrs] =
@@ -1092,24 +1099,24 @@ ScrubBackend::AuthAndObjErrors ScrubBackend::match_in_shards(
   std::list<pg_shard_t> auth_list;     // to be returned
   std::set<pg_shard_t> object_errors;  // to be returned
 
-  for (const auto& [srd, smap] : this_chunk->maps) {
+  for (auto& [srd, smap] : this_chunk->received_maps) {
 
     if (srd == auth_sel.auth_shard) {
       auth_sel.shard_map[auth_sel.auth_shard].selected_oi = true;
     }
 
-    if (smap->objects.count(ho)) {
+    if (smap.objects.count(ho)) {
 
       // the scrub-map has our object
-      auth_sel.shard_map[srd].set_object(smap->objects[ho]);
+      auth_sel.shard_map[srd].set_object(smap.objects[ho]);
 
       // Compare
       stringstream ss;
-      auto& auth_object = auth_sel.auth->second->objects[ho];
+      const auto& auth_object = auth_sel.auth->second.objects[ho];
       const bool discrep_found = compare_obj_details(auth_sel.auth_shard,
                                                      auth_object,
                                                      auth_sel.auth_oi,
-                                                     smap->objects[ho],
+                                                     smap.objects[ho],
                                                      auth_sel.shard_map[srd],
                                                      obj_result,
                                                      ss,
