@@ -18,9 +18,6 @@ using data_omap_digests_t =
 
 using shard_info_map_t = std::map<pg_shard_t, shard_info_wrapper>;
 
-//using shard_to_smap_t = std::map<pg_shard_t, ScrubMap*>;
-
-//using IterToSMap = std::map<pg_shard_t, ScrubMap>::const_iterator;
 using IterToSMap = std::map<pg_shard_t, ScrubMap>::iterator;
 
 /**
@@ -112,23 +109,21 @@ struct ScrubBeChunk {
 
   explicit ScrubBeChunk(pg_shard_t i_am)
   {
-    received_maps[i_am]=ScrubMap{};
+    received_maps[i_am] = ScrubMap{};
   }
 
-  // including our own scrub map
+  /// the working set of scrub maps: the received maps, plus
+  /// Primary's own map.
   std::map<pg_shard_t, ScrubMap> received_maps;
 
-  // the working set of maps: pointers into either received_maps or
-  // Primary's own map
-  //std::map<pg_shard_t, ScrubMap*> maps;
-
+  /// a collection of all objs mentioned in the maps
   std::set<hobject_t> master_set;
 
   utime_t started{ceph_clock_now()};
 
   std::map<hobject_t, data_omap_digests_t> missing_digest;
 
-  // Map from object with errors to good peers
+  /// Map from object with errors to good peers
   std::map<hobject_t, std::list<pg_shard_t>> authoritative;
 
 
@@ -141,7 +136,7 @@ struct ScrubBeChunk {
 
 
 /**
- * Wraps the data and operations required for the back-end part of the scrubbing
+ * ScrubBackend wraps the data and operations required for the back-end part of the scrubbing
  * (i.e. for comparing the maps and fixing objects).
  *
  * Created anew upon each initiation of a scrub session.
@@ -186,22 +181,18 @@ class ScrubBackend : public ScrubBackendIF {
   void update_repair_status(bool should_repair) final;
 
   // note: used by both Primary & replicas
-  // RRR to document
   static ScrubMap clean_meta_map(ScrubMap& cleaned, bool max_reached);
 
   void replica_clean_meta(ScrubMap& smap,
                           bool max_reached,
                           const hobject_t& start) final;
 
-  // RRR document
-  ScrubMap& my_map();
-
   /**
    * decode the arriving MOSDRepScrubMap message, placing the replica's
    * scrub-map into received_maps[from].
    *
    * @param from replica
-   * @param pool TBD
+   * @param pool the pool the replica is in
    */
   void decode_received_map(pg_shard_t from,
                            const MOSDRepScrubMap& msg,
@@ -231,7 +222,6 @@ class ScrubBackend : public ScrubBackendIF {
   bool m_repair;
   const scrub_level_t m_depth;
   const spg_t m_pg_id;
-  //ScrubMap* m_primary_map;                  // primary only // fix ownership
   std::vector<pg_shard_t> m_acting_but_me;  // primary only
   bool m_is_replicated{true};
   std::string_view m_mode_desc;
@@ -250,7 +240,6 @@ class ScrubBackend : public ScrubBackendIF {
   omap_stat_t m_omap_stats = (const struct omap_stat_t){0};
 
  private:
-  using CIterToSMap = std::map<pg_shard_t, ScrubMap*>::const_iterator;
 
   using AuthAndObjErrors = std::tuple<std::list<pg_shard_t>,  ///< the auth-list
                                       std::set<pg_shard_t>    ///< object_errors
@@ -267,14 +256,17 @@ class ScrubBackend : public ScrubBackendIF {
   /// Cleaned std::map pending snap metadata scrub
   ScrubMap m_cleaned_meta_map{};
 
+  /// a reference to the primary map
+  ScrubMap& my_map();
+
   /**
-   *  updates
+   *  merge_to_master_set() updates
    *   - this_chunk->maps[from] with the replicas' scrub-maps;
    *   - this_chunk->master_set as a union of all the maps' objects;
    */
   void merge_to_master_set();
 
-  std::stringstream compare_smaps();
+  std::optional<std::string> compare_smaps();
 
   void compare_obj_in_maps(const hobject_t& ho, std::stringstream& errstream);
 
@@ -287,7 +279,6 @@ class ScrubBackend : public ScrubBackendIF {
     const hobject_t& ho,
     std::stringstream& errstream);
 
-  // RRR to rename
   AuthAndObjErrors match_in_shards(const hobject_t& ho,
                                    auth_selection_t& auth_sel,
                                    inconsistent_obj_wrapper& obj_result,
@@ -319,7 +310,7 @@ class ScrubBackend : public ScrubBackendIF {
    * entry.
    */
   shard_as_auth_t possible_auth_shard(const hobject_t& ho,
-                                      pg_shard_t& srd,
+                                      const pg_shard_t& srd,
                                       shard_info_map_t& shard_map);
 
   auth_selection_t select_auth_object(const hobject_t& ho,
@@ -346,9 +337,6 @@ class ScrubBackend : public ScrubBackendIF {
 
   int process_clones_to(const std::optional<hobject_t>& head,
                         const std::optional<SnapSet>& snapset,
-                        // LogChannelRef clog,
-                        // const spg_t& pgid,  // RRR
-                        // const char* mode,   // RRR
                         bool allow_incomplete_clones,
                         std::optional<snapid_t> target,
                         std::vector<snapid_t>::reverse_iterator* curclone,
@@ -374,7 +362,6 @@ class ScrubBackend : public ScrubBackendIF {
 
   void log_missing(int missing,
                    const std::optional<hobject_t>& head,
-                   // const spg_t& pgid,
                    const char* logged_func_name,
                    bool allow_incomplete_clones);
 

@@ -1305,7 +1305,7 @@ void PgScrubber::map_from_replica(OpRequestRef op)
 
   // note: we check for active() before map_from_replica() is called. Thus, we
   // know m_be is initialized
-  m_be->decode_received_map(m->from, *m, m_pg->pool.id);
+  m_be->decode_received_map(m->from, *m, m_pg->pool.id); // MMM can the pool change?
 
   auto [is_ok, err_txt] = m_maps_status.mark_arriving_map(m->from);
   if (!is_ok) {

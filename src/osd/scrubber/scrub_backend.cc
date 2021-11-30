@@ -136,10 +136,14 @@ void ScrubBackend::merge_to_master_set()
   ceph_assert(this_chunk->master_set.empty() &&
               "the scrubber-backend should be empty");
 
-  for (const auto& i : m_acting_but_me) {
-    dout(15) << __func__ << ": replica " << i << " has "
-             << this_chunk->received_maps[i].objects.size() << " items"
-             << dendl;
+  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 15>()) {
+    for (const auto& rpl : m_acting_but_me) {
+      dout(15) << fmt::format("{}: replica {} has {} items",
+                              __func__,
+                              rpl,
+                              this_chunk->received_maps[rpl].objects.size())
+               << dendl;
+    }
   }
 
   // Construct the master set of objects
@@ -178,7 +182,7 @@ void ScrubBackend::replica_clean_meta(ScrubMap& repl_map,
   dout(15) << __func__ << ": REPL META # " << m_cleaned_meta_map.objects.size()
            << " objects" << dendl;
   ceph_assert(!m_cleaned_meta_map.objects.size());
-  m_cleaned_meta_map.clear_from(start);  // RRR how can that be?
+  m_cleaned_meta_map.clear_from(start);  // RRR how can this be required?
   m_cleaned_meta_map.insert(repl_map);
   auto for_meta_scrub = clean_meta_map(m_cleaned_meta_map, max_reached);
   scan_snaps(for_meta_scrub);
@@ -198,7 +202,7 @@ void ScrubBackend::scrub_compare_maps(bool max_reached)
 
   // construct authoritative scrub map for type-specific scrubbing
 
-  m_cleaned_meta_map.insert(my_map()); // RRR ??? 
+  m_cleaned_meta_map.insert(my_map()); 
   merge_to_master_set();
 
   // collect some omap statistics into m_omap_stats
@@ -234,9 +238,6 @@ void ScrubBackend::scrub_compare_maps(bool max_reached)
   }
 }
 
-// maps - this_chunk->maps,
-// master_set - this_chunk->master_set,
-// omap_stats - m_omap_stats
 void ScrubBackend::omap_checks()
 {
   const bool needs_omap_check = std::any_of(
@@ -262,8 +263,9 @@ void ScrubBackend::omap_checks()
       }
 
       auto it = smap.objects.find(ho);
-      if (it == smap.objects.end())
+      if (it == smap.objects.end()) {
         continue;
+      }
 
       const ScrubMap::object& smap_obj = it->second;
       m_omap_stats.omap_bytes += smap_obj.object_omap_bytes;
@@ -306,11 +308,10 @@ void ScrubBackend::update_authoritative()
     return;
   }
 
-  auto errstream =
-    compare_smaps();  // RRR make it return a string / optional string
-  if (!errstream.str().empty()) {
-    clog->error() << errstream.str();
-    dout(5) << __func__ << ": " << errstream.str() << dendl;
+  auto maybe_err_msg = compare_smaps();
+  if (maybe_err_msg) {
+    dout(5) << __func__ << ": " << *maybe_err_msg << dendl;
+    clog->error() << *maybe_err_msg;
   }
 
   /// \todo try replacing with algorithm-based code
@@ -440,25 +441,21 @@ void ScrubBackend::repair_object(
   const set<pg_shard_t>& bad_peers)
 {
   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
-
     // log the good peers
     set<pg_shard_t> ok_shards;  // the shards from the ok_peers list
     for (const auto& peer : ok_peers) {
       ok_shards.insert(peer.second);
     }
-
-
-    // logger().info("{}: repair_object {} bad_peers osd.{{ {} }}, ok_peers osd.{{
-    // {}
-    // }}",
-    //		__func__, soid, bad_peers, ok_shards);  // RRR add formatting a list
-
-    dout(10) << "repair_object " << soid << " bad_peers osd.{" << bad_peers
-           << "},"
-           << " ok_peers osd.{" << ok_shards << "}" << dendl;
+    dout(10) << fmt::format(
+                  "repair_object {} bad_peers osd.{{{}}}, ok_peers osd.{{{}}}",
+                  soid,
+                  bad_peers,
+                  ok_shards)
+             << dendl;
   }
 
   const ScrubMap::object& po = ok_peers.back().first;
+
   object_info_t oi;
   try {
     bufferlist bv;
@@ -500,15 +497,15 @@ static inline int dcount(const object_info_t& oi)
   return (oi.is_data_digest() ? 1 : 0) + (oi.is_omap_digest() ? 1 : 0);
 }
 
-/*
- *
- * maps are taken from this_chunk->maps;
- */
+// MMM should we just sort the candidate shards, and stop onthe first?
 auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                                                   stringstream& errstream)
 {
   // Create list of shards (with the Primary first, so that it will be
   // auth-copy, all other things being equal)
+
+  // RRR \todo: sort the shards by the conditions for selecting best auth
+  //  source below. Then - stop on the first one that is auth eligible.
   std::list<pg_shard_t> shards;
   for (const auto& [srd, smap] : this_chunk->received_maps) {
     if (srd != m_pg_whoami) {
@@ -549,16 +546,17 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
 
     } else {
 
-      // consider using this shard as authoritative
-      dout(9) << __func__ << " RRR consider using " << l
+      dout(30) << __func__ << " consider using " << l
               << " srv: " << shard_ret.oi.version
               << " oi soid: " << shard_ret.oi.soid << dendl;
+
+      // consider using this shard as authoritative. Is it more recent?
 
       if (auth_version == eversion_t() || shard_ret.oi.version > auth_version ||
           (shard_ret.oi.version == auth_version &&
            dcount(shard_ret.oi) > dcount(ret_auth.auth_oi))) {
 
-        dout(9) << __func__ << " RRR using " << l << " moved auth oi "
+        dout(30) << __func__ << " using " << l << " moved auth oi "
                 << std::hex << (uint64_t)(&ret_auth.auth_oi) << " <-> "
                 << (uint64_t)(&shard_ret.oi) << std::dec << dendl;
 
@@ -570,6 +568,10 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
       }
     }
   }
+
+  dout(10) << fmt::format("{}: selecting osd {} for obj {} with oi {}",
+                __func__, ret_auth.auth_shard, ho, ret_auth.auth_oi)
+           << dendl;
 
   return ret_auth;
 }
@@ -609,7 +611,7 @@ static inline bool test_error_cond(bool error_pred,
 }
 
 shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
-                                                  pg_shard_t& srd,
+                                                  const pg_shard_t& srd,
                                                   shard_info_map_t& shard_map)
 {
   //  'maps' (called with this_chunk->maps originaly): this_chunk->maps
@@ -618,26 +620,19 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   //  'shard_map' - the one created in select_auth_object()
   //     - used to access the 'shard_info'
 
-
-  const auto j = this_chunk->received_maps.find(srd);  // l.890
+  const auto j = this_chunk->received_maps.find(srd);
   const auto& j_shard = j->first;
   const auto& j_smap = j->second;
   auto i = j_smap.objects.find(obj);
   if (i == j_smap.objects.end()) {
-    return shard_as_auth_t{""s};  // RRR no message?
+    return shard_as_auth_t{""s};
   }
   const auto& smap_obj = i->second;
 
-  auto& shard_info = shard_map[j_shard];  // l.896
+  auto& shard_info = shard_map[j_shard];
   if (j_shard == m_pg_whoami) {
     shard_info.primary = true;
   }
-
-  //  dout(9) << __func__ << " RRR X " << obj << " shard info: " << std::hex
-  //	  << (uint64_t)(&shard_info) << std::dec << " js: " << j_shard <<
-  // m_pg_whoami
-  //	  << " smapobj: " << std::hex << (uint64_t)(&smap_obj) << std::dec <<
-  // dendl;
 
   stringstream errstream;  // for this shard
 
@@ -676,8 +671,6 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
     return shard_as_auth_t{errstream.str()};
   }
 
-  // l.938
-
   // We won't pick an auth copy if the snapset is missing or won't decode.
   ceph_assert(!obj.is_snapdir());
 
@@ -708,14 +701,12 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
       }
     } else {
       // debug@dev only
-      dout(8) << __func__ << " RRR missing snap addr: " << std::hex
+      dout(30) << __func__ << " missing snap addr: " << std::hex
               << (uint64_t)(&smap_obj)
               << " shard_info: " << (uint64_t)(&shard_info)
               << " er: " << shard_info.errors << std::dec << dendl;
     }
   }
-
-  // l.964
 
   if (!m_is_replicated) {
     auto k = smap_obj.attrs.find(ECUtil::get_hinfo_key());
@@ -744,8 +735,6 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
     }
   }
 
-  // l.989
-
   object_info_t oi;
 
   {
@@ -766,8 +755,6 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
     try {
       auto bliter = bl.cbegin();
       decode(oi, bliter);
-      // dout(16) << __func__ << fmt::format(" RRR OI: {} {:p}", oi,
-      // (void*)(&oi)) << dendl;
     } catch (...) {
       // invalid object info, probably corrupt
       if (!dup_error_cond(err,
@@ -784,8 +771,6 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
 
   // This is automatically corrected in repair_oinfo_oid()
   ceph_assert(oi.soid == obj);
-
-  // l.1015
 
   if (test_error_cond(smap_obj.size != m_pgbe.be_get_ondisk_size(oi.size),
                       shard_info,
@@ -814,8 +799,8 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   return shard_as_auth_t{oi, j, errstream.str(), digest};
 }
 
-// implementation of PGBackend::be_compare_scrubmaps()
-std::stringstream ScrubBackend::compare_smaps()
+// re-implementation of PGBackend::be_compare_scrubmaps()
+std::optional<std::string> ScrubBackend::compare_smaps()
 {
   dout(10) << __func__ << ": master-set #: " << this_chunk->master_set.size()
            << dendl;
@@ -826,12 +811,13 @@ std::stringstream ScrubBackend::compare_smaps()
     this_chunk->master_set.end(),
     [this, &errstream](const auto& ho) { compare_obj_in_maps(ho, errstream); });
 
-  return errstream;
+  if (errstream.str().empty()) {
+    return std::nullopt;
+  } else {
+    return errstream.str();
+  }
 }
 
-
-// called from the refactored
-// PGBackend::be_compare_scrubmaps()/PgScrubber::compare_smaps()
 void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
                                        stringstream& errstream)
 {
@@ -841,11 +827,6 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
   this_chunk->fix_digest = false;
 
   auto auth_res = select_auth_object(ho, errstream);
-
-  {
-    dout(11) << __func__ << " RRR auth ret: " << fmt::format("{}", auth_res)
-             << ho << dendl;
-  }
 
   inconsistent_obj_wrapper object_error{ho};
   if (!auth_res.is_auth_available) {
@@ -865,8 +846,6 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
     }
 
     m_scrubber.m_store->add_object_error(ho.pool, object_error);
-    dout(20) << " RRR " << m_scrubber.m_pg_id.pgid << " soid " << ho
-             << " : failed to pick suitable object info" << dendl;
     errstream << m_scrubber.m_pg_id.pgid << " soid " << ho
               << " : failed to pick suitable object info\n";
     return;
@@ -890,7 +869,7 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
                         ho,
                         errstream);
 
-  if (opt_ers.has_value()) {  // l. 1192
+  if (opt_ers.has_value()) {
 
     // At this point auth_list is populated, so we add the object error
     // shards as inconsistent.
@@ -1890,7 +1869,7 @@ void ScrubBackend::scan_snaps(ScrubMap& smap)
 
     dout(20) << __func__ << " " << hoid << dendl;
 
-    ceph_assert(!hoid.is_snapdir());  // RRR understand and document
+    ceph_assert(!hoid.is_snapdir());
 
     if (hoid.is_head()) {
       // parse the SnapSet
