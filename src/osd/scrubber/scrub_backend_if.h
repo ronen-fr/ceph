@@ -10,8 +10,6 @@
 
 #include "common/scrub_types.h"
 
-class PgScrubber;
-class PGBackend;
 struct ScrubMap;
 
 /**
@@ -44,11 +42,9 @@ class ScrubBackendIF {
    * scrub-map into received_maps[from].
    *
    * @param from replica
-   * @param pool TBD
    */
   virtual void decode_received_map(pg_shard_t from,
-                                   const MOSDRepScrubMap& msg,
-                                   int64_t pool) = 0;
+                                   const MOSDRepScrubMap& msg) = 0;
 
   virtual void scrub_compare_maps(bool max_point_reached) = 0;
 
@@ -65,8 +61,6 @@ class ScrubBackendIF {
   virtual void replica_clean_meta(ScrubMap& smap,
                                   bool max_reached,
                                   const hobject_t& start) = 0;
-
-  // tbd - stats handling
 
   virtual int get_num_digest_updates_pending() const = 0;
 

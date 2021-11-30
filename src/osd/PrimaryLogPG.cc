@@ -14,8 +14,6 @@
  * Foundation.  See file COPYING.
  *
  */
-#include "PrimaryLogPG.h"
-
 #include <errno.h>
 
 #include <charconv>
@@ -25,16 +23,7 @@
 #include <boost/intrusive_ptr.hpp>
 #include <boost/tuple/tuple.hpp>
 
-//#include "PG.h"
-//#include "scrubber/pg_scrubber.h"
 #include "PrimaryLogPG.h"
-//#include "OSD.h"
-//#include "scrubber/PrimaryLogScrub.h"
-//#include "OpRequest.h"
-//#include "scrubber/ScrubStore.h"
-//#include "Session.h"
-//#include "objclass/objclass.h"
-//#include "osd/ClassHandler.h"
 
 #include "cls/cas/cls_cas_ops.h"
 #include "common/CDC.h"
