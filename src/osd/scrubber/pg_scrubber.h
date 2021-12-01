@@ -13,10 +13,13 @@
 #include <vector>
 
 #include "osd/PG.h"
-#include "ScrubStore.h"
-#include "scrub_machine_lstnr.h"
+#include "osd/PrimaryLogPG.h" // only used to forward PrimaryLogScrub-only methods
 #include "osd/scrubber_common.h"
+
+#include "ScrubStore.h"
 #include "osd_scrub_sched.h"
+#include "scrub_backend_if.h"
+#include "scrub_machine_lstnr.h"
 
 class Callback;
 class ScrubBackend;
@@ -87,7 +90,7 @@ class LocalReservation {
   bool m_holding_local_reservation{false};
 
  public:
-  LocalReservation(OSDService* osds);
+  explicit LocalReservation(OSDService* osds);
   ~LocalReservation();
   bool is_reserved() const { return m_holding_local_reservation; }
 };
@@ -657,7 +660,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   std::unique_ptr<Scrub::Store> m_store;
 
-  int num_digest_updates_pending{0};
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
   /// Returns reference to current osdmap
