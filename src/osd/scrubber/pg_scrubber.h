@@ -82,7 +82,11 @@ Main Scrubber interfaces:
 #include "scrub_backend.h"
 #include "scrub_machine_lstnr.h"
 #include "osd/scrubber_common.h"
+
+#include "ScrubStore.h"
 #include "osd_scrub_sched.h"
+#include "scrub_backend_if.h"
+#include "scrub_machine_lstnr.h"
 
 class Callback;
 class ScrubBackend;
@@ -734,7 +738,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   std::unique_ptr<Scrub::Store> m_store;
 
-  int num_digest_updates_pending{0};
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
   /// Returns reference to current osdmap
@@ -925,7 +928,7 @@ private:
 
    private:
     PG* m_pg;
-    mutable std::mutex m_preemption_lock;
+    mutable ceph::mutex m_preemption_lock;
     bool m_preemptable{false};
     bool m_preempted{false};
     int m_left;
