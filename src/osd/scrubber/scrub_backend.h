@@ -2,6 +2,52 @@
 // vim: ts=8 sw=2 smarttab
 #pragma once
 
+/*
+      +------------------------+
+      |                        |
+      |   PgScrubber           |
+      |                        |-----------------------------+
+      |                        |	                     |
+      +------------------------+		             | ownes & uses
+      |   PrimaryLogScrub      |			     |
+      +------------------------+			     |
+							     |
+							     |
+							     v
+                                  +-------------------------------------------+
+                                  |              <<ScrubBackendIF>>           |
+                                  |                                           |
+                                  | + decode_received_map()                   |
+                                  | + scrub_compare_maps()                    |
+                                  | + scan_snaps()                            |
+                                  | .....                                     |
+                                  |                                           |
+                                  +-------------------------------------------+
+                                                       ^
+                                                       |(implements)
+		       	          +-------------------------------------------+
+			          |ScrubBackend                               |
+        +----------------+        |============                               |
+        |  this_chunk    |        |                                           |
+        | (ScrubBeChunk) |<-------|                                           |
+        +----------------+        |                                           |
+                                  |                                           |
+                                  |                                           |
+				  +--------------------/-------------\--------+
+				         --/	      /		      \
+				      --/	      |		      |
+			           --/		     /		       \
+			         -/	       uses  |		  uses |
+			uses  --/		    /		        \
+			   --/			   /		        |
+		        --/			   |		         \
+		       v			   v			 v
+                  PgBackend             PG/PrimaryLogPG          OSD Services
+
+
+*/
+
+
 #include "./scrub_backend_if.h"
 
 #include <fmt/core.h>
@@ -233,7 +279,8 @@ class ScrubBackend : public ScrubBackendIF {
 
   int num_digest_updates_pending{0};
 
- public:  // as used by PgScrubber::final_cstat_update(). consider relocating.
+ public:  
+  // as used by PgScrubber::final_cstat_update(). consider relocating.
   // actually - only filled in by the PG backend, and used by the scrubber.
   // We are not handling it. So consider getting it from the Scrubber, or
   // creating it by the PG-BE
