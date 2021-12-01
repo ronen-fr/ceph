@@ -233,7 +233,8 @@ class ScrubBackend : public ScrubBackendIF {
 
   int num_digest_updates_pending{0};
 
- public:  // as used by PgScrubber::final_cstat_update(). consider relocating.
+ public:  
+  // as used by PgScrubber::final_cstat_update(). consider relocating.
   // actually - only filled in by the PG backend, and used by the scrubber.
   // We are not handling it. So consider getting it from the Scrubber, or
   // creating it by the PG-BE
