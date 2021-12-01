@@ -904,7 +904,7 @@ private:
 
    private:
     PG* m_pg;
-    mutable std::mutex m_preemption_lock;
+    mutable ceph::mutex m_preemption_lock;
     bool m_preemptable{false};
     bool m_preempted{false};
     int m_left;

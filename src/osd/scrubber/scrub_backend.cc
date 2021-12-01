@@ -1900,7 +1900,7 @@ void ScrubBackend::scan_object_snaps(const hobject_t& hoid,
       ceph::condition_variable my_cond;
       ceph::mutex my_lock = ceph::make_mutex("PG::_scan_snaps my_lock");
       int e = 0;
-      bool done;
+      bool done; // note: initialized to 'false' by C_SafeCond
 
       t.register_on_applied_sync(new C_SafeCond(my_lock, my_cond, &done, &e));
 
@@ -1911,7 +1911,9 @@ void ScrubBackend::scan_object_snaps(const hobject_t& hoid,
       } else {
         std::unique_lock l{my_lock};
         my_cond.wait(l, [&done] { return done; });
+        ceph_assert(m_pg.osd->store);
       }
+      dout(15) << __func__ << " wait on repair - done" << dendl;
     }
   }
 }
