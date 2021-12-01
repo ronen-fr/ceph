@@ -733,7 +733,6 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   std::unique_ptr<Scrub::Store> m_store;
 
-  int num_digest_updates_pending{0};
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
   /// Returns reference to current osdmap
@@ -924,7 +923,7 @@ private:
 
    private:
     PG* m_pg;
-    mutable std::mutex m_preemption_lock;
+    mutable ceph::mutex m_preemption_lock;
     bool m_preemptable{false};
     bool m_preempted{false};
     int m_left;
