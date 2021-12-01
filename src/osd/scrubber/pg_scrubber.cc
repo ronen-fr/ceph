@@ -421,8 +421,8 @@ unsigned int PgScrubber::scrub_requeue_priority(Scrub::scrub_prio_t with_priorit
 						unsigned int suggested_priority) const
 {
   if (with_priority == Scrub::scrub_prio_t::high_priority) {
-    suggested_priority = std::max(suggested_priority,
-				  (unsigned int)m_pg->cct->_conf->osd_client_op_priority);
+    suggested_priority = std::max(
+      suggested_priority, (unsigned int)m_pg->get_cct()->_conf->osd_client_op_priority);
   }
   return suggested_priority;
 }
@@ -523,7 +523,7 @@ PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
     // we do not need the interval data in this case
 
   } else if (m_pg->info.stats.stats_invalid &&
-           m_pg->cct->_conf->osd_scrub_invalid_stats) {
+           m_pg->get_cct()->_conf->osd_scrub_invalid_stats) {
     res.proposed_time = ceph_clock_now();
     res.is_must = ScrubQueue::must_scrub_t::mandatory;
 
@@ -995,7 +995,8 @@ void PgScrubber::on_replica_init()
 int PgScrubber::build_primary_map_chunk()
 {
   epoch_t map_building_since = m_pg->get_osdmap_epoch();
-  dout(20) << __func__ << ": initiated at epoch " << map_building_since << dendl;
+  dout(20) << __func__ << ": initiated at epoch " << map_building_since
+           << dendl;
 
   auto ret = build_scrub_map_chunk(*m_primary_scrubmap,
                                    m_primary_scrubmap_pos,
@@ -1279,7 +1280,7 @@ void PgScrubber::send_preempted_replica()
 				  m_replica_min_epoch, m_pg_whoami);
 
   reply->preempted = true;
-  ::encode(replica_scrubmap, reply->get_data()); // must not skip this
+  ::encode(replica_scrubmap, reply->get_data());  // skipping this crashes the scrubber
   m_pg->send_cluster_message(m_pg->get_primary().osd, reply, m_replica_min_epoch, false);
 }
 
@@ -1572,6 +1573,9 @@ void PgScrubber::scrub_finish()
   // Since we don't know which errors were fixed, we can only clear them
   // when every one has been fixed.
   if (m_is_repair) {
+    dout(15) << fmt::format("{}: {} errors. {} errors fixed", __func__,
+                            m_shallow_errors + m_deep_errors, m_fixed_count)
+             << dendl;
     if (m_fixed_count == m_shallow_errors + m_deep_errors) {
 
       ceph_assert(m_is_deep);
@@ -1584,10 +1588,11 @@ void PgScrubber::scrub_finish()
       // Deep scrub in order to get corrected error counts
       m_pg->scrub_after_recovery = true;
       m_pg->m_planned_scrub.req_scrub =
-	m_pg->m_planned_scrub.req_scrub || m_flags.required;
+        m_pg->m_planned_scrub.req_scrub || m_flags.required;
 
       dout(20) << __func__ << " Current 'required': " << m_flags.required
-	       << " Planned 'req_scrub': " << m_pg->m_planned_scrub.req_scrub << dendl;
+               << " Planned 'req_scrub': " << m_pg->m_planned_scrub.req_scrub
+               << dendl;
 
     } else if (m_shallow_errors || m_deep_errors) {
 
