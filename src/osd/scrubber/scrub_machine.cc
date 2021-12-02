@@ -19,7 +19,6 @@
 
 using namespace std::chrono;
 using namespace std::chrono_literals;
-namespace sc = boost::statechart;
 
 #define DECLARE_LOCALS                                           \
   ScrubMachineListener* scrbr = context<ScrubMachine>().m_scrbr; \
@@ -437,7 +436,10 @@ sc::result WaitReplicas::react(const GotReplicas&)
 
 sc::result WaitReplicas::react(const DigestUpdate&)
 {
-  dout(10) << "WaitReplicas::react(const DigestUpdate&) - too early" << dendl;
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  auto warn_msg = "WaitReplicas::react(const DigestUpdate&): Unexpected DigestUpdate event"s;
+  dout(10) << warn_msg << dendl;
+  scrbr->log_cluster_warning(warn_msg);
   return discard_event();
 }
 
