@@ -115,13 +115,17 @@ SqrubQueue interfaces (main functions):
 
 #include "common/RefCountedObj.h"
 #include "common/ceph_atomic.h"
-#include "include/utime_fmt.h"
+#include "common/ceph_mutex.h"
 #include "osd/osd_types.h"
-#include "osd/osd_types_fmt.h"
 #include "osd/scrubber_common.h"
+#include "include/utime_fmt.h"
+#include "osd/osd_types_fmt.h"
 
+#include "utime.h"
 
-//class PG;
+#ifdef WITH_SEASTAR
+using CephContext = crimson::common::CephContext;
+#endif
 
 namespace Scrub {
 
@@ -154,7 +158,7 @@ class ScrubSchedListener {
    * @return a Scrub::attempt_t detailing either a success, or the failure
    * reason.
    */
-  virtual schedule_result_t initiate_a_scrub(
+  virtual seastar::future<schedule_result_t> initiate_a_scrub(
     spg_t pgid,
     bool allow_requested_repair_only) = 0;
 
@@ -197,7 +201,9 @@ class ScrubQueue {
     utime_t proposed_time{};
     double min_interval{0.0};
     double max_interval{0.0};
-    must_scrub_t is_must{ScrubQueue::must_scrub_t::not_mandatory};
+    // for today's testing: not must_scrub_t
+    // is_must{ScrubQueue::must_scrub_t::not_mandatory};
+    must_scrub_t is_must{ScrubQueue::must_scrub_t::mandatory};
   };
 
   struct ScrubJob final : public RefCountedObject {
@@ -278,7 +284,7 @@ class ScrubQueue {
   };
 
   friend class TestOSDScrub;
-  friend class ScrubSchedTestWrapper; ///< unit-tests structure
+  friend class ScrubSchedTestWrapper;  ///< unit-tests structure
 
   using ScrubJobRef = ceph::ref_t<ScrubJob>;
   using ScrubQContainer = std::vector<ScrubJobRef>;
@@ -400,13 +406,12 @@ class ScrubQueue {
   [[nodiscard]] std::optional<double> update_load_average();
 
  private:
-  CephContext* cct;
+  CephContext* cct;  // RRR fix this faked, not really wanted, pointer
   Scrub::ScrubSchedListener& osd_service;
 
   // the following is required for Crimson compatibility
 #ifdef WITH_SEASTAR
-  //ConfigProxy& conf() const { return crimson::common::local_conf(); }
-  auto& conf() const { return local_conf(); }
+  auto& conf() const { return crimson::common::local_conf(); }
 #else
   auto& conf() const { return cct->_conf; }
 #endif
@@ -427,6 +432,8 @@ class ScrubQueue {
   bool restore_penalized{false};
 
   double daily_loadavg{0.0};
+  double current_loadavg{0.0};
+  double filtrd_loadavg{1.0}; // decaying-mean loadavg
 
   static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
     return jobref->state == qu_state_t::registered;
@@ -493,7 +500,7 @@ class ScrubQueue {
    */
   void move_failed_pgs(utime_t now_is);
 
-  Scrub::schedule_result_t select_from_group(
+  seastar::future<Scrub::schedule_result_t> select_from_group(
     ScrubQContainer& group,
     const Scrub::ScrubPreconds& preconds,
     utime_t now_is);
