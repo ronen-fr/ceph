@@ -35,6 +35,21 @@ class ClientRequest final : public PhasedOperationT<ClientRequest>,
   unsigned instance_id = 0;
 
 public:
+//   class ConnectionPipeline {
+//     struct AwaitMap : OrderedExclusivePhaseT<AwaitMap> {
+//       static constexpr auto type_name =
+//         "ClientRequest::ConnectionPipeline::await_map";
+//     } await_map;
+// 
+//     struct GetPG : OrderedExclusivePhaseT<GetPG> {
+//       static constexpr auto type_name =
+//         "ClientRequest::ConnectionPipeline::get_pg";
+//     } get_pg;
+// 
+//     friend class ClientRequest;
+//     friend struct LttngBackend;
+//   };
+
   class PGPipeline : public CommonPGPipeline {
     struct AwaitMap : OrderedExclusivePhaseT<AwaitMap> {
       static constexpr auto type_name = "ClientRequest::PGPipeline::await_map";
@@ -46,7 +61,7 @@ public:
       static constexpr auto type_name = "ClientRequest::PGPipeline::send_reply";
     } send_reply;
     friend class ClientRequest;
-    friend class LttngBackend;
+    friend struct LttngBackend;
   };
 
   using ordering_hook_t = boost::intrusive::list_member_hook<>;
@@ -152,8 +167,7 @@ public:
     CompletionEvent
   > tracking_events;
 
-  friend class LttngBackend;
-  friend class HistoricBackend;
+  friend struct LttngBackend;
 };
 
 }
