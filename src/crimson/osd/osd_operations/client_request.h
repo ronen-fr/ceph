@@ -46,8 +46,8 @@ public:
       static constexpr auto type_name = "ClientRequest::PGPipeline::send_reply";
     } send_reply;
     friend class ClientRequest;
-    friend class LttngBackend;
-    friend class HistoricBackend;
+    friend struct LttngBackend;
+    friend struct HistoricBackend;
   };
 
   using ordering_hook_t = boost::intrusive::list_member_hook<>;
@@ -153,8 +153,8 @@ public:
     CompletionEvent
   > tracking_events;
 
-  friend class LttngBackend;
-  friend class HistoricBackend;
+  friend struct LttngBackend;
+  friend struct HistoricBackend;
 
   auto get_started() const {
     return get_event<StartEvent>().get_timestamp();
