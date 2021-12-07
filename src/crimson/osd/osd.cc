@@ -52,6 +52,7 @@
 #include "crimson/osd/osd_operations/pg_advance_map.h"
 #include "crimson/osd/osd_operations/recovery_subrequest.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
+#include "crimson/osd/scrubber/pg_scrubber.h"
 
 namespace {
   seastar::logger& logger() {
@@ -87,12 +88,14 @@ OSD::OSD(int id, uint32_t nonce,
     monc{new crimson::mon::Client{*public_msgr, *this}},
     mgrc{new crimson::mgr::Client{*public_msgr, *this}},
     store{store},
-    shard_services{*this, whoami, *cluster_msgr, *public_msgr, *monc, *mgrc, store},
+    scrub_scheduler{nullptr, *this},
+    shard_services{*this, whoami, *cluster_msgr, *public_msgr, *monc, *mgrc, store, &scrub_scheduler},
     heartbeat{new Heartbeat{whoami, shard_services, *monc, hb_front_msgr, hb_back_msgr}},
     // do this in background
     tick_timer{[this] {
       update_heartbeat_peers();
       update_stats();
+      scrub_tick();
     }},
     asok{seastar::make_lw_shared<crimson::admin::AdminSocket>()},
     osdmap_gate("OSD::osdmap_gate", std::make_optional(std::ref(shard_services))),
@@ -544,6 +547,7 @@ seastar::future<> OSD::start_asok_admin()
     // PG commands
     asok->register_command(make_asok_hook<pg::QueryCommand>(*this));
     asok->register_command(make_asok_hook<pg::MarkUnfoundLostCommand>(*this));
+    asok->register_command(make_asok_hook<pg::ScrubCommand>(*this));
   });
 }
 
@@ -1464,4 +1468,176 @@ seastar::future<> OSD::prepare_to_stop()
   return seastar::now();
 }
 
+void OSD::scrub_tick()
+{
+  static int down_counter = 0;
+  if (down_counter > 0) {
+    down_counter--;
+    return;
+  }
+  down_counter = 3; // RRR should be a config!
+  // maybe: local_conf().get_val<int64_t>("osd_scrub_scheduling_period")");
+  static thread_local seastar::semaphore limit(1);
+  static int dbg_idx = 1000;
+  (void)seastar::with_semaphore(limit, 1,
+                                [this]() mutable { (void)sched_scrub(); });
+
+  // for testing - queue a scrub hello message
+  logger().warn("scrub_tick(): b4 pg loop");
+  for (auto [pgid_, pg] : pg_map.get_pgs()) {
+    if (pg->is_primary()) {
+
+      auto pgid=pgid_;
+      logger().info("scrub_tick(): primary for pg[{}]", pgid);
+      // was: send two similar messages. Will they collide?
+
+continue;
+
+      auto pgref = pg;
+
+      // debugging 1st attempt to send an internal message
+      (void) seastar::do_with(
+        std::move(pgref),
+        [this, osds=&get_shard_services(), spg=pgref->get_pgid()](auto& pgref) {
+          shard_services.start_operation<ScrubEvent>(
+            pgref, *osds, spg,
+            (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo_v),
+            pgref->get_osdmap_epoch(),
+            ++dbg_idx+100, 100ms);
+           return seastar::now();
+        });
+    }
+  }
+  logger().warn("scrub_tick(): after pg loop");
 }
+
+
+seastar::future<> OSD::sched_scrub()
+{
+  if (!state.is_active()) {
+    return seastar::now();
+  }
+  if (scrub_random_backoff()) {
+    return seastar::now();
+  }
+
+  // fail fast if no resources are available
+  if (!scrub_scheduler.can_inc_scrubs()) {
+    logger().info("{}: OSD cannot incr scrub", __func__);
+    return seastar::now();
+  }
+
+  // if there is a PG that is just now trying to reserve scrub replica resources
+  // - we should wait and not initiate a new scrub
+  if (scrub_scheduler.is_reserving_now()) {
+    logger().info("{}: scrub resources reservation in progress", __func__);
+    return seastar::now();
+  }
+
+  // find something to scrub
+
+  Scrub::ScrubPreconds env_conditions;
+
+  if (shard_services.is_recovery_active() &&
+      !local_conf()->osd_scrub_during_recovery) {
+    if (!local_conf()->osd_repair_during_recovery) {
+      logger().info("{}: not scheduling scrubs due to active recovery",
+                    __func__);
+      return seastar::now();
+    }
+    logger().info(
+      "OSD::sched_scrub(): scheduling explicitly requested repair due to "
+      "active recovery");
+    env_conditions.allow_requested_repair_only = true;
+  }
+
+  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+    logger().debug("{}: scrub_sched_start", __func__);
+    auto all_jobs = scrub_scheduler.list_registered_jobs();
+    for (const auto& sj : all_jobs) {
+      logger().debug("OSD::sched_scrub(): scrub-queue jobs: {}", *sj);
+    }
+  }
+
+  return scrub_scheduler.select_pg_and_scrub(std::move(env_conditions))
+    .then([](auto was_started) {
+      logger().info("OSD::sched_scrub(): sched_scrub done ({})",
+                    ScrubQueue::attempt_res_text(was_started));
+      return seastar::now();
+    });
+}
+
+
+bool OSD::scrub_random_backoff()
+{
+  bool coin_flip =
+    (rand() / (double)RAND_MAX >= local_conf()->osd_scrub_backoff_ratio);
+
+  /* RRR for now */ coin_flip = true;
+  if (!coin_flip) {
+    logger().info("scrub_random_backoff lost coin flip, randomly backing off");
+    return true;
+  }
+  return false;
+}
+
+
+seastar::future<Scrub::schedule_result_t> OSD::initiate_a_scrub(
+  spg_t pgid, bool allow_requested_repair_only)
+{
+  logger().info("{}: trying to initiate a scrubbing of {}", __func__, pgid);
+
+  // we have a candidate to scrub. We need some PG information to know if
+  // scrubbing is allowed
+
+  Ref<PG> pg = get_pg(pgid);
+  if (!pg) {
+    // the PG was dequeued in the short timespan between creating the candidates
+    // list (collect_ripe_jobs()) and here
+    logger().info("{}: pg {} not found", __func__, pgid);
+    return seastar::make_ready_future<Scrub::schedule_result_t>(
+      Scrub::schedule_result_t::no_such_pg);
+  }
+
+  // This has already started, so go on to the next scrub job
+  if (pg->is_scrub_queued_or_active()) {
+    logger().info("{}: scrubbing already in progress for pg {}", __func__,
+                  pgid);
+    return seastar::make_ready_future<Scrub::schedule_result_t>(
+      Scrub::schedule_result_t::already_started);
+  }
+  // Skip other kinds of scrubbing if only explicitly requested repairing is
+  // allowed
+  if (allow_requested_repair_only && !pg->m_planned_scrub.must_repair) {
+    logger().info(
+      "{}: skipping {} because repairing is not explicitly requested on it",
+      __func__, pgid);
+    return seastar::make_ready_future<Scrub::schedule_result_t>(
+      Scrub::schedule_result_t::preconditions);
+  }
+
+  return pg->sched_scrub_this_pg();
+}
+
+void OSD::resched_all_scrubs()
+{
+  logger().info("{}: start", __func__);
+  auto all_jobs = get_scrub_services().list_registered_jobs();
+  for (auto& e : all_jobs) {
+
+    auto& job = *e;
+    logger().debug("{}: examine {}", __func__, job.pgid);
+
+    Ref<PG> pg = get_pg(job.pgid);
+    if (!pg)
+      continue;
+
+    if (!pg->m_planned_scrub.must_scrub && !pg->m_planned_scrub.need_auto) {
+      logger().debug("{}: reschedule {}", __func__, job.pgid);
+      pg->reschedule_scrub();
+    }
+  }
+  logger().info("{}: done", __func__);
+}
+
+}  // namespace crimson::osd

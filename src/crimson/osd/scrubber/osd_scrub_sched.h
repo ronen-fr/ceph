@@ -8,15 +8,35 @@
 #include <memory>
 #include <optional>
 #include <vector>
+#include <ostream>
 
 #include "common/RefCountedObj.h"
 #include "common/ceph_atomic.h"
-#include "include/utime_fmt.h"
+#include "common/ceph_mutex.h"
 #include "osd/osd_types.h"
-#include "osd/osd_types_fmt.h"
+#ifdef WITH_SEASTAR
+#include "crimson/osd/scrubber_common_cr.h"
+#else
 #include "osd/scrubber_common.h"
+#endif
+#include "osd/osd_types_fmt.h"
+#include "include/utime_fmt.h"
 
+#include "utime.h"
+
+namespace crimson::osd {
 class PG;
+class ShardServices;
+class OSD;
+}
+
+#ifdef WITH_SEASTAR
+using CephContext = crimson::common::CephContext;
+using OSDSvc = crimson::osd::OSD;
+using PG = crimson::osd::PG;
+#else
+using OSDSvc=OSDService;
+#endif
 
 namespace Scrub {
 
@@ -57,7 +77,7 @@ class ScrubQueue {
 		     // under lock
   };
 
-  ScrubQueue(CephContext* cct, OSDService& osds);
+  ScrubQueue(CephContext* cct, OSDSvc& osds);
 
   struct scrub_schedule_t {
     utime_t scheduled_at{};
@@ -108,7 +128,7 @@ class ScrubQueue {
 
     utime_t penalty_timeout{0, 0};
 
-    CephContext* cct;
+    crimson::common::CephContext* cct;
 
     ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
 
@@ -171,7 +191,7 @@ class ScrubQueue {
    *
    * locking: locks jobs_lock
    */
-  Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
+  seastar::future<Scrub::schedule_result_t> select_pg_and_scrub(Scrub::ScrubPreconds&& preconds);
 
   /**
    * Translate attempt_ values into readable text
@@ -261,8 +281,8 @@ class ScrubQueue {
   [[nodiscard]] std::optional<double> update_load_average();
 
  private:
-  CephContext* cct;
-  OSDService& osd_service;
+  CephContext* cct;  // RRR fix this faked, not really wanted, pointer
+  OSDSvc& osd_service;
 
   /**
    *  jobs_lock protects the job containers and the relevant scrub-jobs state
@@ -346,9 +366,9 @@ class ScrubQueue {
    */
   void move_failed_pgs(utime_t now_is);
 
-  Scrub::schedule_result_t select_from_group(ScrubQContainer& group,
-					     const Scrub::ScrubPreconds& preconds,
-					     utime_t now_is);
+  seastar::future<Scrub::schedule_result_t> select_from_group(ScrubQContainer& group,
+				     const Scrub::ScrubPreconds& preconds,
+				     utime_t now_is);
 };
 
 template <>
@@ -358,11 +378,10 @@ struct fmt::formatter<ScrubQueue::ScrubJob> {
   template <typename FormatContext>
   auto format(const ScrubQueue::ScrubJob& sjob, FormatContext& ctx)
   {
-    return fmt::format_to(
-      ctx.out(),
-      "{}, {} dead: {} - {} / failure: {} / pen. t.o.: {} / queue state: {}",
-      sjob.pgid, sjob.schedule.scheduled_at, sjob.schedule.deadline,
-      sjob.registration_state(), sjob.resources_failure, sjob.penalty_timeout,
-      ScrubQueue::qu_state_text(sjob.state));
+    return fmt::format_to(ctx.out(), "{}, {} dead: {} - {} / failure: {} / pen. t.o.: {} / queue state: {}",
+                          sjob.pgid, sjob.schedule.scheduled_at,
+                          sjob.schedule.deadline, sjob.registration_state(),
+                          sjob.resources_failure, sjob.penalty_timeout,
+                          ScrubQueue::qu_state_text(sjob.state));
   }
 };
