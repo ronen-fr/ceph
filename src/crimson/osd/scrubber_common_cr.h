@@ -3,25 +3,32 @@
 #pragma once
 
 #include "common/scrub_types.h"
+#ifdef WITH_SEASTAR
 #include "crimson/osd/osd_operations/osdop_params.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 //#include "crimson/osd/osd_operations/scrub_event.h"
 #include "include/types.h"
 #include "os/ObjectStore.h"
 
+#else
+#include "include/types.h"
+#include "os/ObjectStore.h"
+#include "OpRequest.h"
 
-// RRR #include "OpRequest.h"
+#endif
 
 namespace ceph {
 class Formatter;
 }
 
-//namespace crimson::osd {
-
 namespace Scrub {
 
 /// high/low OP priority
 enum class scrub_prio_t : bool { low_priority = false, high_priority = true };
+
+/// Identifies a specific scrub activation within an interval,
+/// see ScrubPGgIF::m_current_token
+using act_token_t = uint32_t;
 
 /// "environment" preconditions affecting which PGs are eligible for scrubbing
 struct ScrubPreconds {
@@ -113,10 +120,9 @@ struct requested_scrub_t {
    * Otherwise - PG_STATE_FAILED_REPAIR will be asserted.
    */
   bool check_repair{false};
-
-  friend std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
 };
 
+std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
 
 /**
  *  The interface used by the PG when requesting scrub-related info or services
@@ -125,20 +131,15 @@ struct ScrubPgIF {
 
   virtual ~ScrubPgIF() = default;
 
-  friend std::ostream& operator<<(std::ostream& out, const ScrubPgIF& s)
-  {
-    return s.show(out);
-  }
+  friend std::ostream& operator<<(std::ostream& out, const ScrubPgIF& s) { return s.show(out); }
 
   virtual std::ostream& show(std::ostream& out) const = 0;
 
   // --------------- triggering state-machine events:
 
-  //virtual void do_scrub_event(const crimson::osd::PgScrubEvent& evt, PeeringCtx& rctx) = 0;
-
   virtual void initiate_regular_scrub(epoch_t epoch_queued) = 0;
 
-  virtual void queue_regular_scrub() = 0;  // crimson-specific (for now)
+  //virtual void queue_regular_scrub() = 0;  // crimson-specific (for now)
 
   virtual void initiate_scrub_after_repair(epoch_t epoch_queued) = 0;
 
@@ -156,27 +157,29 @@ struct ScrubPgIF {
 
   virtual void send_replica_pushes_upd(epoch_t epoch_queued) = 0;
 
-  virtual void send_start_replica(epoch_t epoch_queued) = 0;
+  virtual void send_start_replica(epoch_t epoch_queued, Scrub::act_token_t token) = 0;
 
-  virtual void send_sched_replica(epoch_t epoch_queued) = 0;
+  virtual void send_sched_replica(epoch_t epoch_queued, Scrub::act_token_t token) = 0;
 
-  virtual void send_full_reset(epoch_t epoch_queued) = 0;  // crimson
+  virtual void send_full_reset(epoch_t epoch_queued) = 0;
 
-  virtual void send_chunk_free(epoch_t epoch_queued) = 0;  // crimson
+  virtual void send_chunk_free(epoch_t epoch_queued) = 0;
 
-  virtual void send_chunk_busy(epoch_t epoch_queued) = 0;  // crimson
+  virtual void send_chunk_busy(epoch_t epoch_queued) = 0;
 
-  virtual void send_requests_sent(epoch_t epoch_queued) = 0; // crimson
+  //virtual void send_requests_sent(epoch_t epoch_queued) = 0; // crimson
 
-  virtual void send_local_map_done(epoch_t epoch_queued) = 0; // crimson
+  virtual void send_local_map_done(epoch_t epoch_queued) = 0;
 
   virtual void send_oninit_done(epoch_t epoch_queued) = 0; // crimson
 
-  virtual void send_get_next_chunk(epoch_t epoch_queued) = 0; // crimson + new in Classic
+  virtual void send_get_next_chunk(epoch_t epoch_queued) = 0;
 
-  virtual void send_scrub_is_finished(epoch_t epoch_queued) = 0; // crimson + new in Classic
+  virtual void send_scrub_is_finished(epoch_t epoch_queued) = 0;
 
-  virtual void send_maps_compared(epoch_t epoch_queued) = 0; // crimson
+  virtual void send_maps_compared(epoch_t epoch_queued) = 0;
+
+  virtual void on_applied_when_primary(const eversion_t &applied_version) = 0;
 
   // --------------------------------------------------
 
@@ -197,6 +200,10 @@ struct ScrubPgIF {
   //virtual void map_from_replica(crimson::osd::RemoteScrubEvent op) = 0;
 
   //virtual void replica_scrub_op(crimson::osd::RemoteScrubEvent op) = 0;
+
+  //virtual void map_from_replica(const MOSDRepScrubMap& msg) = 0;
+
+  //virtual void replica_scrub_op(OpRequestRef op) = 0;
 
   virtual void set_op_parameters(requested_scrub_t&) = 0;
 
@@ -230,9 +237,9 @@ struct ScrubPgIF {
 
   virtual void add_callback(Context* context) = 0;
 
-  /// should we requeue blocked ops?
-  [[nodiscard]] virtual bool should_requeue_blocked_ops(
-    eversion_t last_recovery_applied) const = 0;
+  // /// should we requeue blocked ops?
+  // [[nodiscard]] virtual bool should_requeue_blocked_ops(
+  //   eversion_t last_recovery_applied) const = 0;
 
   /// add to scrub statistics, but only if the soid is below the scrub start
   virtual void stats_of_handled_objects(const object_stat_sum_t& delta_stats,
@@ -290,6 +297,24 @@ struct ScrubPgIF {
    */
   virtual bool reserve_local() = 0;
 
+  /**
+   * Register/de-register with the OSD scrub queue
+   *
+   * Following our status as Primary or replica.
+   */
+  virtual void on_primary_change(const requested_scrub_t& request_flags) = 0;
+
+  /**
+   * Recalculate the required scrub time.
+   *
+   * This function assumes that the queue registration status is up-to-date,
+   * i.e. the OSD "knows our name" if-f we are the Primary.
+   */
+  virtual void update_scrub_job(const requested_scrub_t& request_flags) = 0;
+
+  virtual void on_maybe_registration_change(const requested_scrub_t& request_flags) = 0;
+
+
   // virtual void handle_scrub_reserve_op(Ref<MOSDScrubReserve> req, pg_shard_t from) = 0;
   virtual void handle_scrub_reserve_op(const MOSDScrubReserve& req, pg_shard_t from) = 0;
 
@@ -320,9 +345,16 @@ struct ScrubPgIF {
   virtual void register_with_osd() = 0;
   virtual void unregister_from_osd() = 0;
 
+  virtual void rm_from_osd_scrubbing() = 0;
+
   virtual void scrub_requested(scrub_level_t scrub_level,
 			       scrub_type_t scrub_type,
 			       requested_scrub_t& req_flags) = 0;
-};
 
-//}  // namespace crimson::osd
+  // --------------- debugging via the asok ------------------------------
+
+  virtual int asok_debug(std::string_view cmd,
+			 std::string param,
+			 Formatter* f,
+			 std::stringstream& ss) = 0;
+};
