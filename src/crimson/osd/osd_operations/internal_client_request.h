@@ -14,7 +14,7 @@ class InternalClientRequest : public OperationT<InternalClientRequest>,
                               private CommonClientRequest {
 public:
   explicit InternalClientRequest(Ref<PG> pg);
-  ~InternalClientRequest();
+  virtual ~InternalClientRequest();
 
   // imposed by `ShardService::start_operation<T>(...)`.
   seastar::future<> start();

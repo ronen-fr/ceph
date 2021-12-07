@@ -1,14 +1,49 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
+
+
+/********************************
+
+
+
+
+
+
+
+
+
+
+  CRIMSON
+
+
+
+
+
+
+
+
+
+
+*/
 #include "./osd_scrub_sched.h"
 
-#include "include/utime_fmt.h"
-#include "osd/OSD.h"
-#include "osd/osd_types_fmt.h"
-
-#include "pg_scrubber.h"
+#include "common/dout.h"
+#include "crimson/common/log.h"
+#include "crimson/osd/osd.h"
+#include "crimson/osd/scrubber/pg_scrubber.h"
+#include "global/global_context.h"
+#include "include/utime.h"
 
 using namespace ::std::literals;
+using crimson::common::local_conf;
+using std::ostream;
+
+namespace {
+seastar::logger& logger()
+{
+  return crimson::get_logger(ceph_subsys_osd);
+}
+}  // namespace
 
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubJob
@@ -28,13 +63,7 @@ ScrubQueue::ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
 // debug usage only
 ostream& operator<<(ostream& out, const ScrubQueue::ScrubJob& sjob)
 {
-  out << sjob.pgid << ",  " << sjob.schedule.scheduled_at
-      << " dead: " << sjob.schedule.deadline << " - "
-      << sjob.registration_state() << " / failure: " << sjob.resources_failure
-      << " / pen. t.o.: " << sjob.penalty_timeout
-      << " / queue state: " << ScrubQueue::qu_state_text(sjob.state);
-
-  return out;
+  return out << fmt::format("{}", sjob);
 }
 
 void ScrubQueue::ScrubJob::update_schedule(
@@ -48,8 +77,11 @@ void ScrubQueue::ScrubJob::update_schedule(
   // scan_penalized() is called and the job was moved to the to_scrub queue.
   updated = true;
 
-  dout(10) << " pg[" << pgid << "] adjusted: " << schedule.scheduled_at << "  "
-	   << registration_state() << dendl;
+  logger().info("{}: pg[{}] adjusted: {} {}",
+		__func__,
+		pgid,
+		adjusted.scheduled_at,
+		registration_state());
 }
 
 std::string ScrubQueue::ScrubJob::scheduling_state(utime_t now_is,
@@ -72,7 +104,6 @@ std::string ScrubQueue::ScrubJob::scheduling_state(utime_t now_is,
 		     schedule.scheduled_at);
 }
 
-
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubQueue
 
@@ -83,36 +114,38 @@ std::string ScrubQueue::ScrubJob::scheduling_state(utime_t now_is,
   *_dout << "osd." << osd_service.whoami << " scrub-queue::" << __func__ << " "
 
 
-ScrubQueue::ScrubQueue(CephContext* cct, OSDService& osds)
-    : cct{cct}
-    , osd_service{osds}
+ScrubQueue::ScrubQueue(CephContext* cct, OSDSvc& osds) : osd_service{osds}
 {
   // initialize the daily loadavg with current 15min loadavg
-  if (double loadavgs[3]; getloadavg(loadavgs, 3) == 3) {
-    daily_loadavg = loadavgs[2];
-  } else {
-    derr << "OSD::init() : couldn't read loadavgs\n" << dendl;
-    daily_loadavg = 1.0;
-  }
+  //   if (double loadavgs[3]; getloadavg(loadavgs, 3) == 3) {
+  //     daily_loadavg = loadavgs[2];
+  //   } else {
+  //     derr << "OSD::init() : couldn't read loadavgs\n" << dendl;
+  //     daily_loadavg = 1.0;
+  //   }
+
+  auto temp_cct = std::make_unique<CephContext>();
+  cct = temp_cct.release();
+  daily_loadavg = 1.0;
 }
 
 std::optional<double> ScrubQueue::update_load_average()
 {
-  int hb_interval = local_conf()->osd_heartbeat_interval;
-  int n_samples = 60 * 24 * 24;
-  if (hb_interval > 1) {
-    n_samples /= hb_interval;
-    if (n_samples < 1)
-      n_samples = 1;
-  }
-
-  // get CPU load avg
-  double loadavg;
-  if (getloadavg(&loadavg, 1) == 1) {
-    daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavg) / n_samples;
-    dout(17) << "heartbeat: daily_loadavg " << daily_loadavg << dendl;
-    return 100 * loadavg;
-  }
+  //   int hb_interval = local_conf()->osd_heartbeat_interval;
+  //   int n_samples = 60 * 24 * 24;
+  //   if (hb_interval > 1) {
+  //     n_samples /= hb_interval;
+  //     if (n_samples < 1)
+  //       n_samples = 1;
+  //   }
+  //
+  //   // get CPU load avg
+  //   double loadavg;
+  //   if (getloadavg(&loadavg, 1) == 1) {
+  //     daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavg) /
+  //     n_samples; dout(17) << "heartbeat: daily_loadavg " << daily_loadavg <<
+  //     dendl; return 100 * loadavg;
+  //   }
 
   return std::nullopt;
 }
@@ -169,10 +202,10 @@ void ScrubQueue::register_with_osd(ScrubJobRef scrub_job,
     case qu_state_t::not_registered:
       // insertion under lock
       {
-	std::unique_lock lck{jobs_lock};
+	// std::unique_lock lck{jobs_lock};
 
 	if (state_at_entry != scrub_job->state) {
-	  lck.unlock();
+	  // lck.unlock();
 	  dout(5) << " scrub job state changed" << dendl;
 	  // retry
 	  register_with_osd(scrub_job, suggested);
@@ -192,7 +225,7 @@ void ScrubQueue::register_with_osd(ScrubJobRef scrub_job,
       {
 	// must be under lock, as the job might be removed from the queue
 	// at any minute
-	std::lock_guard lck{jobs_lock};
+	// lock_guard lck{jobs_lock};
 
 	update_job(scrub_job, suggested);
 	if (scrub_job->state == qu_state_t::not_registered) {
@@ -223,7 +256,7 @@ void ScrubQueue::update_job(ScrubJobRef scrub_job,
 // used under jobs_lock
 void ScrubQueue::move_failed_pgs(utime_t now_is)
 {
-  int punished_cnt{0};	// for log/debug only
+  int punished_cnt{0};  // for log/debug only
 
   for (auto job = to_scrub.begin(); job != to_scrub.end();) {
     if ((*job)->resources_failure) {
@@ -303,13 +336,15 @@ std::string_view ScrubQueue::qu_state_text(qu_state_t st)
  *    - use std::min_element() to find a candidate;
  *    - try that one. If not suitable, discard from 'to_scrub_copy'
  */
-Scrub::schedule_result_t ScrubQueue::select_pg_and_scrub(
-  Scrub::ScrubPreconds& preconds)
+seastar::future<Scrub::schedule_result_t> ScrubQueue::select_pg_and_scrub(
+  Scrub::ScrubPreconds&& preconds)
 {
   dout(10) << " reg./pen. sizes: " << to_scrub.size() << " / "
 	   << penalized.size() << dendl;
 
   utime_t now_is = ceph_clock_now();
+
+  // auto preconds = std::move(preconds_moved);
 
   preconds.time_permit = scrub_time_permit(now_is);
   preconds.load_is_low = scrub_load_below_threshold();
@@ -321,8 +356,6 @@ Scrub::schedule_result_t ScrubQueue::select_pg_and_scrub(
   //  - create a copy of the to_scrub (possibly up to first not-ripe)
   //  - same for the penalized (although that usually be a waste)
   //  unlock, then try the lists
-
-  std::unique_lock lck{jobs_lock};
 
   // pardon all penalized jobs that have deadlined (or were updated)
   scan_penalized(restore_penalized, now_is);
@@ -340,27 +373,35 @@ Scrub::schedule_result_t ScrubQueue::select_pg_and_scrub(
   //  as when we use the lists we will not be holding jobs_lock (see
   //  explanation above)
 
-  auto to_scrub_copy = collect_ripe_jobs(to_scrub, now_is);
-  auto penalized_copy = collect_ripe_jobs(penalized, now_is);
-  lck.unlock();
-
-  // try the regular queue first
-  auto res = select_from_group(to_scrub_copy, preconds, now_is);
-
-  // in the sole scenario in which we've gone over all ripe jobs without success
-  // - we will try the penalized
-  if (res == Scrub::schedule_result_t::none_ready && !penalized_copy.empty()) {
-    res = select_from_group(penalized_copy, preconds, now_is);
-    dout(10) << "tried the penalized. Res: "
-	     << ScrubQueue::attempt_res_text(res) << dendl;
-    restore_penalized = true;
-  }
-
-  dout(15) << dendl;
-  return res;
+  return seastar::do_with(
+    collect_ripe_jobs(to_scrub, now_is),
+    collect_ripe_jobs(penalized, now_is),
+    std::move(preconds),
+    [this, now_is](auto& to_scrub_copy, auto& penalized_copy, auto& preconds) {
+      return select_from_group(to_scrub_copy, preconds, now_is)
+	.then([this,
+	       penalized_copy = std::move(penalized_copy),
+	       to_scrub_copy = std::move(to_scrub_copy),
+	       preconds,
+	       now_is](auto result) mutable
+	      -> seastar::future<Scrub::schedule_result_t> {
+	  if (result != Scrub::schedule_result_t::none_ready ||
+	      penalized_copy.empty()) {
+	    return seastar::make_ready_future<Scrub::schedule_result_t>(result);
+	  }
+	  // return seastar::future<Scrub::schedule_result_t>(result);
+	  // try the penalized queue
+	  return select_from_group(penalized_copy, preconds, now_is)
+	    .then([this](auto result) mutable
+		  -> seastar::future<Scrub::schedule_result_t> {
+	      restore_penalized = true;
+	      return seastar::make_ready_future<Scrub::schedule_result_t>(
+		result);
+	    });
+	});
+    });
 }
 
-// must be called under lock
 void ScrubQueue::rm_unregistered_jobs(ScrubQContainer& group)
 {
   std::for_each(group.begin(), group.end(), [](auto& job) {
@@ -417,69 +458,110 @@ ScrubQueue::ScrubQContainer ScrubQueue::collect_ripe_jobs(
   return ripes;
 }
 
+// RRR should we keep preconds?
+
 // not holding jobs_lock. 'group' is a copy of the actual list.
-Scrub::schedule_result_t ScrubQueue::select_from_group(
+seastar::future<Scrub::schedule_result_t> ScrubQueue::select_from_group(
   ScrubQContainer& group,
   const Scrub::ScrubPreconds& preconds,
   utime_t now_is)
 {
-  dout(15) << "jobs #: " << group.size() << dendl;
+  logger().info("{}: jobs #: {}", __func__, group.size());
 
-  for (auto& candidate : group) {
+  if (group.empty()) {
+    return seastar::make_ready_future<Scrub::schedule_result_t>(
+      Scrub::schedule_result_t::none_ready);
+  }
 
-    // we expect the first job in the list to be a good candidate (if any)
+  auto candidate_it = group.begin();
 
-    dout(20) << "try initiating scrub for " << candidate->pgid << dendl;
+  return seastar::repeat_until_value([this,
+				      candidate_it,
+				      group,
+				      preconds,
+				      now_is]() mutable {
+    if (candidate_it == group.end()) {
+      return seastar::make_ready_future<
+	std::optional<Scrub::schedule_result_t>>(
+	std::optional<Scrub::schedule_result_t>{
+	  Scrub::schedule_result_t::none_ready});
+    }
+
+    auto& candidate = *candidate_it;
 
     if (preconds.only_deadlined && (candidate->schedule.deadline.is_zero() ||
 				    candidate->schedule.deadline >= now_is)) {
       dout(15) << " not scheduling scrub for " << candidate->pgid << " due to "
 	       << (preconds.time_permit ? "high load" : "time not permitting")
 	       << dendl;
-      continue;
+      return seastar::make_ready_future<
+	std::optional<Scrub::schedule_result_t>>(
+	std::optional<Scrub::schedule_result_t>{std::nullopt});
     }
 
-    // we have a candidate to scrub. We turn to the OSD to verify that the PG
-    // configuration allows the specified type of scrub, and to initiate the
-    // scrub.
-    switch (
-      osd_service.initiate_a_scrub(candidate->pgid,
-				   preconds.allow_requested_repair_only)) {
+    // candidate life?
+    // candidate_it life?
+    return osd_service
+      .initiate_a_scrub(candidate->pgid, preconds.allow_requested_repair_only)
+      .then([this, candidate_it](auto&& init_result) mutable
+	    -> seastar::future<std::optional<Scrub::schedule_result_t>> {
+	auto& candidate = *candidate_it;
+	switch (init_result) {
 
-      case Scrub::schedule_result_t::scrub_initiated:
-	// the happy path. We are done
-	dout(20) << " initiated for " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::scrub_initiated;
+	  case Scrub::schedule_result_t::scrub_initiated:
+	    // the happy path. We are done
+	    dout(20) << " initiated for " << candidate->pgid << dendl;
+	    logger().debug("ScrubQueue::select_from_group(): initiated for {}",
+			   candidate->pgid);
+	    return seastar::make_ready_future<
+	      std::optional<Scrub::schedule_result_t>>(
+	      std::make_optional<Scrub::schedule_result_t>(
+		Scrub::schedule_result_t::scrub_initiated));
 
-      case Scrub::schedule_result_t::already_started:
-      case Scrub::schedule_result_t::preconditions:
-      case Scrub::schedule_result_t::bad_pg_state:
-	// continue with the next job
-	dout(20) << "failed (state/cond/started) " << candidate->pgid << dendl;
-	break;
+	  case Scrub::schedule_result_t::already_started:
+	  case Scrub::schedule_result_t::preconditions:
+	  case Scrub::schedule_result_t::bad_pg_state:
+	    // continue with the next job
+	    logger().debug(
+	      "ScrubQueue::select_from_group(): failed (state/cond/started) {}",
+	      candidate->pgid);
+	    break;
 
-      case Scrub::schedule_result_t::no_such_pg:
-	// The pg is no longer there
-	dout(20) << "failed (no pg) " << candidate->pgid << dendl;
-	break;
+	  case Scrub::schedule_result_t::no_such_pg:
+	    // The pg is no longer there
+	    logger().debug("ScrubQueue::select_from_group(): failed (no pg) {}",
+			   candidate->pgid);
+	    break;
 
-      case Scrub::schedule_result_t::no_local_resources:
-	// failure to secure local resources. No point in trying the other
-	// PGs at this time. Note that this is not the same as replica resources
-	// failure!
-	dout(20) << "failed (local) " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::no_local_resources;
+	  case Scrub::schedule_result_t::no_local_resources:
+	    // failure to secure local resources. No point in trying the other
+	    // PGs at this time. Note that this is not the same as replica
+	    // resources failure!
+	    logger().debug("ScrubQueue::select_from_group(): failed (local) {}",
+			   candidate->pgid);
+	    return seastar::make_ready_future<
+	      std::optional<Scrub::schedule_result_t>>(
+	      std::make_optional<Scrub::schedule_result_t>(
+		Scrub::schedule_result_t::no_local_resources));
 
-      case Scrub::schedule_result_t::none_ready:
-	// can't happen. Just for the compiler.
-	dout(5) << "failed !!! " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::none_ready;
-    }
-  }
+	  case Scrub::schedule_result_t::none_ready:
+	    // can't happen. Just for the compiler.
+	    logger().error("ScrubQueue::select_from_group(): failed !!! {}",
+			   candidate->pgid);
+	    return seastar::make_ready_future<
+	      std::optional<Scrub::schedule_result_t>>(
+	      std::make_optional<Scrub::schedule_result_t>(
+		Scrub::schedule_result_t::none_ready));
+	};
 
-  dout(20) << " returning 'none ready' " << dendl;
-  return Scrub::schedule_result_t::none_ready;
+	candidate_it++;
+	return seastar::make_ready_future<
+	  std::optional<Scrub::schedule_result_t>>(
+	  std::optional<Scrub::schedule_result_t>{std::nullopt});
+      });
+  });
 }
+
 
 ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
   const sched_params_t& times) const
@@ -539,8 +621,11 @@ double ScrubQueue::scrub_sleep_time(bool must_scrub) const
   return std::max(extended_sleep, regular_sleep_period);
 }
 
+// RRR replace with seastar's load_average
 bool ScrubQueue::scrub_load_below_threshold() const
 {
+  return true;
+#if 0
   double loadavgs[3];
   if (getloadavg(loadavgs, 3) != 3) {
     dout(10) << __func__ << " couldn't read loadavgs\n" << dendl;
@@ -558,17 +643,17 @@ bool ScrubQueue::scrub_load_below_threshold() const
 
   // allow scrub if below daily avg and currently decreasing
   if (loadavgs[0] < daily_loadavg && loadavgs[0] < loadavgs[2]) {
-    dout(20) << "loadavg " << loadavgs[0] << " < daily_loadavg "
-	     << daily_loadavg << " and < 15m avg " << loadavgs[2] << " = yes"
-	     << dendl;
+    dout(20) << "loadavg " << loadavgs[0] << " < daily_loadavg " << daily_loadavg
+	     << " and < 15m avg " << loadavgs[2] << " = yes" << dendl;
     return true;
   }
 
   dout(20) << "loadavg " << loadavgs[0] << " >= max "
-	   << local_conf()->osd_scrub_load_threshold
-	   << " and ( >= daily_loadavg " << daily_loadavg << " or >= 15m avg "
-	   << loadavgs[2] << ") = no" << dendl;
+	   << local_conf()->osd_scrub_load_threshold << " and ( >= daily_loadavg "
+	   << daily_loadavg << " or >= 15m avg " << loadavgs[2] << ") = no"
+	   << dendl;
   return false;
+#endif
 }
 
 
@@ -650,7 +735,6 @@ void ScrubQueue::ScrubJob::dump(ceph::Formatter* f) const
 void ScrubQueue::dump_scrubs(ceph::Formatter* f) const
 {
   ceph_assert(f != nullptr);
-  std::lock_guard lck(jobs_lock);
 
   f->open_array_section("scrubs");
 
@@ -671,8 +755,6 @@ ScrubQueue::ScrubQContainer ScrubQueue::list_registered_jobs() const
   all_jobs.reserve(to_scrub.size() + penalized.size());
   dout(20) << " size: " << all_jobs.capacity() << dendl;
 
-  std::lock_guard lck{jobs_lock};
-
   std::copy_if(to_scrub.begin(),
 	       to_scrub.end(),
 	       std::back_inserter(all_jobs),
@@ -690,10 +772,6 @@ ScrubQueue::ScrubQContainer ScrubQueue::list_registered_jobs() const
 
 bool ScrubQueue::can_inc_scrubs() const
 {
-  // consider removing the lock here. Caller already handles delayed
-  // inc_scrubs_local() failures
-  std::lock_guard lck{resource_lock};
-
   if (scrubs_local + scrubs_remote < local_conf()->osd_max_scrubs) {
     return true;
   }
@@ -705,8 +783,6 @@ bool ScrubQueue::can_inc_scrubs() const
 
 bool ScrubQueue::inc_scrubs_local()
 {
-  std::lock_guard lck{resource_lock};
-
   if (scrubs_local + scrubs_remote < local_conf()->osd_max_scrubs) {
     ++scrubs_local;
     return true;
@@ -719,7 +795,6 @@ bool ScrubQueue::inc_scrubs_local()
 
 void ScrubQueue::dec_scrubs_local()
 {
-  std::lock_guard lck{resource_lock};
   dout(20) << ": " << scrubs_local << " -> " << (scrubs_local - 1) << " (max "
 	   << local_conf()->osd_max_scrubs << ", remote " << scrubs_remote
 	   << ")" << dendl;
@@ -730,8 +805,6 @@ void ScrubQueue::dec_scrubs_local()
 
 bool ScrubQueue::inc_scrubs_remote()
 {
-  std::lock_guard lck{resource_lock};
-
   if (scrubs_local + scrubs_remote < local_conf()->osd_max_scrubs) {
     dout(20) << ": " << scrubs_remote << " -> " << (scrubs_remote + 1)
 	     << " (max " << local_conf()->osd_max_scrubs << ", local "
@@ -747,7 +820,6 @@ bool ScrubQueue::inc_scrubs_remote()
 
 void ScrubQueue::dec_scrubs_remote()
 {
-  std::lock_guard lck{resource_lock};
   dout(20) << ": " << scrubs_remote << " -> " << (scrubs_remote - 1) << " (max "
 	   << local_conf()->osd_max_scrubs << ", local " << scrubs_local << ")"
 	   << dendl;
@@ -757,7 +829,6 @@ void ScrubQueue::dec_scrubs_remote()
 
 void ScrubQueue::dump_scrub_reservations(ceph::Formatter* f) const
 {
-  std::lock_guard lck{resource_lock};
   f->dump_int("scrubs_local", scrubs_local);
   f->dump_int("scrubs_remote", scrubs_remote);
   f->dump_int("osd_max_scrubs", local_conf()->osd_max_scrubs);

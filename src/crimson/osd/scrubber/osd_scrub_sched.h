@@ -75,38 +75,8 @@
 │                                 │
 │                                 │
 └─────────────────────────────────┘
-
-
-SqrubQueue interfaces (main functions):
-
-<1> - OSD/PG resources management:
-
-  - can_inc_scrubs()
-  - {inc/dec}_scrubs_{local/remote}()
-  - dump_scrub_reservations()
-  - {set/clear/is}_reserving_now()
-
-<2> - environment conditions:
-
-  - update_loadavg()
-
-  - scrub_load_below_threshold()
-  - scrub_time_permit()
-
-<3> - scheduling scrubs:
-
-  - select_pg_and_scrub()
-  - dump_scrubs()
-
-<4> - manipulating a job's state:
-
-  - register_with_osd()
-  - remove_from_osd_queue()
-  - update_job()
-
- */
+*/
 // clang-format on
-
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -115,12 +85,31 @@ SqrubQueue interfaces (main functions):
 
 #include "common/RefCountedObj.h"
 #include "common/ceph_atomic.h"
-#include "include/utime_fmt.h"
+#include "common/ceph_mutex.h"
 #include "osd/osd_types.h"
-#include "osd/osd_types_fmt.h"
+#ifdef WITH_SEASTAR
+#include "crimson/osd/scrubber_common_cr.h"
+#else
 #include "osd/scrubber_common.h"
+#endif
+#include "include/utime_fmt.h"
+#include "osd/osd_types_fmt.h"
 
+#include "utime.h"
+
+namespace crimson::osd {
 class PG;
+class ShardServices;
+class OSD;
+}  // namespace crimson::osd
+
+#ifdef WITH_SEASTAR
+using CephContext = crimson::common::CephContext;
+using OSDSvc = crimson::osd::OSD;
+using PG = crimson::osd::PG;
+#else
+using OSDSvc = OSDService;
+#endif
 
 namespace Scrub {
 
@@ -129,12 +118,12 @@ using namespace ::std::literals;
 // possible outcome when trying to select a PG and scrub it
 enum class schedule_result_t {
   scrub_initiated,     // successfully started a scrub
-  none_ready,	       // no pg to scrub
+  none_ready,          // no pg to scrub
   no_local_resources,  // failure to secure local OSD scrub resource
   already_started,     // failed, as already started scrubbing this pg
-  no_such_pg,	       // can't find this pg
-  bad_pg_state,	       // pg state (clean, active, etc.)
-  preconditions	       // time, configuration, etc.
+  no_such_pg,          // can't find this pg
+  bad_pg_state,        // pg state (clean, active, etc.)
+  preconditions        // time, configuration, etc.
 };
 
 }  // namespace Scrub
@@ -156,12 +145,12 @@ class ScrubQueue {
   enum class qu_state_t {
     not_registered,  // not a primary, thus not considered for scrubbing by this
 		     // OSD (also the temporary state when just created)
-    registered,	     // in either of the two queues ('to_scrub' or 'penalized')
+    registered,      // in either of the two queues ('to_scrub' or 'penalized')
     unregistering    // in the process of being unregistered. Will be finalized
 		     // under lock
   };
 
-  ScrubQueue(CephContext* cct, OSDService& osds);
+  ScrubQueue(CephContext* cct, OSDSvc& osds);
 
   struct scrub_schedule_t {
     utime_t scheduled_at{};
@@ -212,7 +201,7 @@ class ScrubQueue {
 
     utime_t penalty_timeout{0, 0};
 
-    CephContext* cct;
+    crimson::common::CephContext* cct;
 
     ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
 
@@ -275,7 +264,8 @@ class ScrubQueue {
    *
    * locking: locks jobs_lock
    */
-  Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
+  seastar::future<Scrub::schedule_result_t> select_pg_and_scrub(
+    Scrub::ScrubPreconds&& preconds);
 
   /**
    * Translate attempt_ values into readable text
@@ -365,11 +355,8 @@ class ScrubQueue {
   [[nodiscard]] std::optional<double> update_load_average();
 
  private:
-  CephContext* cct;
-  OSDService& osd_service;
-
-  // the following is required for Crimson compatibility
-  ConfigProxy& local_conf() const { return cct->_conf; }
+  CephContext* cct;  // RRR fix this faked, not really wanted, pointer
+  OSDSvc& osd_service;
 
   /**
    *  jobs_lock protects the job containers and the relevant scrub-jobs state
@@ -453,7 +440,7 @@ class ScrubQueue {
    */
   void move_failed_pgs(utime_t now_is);
 
-  Scrub::schedule_result_t select_from_group(
+  seastar::future<Scrub::schedule_result_t> select_from_group(
     ScrubQContainer& group,
     const Scrub::ScrubPreconds& preconds,
     utime_t now_is);
