@@ -30,11 +30,13 @@
 #include "common/dout.h"
 
 #include "include/utime.h"
-#include "osd/OSD.h"
+
+#include "crimson/osd/osd.h"
 
 #include "pg_scrubber.h"
 
 using namespace ::std::literals;
+using std::ostream;
 
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubJob
@@ -85,7 +87,7 @@ void ScrubQueue::ScrubJob::update_schedule(
   *_dout << "osd." << osd_service.whoami << " scrub-queue::" << __func__ << " "
 
 
-ScrubQueue::ScrubQueue(CephContext* cct, OSDService& osds)
+ScrubQueue::ScrubQueue(CephContext* cct, OSDSvc& osds)
     : cct{cct}, osd_service{osds}
 {
   // initialize the daily loadavg with current 15min loadavg
