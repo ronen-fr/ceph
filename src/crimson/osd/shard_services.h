@@ -11,6 +11,7 @@
 #include "msg/MessageRef.h"
 #include "crimson/common/exception.h"
 #include "crimson/os/futurized_collection.h"
+#include "crimson/osd/scrubber/osd_scrub_sched.h"
 #include "osd/PeeringState.h"
 #include "crimson/osd/osdmap_service.h"
 #include "crimson/osd/object_context.h"
@@ -87,6 +88,16 @@ public:
   const OSDMapService &get_osdmap_service() const {
     return osdmap_service;
   }
+
+private:
+  /**
+   * The entity that maintains the set of PGs we may scrub (i.e. - those that we
+   * are their primary), and schedules their scrubbing.
+   */
+  ScrubQueue m_scrub_queue;
+
+public:
+  ScrubQueue& get_scrub_services() { return m_scrub_queue; } // RRR create it
 
   // Op Management
   OSDOperationRegistry registry;

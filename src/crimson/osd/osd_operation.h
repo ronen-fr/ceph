@@ -20,6 +20,7 @@ enum class OperationTypeCode {
   background_recovery,
   background_recovery_sub,
   internal_client_request,
+  scrub_event,
   last_op
 };
 
@@ -33,6 +34,7 @@ static constexpr const char* const OP_NAMES[] = {
   "background_recovery",
   "background_recovery_sub",
   "internal_client_request",
+  "scrub_event"
 };
 
 // prevent the addition of OperationTypeCode-s with no matching OP_NAMES entry:
