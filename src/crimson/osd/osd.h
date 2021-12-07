@@ -20,6 +20,7 @@
 #include "crimson/mgr/client.h"
 #include "crimson/net/Dispatcher.h"
 #include "crimson/osd/osdmap_service.h"
+#include "crimson/osd/scrubber/osd_scrub_sched.h"
 #include "crimson/osd/state.h"
 #include "crimson/osd/shard_services.h"
 #include "crimson/osd/osdmap_gate.h"
@@ -37,6 +38,7 @@ class MOSDMap;
 class MOSDRepOpReply;
 class MOSDRepOp;
 class MOSDScrub2;
+class OSDMap;
 class OSDMeta;
 class Heartbeat;
 
@@ -60,9 +62,11 @@ namespace crimson::osd {
 class PG;
 
 class OSD final : public crimson::net::Dispatcher,
+		  public Scrub::ScrubSchedListener,
 		  private OSDMapService,
 		  private crimson::common::AuthHandler,
 		  private crimson::mgr::WithStats {
+private:
   const int whoami;
   const uint32_t nonce;
   seastar::timer<seastar::lowres_clock> beacon_timer;
@@ -111,13 +115,21 @@ class OSD final : public crimson::net::Dispatcher,
   void handle_authentication(const EntityName& name,
 			     const AuthCapsInfo& caps) final;
 
+  /**
+   * The entity that maintains the set of PGs we may scrub (i.e. - those that we
+   * are their primary), and schedules their scrubbing.
+   */
+  ScrubQueue scrub_scheduler;
+
   crimson::osd::ShardServices shard_services;
 
   std::unique_ptr<Heartbeat> heartbeat;
+
   seastar::timer<seastar::lowres_clock> tick_timer;
 
   // admin-socket
   seastar::lw_shared_ptr<crimson::admin::AdminSocket> asok;
+
 
 public:
   OSD(int id, uint32_t nonce,
@@ -142,6 +154,8 @@ public:
 
   /// @return the seq id of the pg stats being sent
   uint64_t send_pg_stats();
+
+  ScrubQueue& get_scrub_services() { return scrub_scheduler; }
 
 private:
   seastar::future<> _write_superblock();
@@ -217,6 +231,8 @@ public:
 
   seastar::future<> consume_map(epoch_t epoch);
 
+  int get_nodeid() const final { return whoami; }
+
 private:
   PGMap pg_map;
   crimson::common::Gated gate;
@@ -235,6 +251,13 @@ private:
   RemotePeeringEvent::OSDPipeline peering_request_osd_pipeline;
   friend class RemotePeeringEvent;
 
+  friend class ScrubQueue;
+  seastar::future<> sched_scrub();
+  bool scrub_random_backoff();
+  void scrub_tick();
+  void resched_all_scrubs();
+
+
 public:
   seastar::future<Ref<PG>> get_or_create_pg(
     PGMap::PGCreationBlockingEvent::TriggerI&&,
@@ -246,7 +269,10 @@ public:
   Ref<PG> get_pg(spg_t pgid);
   seastar::future<> send_beacon();
 
-private:
+  seastar::future<Scrub::schedule_result_t> initiate_a_scrub(
+    spg_t pgid, bool allow_requested_repair_only);
+
+ private:
   LogClient log_client;
   LogChannelRef clog;
 };

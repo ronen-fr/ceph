@@ -115,12 +115,31 @@ SqrubQueue interfaces (main functions):
 
 #include "common/RefCountedObj.h"
 #include "common/ceph_atomic.h"
-#include "include/utime_fmt.h"
+#include "common/ceph_mutex.h"
 #include "osd/osd_types.h"
-#include "osd/osd_types_fmt.h"
+#ifdef WITH_SEASTAR
+#include "crimson/osd/scrubber_common_cr.h"
+#else
 #include "osd/scrubber_common.h"
+#endif
+#include "include/utime_fmt.h"
+#include "osd/osd_types_fmt.h"
 
+#include "utime.h"
+
+namespace crimson::osd {
 class PG;
+class ShardServices;
+class OSD;
+}  // namespace crimson::osd
+
+#ifdef WITH_SEASTAR
+using CephContext = crimson::common::CephContext;
+using OSDSvc = crimson::osd::OSD;
+using PG = crimson::osd::PG;
+#else
+using OSDSvc = OSDService;
+#endif
 
 namespace Scrub {
 
@@ -135,6 +154,29 @@ enum class schedule_result_t {
   no_such_pg,	       // can't find this pg
   bad_pg_state,	       // pg state (clean, active, etc.)
   preconditions	       // time, configuration, etc.
+};
+
+// the OSD services provided to the scrub scheduler
+class ScrubSchedListener {
+ public:
+  virtual int get_nodeid() const = 0;  // returns the OSD number ('whoami')
+
+  /**
+   * A callback used by the ScrubQueue object to initiate a scrub on a specific
+   * PG.
+   *
+   * The request might fail for multiple reasons, as ScrubQueue cannot by its
+   * own check some of the PG-specific preconditions and those are checked here.
+   * See attempt_t definition.
+   *
+   * @return a Scrub::attempt_t detailing either a success, or the failure
+   * reason.
+   */
+  virtual seastar::future<schedule_result_t> initiate_a_scrub(
+    spg_t pgid,
+    bool allow_requested_repair_only) = 0;
+
+  virtual ~ScrubSchedListener() {}
 };
 
 }  // namespace Scrub
@@ -161,7 +203,7 @@ class ScrubQueue {
 		     // under lock
   };
 
-  ScrubQueue(CephContext* cct, OSDService& osds);
+  ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds);
 
   struct scrub_schedule_t {
     utime_t scheduled_at{};
@@ -172,7 +214,9 @@ class ScrubQueue {
     utime_t proposed_time{};
     double min_interval{0.0};
     double max_interval{0.0};
-    must_scrub_t is_must{ScrubQueue::must_scrub_t::not_mandatory};
+    // for today's testing: not must_scrub_t
+    // is_must{ScrubQueue::must_scrub_t::not_mandatory};
+    must_scrub_t is_must{ScrubQueue::must_scrub_t::mandatory};
   };
 
   struct ScrubJob final : public RefCountedObject {
@@ -253,6 +297,7 @@ class ScrubQueue {
   };
 
   friend class TestOSDScrub;
+  friend class ScrubSchedTestWrapper;  ///< unit-tests structure
 
   using ScrubJobRef = ceph::ref_t<ScrubJob>;
   using ScrubQContainer = std::vector<ScrubJobRef>;
@@ -275,7 +320,12 @@ class ScrubQueue {
    *
    * locking: locks jobs_lock
    */
+#ifdef WITH_SEASTAR
+  seastar::future<Scrub::schedule_result_t> select_pg_and_scrub(
+    Scrub::ScrubPreconds&& preconds);
+#else
   Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
+#endif
 
   /**
    * Translate attempt_ values into readable text
@@ -328,6 +378,10 @@ class ScrubQueue {
    */
   void update_job(ScrubJobRef sjob, const sched_params_t& suggested);
 
+  sched_params_t determine_scrub_time(const requested_scrub_t& request_flags,
+				      const pg_info_t& pg_info,
+				      const pool_opts_t pool_conf) const;
+
  public:
   void dump_scrubs(ceph::Formatter* f) const;
 
@@ -365,10 +419,9 @@ class ScrubQueue {
   [[nodiscard]] std::optional<double> update_load_average();
 
  private:
-  CephContext* cct;
-  OSDService& osd_service;
+  CephContext* cct;  // RRR fix this faked, not really wanted, pointer
+  Scrub::ScrubSchedListener& osd_service;
 
-  // the following is required for Crimson compatibility
 #ifdef WITH_SEASTAR
   ConfigProxy& conf() const { return crimson::common::local_conf(); }
 #else
@@ -457,7 +510,7 @@ class ScrubQueue {
    */
   void move_failed_pgs(utime_t now_is);
 
-  Scrub::schedule_result_t select_from_group(
+  seastar::future<Scrub::schedule_result_t> select_from_group(
     ScrubQContainer& group,
     const Scrub::ScrubPreconds& preconds,
     utime_t now_is);
