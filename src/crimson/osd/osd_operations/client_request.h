@@ -39,7 +39,7 @@ public:
     } get_pg;
 
     friend class ClientRequest;
-    friend class LttngBackend;
+    friend struct LttngBackend;
   };
 
   class PGPipeline : public CommonPGPipeline {
@@ -53,7 +53,7 @@ public:
       static constexpr auto type_name = "ClientRequest::PGPipeline::send_reply";
     } send_reply;
     friend class ClientRequest;
-    friend class LttngBackend;
+    friend struct LttngBackend;
   };
 
   static constexpr OperationTypeCode type = OperationTypeCode::client_request;
@@ -125,8 +125,7 @@ public:
     CompletionEvent
   > tracking_events;
 
-  friend class LttngBackend;
-  friend class HistoricBackend;
+  friend struct LttngBackend;
 };
 
 }
