@@ -179,7 +179,7 @@ class ScrubQueue {
    *
    * locking: locks jobs_lock
    */
-  Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
+  seastar::future<Scrub::schedule_result_t> select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
 
   /**
    * Translate attempt_ values into readable text

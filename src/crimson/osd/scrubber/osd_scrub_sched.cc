@@ -32,7 +32,7 @@
 #include "include/utime.h"
 #include "osd/OSD.h"
 
-#include "pg_scrubber.h"
+#include "crimson/osd/scrubber/pg_scrubber.h"
 
 using namespace ::std::literals;
 
@@ -302,7 +302,7 @@ std::string_view ScrubQueue::qu_state_text(qu_state_t st)
  *    - use std::min_element() to find a candidate;
  *    - try that one. If not suitable, discard from 'to_scrub_copy'
  */
-Scrub::schedule_result_t ScrubQueue::select_pg_and_scrub(
+seastar::future<Scrub::schedule_result_t> ScrubQueue::select_pg_and_scrub(
   Scrub::ScrubPreconds& preconds)
 {
   dout(10) << " reg./pen. sizes: " << to_scrub.size() << " / " << penalized.size()
@@ -342,20 +342,21 @@ Scrub::schedule_result_t ScrubQueue::select_pg_and_scrub(
   auto penalized_copy = collect_ripe_jobs(penalized, now_is);
   lck.unlock();
 
-  // try the regular queue first
-  auto res = select_from_group(to_scrub_copy, preconds, now_is);
+ return select_from_group(to_scrub_copy, preconds, now_is).then(
+      [this, penalized_copy=std::move(penalized_copy), to_scrub_copy=std::move(to_scrub_copy), &preconds, now_is](auto result)
+         mutable -> seastar::future<Scrub::schedule_result_t>   {
 
-  // in the sole scenario in which we've gone over all ripe jobs without success
-  // - we will try the penalized
-  if (res == Scrub::schedule_result_t::none_ready && !penalized_copy.empty()) {
-    res = select_from_group(penalized_copy, preconds, now_is);
-    dout(10) << "tried the penalized. Res: " << ScrubQueue::attempt_res_text(res)
-	     << dendl;
-    restore_penalized = true;
-  }
-
-  dout(15) << dendl;
-  return res;
+    if (result != Scrub::schedule_result_t::none_ready || penalized_copy.empty()) {
+      return seastar::make_ready_future<Scrub::schedule_result_t>(result);
+    }
+//return seastar::future<Scrub::schedule_result_t>(result);
+    // try the penalized queue
+    return select_from_group(penalized_copy, preconds, now_is).then([this](auto result) mutable -> seastar::future<Scrub::schedule_result_t>  {
+        restore_penalized = true;
+        return seastar::make_ready_future<Scrub::schedule_result_t>(result);
+        //return seastar::future<Scrub::schedule_result_t>(result);
+        });
+        });
 }
 
 // must be called under lock
@@ -400,7 +401,8 @@ ScrubQueue::ScrubQContainer ScrubQueue::collect_ripe_jobs(ScrubQContainer& group
 	       });
   std::sort(ripes.begin(), ripes.end(), cmp_sched_time_t{});
 
-  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+  //if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+  if (true) {
     for (const auto& jobref : group) {
       if (jobref->schedule.scheduled_at > time_now) {
 	dout(20) << " not ripe: " << jobref->pgid << " @ "
@@ -412,109 +414,188 @@ ScrubQueue::ScrubQContainer ScrubQueue::collect_ripe_jobs(ScrubQContainer& group
   return ripes;
 }
 
+// RRR should we keep preconds?
+
 // not holding jobs_lock. 'group' is a copy of the actual list.
-Scrub::schedule_result_t ScrubQueue::select_from_group(
+seastar::future<Scrub::schedule_result_t> ScrubQueue::select_from_group(
   ScrubQContainer& group, const Scrub::ScrubPreconds& preconds, utime_t now_is)
 {
   dout(15) << "jobs #: " << group.size() << dendl;
 
-  for (auto& candidate : group) {
+  if (group.empty()) {
+    return seastar::make_ready_future<Scrub::schedule_result_t>(
+      Scrub::schedule_result_t::none_ready);
+  }
 
-    // we expect the first job in the list to be a good candidate (if any)
+  auto candidate_it = group.begin();
 
-    dout(20) << "try initiating scrub for " << candidate->pgid << dendl;
+  return seastar::repeat_until_value([this, candidate_it, group, &preconds,
+				      now_is]() mutable {
+
+    if (candidate_it == group.end()) {
+      return seastar::make_ready_future<std::optional<Scrub::schedule_result_t>>(std::optional<Scrub::schedule_result_t>{
+	Scrub::schedule_result_t::none_ready});
+    }
+
+    auto& candidate = *candidate_it;
 
     if (preconds.only_deadlined && (candidate->schedule.deadline.is_zero() ||
 				    candidate->schedule.deadline >= now_is)) {
       dout(15) << " not scheduling scrub for " << candidate->pgid << " due to "
 	       << (preconds.time_permit ? "high load" : "time not permitting")
 	       << dendl;
-      continue;
+      return seastar::make_ready_future<std::optional<Scrub::schedule_result_t>>(
+	std::optional<Scrub::schedule_result_t>{std::nullopt});
     }
 
-    // we have a candidate to scrub. We turn to the OSD to verify that the PG
-    // configuration allows the specified type of scrub, and to initiate the
-    // scrub.
-    switch (osd_service.initiate_a_scrub(candidate->pgid,
-					 preconds.allow_requested_repair_only)) {
+    // candidate life?
+    // candidate_it life?
+    return osd_service
+      .initiate_a_scrub(candidate->pgid, preconds.allow_requested_repair_only)
+      .then([this, &candidate_it, &candidate](auto&& init_result) mutable -> seastar::future<std::optional<Scrub::schedule_result_t>> {
+	switch (init_result) {
 
-      case Scrub::schedule_result_t::scrub_initiated:
-	// the happy path. We are done
-	dout(20) << " initiated for " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::scrub_initiated;
+	  case Scrub::schedule_result_t::scrub_initiated:
+	    // the happy path. We are done
+	    dout(20) << " initiated for " << candidate->pgid << dendl;
+	    return seastar::make_ready_future<std::optional<Scrub::schedule_result_t>>(
+	      std::make_optional<Scrub::schedule_result_t>(
+		Scrub::schedule_result_t::scrub_initiated));
 
-      case Scrub::schedule_result_t::already_started:
-      case Scrub::schedule_result_t::preconditions:
-      case Scrub::schedule_result_t::bad_pg_state:
-	// continue with the next job
-	dout(20) << "failed (state/cond/started) " << candidate->pgid << dendl;
-	break;
+	  case Scrub::schedule_result_t::already_started:
+	  case Scrub::schedule_result_t::preconditions:
+	  case Scrub::schedule_result_t::bad_pg_state:
+	    // continue with the next job
+	    dout(20) << "failed (state/cond/started) " << candidate->pgid
+		     << dendl;
+	    break;
 
-      case Scrub::schedule_result_t::no_such_pg:
-	// The pg is no longer there
-	dout(20) << "failed (no pg) " << candidate->pgid << dendl;
-	break;
+	  case Scrub::schedule_result_t::no_such_pg:
+	    // The pg is no longer there
+	    dout(20) << "failed (no pg) " << candidate->pgid << dendl;
+	    break;
 
-      case Scrub::schedule_result_t::no_local_resources:
-	// failure to secure local resources. No point in trying the other
-	// PGs at this time. Note that this is not the same as replica resources
-	// failure!
-	dout(20) << "failed (local) " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::no_local_resources;
+	  case Scrub::schedule_result_t::no_local_resources:
+	    // failure to secure local resources. No point in trying the other
+	    // PGs at this time. Note that this is not the same as replica
+	    // resources failure!
+	    dout(20) << "failed (local) " << candidate->pgid << dendl;
+	    return seastar::make_ready_future<std::optional<Scrub::schedule_result_t>>(
+	      std::make_optional<Scrub::schedule_result_t>(
+		Scrub::schedule_result_t::no_local_resources));
 
-      case Scrub::schedule_result_t::none_ready:
-	// can't happen. Just for the compiler.
-	dout(5) << "failed !!! " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::none_ready;
-    }
-  }
-
-  dout(20) << " returning 'none ready' " << dendl;
-  return Scrub::schedule_result_t::none_ready;
+	  case Scrub::schedule_result_t::none_ready:
+	    // can't happen. Just for the compiler.
+	    dout(5) << "failed !!! " << candidate->pgid << dendl;
+	    return seastar::make_ready_future<std::optional<Scrub::schedule_result_t>>(
+	      std::make_optional<Scrub::schedule_result_t>(
+		Scrub::schedule_result_t::none_ready));
+	};
+	candidate_it++;
+	return seastar::make_ready_future<std::optional<Scrub::schedule_result_t>>(
+	  std::optional<Scrub::schedule_result_t>{std::nullopt});
+      });
+  });
 }
 
-ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
-  const sched_params_t& times) const
-{
-  ScrubQueue::scrub_schedule_t sched_n_dead{times.proposed_time,
-					    times.proposed_time};
-
-  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
-    dout(20) << "min t: " << times.min_interval
-	     << " osd: " << cct->_conf->osd_scrub_min_interval
-	     << " max t: " << times.max_interval
-	     << " osd: " << cct->_conf->osd_scrub_max_interval << dendl;
-
-    dout(20) << "at " << sched_n_dead.scheduled_at << " ratio "
-	     << cct->_conf->osd_scrub_interval_randomize_ratio << dendl;
-  }
-
-  if (times.is_must == ScrubQueue::must_scrub_t::not_mandatory) {
-
-    // if not explicitly requested, postpone the scrub with a random delay
-    double scrub_min_interval = times.min_interval > 0
-				  ? times.min_interval
-				  : cct->_conf->osd_scrub_min_interval;
-    double scrub_max_interval = times.max_interval > 0
-				  ? times.max_interval
-				  : cct->_conf->osd_scrub_max_interval;
-
-    sched_n_dead.scheduled_at += scrub_min_interval;
-    double r = rand() / (double)RAND_MAX;
-    sched_n_dead.scheduled_at +=
-      scrub_min_interval * cct->_conf->osd_scrub_interval_randomize_ratio * r;
-
-    if (scrub_max_interval <= 0) {
-      sched_n_dead.deadline = utime_t{};
-    } else {
-      sched_n_dead.deadline += scrub_max_interval;
-    }
-  }
-
-  dout(17) << "at (final) " << sched_n_dead.scheduled_at << " - "
-	   << sched_n_dead.deadline << dendl;
-  return sched_n_dead;
-}
+// int xx() {
+//   for (auto& candidate : group) {
+// 
+//     // we expect the first job in the list to be a good candidate (if any)
+// 
+//     dout(20) << "try initiating scrub for " << candidate->pgid << dendl;
+// 
+//     if (preconds.only_deadlined && (candidate->schedule.deadline.is_zero() ||
+// 				    candidate->schedule.deadline >= now_is)) {
+//       dout(15) << " not scheduling scrub for " << candidate->pgid << " due to "
+// 	       << (preconds.time_permit ? "high load" : "time not permitting")
+// 	       << dendl;
+//       continue;
+//     }
+// 
+//     // we have a candidate to scrub. We turn to the OSD to verify that the PG
+//     // configuration allows the specified type of scrub, and to initiate the
+//     // scrub.
+//     switch (osd_service.initiate_a_scrub(candidate->pgid,
+// 					 preconds.allow_requested_repair_only)) {
+// 
+//       case Scrub::schedule_result_t::scrub_initiated:
+// 	// the happy path. We are done
+// 	dout(20) << " initiated for " << candidate->pgid << dendl;
+// 	return Scrub::schedule_result_t::scrub_initiated;
+// 
+//       case Scrub::schedule_result_t::already_started:
+//       case Scrub::schedule_result_t::preconditions:
+//       case Scrub::schedule_result_t::bad_pg_state:
+// 	// continue with the next job
+// 	dout(20) << "failed (state/cond/started) " << candidate->pgid << dendl;
+// 	break;
+// 
+//       case Scrub::schedule_result_t::no_such_pg:
+// 	// The pg is no longer there
+// 	dout(20) << "failed (no pg) " << candidate->pgid << dendl;
+// 	break;
+// 
+//       case Scrub::schedule_result_t::no_local_resources:
+// 	// failure to secure local resources. No point in trying the other
+// 	// PGs at this time. Note that this is not the same as replica resources
+// 	// failure!
+// 	dout(20) << "failed (local) " << candidate->pgid << dendl;
+// 	return Scrub::schedule_result_t::no_local_resources;
+// 
+//       case Scrub::schedule_result_t::none_ready:
+// 	// can't happen. Just for the compiler.
+// 	dout(5) << "failed !!! " << candidate->pgid << dendl;
+// 	return Scrub::schedule_result_t::none_ready;
+//     }
+//   }
+// 
+//   dout(20) << " returning 'none ready' " << dendl;
+//   return Scrub::schedule_result_t::none_ready;
+// }
+// 
+// ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
+//   const sched_params_t& times) const
+// {
+//   ScrubQueue::scrub_schedule_t sched_n_dead{times.proposed_time,
+// 					    times.proposed_time};
+// 
+//   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+//     dout(20) << "min t: " << times.min_interval
+// 	     << " osd: " << cct->_conf->osd_scrub_min_interval
+// 	     << " max t: " << times.max_interval
+// 	     << " osd: " << cct->_conf->osd_scrub_max_interval << dendl;
+// 
+//     dout(20) << "at " << sched_n_dead.scheduled_at << " ratio "
+// 	     << cct->_conf->osd_scrub_interval_randomize_ratio << dendl;
+//   }
+// 
+//   if (times.is_must == ScrubQueue::must_scrub_t::not_mandatory) {
+// 
+//     // if not explicitly requested, postpone the scrub with a random delay
+//     double scrub_min_interval = times.min_interval > 0
+// 				  ? times.min_interval
+// 				  : cct->_conf->osd_scrub_min_interval;
+//     double scrub_max_interval = times.max_interval > 0
+// 				  ? times.max_interval
+// 				  : cct->_conf->osd_scrub_max_interval;
+// 
+//     sched_n_dead.scheduled_at += scrub_min_interval;
+//     double r = rand() / (double)RAND_MAX;
+//     sched_n_dead.scheduled_at +=
+//       scrub_min_interval * cct->_conf->osd_scrub_interval_randomize_ratio * r;
+// 
+//     if (scrub_max_interval <= 0) {
+//       sched_n_dead.deadline = utime_t{};
+//     } else {
+//       sched_n_dead.deadline += scrub_max_interval;
+//     }
+//   }
+// 
+//   dout(17) << "at (final) " << sched_n_dead.scheduled_at << " - "
+// 	   << sched_n_dead.deadline << dendl;
+//   return sched_n_dead;
+// }
 
 double ScrubQueue::scrub_sleep_time(bool must_scrub) const
 {

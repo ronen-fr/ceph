@@ -44,7 +44,9 @@ namespace crimson::osd {
 class ShardServices : public md_config_obs_t {
   using cached_map_t = boost::local_shared_ptr<const OSDMap>;
   OSDMapService &osdmap_service;
+public: // RRR
   const int whoami;
+private:
   crimson::net::Messenger &cluster_msgr;
   crimson::net::Messenger &public_msgr;
   crimson::mon::Client &monc;
@@ -88,6 +90,19 @@ public:
     return osdmap_service;
   }
 
+// private:
+//   /**
+//    * The entity that maintains the set of PGs we may scrub (i.e. - those that we
+//    * are their primary), and schedules their scrubbing.
+//    */
+//   ScrubQueue m_scrub_queue;
+// 
+// public:
+//   ScrubQueue& get_scrub_services() { return m_scrub_queue; } // RRR create it
+//   seastar::future<Scrub::schedule_result_t> initiate_a_scrub(spg_t pgid,
+// 						      bool allow_requested_repair_only);
+// 
+// >>>>>>> 6f0c486a94e... working on the Crimson scrub scheduler
   // Op Management
   OSDOperationRegistry registry;
   OperationThrottler throttler;
