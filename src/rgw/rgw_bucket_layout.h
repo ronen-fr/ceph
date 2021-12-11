@@ -135,7 +135,7 @@ void decode_json_obj(bucket_log_layout_generation& l, JSONObj *obj);
 
 // return a log layout that shares its layout with the index
 inline bucket_log_layout_generation log_layout_from_index(
-    uint64_t gen, const bucket_index_layout_generation& index)
+  uint64_t gen, /* const */ bucket_index_layout_generation& index)
 {
   return {gen, {BucketLogType::InIndex, {index.gen, index.layout.normal}}};
 }

@@ -2275,7 +2275,7 @@ void RGWBucketInfo::decode(bufferlist::const_iterator& bl) {
 
   if (layout.logs.empty() &&
       layout.current_index.layout.type == rgw::BucketIndexType::Normal) {
-    layout.logs.push_back(rgw::log_layout_from_index(0, layout.current_index.layout.normal));
+    layout.logs.push_back(rgw::log_layout_from_index(0, layout.current_index));
   }
   DECODE_FINISH(bl);
 }
