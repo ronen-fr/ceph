@@ -16,6 +16,8 @@
 #include "crimson/osd/osdmap_service.h"
 #include "crimson/osd/object_context.h"
 #include "common/AsyncReserver.h"
+#include "crimson/common/logclient.h"
+
 
 namespace crimson::net {
   class Messenger;
@@ -34,8 +36,8 @@ namespace crimson::os {
 }
 
 class OSDMap;
-class PeeringCtx;
-class BufferedRecoveryMessages;
+struct PeeringCtx;
+struct BufferedRecoveryMessages;
 
 namespace crimson::osd {
 
@@ -91,17 +93,13 @@ public:
     return osdmap_service;
   }
 
-private:
-  /**
-   * The entity that maintains the set of PGs we may scrub (i.e. - those that we
-   * are their primary), and schedules their scrubbing.
-   */
-  //ScrubQueue m_scrub_queue;
+  LogClient log_client;
+  LogChannel::Ref clog;
+  bool is_recovery_active() { /* RRR !!! */ return false; }
+
+//private:
 
 public:
-  //ScrubQueue& get_scrub_services() { return m_scrub_queue; } // RRR create it
-  //seastar::future<Scrub::schedule_result_t> initiate_a_scrub(spg_t pgid,
-//						      bool allow_requested_repair_only);
 
   // Op Management
   OSDOperationRegistry registry;

@@ -89,13 +89,14 @@ OSD::OSD(int id, uint32_t nonce,
     store{store},
     shard_services{*this, whoami, *cluster_msgr, *public_msgr, *monc, *mgrc, store},
     heartbeat{new Heartbeat{whoami, shard_services, *monc, hb_front_msgr, hb_back_msgr}},
+    scrub_scheduler{nullptr, *this},
     // do this in background
     tick_timer{[this] {
       update_heartbeat_peers();
       update_stats();
+      (void)sched_scrub();
     }},
     asok{seastar::make_lw_shared<crimson::admin::AdminSocket>()},
-    m_scrub_queue{nullptr, *this},
     osdmap_gate("OSD::osdmap_gate", std::make_optional(std::ref(shard_services))),
     log_client(cluster_msgr.get(), LogClient::NO_FLAGS),
     clog(log_client.create_channel())
@@ -1463,6 +1464,89 @@ seastar::future<> OSD::prepare_to_stop()
     });
   }
   return seastar::now();
+}
+
+void OSD::scrub_tick()
+{
+  static int down_counter = 0;
+  if (down_counter > 0) {
+    down_counter--;
+    return;
+  }
+  down_counter = 10;
+    // RRR should be local_conf().get_val<int64_t>("osd_scrub_down_counter");
+  static thread_local seastar::semaphore limit(1);
+  (void)seastar::with_semaphore(limit, 1, [this]() mutable { (void)sched_scrub(); });
+}
+
+seastar::future<> OSD::sched_scrub()
+{
+  if (!state.is_active()) {
+    return seastar::now();
+  }
+  if (scrub_random_backoff()) {
+    return seastar::now();
+  }
+
+  // fail fast if no resources are available
+  if (!scrub_scheduler.can_inc_scrubs()) {
+    logger().info("{}: OSD cannot incr scrub", __func__);
+    return seastar::now();
+  }
+
+  // if there is a PG that is just now trying to reserve scrub replica resources
+  // - we should wait and not initiate a new scrub
+  if (scrub_scheduler.is_reserving_now()) {
+    logger().info("{}: scrub resources reservation in progress", __func__);
+    return seastar::now();
+  }
+
+  // find something to scrub
+
+  Scrub::ScrubPreconds env_conditions;
+
+  if (false /* RRR state.is_recovery_active()*/ &&
+      !local_conf()->osd_scrub_during_recovery) {
+    if (!local_conf()->osd_repair_during_recovery) {
+      logger().info("{}: not scheduling scrubs due to active recovery",
+		    __func__);
+      return seastar::now();
+    }
+    logger().info(
+      "{}: scheduling explicitly requested repair due to active recovery",
+      __func__);
+    env_conditions.allow_requested_repair_only = true;
+  }
+
+  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+    logger().debug("{}: scrub_sched_start", __func__);
+    auto all_jobs = scrub_scheduler.list_registered_jobs();
+    for (const auto& sj : all_jobs) {
+      logger().debug("{}: sched_scrub scrub-queue jobs: {}", __func__, *sj);
+    }
+  }
+
+  return scrub_scheduler.select_pg_and_scrub(env_conditions)
+    .then([](auto was_started) {
+      logger().info("{}: sched_scrub done ({})", __func__,
+		    ScrubQueue::attempt_res_text(was_started));
+      return seastar::now();
+    });
+}
+
+
+/// \todo RRR move to the scrub-queue
+bool OSD::scrub_random_backoff()
+{
+  bool coin_flip =
+    (rand() / (double)RAND_MAX >= local_conf()->osd_scrub_backoff_ratio);
+
+  /* RRR for now */ coin_flip = true;
+  if (!coin_flip) {
+    logger().info("scrub_random_backoff lost coin flip, randomly backing off");
+    return true;
+  }
+  return false;
 }
 
 
