@@ -6,6 +6,7 @@
 #include "crimson/osd/osd_operations/osdop_params.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 //#include "crimson/osd/osd_operations/scrub_event.h"
+#include <fmt/format.h>
 #include "include/types.h"
 #include "os/ObjectStore.h"
 
@@ -117,6 +118,27 @@ struct requested_scrub_t {
   friend std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
 };
 
+template <> struct fmt::formatter<requested_scrub_t> {
+
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext> auto format(const requested_scrub_t& plan, FormatContext& ctx)
+  {
+    return format_to(ctx.out(), "{}{}{}{}{}{}{}{}{}"
+                     , plan.must_scrub ? " must_scrub" : ""
+                     , plan.req_scrub ? " req_scrub" : ""
+                     , plan.need_auto ? " need_auto" : ""
+                     , plan.must_deep_scrub ? " must_deep_scrub" : ""
+                     , plan.time_for_deep ? " time_for_deep" : ""
+                     , plan.deep_scrub_on_error ? " deep_scrub_on_error" : ""
+                     , plan.must_repair ? " must_repair" : ""
+                     , plan.auto_repair ? " auto_repair" : ""
+                     , plan.check_repair ? "check_repair" : ""
+                     );
+  }
+};
+
+std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
 
 /**
  *  The interface used by the PG when requesting scrub-related info or services
@@ -170,7 +192,7 @@ struct ScrubPgIF {
 
   virtual void send_local_map_done(epoch_t epoch_queued) = 0; // crimson
 
-  virtual void send_oninit_done(epoch_t epoch_queued) = 0; // crimson
+  //virtual void send_oninit_done(epoch_t epoch_queued) = 0; // crimson
 
   virtual void send_get_next_chunk(epoch_t epoch_queued) = 0; // crimson + new in Classic
 
@@ -308,16 +330,16 @@ struct ScrubPgIF {
   virtual bool reserve_local() = 0;
 
   // virtual void handle_scrub_reserve_op(Ref<MOSDScrubReserve> req, pg_shard_t from) = 0;
-  virtual void handle_scrub_reserve_op(const MOSDScrubReserve& req, pg_shard_t from) = 0;
+  //virtual void handle_scrub_reserve_op(const MOSDScrubReserve& req, pg_shard_t from) = 0;
 
-  virtual void handle_scrub_map_request(const MOSDRepScrub& req, pg_shard_t from) = 0;
+  //virtual void handle_scrub_map_request(const MOSDRepScrub& req, pg_shard_t from) = 0;
 
-  virtual void map_from_replica(const MOSDRepScrubMap& msg, pg_shard_t from) = 0;
+  //virtual void map_from_replica(const MOSDRepScrubMap& msg, pg_shard_t from) = 0;
 
   // on the replica:
   // virtual void handle_scrub_reserve_request(crimson::osd::RemoteScrubEvent op) = 0;
-  virtual void handle_scrub_reserve_request(const MOSDScrubReserve& req,
-					    pg_shard_t from) = 0;
+  ////virtual void handle_scrub_reserve_request(const MOSDScrubReserve& req,
+  ////					    pg_shard_t from) = 0;
   // virtual void handle_scrub_reserve_request(Ref<MOSDScrubReserve> req, pg_shard_t from)
   // = 0;
 
@@ -334,8 +356,8 @@ struct ScrubPgIF {
   //virtual void reg_next_scrub(const requested_scrub_t& request_flags) = 0;
   //virtual void unreg_next_scrub() = 0;
 
-  virtual void register_with_osd() = 0;
-  virtual void unregister_from_osd() = 0;
+  //virtual void register_with_osd() = 0;
+  //virtual void unregister_from_osd() = 0;
 
   virtual void scrub_requested(scrub_level_t scrub_level,
 			       scrub_type_t scrub_type,

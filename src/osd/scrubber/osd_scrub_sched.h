@@ -13,6 +13,10 @@
 #include "common/ceph_atomic.h"
 #include "osd/osd_types.h"
 #include "osd/scrubber_common.h"
+//#include <fmt/format.h>
+//#include "common/hobject.h"
+//#include "include/types_fmt.h"
+#include "osd/osd_types_fmt.h"
 
 #include "utime.h"
 
@@ -350,3 +354,15 @@ class ScrubQueue {
 					     const Scrub::ScrubPreconds& preconds,
 					     utime_t now_is);
 };
+
+// template <>
+// struct fmt::formatter<ScrubQueue::ScrubJob> {
+//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+// 
+//   template <typename FormatContext>
+//   auto format(const ScrubQueue::ScrubJob& sjob, FormatContext& ctx)
+//   {
+//     return fmt::format_to(ctx.out(), "{}.{}:{}", req_id.name, req_id.inc,
+// 			  req_id.tid);
+//   }
+// };
