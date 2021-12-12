@@ -42,7 +42,7 @@ ShardServices::ShardServices(
       monc(monc),
       mgrc(mgrc),
       store(store),
-      m_scrub_queue{&cct, *this},
+      //m_scrub_queue{&cct, *this},
       throttler(crimson::common::local_conf()),
       obc_registry(crimson::common::local_conf()),
       local_reserver(
@@ -309,4 +309,4 @@ seastar::future<> ShardServices::send_alive(const epoch_t want)
   }
 }
 
-};
+}

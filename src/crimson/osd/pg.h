@@ -89,6 +89,10 @@ class PG : public boost::intrusive_ref_counter<
   seastar::timer<seastar::lowres_clock> check_readable_timer;
   seastar::timer<seastar::lowres_clock> renew_lease_timer;
 
+  /// the 'scrubber'. Will be allocated in the derivative (PrimaryLogPG) ctor,
+  /// and be removed only in the PrimaryLogPG destructor.
+  std::unique_ptr<ScrubPgIF> m_scrubber;
+
 public:
   template <typename T = void>
   using interruptible_future =
@@ -487,6 +491,16 @@ public:
 
   seastar::future<> read_state(crimson::os::FuturizedStore* store);
 
+  // -------------- some scrubber-related stuff --------------
+  // ------------- which I don't know what interface it should implement -------------
+
+  seastar::future<Scrub::schedule_result_t> sched_scrub();
+
+  bool is_scrub_queued_or_active() const {
+    return m_scrubber->is_queued_or_active();
+  }
+
+
   void do_peering_event(
     PGPeeringEvent& evt, PeeringCtx &rctx);
 
@@ -637,6 +651,10 @@ public:
     return shard_services;
   }
   seastar::future<> stop();
+
+  /// flags detailing scheduling/operation characteristics of the next scrub 
+  requested_scrub_t m_planned_scrub; // RRR why public? refactor
+
 private:
   std::unique_ptr<PGBackend> backend;
   std::unique_ptr<RecoveryBackend> recovery_backend;
