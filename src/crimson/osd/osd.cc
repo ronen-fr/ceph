@@ -95,6 +95,7 @@ OSD::OSD(int id, uint32_t nonce,
       update_stats();
     }},
     asok{seastar::make_lw_shared<crimson::admin::AdminSocket>()},
+    m_scrub_queue{nullptr, *this},
     osdmap_gate("OSD::osdmap_gate", std::make_optional(std::ref(shard_services))),
     log_client(cluster_msgr.get(), LogClient::NO_FLAGS),
     clog(log_client.create_channel())
@@ -1462,6 +1463,39 @@ seastar::future<> OSD::prepare_to_stop()
     });
   }
   return seastar::now();
+}
+
+
+seastar::future<Scrub::schedule_result_t> OSD::initiate_a_scrub(spg_t pgid,
+						      bool allow_requested_repair_only)
+{
+  logger().info("{}: trying to initiate a scrubbing of {}", __func__, pgid);
+
+  // we have a candidate to scrub. We need some PG information to know if scrubbing is
+  // allowed
+
+  Ref<PG> pg = get_pg(pgid);
+  if (!pg) {
+    // the PG was dequeued in the short timespan between creating the candidates list
+    // (collect_ripe_jobs()) and here
+    logger().info("{}: pg {} not found", __func__, pgid);
+    return seastar::make_ready_future<Scrub::schedule_result_t>(Scrub::schedule_result_t::no_such_pg);
+  }
+
+  // This has already started, so go on to the next scrub job
+  if (pg->is_scrub_queued_or_active()) {
+    //pg->unlock();
+    logger().info("{}: scrubbing already in progress for pg {}", __func__, pgid);
+    return seastar::make_ready_future<Scrub::schedule_result_t>(Scrub::schedule_result_t::already_started);
+  }
+  // Skip other kinds of scrubbing if only explicitly requested repairing is allowed
+  if (allow_requested_repair_only && !pg->m_planned_scrub.must_repair) {
+    //pg->unlock();
+    logger().info("{}: skipping {} because repairing is not explicitly requested on it", __func__, pgid);
+    return seastar::make_ready_future<Scrub::schedule_result_t>(Scrub::schedule_result_t::preconditions);
+  }
+
+  return pg->sched_scrub();
 }
 
 }
