@@ -3,6 +3,7 @@
 
 #include "crimson/osd/shard_services.h"
 
+#include "crimson/common/logclient.h"
 #include "messages/MOSDAlive.h"
 #include "messages/MOSDPGCreated.h"
 #include "messages/MOSDPGTemp.h"
@@ -42,7 +43,8 @@ ShardServices::ShardServices(
       monc(monc),
       mgrc(mgrc),
       store(store),
-      //m_scrub_queue{&cct, *this},
+      log_client{cluster_msgr.get(), LogClient::NO_FLAGS},
+      clog{log_client.create_channel()},
       throttler(crimson::common::local_conf()),
       obc_registry(crimson::common::local_conf()),
       local_reserver(

@@ -16,6 +16,8 @@
 #include "crimson/osd/osdmap_service.h"
 #include "crimson/osd/object_context.h"
 #include "common/AsyncReserver.h"
+#include "crimson/common/logclient.h"
+
 
 namespace crimson::net {
   class Messenger;
@@ -90,6 +92,9 @@ public:
   const OSDMapService &get_osdmap_service() const {
     return osdmap_service;
   }
+
+  LogClient log_client;
+  LogChannel::Ref clog;
 
 private:
   /**
