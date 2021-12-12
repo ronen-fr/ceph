@@ -7,6 +7,7 @@
 #include "crimson/osd/osd_operations/osdop_params.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 //#include "crimson/osd/osd_operations/scrub_event.h"
+#include <fmt/format.h>
 #include "include/types.h"
 #include "os/ObjectStore.h"
 
@@ -120,6 +121,26 @@ struct requested_scrub_t {
    * Otherwise - PG_STATE_FAILED_REPAIR will be asserted.
    */
   bool check_repair{false};
+};
+
+template <> struct fmt::formatter<requested_scrub_t> {
+
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext> auto format(const requested_scrub_t& plan, FormatContext& ctx)
+  {
+    return format_to(ctx.out(), "{}{}{}{}{}{}{}{}{}"
+                     , plan.must_scrub ? " must_scrub" : ""
+                     , plan.req_scrub ? " req_scrub" : ""
+                     , plan.need_auto ? " need_auto" : ""
+                     , plan.must_deep_scrub ? " must_deep_scrub" : ""
+                     , plan.time_for_deep ? " time_for_deep" : ""
+                     , plan.deep_scrub_on_error ? " deep_scrub_on_error" : ""
+                     , plan.must_repair ? " must_repair" : ""
+                     , plan.auto_repair ? " auto_repair" : ""
+                     , plan.check_repair ? "check_repair" : ""
+                     );
+  }
 };
 
 std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
@@ -360,7 +381,7 @@ struct ScrubPgIF {
   //virtual void unreg_next_scrub() = 0;
 
   virtual void register_with_osd() = 0;
-  virtual void unregister_from_osd() = 0;
+  //virtual void unregister_from_osd() = 0;
 
   virtual void rm_from_osd_scrubbing() = 0;
 
