@@ -32,6 +32,7 @@ add_executable(crimson-osd
   pg_interval_interrupt_condition.cc
   objclass.cc
   ${PROJECT_SOURCE_DIR}/src/crimson/osd/scrubber/osd_scrub_sched.cc
+  ${PROJECT_SOURCE_DIR}/src/crimson/osd/scrubber/pg_scrubber.cc
   ${PROJECT_SOURCE_DIR}/src/objclass/class_api.cc
   ${PROJECT_SOURCE_DIR}/src/osd/ClassHandler.cc
   ${PROJECT_SOURCE_DIR}/src/osd/osd_op_util.cc

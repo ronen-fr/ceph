@@ -19,6 +19,7 @@
 #else
 #include "osd/scrubber_common.h"
 #endif
+#include "osd/osd_types_fmt.h"
 
 #include "utime.h"
 
@@ -274,7 +275,7 @@ class ScrubQueue {
   [[nodiscard]] std::optional<double> update_load_average();
 
  private:
-  CephContext* cct;
+  CephContext* cct;  // RRR fix this faked, not really wanted, pointer
   OSDSvc& osd_service;
 
   /**
@@ -364,3 +365,17 @@ class ScrubQueue {
 				     utime_t now_is);
 };
 
+template <>
+struct fmt::formatter<ScrubQueue::ScrubJob> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const ScrubQueue::ScrubJob& sjob, FormatContext& ctx)
+  {
+    return fmt::format_to(ctx.out(), "{}, {} dead: {} - {} / failure: {} / pen. t.o.: {} / queue state: {}",
+                          sjob.pgid, sjob.schedule.scheduled_at,
+                          sjob.schedule.deadline, sjob.registration_state(),
+                          sjob.resources_failure, sjob.penalty_timeout,
+                          ScrubQueue::qu_state_text(sjob.state));
+  }
+};

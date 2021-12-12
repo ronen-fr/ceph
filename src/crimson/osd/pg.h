@@ -35,11 +35,11 @@
 #include "crimson/osd/pg_recovery_listener.h"
 #include "crimson/osd/recovery_backend.h"
 
-class MQuery;
+struct MQuery;
 class OSDMap;
 class PGBackend;
 class PGPeeringEvent;
-class osd_op_params_t;
+struct osd_op_params_t;
 class PgScrubber;
 class ScrubBackend;
 
@@ -643,6 +643,8 @@ private:
 
 public:
   cached_map_t get_osdmap() { return osdmap; }
+  const cached_map_t get_osdmap() const { return osdmap; }
+
   eversion_t next_version() {
     return eversion_t(get_osdmap_epoch(),
 		      ++projected_last_update.version);
@@ -795,6 +797,32 @@ private:
 
 private:
   BackfillRecovery::BackfillRecoveryPipeline backfill_pipeline;
+
+  // auxiliaries used by sched_scrub():
+
+  double next_deepscrub_interval() const;
+
+  /// should we perform deep scrub?
+  bool is_time_for_deep(bool allow_deep_scrub,
+		        bool allow_scrub,
+		        bool has_deep_errors,
+		        const requested_scrub_t& planned) const;
+
+  /**
+   * Verify the various 'next scrub' flags in m_planned_scrub against configuration
+   * and scrub-related timestamps.
+   *
+   * @returns an updated copy of the m_planned_flags (or nothing if no scrubbing)
+   */
+  std::optional<requested_scrub_t> verify_scrub_mode() const;
+
+  bool verify_periodic_scrub_mode(bool allow_deep_scrub,
+				  bool try_to_auto_repair,
+				  bool allow_regular_scrub,
+				  bool has_deep_errors,
+				  requested_scrub_t& planned) const;
+
+
 
   friend class IOInterruptCondition;
 };
