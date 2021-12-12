@@ -308,4 +308,4 @@ seastar::future<> ShardServices::send_alive(const epoch_t want)
   }
 }
 
-};
+}
