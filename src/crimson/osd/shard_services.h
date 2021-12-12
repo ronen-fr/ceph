@@ -90,19 +90,18 @@ public:
     return osdmap_service;
   }
 
-// private:
-//   /**
-//    * The entity that maintains the set of PGs we may scrub (i.e. - those that we
-//    * are their primary), and schedules their scrubbing.
-//    */
-//   ScrubQueue m_scrub_queue;
-// 
-// public:
-//   ScrubQueue& get_scrub_services() { return m_scrub_queue; } // RRR create it
-//   seastar::future<Scrub::schedule_result_t> initiate_a_scrub(spg_t pgid,
-// 						      bool allow_requested_repair_only);
-// 
-// >>>>>>> 6f0c486a94e... working on the Crimson scrub scheduler
+private:
+  /**
+   * The entity that maintains the set of PGs we may scrub (i.e. - those that we
+   * are their primary), and schedules their scrubbing.
+   */
+  //ScrubQueue m_scrub_queue;
+
+public:
+  //ScrubQueue& get_scrub_services() { return m_scrub_queue; } // RRR create it
+  //seastar::future<Scrub::schedule_result_t> initiate_a_scrub(spg_t pgid,
+//						      bool allow_requested_repair_only);
+
   // Op Management
   OSDOperationRegistry registry;
   OperationThrottler throttler;

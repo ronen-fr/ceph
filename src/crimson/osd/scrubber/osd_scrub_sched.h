@@ -23,13 +23,16 @@
 namespace crimson::osd {
 class PG;
 class ShardServices;
+class OSD;
 }
 
 #ifdef WITH_SEASTAR
-using CephContext=crimson::common::CephContext;
-using OSDService=crimson::osd::ShardServices;
-else
-
+using CephContext = crimson::common::CephContext;
+//using OSDSvc = crimson::osd::ShardServices;
+using OSDSvc = crimson::osd::OSD;
+using PG = crimson::osd::PG;
+#else
+using OSDSvc=OSDService;
 #endif
 
 namespace Scrub {

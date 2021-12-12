@@ -89,31 +89,32 @@ ScrubQueue::ScrubQueue(CephContext* cct, OSDService& osds)
     : cct{cct}, osd_service{osds}
 {
   // initialize the daily loadavg with current 15min loadavg
-  if (double loadavgs[3]; getloadavg(loadavgs, 3) == 3) {
-    daily_loadavg = loadavgs[2];
-  } else {
-    derr << "OSD::init() : couldn't read loadavgs\n" << dendl;
-    daily_loadavg = 1.0;
-  }
+//   if (double loadavgs[3]; getloadavg(loadavgs, 3) == 3) {
+//     daily_loadavg = loadavgs[2];
+//   } else {
+//     derr << "OSD::init() : couldn't read loadavgs\n" << dendl;
+//     daily_loadavg = 1.0;
+//   }
+  daily_loadavg = 1.0;
 }
 
 std::optional<double> ScrubQueue::update_load_average()
 {
-  int hb_interval = cct->_conf->osd_heartbeat_interval;
-  int n_samples = 60 * 24 * 24;
-  if (hb_interval > 1) {
-    n_samples /= hb_interval;
-    if (n_samples < 1)
-      n_samples = 1;
-  }
-
-  // get CPU load avg
-  double loadavg;
-  if (getloadavg(&loadavg, 1) == 1) {
-    daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavg) / n_samples;
-    dout(17) << "heartbeat: daily_loadavg " << daily_loadavg << dendl;
-    return 100 * loadavg;
-  }
+//   int hb_interval = cct->_conf->osd_heartbeat_interval;
+//   int n_samples = 60 * 24 * 24;
+//   if (hb_interval > 1) {
+//     n_samples /= hb_interval;
+//     if (n_samples < 1)
+//       n_samples = 1;
+//   }
+// 
+//   // get CPU load avg
+//   double loadavg;
+//   if (getloadavg(&loadavg, 1) == 1) {
+//     daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavg) / n_samples;
+//     dout(17) << "heartbeat: daily_loadavg " << daily_loadavg << dendl;
+//     return 100 * loadavg;
+//   }
 
   return std::nullopt;
 }
@@ -452,7 +453,8 @@ seastar::future<Scrub::schedule_result_t> ScrubQueue::select_from_group(
     // candidate_it life?
     return osd_service
       .initiate_a_scrub(candidate->pgid, preconds.allow_requested_repair_only)
-      .then([this, &candidate_it, &candidate](auto&& init_result) mutable -> seastar::future<std::optional<Scrub::schedule_result_t>> {
+      .then([this, &candidate_it](auto&& init_result) mutable -> seastar::future<std::optional<Scrub::schedule_result_t>> {
+        auto& candidate = *candidate_it;
 	switch (init_result) {
 
 	  case Scrub::schedule_result_t::scrub_initiated:
@@ -491,6 +493,7 @@ seastar::future<Scrub::schedule_result_t> ScrubQueue::select_from_group(
 	      std::make_optional<Scrub::schedule_result_t>(
 		Scrub::schedule_result_t::none_ready));
 	};
+
 	candidate_it++;
 	return seastar::make_ready_future<std::optional<Scrub::schedule_result_t>>(
 	  std::optional<Scrub::schedule_result_t>{std::nullopt});
@@ -554,48 +557,49 @@ seastar::future<Scrub::schedule_result_t> ScrubQueue::select_from_group(
 //   return Scrub::schedule_result_t::none_ready;
 // }
 // 
-// ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
-//   const sched_params_t& times) const
-// {
-//   ScrubQueue::scrub_schedule_t sched_n_dead{times.proposed_time,
-// 					    times.proposed_time};
-// 
-//   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
-//     dout(20) << "min t: " << times.min_interval
-// 	     << " osd: " << cct->_conf->osd_scrub_min_interval
-// 	     << " max t: " << times.max_interval
-// 	     << " osd: " << cct->_conf->osd_scrub_max_interval << dendl;
-// 
-//     dout(20) << "at " << sched_n_dead.scheduled_at << " ratio "
-// 	     << cct->_conf->osd_scrub_interval_randomize_ratio << dendl;
-//   }
-// 
-//   if (times.is_must == ScrubQueue::must_scrub_t::not_mandatory) {
-// 
-//     // if not explicitly requested, postpone the scrub with a random delay
-//     double scrub_min_interval = times.min_interval > 0
-// 				  ? times.min_interval
-// 				  : cct->_conf->osd_scrub_min_interval;
-//     double scrub_max_interval = times.max_interval > 0
-// 				  ? times.max_interval
-// 				  : cct->_conf->osd_scrub_max_interval;
-// 
-//     sched_n_dead.scheduled_at += scrub_min_interval;
-//     double r = rand() / (double)RAND_MAX;
-//     sched_n_dead.scheduled_at +=
-//       scrub_min_interval * cct->_conf->osd_scrub_interval_randomize_ratio * r;
-// 
-//     if (scrub_max_interval <= 0) {
-//       sched_n_dead.deadline = utime_t{};
-//     } else {
-//       sched_n_dead.deadline += scrub_max_interval;
-//     }
-//   }
-// 
-//   dout(17) << "at (final) " << sched_n_dead.scheduled_at << " - "
-// 	   << sched_n_dead.deadline << dendl;
-//   return sched_n_dead;
-// }
+ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
+  const sched_params_t& times) const
+{
+  ScrubQueue::scrub_schedule_t sched_n_dead{times.proposed_time,
+					    times.proposed_time};
+
+  //if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+  if (true) {
+    dout(20) << "min t: " << times.min_interval
+	     << " osd: " << cct->_conf->osd_scrub_min_interval
+	     << " max t: " << times.max_interval
+	     << " osd: " << cct->_conf->osd_scrub_max_interval << dendl;
+
+    dout(20) << "at " << sched_n_dead.scheduled_at << " ratio "
+	     << cct->_conf->osd_scrub_interval_randomize_ratio << dendl;
+  }
+
+  if (times.is_must == ScrubQueue::must_scrub_t::not_mandatory) {
+
+    // if not explicitly requested, postpone the scrub with a random delay
+    double scrub_min_interval = times.min_interval > 0
+				  ? times.min_interval
+				  : cct->_conf->osd_scrub_min_interval;
+    double scrub_max_interval = times.max_interval > 0
+				  ? times.max_interval
+				  : cct->_conf->osd_scrub_max_interval;
+
+    sched_n_dead.scheduled_at += scrub_min_interval;
+    double r = rand() / (double)RAND_MAX;
+    sched_n_dead.scheduled_at +=
+      scrub_min_interval * cct->_conf->osd_scrub_interval_randomize_ratio * r;
+
+    if (scrub_max_interval <= 0) {
+      sched_n_dead.deadline = utime_t{};
+    } else {
+      sched_n_dead.deadline += scrub_max_interval;
+    }
+  }
+
+  dout(17) << "at (final) " << sched_n_dead.scheduled_at << " - "
+	   << sched_n_dead.deadline << dendl;
+  return sched_n_dead;
+}
 
 double ScrubQueue::scrub_sleep_time(bool must_scrub) const
 {
@@ -612,8 +616,11 @@ double ScrubQueue::scrub_sleep_time(bool must_scrub) const
   return std::max(extended_sleep, regular_sleep_period);
 }
 
+// RRR replace with seastar's load_average
 bool ScrubQueue::scrub_load_below_threshold() const
 {
+  return true;
+#if 0
   double loadavgs[3];
   if (getloadavg(loadavgs, 3) != 3) {
     dout(10) << __func__ << " couldn't read loadavgs\n" << dendl;
@@ -641,6 +648,7 @@ bool ScrubQueue::scrub_load_below_threshold() const
 	   << daily_loadavg << " or >= 15m avg " << loadavgs[2] << ") = no"
 	   << dendl;
   return false;
+#endif
 }
 
 
