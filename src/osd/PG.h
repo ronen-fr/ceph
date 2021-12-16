@@ -649,8 +649,9 @@ private:
   double next_deepscrub_interval() const;
 
   /// should we perform deep scrub?
-  bool is_time_for_deep(bool allow_deep_scrub,
-		        bool allow_scrub,
+  bool is_time_for_deep(/*bool allow_deep_scrub,
+		        bool allow_scrub,*/
+                        Scrub::AllowedModes allowed_modes,
 		        bool has_deep_errors,
 		        const requested_scrub_t& planned) const;
 
@@ -662,9 +663,10 @@ private:
    */
   std::optional<requested_scrub_t> verify_scrub_mode() const;
 
-  bool verify_periodic_scrub_mode(bool allow_deep_scrub,
+  bool verify_periodic_scrub_mode(/*bool allow_deep_scrub,*/
+                                  Scrub::AllowedModes allowed_modes,
 				  bool try_to_auto_repair,
-				  bool allow_regular_scrub,
+				  //bool allow_regular_scrub,
 				  bool has_deep_errors,
 				  requested_scrub_t& planned) const;
 

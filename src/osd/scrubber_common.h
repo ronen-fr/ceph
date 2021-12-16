@@ -2,6 +2,10 @@
 // vim: ts=8 sw=2 smarttab
 #pragma once
 
+#include <fmt/format.h>
+#include <fmt/core.h>
+
+#include "common/bitmask.hpp"
 #include "common/scrub_types.h"
 #include "include/types.h"
 #include "os/ObjectStore.h"
@@ -29,7 +33,46 @@ struct ScrubPreconds {
   bool only_deadlined{false};
 };
 
+/// combining computed set of allowed scrub modes
+enum class allowed_mode_t : uint_fast16_t { scrub_ok = 0x1, deep_ok = 0x2, periodic_ok=0x4 };
+BITMASK_DEFINE_MAX_ELEMENT(allowed_mode_t, periodic_ok)
+
+using AllowedModes = bitmask::bitmask<allowed_mode_t>;
+
 }  // namespace Scrub
+
+template <>
+struct fmt::formatter<Scrub::allowed_mode_t> {
+
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::allowed_mode_t& alwd, FormatContext& ctx)
+  {
+    switch (alwd) {
+      case Scrub::allowed_mode_t::scrub_ok:
+        return format_to(ctx.out(), "scrub_ok");
+      case Scrub::allowed_mode_t::deep_ok:
+        return format_to(ctx.out(), "deep_ok");
+      default:
+        return format_to(ctx.out(), "unknown");
+    }
+  }
+};
+
+template <>
+struct fmt::formatter<Scrub::AllowedModes> {
+
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::AllowedModes& alwd, FormatContext& ctx)
+  {
+    return fmt::format_to(ctx.out(), "[{},{}]",
+                          (alwd & allowed_mode_t::shallow) ? "shallow+" : "shallow-",
+                          (alwd & allowed_mode_t::deep) ? "deep+" : "deep-");
+  }
+};
 
 
 /**

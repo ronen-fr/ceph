@@ -1386,11 +1386,17 @@ double PG::next_deepscrub_interval() const
   return info.history.last_deep_scrub_stamp + deep_scrub_interval;
 }
 
-bool PG::is_time_for_deep(bool allow_deep_scrub,
-			  bool allow_scrub,
+// bool PG::is_time_for_deep(bool allow_deep_scrub,
+// 			  bool allow_scrub,
+// 			  bool has_deep_errors,
+// 			  const requested_scrub_t& planned) const
+bool PG::is_time_for_deep(Scrub::AllowedModes allowed_modes,
 			  bool has_deep_errors,
 			  const requested_scrub_t& planned) const
 {
+  bool allow_deep_scrub =
+    allowed_modes.test(Scrub::allowed_mode_t::deep_ok);
+
   dout(10) << __func__ << ": need_auto?" << planned.need_auto << " allow_deep_scrub? "
 	   << allow_deep_scrub << dendl;
 
@@ -1416,7 +1422,7 @@ bool PG::is_time_for_deep(bool allow_deep_scrub,
 
   // we only flip coins if 'allow_scrub' is asserted. Otherwise - as this function is
   // called often, we will probably be deep-scrubbing most of the time.
-  if (allow_scrub) {
+  if (allowed_modes.test(Scrub::allowed_mode_t::scrub_ok)) {
     bool deep_coin_flip =
       (rand() % 100) < cct->_conf->osd_deep_scrub_randomize_ratio * 100;
 
@@ -1430,9 +1436,10 @@ bool PG::is_time_for_deep(bool allow_deep_scrub,
   return false;
 }
 
-bool PG::verify_periodic_scrub_mode(bool allow_deep_scrub,
+bool PG::verify_periodic_scrub_mode(Scrub::AllowedModes allowed_modes,
+                              /*bool allow_deep_scrub,
+			      bool allow_regular_scrub,*/
 			      bool try_to_auto_repair,
-			      bool allow_regular_scrub,
 			      bool has_deep_errors,
 			      requested_scrub_t& planned) const
 
