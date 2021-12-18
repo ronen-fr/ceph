@@ -383,7 +383,7 @@ struct ScrubPgIF {
   //virtual void register_with_osd() = 0;
   //virtual void unregister_from_osd() = 0;
 
-  //virtual void rm_from_osd_scrubbing() = 0;
+  virtual void rm_from_osd_scrubbing() = 0;
 
   virtual void scrub_requested(scrub_level_t scrub_level,
 			       scrub_type_t scrub_type,

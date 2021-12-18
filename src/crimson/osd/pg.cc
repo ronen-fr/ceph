@@ -1166,6 +1166,7 @@ seastar::future<> PG::stop()
 {
   logger().info("PG {} {}", pgid, __func__);
   stopping = true;
+  m_scrubber->rm_from_osd_scrubbing();  // should this block and wait for a possible ongoing scrub to finish?
   cancel_local_background_io_reservation();
   cancel_remote_recovery_reservation();
   check_readable_timer.cancel();
@@ -1421,13 +1422,17 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
   const bool allow_regular_scrub =
     !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
       get_pool().info.has_flag(pg_pool_t::FLAG_NOSCRUB));
+
   const bool allow_deep_scrub =
     allow_regular_scrub &&
     !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
       get_pool().info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
-  const bool has_deep_errors = (get_info().stats.stats.sum.num_deep_scrub_errors > 0);
+
+  const bool has_deep_errors =
+    (get_info().stats.stats.sum.num_deep_scrub_errors > 0);
+
   const bool try_to_auto_repair = (local_conf()->osd_scrub_auto_repair &&
-				   get_backend().auto_repair_supported());
+                                   get_backend().auto_repair_supported());
 
   logger().info(
     "{}: pg {}: allow (r/d)? {}/{} auto-repair? {} ({}) deep-errors? {}",
@@ -1477,4 +1482,42 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
   upd_flags.need_auto = false;
   return upd_flags;
 }
+
+std::vector<pg_shard_t> PG::get_actingset(Scrub::ScrubberPasskey) const
+{
+  const auto& aset = peering_state.get_actingset();
+  std::vector<pg_shard_t> ret{aset.cbegin(), aset.cend()};
+  return ret;
 }
+
+void PG::on_info_history_change()
+{
+  logger().warn("{} {}", __func__, m_planned_scrub);
+  ceph_assert(m_scrubber);
+  m_scrubber->on_maybe_registration_change(m_planned_scrub);
+}
+
+void PG::on_primary_status_change(bool was_primary, bool now_primary)
+{
+  logger().warn("{}: {} -> {}", __func__, was_primary ? "primary" : "secondary",
+                now_primary ? "primary" : "secondary");
+  if (was_primary != now_primary) {
+    ceph_assert(m_scrubber);
+    m_scrubber->on_primary_change(m_planned_scrub);
+  }
+}
+
+void PG::reschedule_scrub()
+{
+  logger().debug("{}: for a {}", __func__,
+                 (is_primary() ? "Primary" : "non-primary"));
+
+  // we are assuming no change in primary status
+  if (is_primary()) {
+    ceph_assert(m_scrubber);
+    m_scrubber->update_scrub_job(m_planned_scrub);
+  }
+}
+
+
+}  // namespace crimson::osd

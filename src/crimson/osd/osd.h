@@ -115,15 +115,15 @@ private:
   void handle_authentication(const EntityName& name,
 			     const AuthCapsInfo& caps) final;
 
-  crimson::osd::ShardServices shard_services;
-
-  std::unique_ptr<Heartbeat> heartbeat;
-
   /**
    * The entity that maintains the set of PGs we may scrub (i.e. - those that we
    * are their primary), and schedules their scrubbing.
    */
   ScrubQueue scrub_scheduler;
+
+  crimson::osd::ShardServices shard_services;
+
+  std::unique_ptr<Heartbeat> heartbeat;
 
   seastar::timer<seastar::lowres_clock> tick_timer;
 
@@ -253,6 +253,8 @@ private:
   seastar::future<> sched_scrub();
   bool scrub_random_backoff();
   void scrub_tick();
+  void resched_all_scrubs();
+
 
 public:
   blocking_future<Ref<PG>> get_or_create_pg(
