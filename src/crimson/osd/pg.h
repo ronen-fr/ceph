@@ -63,9 +63,21 @@ namespace crimson::os {
   class FuturizedStore;
 }
 
+namespace Scrub {
+class ScrubberPasskey {
+ private:
+  friend class Scrub::ReplicaReservations;
+  friend class ::PgScrubber;
+  ScrubberPasskey() {}
+  ScrubberPasskey(const ScrubberPasskey&) = default;
+  ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
+};
+}  // namespace Scrub
+
 namespace crimson::osd {
 class ClientRequest;
 class OpsExecuter;
+
 
 class PG : public boost::intrusive_ref_counter<
   PG,
@@ -167,17 +179,14 @@ public:
     bool need_write_epoch,
     ceph::os::Transaction &t) final;
 
-  void on_info_history_change() final {
-    // Not needed yet -- mainly for scrub scheduling
-  }
+  // mainly for scrub scheduling
+  void on_info_history_change() final;
 
   /// Notify PG that Primary/Replica status has changed (to update scrub registration)
-  void on_primary_status_change(bool was_primary, bool now_primary) final {
-  }
+  void on_primary_status_change(bool was_primary, bool now_primary) final;
 
   /// Need to reschedule next scrub. Assuming no change in role
-  void reschedule_scrub() final {
-  }
+  void reschedule_scrub() final;
 
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) final;
 
@@ -822,7 +831,18 @@ private:
 				  bool has_deep_errors,
 				  requested_scrub_t& planned) const;
 
+// ScrubberPasskey getters:
+public:
+  const pg_info_t& get_pg_info(Scrub::ScrubberPasskey) const {
+    return get_info();
+  }
 
+  OSDService* get_pg_osd(Scrub::ScrubberPasskey) const {
+    ceph_assert(0 && "not implemented");
+    return nullptr; // osd;
+  }
+
+  std::vector<pg_shard_t> get_actingset(Scrub::ScrubberPasskey) const;
 
   friend class IOInterruptCondition;
 };
