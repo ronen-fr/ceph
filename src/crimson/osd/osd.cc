@@ -87,9 +87,9 @@ OSD::OSD(int id, uint32_t nonce,
     monc{new crimson::mon::Client{*public_msgr, *this}},
     mgrc{new crimson::mgr::Client{*public_msgr, *this}},
     store{store},
-    shard_services{*this, whoami, *cluster_msgr, *public_msgr, *monc, *mgrc, store},
-    heartbeat{new Heartbeat{whoami, shard_services, *monc, hb_front_msgr, hb_back_msgr}},
     scrub_scheduler{nullptr, *this},
+    shard_services{*this, whoami, *cluster_msgr, *public_msgr, *monc, *mgrc, store, &scrub_scheduler},
+    heartbeat{new Heartbeat{whoami, shard_services, *monc, hb_front_msgr, hb_back_msgr}},
     // do this in background
     tick_timer{[this] {
       update_heartbeat_peers();

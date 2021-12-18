@@ -63,9 +63,20 @@ namespace crimson::os {
   class FuturizedStore;
 }
 
+namespace Scrub {
+class ScrubberPasskey {
+ private:
+  friend class Scrub::ReplicaReservations;
+  ScrubberPasskey() {}
+  ScrubberPasskey(const ScrubberPasskey&) = default;
+  ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
+};
+}  // namespace Scrub
+
 namespace crimson::osd {
 class ClientRequest;
 class OpsExecuter;
+
 
 class PG : public boost::intrusive_ref_counter<
   PG,
@@ -822,7 +833,17 @@ private:
 				  bool has_deep_errors,
 				  requested_scrub_t& planned) const;
 
+// ScrubberPasskey getters:
+public:
+  const pg_info_t& get_pg_info(Scrub::ScrubberPasskey) const {
+    return info;
+  }
 
+  OSDService* get_pg_osd(Scrub::ScrubberPasskey) const {
+    return osd;
+  }
+
+  std::vector<pg_shard_t> get_actingset(Scrub::ScrubberPasskey) const;
 
   friend class IOInterruptCondition;
 };

@@ -57,6 +57,7 @@ private:
   crimson::os::FuturizedStore &store;
 
   crimson::common::CephContext cct;
+  ScrubQueue* scrub_scheduler; // non-owning
 
   PerfCounters *perf = nullptr;
   PerfCounters *recoverystate_perf = nullptr;
@@ -73,7 +74,8 @@ public:
     crimson::net::Messenger &public_msgr,
     crimson::mon::Client &monc,
     crimson::mgr::Client &mgrc,
-    crimson::os::FuturizedStore &store);
+    crimson::os::FuturizedStore &store,
+    ScrubQueue* scrub_sched);
 
   seastar::future<> send_to_osd(
     int peer,
@@ -96,6 +98,8 @@ public:
   LogClient log_client;
   LogChannel::Ref clog;
   bool is_recovery_active() { /* RRR !!! */ return false; }
+  ScrubQueue& get_scrub_services() { return *scrub_scheduler; }
+
 
 //private:
 

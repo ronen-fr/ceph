@@ -1471,4 +1471,11 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
   upd_flags.need_auto = false;
   return upd_flags;
 }
+
+std::vector<pg_shard_t> PG::get_actingset(Scrub::ScrubberPasskey) const
+{
+  const auto& aset = peering_state.get_actingset();
+  std::vector<pg_shard_t> ret{aset.cbegin(), aset.cend()};
+  return ret;
+}
 }
