@@ -25,7 +25,7 @@
 #include "crimson/osd/pg.h"
 #include "crimson/osd/scrubber/osd_scrub_sched.h"
 #include "crimson/osd/scrubber/scrub_machine_lstnr_cr.h"
-#include "crimson/osd/scrubber/scrub_store.h"
+//#include "crimson/osd/scrubber/scrub_store.h"
 #include "crimson/osd/scrubber_common_cr.h"
 #else
 BAD
