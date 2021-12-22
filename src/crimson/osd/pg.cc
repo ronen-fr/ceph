@@ -1243,7 +1243,7 @@ PG::already_complete(const osd_reqid_t& reqid)
 /*
  *  implementation note:
  *  PG::sched_scrub() is called only once per a specific scrub session.
- *  That call commits us to the whatever choices are made (deep/shallow, etc').
+ *  That call commits us to whatever choices are made (deep/shallow, etc').
  *  Unless failing to start scrubbing, the 'planned scrub' flag-set is 'frozen' into
  *  PgScrubber's m_flags, then cleared.
  */

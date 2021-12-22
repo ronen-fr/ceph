@@ -1555,7 +1555,6 @@ seastar::future<Scrub::schedule_result_t> OSD::initiate_a_scrub(
 
   // This has already started, so go on to the next scrub job
   if (pg->is_scrub_queued_or_active()) {
-    // pg->unlock();
     logger().info("{}: scrubbing already in progress for pg {}", __func__,
                   pgid);
     return seastar::make_ready_future<Scrub::schedule_result_t>(
@@ -1564,7 +1563,6 @@ seastar::future<Scrub::schedule_result_t> OSD::initiate_a_scrub(
   // Skip other kinds of scrubbing if only explicitly requested repairing is
   // allowed
   if (allow_requested_repair_only && !pg->m_planned_scrub.must_repair) {
-    // pg->unlock();
     logger().info(
       "{}: skipping {} because repairing is not explicitly requested on it",
       __func__, pgid);

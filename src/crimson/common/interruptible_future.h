@@ -593,7 +593,7 @@ private:
   template <typename, typename>
   friend class ::crimson::maybe_handle_error_t;
   template <typename>
-  friend class ::seastar::internal::extract_values_from_futures_vector;
+  friend struct ::seastar::internal::extract_values_from_futures_vector;
   template <typename, typename>
   friend class interruptible_future_detail;
   template <typename ResolvedVectorTransform, typename Future>
@@ -996,7 +996,7 @@ private:
     return static_cast<core_type&&>(std::move(*this));
   }
 
-  friend class interruptor<InterruptCond>;
+  friend struct interruptor<InterruptCond>;
   friend class interruptible_future_builder<InterruptCond>;
   template <typename U>
   friend struct ::seastar::futurize;
