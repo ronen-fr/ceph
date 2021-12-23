@@ -12,6 +12,7 @@
 
 #include "common/dout.h"
 #include "crimson/net/Fwd.h"
+#include "crimson/osd/osd_operations/scrub_event.h"
 #include "messages/MOSDRepOpReply.h"
 #include "messages/MOSDOpReply.h"
 #include "os/Transaction.h"
@@ -56,6 +57,8 @@ namespace Scrub {
   class ReplicaReservations;
   class LocalReservation;
   class ReservedByRemotePrimary;
+  //class ScrubEvent;
+  //class LocalScrubEvent;
   enum class schedule_result_t;
 }
 
@@ -68,6 +71,7 @@ class ScrubberPasskey {
  private:
   friend class Scrub::ReplicaReservations;
   friend class ::PgScrubber;
+  friend class crimson::osd::LocalScrubEvent;
   ScrubberPasskey() {}
   ScrubberPasskey(const ScrubberPasskey&) = default;
   ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
@@ -509,6 +513,9 @@ public:
     return m_scrubber->is_queued_or_active();
   }
 
+  ScrubPgIF* get_scrubber(Scrub::ScrubberPasskey) {
+    return m_scrubber.get();
+  }
 
   void do_peering_event(
     PGPeeringEvent& evt, PeeringCtx &rctx);
@@ -782,6 +789,8 @@ private:
   friend class WatchTimeoutRequest;
   friend class ScrubInternalOp;
   friend PgScrubber;
+  friend class crimson::osd::LocalScrubEvent;
+
 private:
   seastar::future<bool> find_unfound() {
     return seastar::make_ready_future<bool>(true);
