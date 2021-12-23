@@ -52,6 +52,7 @@
 #include "crimson/osd/osd_operations/pg_advance_map.h"
 #include "crimson/osd/osd_operations/recovery_subrequest.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
+#include "crimson/osd/osd_operations/scrub_event.h"
 
 namespace {
   seastar::logger& logger() {
@@ -1594,4 +1595,11 @@ void OSD::resched_all_scrubs()
   logger().info("{}: done", __func__);
 }
 
+seastar::future<> OSD::queue_for_scrub(spg_t pgid,
+                                       Scrub::scrub_prio_t with_priority)
+{
+  using LocalScrubEvent = crimson::osd::LocalScrubEvent;
+  return seastar::now();
 }
+
+}  // namespace crimson::osd

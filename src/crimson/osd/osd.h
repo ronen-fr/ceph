@@ -269,7 +269,10 @@ public:
   seastar::future<Scrub::schedule_result_t> initiate_a_scrub(spg_t pgid,
 						      bool allow_requested_repair_only);
 
-private:
+  seastar::future<> queue_for_scrub(spg_t pgid,
+                                    Scrub::scrub_prio_t with_priority);
+
+ private:
   LogClient log_client;
   LogChannelRef clog;
 };

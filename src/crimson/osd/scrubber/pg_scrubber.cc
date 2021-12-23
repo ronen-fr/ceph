@@ -23,6 +23,7 @@
 
 #include "crimson/common/log.h"
 
+#include "crimson/osd/osd_operations/scrub_event.h"
 #include "crimson/osd/scrubber/scrub_machine_cr.h"
 
 
