@@ -18,6 +18,7 @@ add_executable(crimson-osd
   osd_operations/compound_peering_request.cc
   osd_operations/internal_client_request.cc
   osd_operations/peering_event.cc
+  osd_operations/scrub_event.cc
   osd_operations/pg_advance_map.cc
   osd_operations/replicated_request.cc
   osd_operations/background_recovery.cc

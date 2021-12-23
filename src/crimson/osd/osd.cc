@@ -52,6 +52,8 @@
 #include "crimson/osd/osd_operations/pg_advance_map.h"
 #include "crimson/osd/osd_operations/recovery_subrequest.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
+#include "crimson/osd/osd_operations/scrub_event.h"
+#include "crimson/osd/scrubber/pg_scrubber.h"
 
 namespace {
   seastar::logger& logger() {
@@ -1474,11 +1476,25 @@ void OSD::scrub_tick()
     return;
   }
   down_counter = 10;
-  // RRR should be local_conf().get_val<int64_t>("osd_scrub_scheduling_period")");
+  // RRR should be
+  // local_conf().get_val<int64_t>("osd_scrub_scheduling_period")");
   static thread_local seastar::semaphore limit(1);
   (void)seastar::with_semaphore(limit, 1,
                                 [this]() mutable { (void)sched_scrub(); });
+
+  // for testing - queue a scrub hello message
+  for (auto [pgid, pg] : pg_map.get_pgs()) {
+    if (pg->is_primary()) {
+      (void)shard_services.start_operation<ScrubEvent>(
+        //*this, pg->get_pgid(), pg->get_osdmap_epoch(),
+        //pg->get_last_peering_reset());
+        pg, get_shard_services(), pgid,
+        (ScrubEventFwd)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
+        down_counter, 100ms);
+    }
+  }
 }
+
 
 seastar::future<> OSD::sched_scrub()
 {
@@ -1608,4 +1624,11 @@ void OSD::resched_all_scrubs()
   logger().info("{}: done", __func__);
 }
 
+seastar::future<> OSD::queue_for_scrub(spg_t pgid,
+                                       Scrub::scrub_prio_t with_priority)
+{
+  using ScrubEvent = crimson::osd::ScrubEvent;
+  return seastar::now();
 }
+
+}  // namespace crimson::osd

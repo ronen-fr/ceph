@@ -23,6 +23,7 @@
 
 #include "crimson/common/log.h"
 
+#include "crimson/osd/osd_operations/scrub_event.h"
 #include "crimson/osd/scrubber/scrub_machine_cr.h"
 
 
@@ -118,6 +119,15 @@ ostream& PgScrubber::show(ostream& out) const
 }
 
 
+seastar::future<> PgScrubber::send_scrub_echo(epoch_t epoch_queued)
+{
+  return seastar::now();
+}
+
+void PgScrubber::scrub_echo(epoch_t epoch_queued)
+{
+  logger().warn("{}: epoch: {}", __func__, epoch_queued);
+}
 
 // -------------------------------------------------------------------------------------------
 // the I/F used by the state-machine (i.e. the implementation of ScrubMachineListener)
