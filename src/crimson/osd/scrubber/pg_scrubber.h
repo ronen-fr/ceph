@@ -832,6 +832,18 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    */
   Scrub::scrub_prio_t m_replica_request_priority;
 
+
+
+  // DEBUG
+public:
+  seastar::future<> send_scrub_echo(epoch_t epoch_queued);
+
+  crimson::osd::ScrubEvent::ScrubEventFwd scrub_echo1;
+
+  crimson::osd::ScrubEvent::interruptible_future<> scrub_echo(epoch_t epoch_queued);
+
+
+private:
   /**
    * the 'preemption' "state-machine".
    * Note: I was considering an orthogonal sub-machine implementation, but as
