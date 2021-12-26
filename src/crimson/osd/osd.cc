@@ -1475,22 +1475,33 @@ void OSD::scrub_tick()
     down_counter--;
     return;
   }
-  down_counter = 10;
-  // RRR should be
-  // local_conf().get_val<int64_t>("osd_scrub_scheduling_period")");
+  down_counter = 9; // RRR should be a config!
+  // maybe: local_conf().get_val<int64_t>("osd_scrub_scheduling_period")");
   static thread_local seastar::semaphore limit(1);
   (void)seastar::with_semaphore(limit, 1,
                                 [this]() mutable { (void)sched_scrub(); });
 
   // for testing - queue a scrub hello message
+  logger().warn("scrub_tick(): b4 pg loop");
   for (auto [pgid, pg] : pg_map.get_pgs()) {
     if (pg->is_primary()) {
+
+      logger().warn("scrub_tick(): pgid {}", pgid);
+      // send two similar messages. Will they collide?
+
       (void)shard_services.start_operation<ScrubEvent>(
         //*this, pg->get_pgid(), pg->get_osdmap_epoch(),
         //pg->get_last_peering_reset());
         pg, get_shard_services(), pgid,
         (ScrubEventFwd)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
-        down_counter, 100ms);
+        down_counter, 1ms);
+
+      (void)shard_services.start_operation<ScrubEvent>(
+        //*this, pg->get_pgid(), pg->get_osdmap_epoch(),
+        //pg->get_last_peering_reset());
+        pg, get_shard_services(), pgid,
+        (ScrubEventFwd)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
+        down_counter+200, 200ms);
     }
   }
 }

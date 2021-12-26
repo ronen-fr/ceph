@@ -67,7 +67,7 @@ void ScrubEvent::print(std::ostream& lhs) const
 
 void ScrubEvent::dump_detail(Formatter* f) const
 {
-  f->open_object_section("LocalScrubEvent");
+  f->open_object_section("ScrubEvent");
   //f->dump_stream("from") << from;
   f->dump_stream("pgid") << pgid;
   // f->dump_int("sent", evt.get_epoch_sent());
@@ -109,7 +109,7 @@ ScrubEvent::~ScrubEvent() = default;
 seastar::future<> ScrubEvent::start()
 {
   logger().debug(
-    "scrubber: ScrubEvent2::start(): {}: start (delay: {}) pg:{:p}", *this,
+    "scrubber: ScrubEvent::start(): {}: start (delay: {}) pg:{:p}", *this,
     delay, (void*)&(*pg));
 
   IRef ref = this;
@@ -146,21 +146,22 @@ seastar::future<> ScrubEvent::start()
       //    handle.enter(Scrub::scrub(*pg).process));
       //#endif
       }).then_interruptible([this, pg]() mutable /*-> ScrubEvent::interruptible_future<> */{
-        logger().info("LocalScrubEvent::start() executing...");
+        logger().info("ScrubEvent::start() executing...");
         (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*event_fwd_func)(epoch_queued);
         handle.exit();
+        logger().info("ScrubEvent::start() executing... done");
         return complete_rctx(pg);
       }).then_interruptible([pg]() -> ScrubEvent::interruptible_future<> {
         return seastar::now();
       });
     },
     [this](std::exception_ptr ep) {
-      logger().debug("{}: interrupted with {}", *this, ep);
+      logger().debug("ScrubEvent::start(): {} interrupted with {}", *this, ep);
       return seastar::now();
     },
     pg);
   }).finally([ref=std::move(ref)] {
-    logger().debug("{}: complete", *ref);
+    logger().debug("ScrubEvent::start(): complete" /*, *ref*/);
   });
 }
 // clang-format on
