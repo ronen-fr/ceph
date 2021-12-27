@@ -157,7 +157,6 @@ class ScrubEvent : public OperationT<ScrubEvent> {
   void print(std::ostream&) const final;
   void dump_detail(ceph::Formatter* f) const final;
   seastar::future<> start();
-  seastar::future<> start0();
 
   friend fmt::formatter<ScrubEvent>;
 };

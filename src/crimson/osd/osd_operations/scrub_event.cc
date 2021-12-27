@@ -169,6 +169,9 @@ seastar::future<> ScrubEvent::start()
   });
 }
 // clang-format on
+
+
+#if 0
 seastar::future<> ScrubEvent::start0()
 {
   logger().debug(
@@ -229,6 +232,8 @@ seastar::future<> ScrubEvent::start0()
     logger().debug("{}: complete", *ref);
   });
 }
+
+#endif
 
 #if 0
 // --------------------------- LocalScrubEvent -----------------------
