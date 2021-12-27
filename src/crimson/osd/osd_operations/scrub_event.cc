@@ -134,6 +134,69 @@ seastar::future<> ScrubEvent::start()
       ).then_interruptible([this, pg] {
         return with_blocking_future_interruptible<interruptor::condition>(
           pg->osdmap_gate.wait_for_map(epoch_queued));
+      }).then_interruptible([this, pg](auto) {
+        return with_blocking_future_interruptible<interruptor::condition>(
+          handle.enter(pp(*pg).process));
+      }).then_interruptible([this, pg]() mutable -> ScrubEvent::interruptible_future<>  {
+
+        logger().info("ScrubEvent::start() {} executing...", *this);
+        if (std::holds_alternative<ScrubEvent::ScrubEventFwdImm>(event_fwd_func)) {
+          (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdImm>(event_fwd_func))(epoch_queued);
+          return seastar::make_ready_future<>();
+        } else {
+          return (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdFut>(event_fwd_func))(epoch_queued);
+        }
+        //return (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*event_fwd_func)(epoch_queued);
+
+      }).then_interruptible([this, pg]() mutable {
+        logger().info("ScrubEvent::start() {} after calling fwder", *this);
+        handle.exit();
+        logger().info("ScrubEvent::start() {} executing... exited", *this);
+        return complete_rctx(pg);
+      }).then_interruptible([pg]() -> ScrubEvent::interruptible_future<> {
+        return seastar::now();
+      });
+    },
+    [this](std::exception_ptr ep) {
+      logger().debug("ScrubEvent::start(): {} interrupted with {}", *this, ep);
+      return seastar::now();
+    },
+    pg);
+  }).finally([this, ref=std::move(ref)] {
+    logger().debug("ScrubEvent::start(): {} complete", *this /*, *ref*/);
+  });
+}
+// clang-format on
+
+#if 0
+seastar::future<> ScrubEvent::start0()
+{
+  logger().debug(
+    "scrubber: ScrubEvent::start(): {}: start (delay: {}) pg:{:p}", *this,
+    delay, (void*)&(*pg));
+
+  IRef ref = this;
+  auto maybe_delay = seastar::now();
+  if (delay.count() > 0) {
+    maybe_delay = seastar::sleep(delay);
+  }
+
+  return maybe_delay.then([this] {
+    return get_pg();
+  }).then([this](Ref<PG> pg) {
+    return interruptor::with_interruption([this, pg]() -> ScrubEvent::interruptible_future<> {
+      if (!pg) {
+        logger().warn("scrubber: ScrubEvent::start(): {}: pg absent, did not create", *this);
+        on_pg_absent();
+        handle.exit();
+        return complete_rctx(pg);
+      }
+      logger().debug("scrubber: ScrubEvent::start(): {}: pg present", *this);
+      return with_blocking_future_interruptible<interruptor::condition>(
+        handle.enter(pp(*pg).await_map)
+      ).then_interruptible([this, pg] {
+        return with_blocking_future_interruptible<interruptor::condition>(
+          pg->osdmap_gate.wait_for_map(epoch_queued));
       //#ifdef NOT_YET
       }).then_interruptible([this, pg](auto) {
         return with_blocking_future_interruptible<interruptor::condition>(
@@ -168,73 +231,8 @@ seastar::future<> ScrubEvent::start()
     logger().debug("ScrubEvent::start(): {} complete", *this /*, *ref*/);
   });
 }
-// clang-format on
-
-
-#if 0
-seastar::future<> ScrubEvent::start0()
-{
-  logger().debug(
-    "scrubber: ScrubEvent2::start(): {}: start (delay: {}) pg:{:p}", *this,
-    delay, (void*)&(*pg));
-
-  IRef ref = this;
-  auto maybe_delay = seastar::now();
-  if (delay.count() > 0) {
-    maybe_delay = seastar::sleep(delay);
-  }
-
-  return maybe_delay.then([this] {
-    return get_pg();
-  }).then([this](Ref<PG> pg) {
-    return interruptor::with_interruption([this, pg]() -> ScrubEvent::interruptible_future<> {
-
-
-      #ifdef NOT_YET
-      if (!pg) {
-        logger().warn("{}: pg absent, did not create", *this);
-        on_pg_absent();
-        handle.exit();
-        return complete_rctx(pg);
-      }
-      logger().debug("{}: pg present", *this);
-      return with_blocking_future_interruptible<interruptor::condition>(
-        handle.enter(pp(*pg).await_map)
-      ).then_interruptible([this, pg] {
-        return with_blocking_future_interruptible<interruptor::condition>(
-          pg->osdmap_gate.wait_for_map(epoch_queued));
-      }).then_interruptible([this, pg](auto) {
-        return with_blocking_future_interruptible<interruptor::condition>(
-          handle.enter(pp(*pg).process));
-      }).then_interruptible([this, pg] {
-        return with_blocking_future_interruptible<interruptor::condition>(
-          handle.enter(BackfillRecovery::bp(*pg).process));
-      }).then_interruptible([this, pg] {
-        return with_blocking_future_interruptible<interruptor::condition>(
-          handle.enter(Scrub::scrub(*pg).process));
-      }).then_interruptible([this, pg]() mutable /*-> ScrubEvent::interruptible_future<> */{
-        logger().info("LocalScrubEvent::start() executing...");
-        (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*event_fwd_func)(epoch_queued);
-        handle.exit();
-        return complete_rctx(pg);
-      }).then_interruptible([pg]() -> ScrubEvent::interruptible_future<> {
-        return seastar::now();
-      });
-      #endif
-      return seastar::now();
-    },
-    [this](std::exception_ptr ep) {
-      logger().debug("{}: interrupted with {}", *this, ep);
-      return seastar::now();
-    },
-    pg);
-  }).finally([ref=std::move(ref)] {
-    logger().debug("{}: complete", *ref);
-  });
-}
 
 #endif
-
 #if 0
 // --------------------------- LocalScrubEvent -----------------------
 

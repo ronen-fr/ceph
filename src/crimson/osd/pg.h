@@ -502,7 +502,7 @@ public:
   // -------------- some scrubber-related stuff --------------
   // ------------- which I don't know what interface it should implement -------------
 
-  seastar::future<Scrub::schedule_result_t> sched_scrub();
+  seastar::future<Scrub::schedule_result_t> sched_scrub_this_pg();
 
   bool is_scrub_queued_or_active() const {
     return m_scrubber->is_queued_or_active();
