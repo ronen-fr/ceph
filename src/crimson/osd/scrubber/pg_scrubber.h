@@ -262,6 +262,8 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void initiate_regular_scrub(epoch_t epoch_queued) final;
 
+  ScrubEIF initiate_regular_scrub_v2(epoch_t epoch_queued) final;
+
   void initiate_scrub_after_repair(epoch_t epoch_queued) final;
 
   void send_scrub_resched(epoch_t epoch_queued) final;

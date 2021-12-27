@@ -145,6 +145,9 @@ template <> struct fmt::formatter<requested_scrub_t> {
 
 std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
 
+using ScrubEIF = ::crimson::interruptible::interruptible_future<
+      ::crimson::osd::IOInterruptCondition, void>;
+
 /**
  *  The interface used by the PG when requesting scrub-related info or services
  */
@@ -159,6 +162,8 @@ struct ScrubPgIF {
   // --------------- triggering state-machine events:
 
   virtual void initiate_regular_scrub(epoch_t epoch_queued) = 0;
+
+  virtual ScrubEIF initiate_regular_scrub_v2(epoch_t epoch_queued) = 0;
 
   //virtual void queue_regular_scrub() = 0;  // crimson-specific (for now)
 
