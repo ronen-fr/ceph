@@ -42,6 +42,7 @@ using namespace std::literals;
 
 
 using crimson::common::local_conf;
+using crimson::osd::ScrubEvent;
 
 namespace {
   seastar::logger& logger() {
@@ -123,6 +124,30 @@ seastar::future<> PgScrubber::send_scrub_echo(epoch_t epoch_queued)
 {
   return seastar::now();
 }
+
+
+void PgScrubber::scrub_fake_scrub_session(epoch_t epoch_queued)
+{
+  // mark us as scrubbing,
+  // wait for 10 seconds,
+  // mark us as done scrubbing
+
+  logger().warn("{}: pg: {} - faking scrub session", __func__, m_pg_id);
+  set_scrub_begin_time();
+
+ (void)m_pg->get_shard_services().start_operation<ScrubEvent>(
+        m_pg, m_pg->get_shard_services(), m_pg_id,
+        (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_fake_scrub_done), m_pg->get_osdmap_epoch(),
+        0, 10s);
+}
+
+
+void PgScrubber::scrub_fake_scrub_done(epoch_t epoch_queued)
+{
+  logger().warn("{}: pg: {} - fake scrub session done", __func__, m_pg_id);
+  set_scrub_duration();
+}
+
 
 // void PgScrubber::scrub_echo(epoch_t epoch_queued)
 // {
@@ -613,6 +638,21 @@ blocked_range_t::~blocked_range_t()
 
 void PgScrubber::initiate_regular_scrub(epoch_t epoch_queued) {}
 
+ScrubEIF PgScrubber::initiate_regular_scrub_v2(epoch_t epoch_queued)
+{
+  logger().debug("{}: epoch: {}", __func__, epoch_queued);
+  // we may have lost our Primary status while the message languished in the queue
+  if (check_interval(epoch_queued)) {
+    logger().info("scrubber event -->> StartScrub epoch: {}", epoch_queued);
+    reset_epoch(epoch_queued);
+    //m_fsm->process_event(StartScrub{});
+    logger().info("scrubber event --<< StartScrub");
+  } else {
+    clear_queued_or_active();
+  }
+  return seastar::now();
+}
+
 void PgScrubber::initiate_scrub_after_repair(epoch_t epoch_queued) {}
 
 void PgScrubber::send_scrub_resched(epoch_t epoch_queued) {}
@@ -808,8 +848,20 @@ void PgScrubber::clear_reserving_now() {}
   return false;
 }
 
-void PgScrubber::set_queued_or_active() {}
-void PgScrubber::clear_queued_or_active() {}
+void PgScrubber::set_queued_or_active()
+{
+  m_queued_or_active = true;
+}
+
+void PgScrubber::clear_queued_or_active()
+{
+  m_queued_or_active = false;
+}
+
+bool PgScrubber::is_queued_or_active() const
+{
+  return m_queued_or_active;
+}
 
 void PgScrubber::mark_local_map_ready() {}
 

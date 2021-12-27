@@ -104,3 +104,15 @@ struct fmt::formatter<object_info_t> {
     return fmt::format_to(ctx.out(), ")");
   }
 };
+
+template <>
+struct fmt::formatter<spg_t> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const spg_t& spg, FormatContext& ctx)
+  {
+    return fmt::format_to(ctx.out(), "{}/{}", 17/*spg.pgid*/, spg.shard);
+  }
+};
+

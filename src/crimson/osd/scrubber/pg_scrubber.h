@@ -391,7 +391,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void scrub_clear_state() final;
 
-  bool is_queued_or_active() const final { return false; };  // RRR todo
+  bool is_queued_or_active() const final;
 
   /**
    *  add to scrub statistics, but only if the soid is below the scrub start
@@ -699,6 +699,23 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   bool m_active{false};
 
+  /**
+   * a flag designed to prevent the initiation of a second scrub on a PG for which scrubbing
+   * has been initiated.
+   *
+   * set once scrubbing was initiated (i.e. - even before the FSM event that
+   * will trigger a state-change out of Inactive was handled), and only reset
+   * once the FSM is back in Inactive.
+   * In other words - its ON period encompasses:
+   *   - the time period covered today by 'queued', and
+   *   - the time when m_active is set, and
+   *   - all the time from scrub_finish() calling update_stats() till the
+   *     FSM handles the 'finished' event
+   *
+   * Compared with 'm_active', this flag is asserted earlier and remains ON for longer.
+   */
+  bool m_queued_or_active{false};
+
   eversion_t m_subset_last_update{};
 
  //RRR// std::unique_ptr<Scrub::Store> m_store;
@@ -838,9 +855,9 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   // DEBUG
 public:
-  seastar::future<> send_scrub_echo(epoch_t epoch_queued);
 
-  crimson::osd::ScrubEvent::ScrubEventFwd scrub_echo1;
+  void scrub_fake_scrub_session(epoch_t epoch_queued);
+  void scrub_fake_scrub_done(epoch_t epoch_queued);
 
   crimson::osd::ScrubEvent::interruptible_future<> scrub_echo(epoch_t epoch_queued);
 

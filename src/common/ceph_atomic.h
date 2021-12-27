@@ -52,7 +52,8 @@ namespace ceph {
 				 std::memory_order=std::memory_order_seq_cst) noexcept
     {
       if (expected == value) {
-	expected = std::move(desired);
+        value = std::move(desired);
+	expected = value;
 	return true;
       } else {
 	return false;
@@ -96,6 +97,12 @@ namespace ceph {
 } // namespace ceph
 
 #else  // WITH_SEASTAR
+
+#if defined(WITH_SEASTAR)
+
+//xxx shouldn't happen
+
+#endif
 
 namespace ceph {
   template <class T> using atomic = ::std::atomic<T>;
