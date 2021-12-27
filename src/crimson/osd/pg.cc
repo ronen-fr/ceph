@@ -1253,11 +1253,11 @@ PG::already_complete(const osd_reqid_t& reqid)
  *  Unless failing to start scrubbing, the 'planned scrub' flag-set is 'frozen' into
  *  PgScrubber's m_flags, then cleared.
  */
-seastar::future<Scrub::schedule_result_t> PG::sched_scrub()
+seastar::future<Scrub::schedule_result_t> PG::sched_scrub_this_pg()
 {
   logger().info("{}: pg {} (<{}>,<{}>)", __func__, pgid,
-		(peering_state.is_active() ? "active>" : "not-active"),
-		(peering_state.is_clean() ? "clean>" : "not-clean>"));
+                (peering_state.is_active() ? "active>" : "not-active"),
+                (peering_state.is_clean() ? "clean>" : "not-clean>"));
 
   // ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);
@@ -1307,7 +1307,16 @@ seastar::future<Scrub::schedule_result_t> PG::sched_scrub()
   logger().info("{}: queueing scrub", __func__);
   m_scrubber->set_queued_or_active();
 
+  // for now - faking an N seconds scrub.
+
   // RRR osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
+  (void)shard_services.start_operation<ScrubEvent>(
+    this, get_shard_services(), pgid,
+    (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_fake_scrub_session),
+    get_osdmap_epoch(), 0, 0s);
+
+  // RRR ask how to guarantee that the scrub is not executed before we return?
+
   return seastar::make_ready_future<Scrub::schedule_result_t>(
     Scrub::schedule_result_t::scrub_initiated);
 }

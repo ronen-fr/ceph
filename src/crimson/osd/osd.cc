@@ -1491,17 +1491,13 @@ void OSD::scrub_tick()
       // send two similar messages. Will they collide?
 
       (void)shard_services.start_operation<ScrubEvent>(
-        //*this, pg->get_pgid(), pg->get_osdmap_epoch(),
-        //pg->get_last_peering_reset());
         pg, get_shard_services(), pgid,
-        (ScrubEvent::ScrubEventFwd)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
+        (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
         ++dbg_idx, 1ms);
 
       (void)shard_services.start_operation<ScrubEvent>(
-        //*this, pg->get_pgid(), pg->get_osdmap_epoch(),
-        //pg->get_last_peering_reset());
         pg, get_shard_services(), pgid,
-        (ScrubEvent::ScrubEventFwd)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
+        (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
         ++dbg_idx+200, 200ms);
     }
   }
@@ -1613,7 +1609,7 @@ seastar::future<Scrub::schedule_result_t> OSD::initiate_a_scrub(
       Scrub::schedule_result_t::preconditions);
   }
 
-  return pg->sched_scrub();
+  return pg->sched_scrub_this_pg();
 }
 
 void OSD::resched_all_scrubs()
@@ -1640,7 +1636,7 @@ void OSD::resched_all_scrubs()
 seastar::future<> OSD::queue_for_scrub(spg_t pgid,
                                        Scrub::scrub_prio_t with_priority)
 {
-  using ScrubEvent = crimson::osd::ScrubEvent;
+  //using ScrubEvent = crimson::osd::ScrubEvent;
   return seastar::now();
 }
 
