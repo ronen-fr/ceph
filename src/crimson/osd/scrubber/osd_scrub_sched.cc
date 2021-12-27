@@ -30,13 +30,22 @@
 #include "common/dout.h"
 
 #include "include/utime.h"
-#include "osd/OSD.h"
+
+#include "crimson/common/log.h"
+
+#include "crimson/osd/osd.h"
 
 #include "crimson/osd/scrubber/pg_scrubber.h"
 
 using namespace ::std::literals;
 using std::ostream;
 using crimson::common::local_conf;
+
+namespace {
+  seastar::logger& logger() {
+    return crimson::get_logger(ceph_subsys_osd);
+  }
+}
 
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubJob
@@ -74,8 +83,9 @@ void ScrubQueue::ScrubJob::update_schedule(
   // scan_penalized() is called and the job was moved to the to_scrub queue.
   updated = true;
 
-  dout(10) << " pg[" << pgid << "] adjusted: " << schedule.scheduled_at << "  "
-	   << registration_state() << dendl;
+  logger().info("{}: pg[{}] adjusted: {} {}", __func__, pgid,
+                adjusted.scheduled_at, registration_state());
+
 }
 
 // ////////////////////////////////////////////////////////////////////////// //

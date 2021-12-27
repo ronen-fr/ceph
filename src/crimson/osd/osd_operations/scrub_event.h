@@ -6,6 +6,7 @@
 #include <seastar/core/future.hh>
 
 #include <iostream>
+#include <variant>
 
 #include "crimson/common/type_helpers.h"
 #include "crimson/osd/osd_operation.h"
@@ -90,17 +91,17 @@ class ScrubEvent : public OperationT<ScrubEvent> {
     ::crimson::interruptible::interruptible_future<
       ::crimson::osd::IOInterruptCondition, T>;
 
-  using ScrubEventFwd = interruptible_future<> (ScrubPgIF::*)(epoch_t);
+  using ScrubEventFwdFut = interruptible_future<> (ScrubPgIF::*)(epoch_t);
+  using ScrubEventFwdImm = void (ScrubPgIF::*)(epoch_t);
+  using ScrubEventFwd = std::variant<ScrubEventFwdFut, ScrubEventFwdImm>;
 
 
   class PGPipeline {
     OrderedExclusivePhase await_map = {"ScrubEvent::PGPipeline::await_map"};
     //  do we need a pipe phase to lock the PG against other
-    // types of client operations?
+    //  types of client operations?
     OrderedExclusivePhase process = {"ScrubEvent::PGPipeline::process"};
     friend class ScrubEvent;
-    //friend class LocalScrubEvent;
-    // friend class PGAdvanceMap;
   };
 
  private:
