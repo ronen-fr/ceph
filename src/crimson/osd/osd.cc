@@ -1476,7 +1476,7 @@ void OSD::scrub_tick()
     down_counter--;
     return;
   }
-  down_counter = 9; // RRR should be a config!
+  down_counter = 3; // RRR should be a config!
   // maybe: local_conf().get_val<int64_t>("osd_scrub_scheduling_period")");
   static thread_local seastar::semaphore limit(1);
   static int dbg_idx = 1000;
@@ -1489,16 +1489,14 @@ void OSD::scrub_tick()
     if (pg->is_primary()) {
 
       auto pgid=pgid_;
-      logger().warn("scrub_tick(): pgid {}", pgid);
-      // send two similar messages. Will they collide?
+      logger().info("scrub_tick(): primary for pg[{}]", pgid);
+      // was: send two similar messages. Will they collide?
+
+continue;
 
       auto pgref = pg;
-//continue;
 
-//       (void)shard_services.start_operation<ScrubEvent>(
-//         pgref, get_shard_services(), pgid,
-//         (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
-//         ++dbg_idx, 1ms);
+      // debugging 1st attempt to send an internal message
       (void) seastar::do_with(
         std::move(pgref),
         [this, osds=&get_shard_services(), spg=pgref->get_pgid()](auto& pgref) {
@@ -1509,11 +1507,6 @@ void OSD::scrub_tick()
             ++dbg_idx+100, 100ms);
            return seastar::now();
         });
-//       (void)shard_services.start_operation<ScrubEvent>(
-//         pgref, get_shard_services(), pgid,
-//         (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
-//         ++dbg_idx+200, 200ms);
-//     }
     }
   }
   logger().warn("scrub_tick(): after pg loop");
@@ -1567,7 +1560,7 @@ seastar::future<> OSD::sched_scrub()
     }
   }
 
-  return scrub_scheduler.select_pg_and_scrub(env_conditions)
+  return scrub_scheduler.select_pg_and_scrub(std::move(env_conditions))
     .then([](auto was_started) {
       logger().info("OSD::sched_scrub(): sched_scrub done ({})",
                     ScrubQueue::attempt_res_text(was_started));

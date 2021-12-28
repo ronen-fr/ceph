@@ -107,6 +107,7 @@ class ReplicaReservations {
 
   std::ostream& gen_prefix(std::ostream& out) const;
 };
+#endif
 
 /**
  *  wraps the local OSD scrub resource reservation in an RAII wrapper
@@ -122,6 +123,7 @@ class LocalReservation {
 };
 
 
+#ifdef NOT_YET
 /**
  *  wraps the OSD resource we are using when reserved as a replica by a
  * scrubbing master.
@@ -632,12 +634,12 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   utime_t m_sleep_started_at;
 
-#ifdef NOT_YET
   // 'optional', as 'ReplicaReservations' & 'LocalReservation' are
   // 'RAII-designed' to guarantee un-reserving when deleted.
-  std::optional<Scrub::ReplicaReservations> m_reservations;
+  // RRR std::optional<Scrub::ReplicaReservations> m_reservations;
   std::optional<Scrub::LocalReservation> m_local_osd_resource;
 
+#ifdef NOT_YET
   /// the 'remote' resource we, as a replica, grant our Primary when it is
   /// scrubbing
   std::optional<Scrub::ReservedByRemotePrimary> m_remote_osd_resource;
