@@ -548,6 +548,7 @@ seastar::future<> OSD::start_asok_admin()
     // PG commands
     asok->register_command(make_asok_hook<pg::QueryCommand>(*this));
     asok->register_command(make_asok_hook<pg::MarkUnfoundLostCommand>(*this));
+    asok->register_command(make_asok_hook<pg::ScrubCommand>(*this));
   });
 }
 
@@ -1484,21 +1485,35 @@ void OSD::scrub_tick()
 
   // for testing - queue a scrub hello message
   logger().warn("scrub_tick(): b4 pg loop");
-  for (auto [pgid, pg] : pg_map.get_pgs()) {
+  for (auto [pgid_, pg] : pg_map.get_pgs()) {
     if (pg->is_primary()) {
 
+      auto pgid=pgid_;
       logger().warn("scrub_tick(): pgid {}", pgid);
       // send two similar messages. Will they collide?
 
-      (void)shard_services.start_operation<ScrubEvent>(
-        pg, get_shard_services(), pgid,
-        (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
-        ++dbg_idx, 1ms);
+      auto pgref = pg;
+//continue;
 
-      (void)shard_services.start_operation<ScrubEvent>(
-        pg, get_shard_services(), pgid,
-        (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
-        ++dbg_idx+200, 200ms);
+//       (void)shard_services.start_operation<ScrubEvent>(
+//         pgref, get_shard_services(), pgid,
+//         (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
+//         ++dbg_idx, 1ms);
+      (void) seastar::do_with(
+        std::move(pgref),
+        [this, osds=&get_shard_services(), spg=pgref->get_pgid()](auto& pgref) {
+          shard_services.start_operation<ScrubEvent>(
+            pgref, *osds, spg,
+            (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo_v),
+            pgref->get_osdmap_epoch(),
+            ++dbg_idx+100, 100ms);
+           return seastar::now();
+        });
+//       (void)shard_services.start_operation<ScrubEvent>(
+//         pgref, get_shard_services(), pgid,
+//         (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
+//         ++dbg_idx+200, 200ms);
+//     }
     }
   }
   logger().warn("scrub_tick(): after pg loop");

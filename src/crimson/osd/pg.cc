@@ -366,6 +366,33 @@ void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
   });
 }
 
+
+void PG::set_last_scrub_stamp(utime_t t)
+{
+  peering_state.update_stats([=](auto& history, auto& stats) {
+    set_last_scrub_stamp(t, history, stats);
+    return true;
+  });
+}
+
+
+void PG::set_last_deep_scrub_stamp(utime_t t)
+{
+  peering_state.update_stats([=](auto& history, auto& stats) {
+    set_last_deep_scrub_stamp(t, history, stats);
+    return true;
+  });
+}
+
+// debug aux
+seastar::future<> PG::push_scrubstamp_back()
+{
+  set_last_scrub_stamp(utime_t(0, 0));
+
+  return seastar::now();
+}
+
+
 void PG::log_state_enter(const char *state) {
   logger().info("Entering state: {}", state);
 }

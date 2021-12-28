@@ -53,9 +53,9 @@ namespace ceph {
     {
       if (expected == value) {
         value = std::move(desired);
-	expected = value;
 	return true;
       } else {
+	expected = value;
 	return false;
       }
     }
