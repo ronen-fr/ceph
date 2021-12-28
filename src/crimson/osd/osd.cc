@@ -1490,15 +1490,12 @@ void OSD::scrub_tick()
 
       auto pgid=pgid_;
       logger().warn("scrub_tick(): pgid {}", pgid);
-      // send two similar messages. Will they collide?
+      // was: send two similar messages. Will they collide?
 
       auto pgref = pg;
-//continue;
+continue;
 
-//       (void)shard_services.start_operation<ScrubEvent>(
-//         pgref, get_shard_services(), pgid,
-//         (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
-//         ++dbg_idx, 1ms);
+      // debugging 1st attempt to send an internal message
       (void) seastar::do_with(
         std::move(pgref),
         [this, osds=&get_shard_services(), spg=pgref->get_pgid()](auto& pgref) {
@@ -1509,11 +1506,6 @@ void OSD::scrub_tick()
             ++dbg_idx+100, 100ms);
            return seastar::now();
         });
-//       (void)shard_services.start_operation<ScrubEvent>(
-//         pgref, get_shard_services(), pgid,
-//         (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_echo), pg->get_osdmap_epoch(),
-//         ++dbg_idx+200, 200ms);
-//     }
     }
   }
   logger().warn("scrub_tick(): after pg loop");

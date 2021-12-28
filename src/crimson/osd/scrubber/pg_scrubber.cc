@@ -146,15 +146,6 @@ void PgScrubber::scrub_fake_scrub_done(epoch_t epoch_queued)
 }
 
 
-// void PgScrubber::scrub_echo(epoch_t epoch_queued)
-// {
-//   logger().warn("{}: pg: {} epoch: {} echo block starts", __func__, m_pg_id, epoch_queued);
-//   (void) seastar::sleep(1s).then([this, epoch_queued] {
-//     logger().warn("scrub_echo: pg: {} epoch: {} echo block done", m_pg_id, epoch_queued);
-//   });
-//   logger().warn("{}: pg: {} epoch: {} echo block sent", __func__, m_pg_id, epoch_queued);
-// }
-
 crimson::osd::ScrubEvent::interruptible_future<>
 PgScrubber::scrub_echo(epoch_t epoch_queued)
 {
@@ -166,7 +157,7 @@ PgScrubber::scrub_echo(epoch_t epoch_queued)
   //logger().warn("{}: pg: {} epoch: {} echo block sent", __func__, m_pg_id, epoch_queued);
 }
 
-// trying to debug a crash:
+// trying to debug a crash: this version works!
 void PgScrubber::scrub_echo_v(epoch_t epoch_queued)
 {
   logger().warn("{}: pg: {} epoch: {} echo block starts", __func__, m_pg_id, epoch_queued);

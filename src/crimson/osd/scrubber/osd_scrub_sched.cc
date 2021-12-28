@@ -62,13 +62,6 @@ ScrubQueue::ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
 // debug usage only
 ostream& operator<<(ostream& out, const ScrubQueue::ScrubJob& sjob)
 {
-//   out << sjob.pgid << ",  " << sjob.schedule.scheduled_at
-//       << " dead: " << sjob.schedule.deadline << " - " << sjob.registration_state()
-//       << " / failure: " << sjob.resources_failure
-//       << " / pen. t.o.: " << sjob.penalty_timeout
-//       << " / queue state: " << ScrubQueue::qu_state_text(sjob.state);
-
-
   return out << fmt::format("{}", sjob);
 }
 
@@ -517,62 +510,7 @@ seastar::future<Scrub::schedule_result_t> ScrubQueue::select_from_group(
   });
 }
 
-// int xx() {
-//   for (auto& candidate : group) {
-// 
-//     // we expect the first job in the list to be a good candidate (if any)
-// 
-//     dout(20) << "try initiating scrub for " << candidate->pgid << dendl;
-// 
-//     if (preconds.only_deadlined && (candidate->schedule.deadline.is_zero() ||
-// 				    candidate->schedule.deadline >= now_is)) {
-//       dout(15) << " not scheduling scrub for " << candidate->pgid << " due to "
-// 	       << (preconds.time_permit ? "high load" : "time not permitting")
-// 	       << dendl;
-//       continue;
-//     }
-// 
-//     // we have a candidate to scrub. We turn to the OSD to verify that the PG
-//     // configuration allows the specified type of scrub, and to initiate the
-//     // scrub.
-//     switch (osd_service.initiate_a_scrub(candidate->pgid,
-// 					 preconds.allow_requested_repair_only)) {
-// 
-//       case Scrub::schedule_result_t::scrub_initiated:
-// 	// the happy path. We are done
-// 	dout(20) << " initiated for " << candidate->pgid << dendl;
-// 	return Scrub::schedule_result_t::scrub_initiated;
-// 
-//       case Scrub::schedule_result_t::already_started:
-//       case Scrub::schedule_result_t::preconditions:
-//       case Scrub::schedule_result_t::bad_pg_state:
-// 	// continue with the next job
-// 	dout(20) << "failed (state/cond/started) " << candidate->pgid << dendl;
-// 	break;
-// 
-//       case Scrub::schedule_result_t::no_such_pg:
-// 	// The pg is no longer there
-// 	dout(20) << "failed (no pg) " << candidate->pgid << dendl;
-// 	break;
-// 
-//       case Scrub::schedule_result_t::no_local_resources:
-// 	// failure to secure local resources. No point in trying the other
-// 	// PGs at this time. Note that this is not the same as replica resources
-// 	// failure!
-// 	dout(20) << "failed (local) " << candidate->pgid << dendl;
-// 	return Scrub::schedule_result_t::no_local_resources;
-// 
-//       case Scrub::schedule_result_t::none_ready:
-// 	// can't happen. Just for the compiler.
-// 	dout(5) << "failed !!! " << candidate->pgid << dendl;
-// 	return Scrub::schedule_result_t::none_ready;
-//     }
-//   }
-// 
-//   dout(20) << " returning 'none ready' " << dendl;
-//   return Scrub::schedule_result_t::none_ready;
-// }
-// 
+
 ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
   const sched_params_t& times) const
 {
@@ -600,7 +538,7 @@ ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
 				  ? times.max_interval
 				  : local_conf()->osd_scrub_max_interval;
 
-    sched_n_dead.scheduled_at += scrub_min_interval;
+    // RRR for now: sched_n_dead.scheduled_at += scrub_min_interval;
     double r = rand() / (double)RAND_MAX;
     sched_n_dead.scheduled_at +=
       scrub_min_interval * local_conf()->osd_scrub_interval_randomize_ratio * r;

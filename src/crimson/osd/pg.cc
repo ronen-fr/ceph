@@ -1283,8 +1283,8 @@ PG::already_complete(const osd_reqid_t& reqid)
 seastar::future<Scrub::schedule_result_t> PG::sched_scrub_this_pg()
 {
   logger().info("{}: pg {} (<{}>,<{}>)", __func__, pgid,
-                (peering_state.is_active() ? "active>" : "not-active"),
-                (peering_state.is_clean() ? "clean>" : "not-clean>"));
+                (peering_state.is_active() ? "active" : "not-active"),
+                (peering_state.is_clean() ? "clean" : "not-clean"));
 
   // ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);
@@ -1331,12 +1331,12 @@ seastar::future<Scrub::schedule_result_t> PG::sched_scrub_this_pg()
   // resources reservations.
   m_scrubber->set_op_parameters(m_planned_scrub);
 
-  logger().info("{}: queueing scrub", __func__);
+  logger().info("{}: pg[{}] queueing scrub", __func__, pgid);
   m_scrubber->set_queued_or_active();
 
   // for now - faking an N seconds scrub.
 
-  // RRR osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
+  // classic: osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
   (void)shard_services.start_operation<ScrubEvent>(
     this, get_shard_services(), pgid,
     (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_fake_scrub_session),
@@ -1471,7 +1471,7 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
                                    get_backend().auto_repair_supported());
 
   logger().info(
-    "{}: pg {}: allow (r/d)? {}/{} auto-repair? {} ({}) deep-errors? {}",
+    "{}: pg {}: allow (reg/deep)? {}/{} auto-repair? {} (conf:{}) deep-errors? {}",
     __func__, pgid, allow_regular_scrub, allow_deep_scrub, try_to_auto_repair,
     local_conf()->osd_scrub_auto_repair, has_deep_errors);
 
