@@ -748,6 +748,26 @@ public:
     return seastar::now();
   }
 
+  seastar::future<> push_scrubstamp_back();
+
+  static void set_last_scrub_stamp(
+    utime_t t, pg_history_t &history, pg_stat_t &stats) {
+    stats.last_scrub_stamp = t;
+    history.last_scrub_stamp = t;
+  }
+
+  void set_last_scrub_stamp(utime_t t);
+
+  static void set_last_deep_scrub_stamp(
+    utime_t t, pg_history_t &history, pg_stat_t &stats) {
+    stats.last_deep_scrub_stamp = t;
+    history.last_deep_scrub_stamp = t;
+  }
+
+  void set_last_deep_scrub_stamp(utime_t t);
+
+
+
   bool old_peering_msg(epoch_t reply_epoch, epoch_t query_epoch) const;
 
   template <typename MsgType>

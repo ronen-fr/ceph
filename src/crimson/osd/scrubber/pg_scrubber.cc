@@ -22,6 +22,8 @@
 // #include "scrub_machine.h"
 
 #include "crimson/common/log.h"
+#include "osd/osd_types_fmt.h"
+
 
 #include "crimson/osd/osd_operations/scrub_event.h"
 #include "crimson/osd/scrubber/scrub_machine_cr.h"
@@ -120,11 +122,6 @@ ostream& PgScrubber::show(ostream& out) const
 }
 
 
-seastar::future<> PgScrubber::send_scrub_echo(epoch_t epoch_queued)
-{
-  return seastar::now();
-}
-
 
 void PgScrubber::scrub_fake_scrub_session(epoch_t epoch_queued)
 {
@@ -162,11 +159,20 @@ crimson::osd::ScrubEvent::interruptible_future<>
 PgScrubber::scrub_echo(epoch_t epoch_queued)
 {
   logger().warn("{}: pg: {} epoch: {} echo block starts", __func__, m_pg_id, epoch_queued);
-  return seastar::sleep(1s).then([this, epoch_queued]() mutable -> crimson::osd::ScrubEvent::interruptible_future<> {
-    logger().warn("scrub_echo: pg: {} epoch: {} echo block done", m_pg_id, epoch_queued);
+  return seastar::sleep(1s).then([pg=m_pg_id, epoch_queued]() mutable -> crimson::osd::ScrubEvent::interruptible_future<> {
+    logger().warn("scrub_echo: pg: {} epoch: {} echo block done", pg, epoch_queued);
     return seastar::make_ready_future();
   });
   //logger().warn("{}: pg: {} epoch: {} echo block sent", __func__, m_pg_id, epoch_queued);
+}
+
+// trying to debug a crash:
+void PgScrubber::scrub_echo_v(epoch_t epoch_queued)
+{
+  logger().warn("{}: pg: {} epoch: {} echo block starts", __func__, m_pg_id, epoch_queued);
+  (void) seastar::sleep(1s).then([pg=m_pg_id, epoch_queued]() /*mutable -> crimson::osd::ScrubEvent::interruptible_future<> */ {
+    logger().warn("scrub_echo: pg: {} epoch: {} echo block done", pg, epoch_queued);
+  });
 }
 
 
