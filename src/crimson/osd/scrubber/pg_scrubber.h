@@ -860,6 +860,7 @@ public:
   void scrub_fake_scrub_done(epoch_t epoch_queued);
 
   crimson::osd::ScrubEvent::interruptible_future<> scrub_echo(epoch_t epoch_queued);
+  void scrub_echo_v(epoch_t epoch_queued);
 
 
 private:
