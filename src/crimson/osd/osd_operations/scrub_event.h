@@ -100,6 +100,11 @@ class ScrubEvent : public OperationT<ScrubEvent> {
     OrderedExclusivePhase await_map = {"ScrubEvent::PGPipeline::await_map"};
     //  do we need a pipe phase to lock the PG against other
     //  types of client operations?
+
+    // a local synchronier, to enable us to finish an operation after creating
+    // a new event.
+    OrderedExclusivePhase local_sync = {"ScrubEvent::PGPipeline::local_sync"};
+
     OrderedExclusivePhase process = {"ScrubEvent::PGPipeline::process"};
     friend class ScrubEvent;
   };
@@ -110,7 +115,16 @@ class ScrubEvent : public OperationT<ScrubEvent> {
   Scrub::act_token_t act_token;
 
   PipelineHandle handle;
-  PGPipeline& pp(PG& pg);  // should this one be static?
+  static PGPipeline& pp(PG& pg);  // should this one be static?
+
+  public:
+
+  //using rett = decltype(std::declval<ScrubEventFwd>().index());
+  using rett = decltype(handle.enter(pp(*pg).local_sync));
+  struct nullevent_tag_t{};
+
+
+private:
 
   ShardServices& shard_services;
   // PeeringCtx ctx;
@@ -155,9 +169,21 @@ class ScrubEvent : public OperationT<ScrubEvent> {
              epoch_t epoch_queued,
              Scrub::act_token_t tkn);
 
+  // until I learn how to enter the pipeline w/o creating a new event
+  ScrubEvent(nullevent_tag_t,
+             Ref<PG> pg,
+             ShardServices& shard_services,
+             const spg_t& pgid,
+             ScrubEventFwd func);
+
   void print(std::ostream&) const final;
   void dump_detail(ceph::Formatter* f) const final;
   seastar::future<> start();
+
+  //static seastar::future<PipelineHandle> lockout(PG& pg);
+  //static void unlock(PG& pg, PipelineHandle&& handle);
+  rett lockout();
+  void unlock();
 
   friend fmt::formatter<ScrubEvent>;
 };

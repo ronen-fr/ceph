@@ -60,6 +60,17 @@ ScrubEvent::ScrubEvent(Ref<PG> pg,
   logger().debug("ScrubEvent: 2'nd ctor {:p} {}", (void*)this, dbg_desc);
 }
 
+ScrubEvent::ScrubEvent(nullevent_tag_t,
+                       Ref<PG> pg,
+                       ShardServices& shard_services,
+                       const spg_t& pgid,
+                       ScrubEventFwd func)
+: ScrubEvent{std::move(pg), shard_services, pgid, func, epoch_queued, 0,
+             std::chrono::milliseconds{0}}
+{
+  logger().debug("ScrubEvent: dummy event");
+}
+
 void ScrubEvent::print(std::ostream& lhs) const
 {
   lhs << fmt::format("{}", *this);
@@ -136,6 +147,9 @@ seastar::future<> ScrubEvent::start()
           pg->osdmap_gate.wait_for_map(epoch_queued));
       }).then_interruptible([this, pg](auto) {
         return with_blocking_future_interruptible<interruptor::condition>(
+          handle.enter(pp(*pg).local_sync));
+      }).then_interruptible([this, pg]() {
+        return with_blocking_future_interruptible<interruptor::condition>(
           handle.enter(pp(*pg).process));
       }).then_interruptible([this, pg]() mutable -> ScrubEvent::interruptible_future<>  {
 
@@ -167,6 +181,68 @@ seastar::future<> ScrubEvent::start()
   });
 }
 // clang-format on
+
+ScrubEvent::rett ScrubEvent::lockout()
+{
+  return handle.enter(pp(*pg).local_sync);
+}
+
+void ScrubEvent::unlock()
+{
+  handle.exit();
+}
+
+// seastar::future<PipelineHandle> ScrubEvent::lockout(PG& pg)
+// {
+//   PipelineHandle hdl;
+// 
+//   return handle.enter(ScrubEvent::pp(pg).local_sync
+//     ).then_interruptible<void>([handle=std::move(handle)]() mutable {
+//       return seastar::make_ready_future<PipelineHandle>(std::move(handle));
+//     });
+
+  //      return seastar::make_ready_future<PipelineHandle>(std::move(handle));
+   //   })
+
+//   return with_blocking_future<void>([&] {
+//     return hdl.enter(ScrubEvent::pp(pg).local_sync);
+//   }).then([&] {
+//     return seastar::make_ready_future<PipelineHandle>(std::move(handle));
+//   });
+// 
+//   //      .then([handle=std::move(handle)]()/* -> ScrubEvent::interruptible_future<>*/ {
+//   //      return seastar::make_ready_future<PipelineHandle>(std::move(handle));
+//    //   });
+//   return with_blocking_future<>(hdl.enter(ScrubEvent::pp(pg).local_sync))
+//         .then([handle=std::move(hdl)]() -> seastar::future<PipelineHandle> {
+//         return seastar::make_ready_future<PipelineHandle>(std::move(handle));
+//       });
+//}
+
+// void ScrubEvent::unlock(PG& pg, PipelineHandle&& handle)
+// {
+//   handle.exit(); 
+// }
+
+#if 0
+
+
+return with_blocking_future_interruptible<interruptor::condition>(
+    // process_event() of our boost::statechart machine is non-reentrant.
+    // with the backfill_pipeline we protect it from a second entry from
+    // the implementation of BackfillListener.
+    // additionally, this stage serves to synchronize with PeeringEvent.
+    handle.enter(bp(*pg).process)
+  ).then_interruptible([this] {
+    pg->get_recovery_handler()->dispatch_backfill_event(std::move(evt));
+    return seastar::make_ready_future<bool>(false);
+  });
+
+using crimson::osd::InterruptibleOperation::interruptible_future<bool> = 
+crimson::interruptible::interruptible_future<crimson::osd::IOInterruptCondition, bool> 
+
+#endif
+
 
 #if 0
 seastar::future<> ScrubEvent::start0()

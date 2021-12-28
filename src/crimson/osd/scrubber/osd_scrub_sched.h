@@ -18,6 +18,7 @@
 #include "osd/scrubber_common.h"
 #endif
 #include "osd/osd_types_fmt.h"
+#include "include/utime_fmt.h"
 
 #include "utime.h"
 
@@ -29,7 +30,6 @@ class OSD;
 
 #ifdef WITH_SEASTAR
 using CephContext = crimson::common::CephContext;
-//using OSDSvc = crimson::osd::ShardServices;
 using OSDSvc = crimson::osd::OSD;
 using PG = crimson::osd::PG;
 #else
@@ -183,7 +183,7 @@ class ScrubQueue {
    *
    * locking: locks jobs_lock
    */
-  seastar::future<Scrub::schedule_result_t> select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
+  seastar::future<Scrub::schedule_result_t> select_pg_and_scrub(Scrub::ScrubPreconds&& preconds);
 
   /**
    * Translate attempt_ values into readable text

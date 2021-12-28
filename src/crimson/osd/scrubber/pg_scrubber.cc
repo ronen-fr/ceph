@@ -131,6 +131,7 @@ void PgScrubber::scrub_fake_scrub_session(epoch_t epoch_queued)
 
   logger().warn("{}: pg: {} - faking scrub session", __func__, m_pg_id);
   set_scrub_begin_time();
+  m_active = true;
 
  (void)m_pg->get_shard_services().start_operation<ScrubEvent>(
         m_pg, m_pg->get_shard_services(), m_pg_id,
@@ -143,17 +144,12 @@ void PgScrubber::scrub_fake_scrub_done(epoch_t epoch_queued)
 {
   logger().warn("{}: pg: {} - fake scrub session done", __func__, m_pg_id);
   set_scrub_duration();
+  clear_queued_or_active();
+  m_active = false;
+  clear_scrub_reservations();
+  m_pg->reschedule_scrub();
 }
 
-
-// void PgScrubber::scrub_echo(epoch_t epoch_queued)
-// {
-//   logger().warn("{}: pg: {} epoch: {} echo block starts", __func__, m_pg_id, epoch_queued);
-//   (void) seastar::sleep(1s).then([this, epoch_queued] {
-//     logger().warn("scrub_echo: pg: {} epoch: {} echo block done", m_pg_id, epoch_queued);
-//   });
-//   logger().warn("{}: pg: {} epoch: {} echo block sent", __func__, m_pg_id, epoch_queued);
-// }
 
 crimson::osd::ScrubEvent::interruptible_future<>
 PgScrubber::scrub_echo(epoch_t epoch_queued)
@@ -166,7 +162,7 @@ PgScrubber::scrub_echo(epoch_t epoch_queued)
   //logger().warn("{}: pg: {} epoch: {} echo block sent", __func__, m_pg_id, epoch_queued);
 }
 
-// trying to debug a crash:
+// trying to debug a crash: this version works!
 void PgScrubber::scrub_echo_v(epoch_t epoch_queued)
 {
   logger().warn("{}: pg: {} epoch: {} echo block starts", __func__, m_pg_id, epoch_queued);
@@ -501,6 +497,9 @@ std::ostream& ReplicaReservations::gen_prefix(std::ostream& out) const
   return out << m_log_msg_prefix;
 }
 
+#endif
+
+
 // ///////////////////// LocalReservation //////////////////////////////////
 
 // note: no dout()s in LocalReservation functions. Client logs interactions.
@@ -521,6 +520,7 @@ LocalReservation::~LocalReservation()
   }
 }
 
+#ifdef NOT_YET
 // ///////////////////// ReservedByRemotePrimary ///////////////////////////////
 
 ReservedByRemotePrimary::ReservedByRemotePrimary(const PgScrubber* scrubber,
@@ -712,7 +712,13 @@ bool PgScrubber::range_intersects_scrub(const hobject_t& start,
 
 void PgScrubber::discard_replica_reservations() {}
 
-void PgScrubber::clear_scrub_reservations() {}
+void PgScrubber::clear_scrub_reservations()
+{
+  logger().info("scrubber: clear_scrub_reservations");
+  //m_reservations.reset();	  // the remote reservations
+  m_local_osd_resource.reset();	  // the local reservation
+  //m_remote_osd_resource.reset();  // we as replica reserved for a Primary
+}
 
 void PgScrubber::unreserve_replicas() {}
 
@@ -723,7 +729,18 @@ void PgScrubber::scrub_requested(scrub_level_t scrub_level,
 
 bool PgScrubber::reserve_local()
 {
-  return true;
+  // try to create the reservation object (which translates into asking the
+  // OSD for the local scrub resource). If failing - undo it immediately
+
+  m_local_osd_resource.emplace(&m_osds);
+  if (m_local_osd_resource->is_reserved()) {
+    logger().info("{}: pg[{}]: local resources reserved", __func__, m_pg_id);
+    return true;
+  }
+
+  logger().warn("{}: pg[{}]: failed to reserve local scrub resources", __func__, m_pg_id);
+  m_local_osd_resource.reset();
+  return false;
 }
 
 void PgScrubber::handle_query_state(ceph::Formatter* f) {}
