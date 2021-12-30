@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 #pragma once
 
+// clang-format off
 /*
       +------------------------+
       |                        |
@@ -46,7 +47,7 @@
 
 
 */
-
+// clang-format on
 
 #include "./scrub_backend_if.h"
 
