@@ -690,6 +690,9 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   scrub_flags_t m_flags;
 
+  /// a reference to the details of the next scrub (as requested and managed by the PG)
+  requested_scrub_t& m_planned_scrub;
+
   bool m_active{false};
 
   /**
