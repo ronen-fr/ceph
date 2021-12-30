@@ -79,6 +79,8 @@ Main Scrubber interfaces:
 #include "osd/PG.h"
 #include "osd/PrimaryLogPG.h" // only used to forward PrimaryLogScrub-only methods
 #include "osd/scrubber_common.h"
+
+#include "ScrubStore.h"
 #include "osd_scrub_sched.h"
 #include "scrub_backend.h"
 #include "scrub_machine_lstnr.h"
