@@ -2,6 +2,53 @@
 // vim: ts=8 sw=2 smarttab
 #pragma once
 
+// clang-format off
+/*
+      +------------------------+
+      |                        |
+      |   PgScrubber           |
+      |                        |-----------------------------+
+      |                        |                             |
+      +------------------------+                             | ownes & uses
+      |   PrimaryLogScrub      |                             |
+      +------------------------+                             |
+                                                             |
+                                                             |
+                                                             v
+                                  +-------------------------------------------+
+                                  |              <<ScrubBackendIF>>           |
+                                  |                                           |
+                                  | + decode_received_map()                   |
+                                  | + scrub_compare_maps()                    |
+                                  | + scan_snaps()                            |
+                                  | .....                                     |
+                                  |                                           |
+                                  +-------------------------------------------+
+                                                       ^
+                                                       |(implements)
+                                  +-------------------------------------------+
+                                  |ScrubBackend                               |
+        +----------------+        |============                               |
+        |  this_chunk    |        |                                           |
+        | (ScrubBeChunk) |<-------|                                           |
+        +----------------+        |                                           |
+                                  |                                           |
+                                  |                                           |
+                                  +--------------------/-------------\--------+
+                                         --/          /               \
+                                      --/             |               |
+                                   --/               /                 \
+                                 -/            uses  |            uses |
+                        uses  --/                   /                   \
+                           --/                     /                    |
+                        --/                        |                     \
+                       v                           v                     v
+                  PgBackend             PG/PrimaryLogPG          OSD Services
+
+
+*/
+// clang-format on
+
 #include "./scrub_backend_if.h"
 
 #include <fmt/core.h>
