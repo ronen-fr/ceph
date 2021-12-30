@@ -78,6 +78,8 @@ Main Scrubber interfaces:
 
 #include "osd/PG.h"
 #include "osd/scrubber_common.h"
+
+#include "ScrubStore.h"
 #include "osd_scrub_sched.h"
 #include "scrub_backend.h"
 #include "scrub_machine_lstnr.h"
@@ -718,6 +720,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   std::unique_ptr<Scrub::Store> m_store;
 
+  int num_digest_updates_pending{0};
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
   /// Returns reference to current osdmap
