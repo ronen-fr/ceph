@@ -152,6 +152,14 @@ void PG::publish_stats_to_osd()
 {
   if (!is_primary())
     return;
+
+  ceph_assert(m_scrubber);
+  peering_state.update_stats_wo_resched(
+    [scrubber = m_scrubber.get()](pg_history_t& hist,
+                                  pg_stat_t& info) mutable -> void {
+      info.scrub_sched_status = scrubber->get_schedule();
+    });
+
   if (auto new_pg_stats = peering_state.prepare_stats_for_publish(
         pg_stats,
         object_stat_collection_t());
@@ -558,8 +566,11 @@ void PG::dump_primary(Formatter* f)
   peering_state.handle_event(q, 0);
   f->close_section();
 
+  if (is_primary() && peering_state.is_active() && m_scrubber) {
+    m_scrubber->dump_scrubber(f, m_planned_scrub);
+  }
+
   // TODO: snap_trimq
-  // TODO: scrubber state
   // TODO: agent state
 }
 

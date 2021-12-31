@@ -147,6 +147,12 @@ void PgScrubber::scrub_fake_scrub_done(epoch_t epoch_queued)
   clear_queued_or_active();
   m_active = false;
   clear_scrub_reservations();
+  m_pg->set_last_scrub_stamp(ceph_clock_now());
+  m_pg->set_last_deep_scrub_stamp(ceph_clock_now());
+
+  // this is the wrong function to call, but for now:
+  m_pg->scrub_requested(scrub_level_t::shallow, scrub_type_t::not_repair); // juts sends updates
+
   m_pg->reschedule_scrub();
 }
 
@@ -292,9 +298,9 @@ PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
 
   } else {
     res.proposed_time = m_pg->get_pg_info(ScrubberPasskey{}).history.last_scrub_stamp;
-    res.min_interval =
+    res.min_interval = /* RRR for now */ 100 +
       m_pg->get_pool().info.opts.value_or(pool_opts_t::SCRUB_MIN_INTERVAL, 0.0);
-    res.max_interval =
+    res.max_interval = /* RRR for now */ 400 +
       m_pg->get_pool().info.opts.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
   }
 
@@ -562,7 +568,7 @@ std::ostream& ReservedByRemotePrimary::gen_prefix(std::ostream& out) const
 
 #endif
 
-#ifdef NOT_YET
+//#ifdef NOT_YET
 
 // ///////////////////// MapsCollectionStatus ////////////////////////////////
 
@@ -593,7 +599,7 @@ std::string MapsCollectionStatus::dump() const
   return all;
 }
 
-ostream& operator<<(ostream& out, const MapsCollectionStatus& sf)
+ostream& operator<<(ostream& out, const ::Scrub::MapsCollectionStatus& sf)
 {
   out << " [ ";
   for (const auto& rp : sf.m_maps_awaited_for) {
@@ -605,7 +611,7 @@ ostream& operator<<(ostream& out, const MapsCollectionStatus& sf)
   return out << " ] ";
 }
 
-#endif
+//#endif
 
 // ///////////////////// blocked_range_t ///////////////////////////////
 
@@ -743,9 +749,163 @@ bool PgScrubber::reserve_local()
   return false;
 }
 
-void PgScrubber::handle_query_state(ceph::Formatter* f) {}
 
-void PgScrubber::dump(ceph::Formatter* f) const {}
+/*
+ * note that the flags-set fetched from the PG (m_pg->m_planned_scrub)
+ * is cleared once scrubbing starts; Some of the values dumped here are
+ * thus transitory.
+ */
+void PgScrubber::dump_scrubber(ceph::Formatter* f,
+			       const requested_scrub_t& request_flags) const
+{
+  f->open_object_section("scrubber");
+
+  if (m_active) {  // TBD replace with PR#42780's test
+    f->dump_bool("active", true);
+    dump_active_scrubber(f, state_test(PG_STATE_DEEP_SCRUB));
+  } else {
+    f->dump_bool("active", false);
+    f->dump_bool("must_scrub",
+		 (m_pg->m_planned_scrub.must_scrub || m_flags.required));
+    f->dump_bool("must_deep_scrub", request_flags.must_deep_scrub);
+    f->dump_bool("must_repair", request_flags.must_repair);
+    f->dump_bool("need_auto", request_flags.need_auto);
+
+    f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time();
+
+    // note that we are repeating logic that is coded elsewhere (currently PG.cc).
+    // This is not optimal.
+    bool deep_expected = (ceph_clock_now() >= m_pg->next_deepscrub_interval()) ||
+			 request_flags.must_deep_scrub || request_flags.need_auto;
+    auto sched_state =
+      m_scrub_job->scheduling_state(ceph_clock_now(), deep_expected);
+    f->dump_string("schedule", sched_state);
+  }
+
+  if (m_publish_sessions) {
+    f->dump_int("test_sequence",
+                m_sessions_counter);  // an ever-increasing number used by tests
+  }
+
+  f->close_section();
+}
+
+void PgScrubber::dump_active_scrubber(ceph::Formatter* f, bool is_deep) const
+{
+  f->dump_stream("epoch_start") << m_interval_start;
+  f->dump_stream("start") << m_start;
+  f->dump_stream("end") << m_end;
+  f->dump_stream("max_end") << m_max_end;
+  f->dump_stream("subset_last_update") << m_subset_last_update;
+  // note that m_is_deep will be set some time after PG_STATE_DEEP_SCRUB is
+  // asserted. Thus, using the latter.
+  f->dump_bool("deep", is_deep);
+
+  // dump the scrub-type flags
+  f->dump_bool("req_scrub", m_flags.required);
+  f->dump_bool("auto_repair", m_flags.auto_repair);
+  f->dump_bool("check_repair", m_flags.check_repair);
+  f->dump_bool("deep_scrub_on_error", m_flags.deep_scrub_on_error);
+  f->dump_unsigned("priority", m_flags.priority);
+
+  f->dump_int("shallow_errors", m_shallow_errors);
+  f->dump_int("deep_errors", m_deep_errors);
+  f->dump_int("fixed", m_fixed_count);
+  {
+    f->open_array_section("waiting_on_whom");
+    for (const auto& p : m_maps_status.get_awaited()) {
+      f->dump_stream("shard") << p;
+    }
+    f->close_section();
+  }
+  f->dump_string("schedule", "scrubbing");
+}
+
+pg_scrubbing_status_t PgScrubber::get_schedule() const
+{
+  logger().debug("{}: pg[{}]", __func__, m_pg_id);
+
+  if (!m_scrub_job) {
+    return pg_scrubbing_status_t{};
+  }
+
+  auto now_is = ceph_clock_now();
+
+  if (m_active) {
+    // report current scrub info, including updated duration
+    int32_t duration = (utime_t{now_is} - scrub_begin_stamp).sec();
+
+    return pg_scrubbing_status_t{
+      utime_t{},
+      duration,
+      pg_scrub_sched_status_t::active,
+      true,  // active
+      (m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow),
+      false /* is periodic? unknown, actually */};
+  }
+  if (m_scrub_job->state != ScrubQueue::qu_state_t::registered) {
+    return pg_scrubbing_status_t{utime_t{},
+                                 0,
+                                 pg_scrub_sched_status_t::not_queued,
+                                 false,
+                                 scrub_level_t::shallow,
+                                 false};
+  }
+
+  // Will next scrub surely be a deep one? note that deep-scrub might be
+  // selected even if we report a regular scrub here.
+  bool deep_expected = (now_is >= m_pg->next_deepscrub_interval()) ||
+                       m_pg->m_planned_scrub.must_deep_scrub ||
+                       m_pg->m_planned_scrub.need_auto;
+  scrub_level_t expected_level =
+    deep_expected ? scrub_level_t::deep : scrub_level_t::shallow;
+  bool periodic = !m_pg->m_planned_scrub.must_scrub &&
+                  !m_pg->m_planned_scrub.need_auto &&
+                  !m_pg->m_planned_scrub.must_deep_scrub;
+
+  // are we ripe for scrubbing?
+  if (now_is > m_scrub_job->schedule.scheduled_at) {
+    // we are waiting for our turn at the OSD.
+    return pg_scrubbing_status_t{m_scrub_job->schedule.scheduled_at,
+                                 0,
+                                 pg_scrub_sched_status_t::queued,
+                                 false,
+                                 expected_level,
+                                 periodic};
+  }
+
+  return pg_scrubbing_status_t{m_scrub_job->schedule.scheduled_at,
+                               0,
+                               pg_scrub_sched_status_t::scheduled,
+                               false,
+                               expected_level,
+                               periodic};
+}
+
+void PgScrubber::handle_query_state(ceph::Formatter* f)
+{
+  logger().debug("{}: pg[{}]", __func__, m_pg_id);
+
+  f->open_object_section("scrub");
+  f->dump_stream("scrubber.epoch_start") << m_interval_start;
+  f->dump_bool("scrubber.active", m_active);
+  f->dump_stream("scrubber.start") << m_start;
+  f->dump_stream("scrubber.end") << m_end;
+  f->dump_stream("scrubber.max_end") << m_max_end;
+  f->dump_stream("scrubber.subset_last_update") << m_subset_last_update;
+  f->dump_bool("scrubber.deep", m_is_deep);
+  {
+    f->open_array_section("scrubber.waiting_on_whom");
+    for (const auto& p : m_maps_status.get_awaited()) {
+      f->dump_stream("shard") << p;
+    }
+    f->close_section();
+  }
+
+  f->dump_string("comment", "DEPRECATED - may be removed in the next release");
+
+  f->close_section();
+}
 
 unsigned int PgScrubber::scrub_requeue_priority(
   Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const
@@ -780,6 +940,34 @@ int PgScrubber::asok_debug(std::string_view cmd,
                            Formatter* f,
                            std::stringstream& ss)
 {
+  logger().info("{}: cmd: {}, param: {}", __func__, cmd, param);
+
+  if (cmd == "block") {
+    // set a flag that will cause the next 'select_range' to report a blocked object
+    m_debug_blockrange = 1;
+
+  } else if (cmd == "unblock") {
+    // send an 'unblock' event, as if a blocked range was freed
+    m_debug_blockrange = 0;
+    //m_fsm->process_event(Unblocked{});
+
+  } else if ((cmd == "set") || (cmd == "unset")) {
+
+    if (param == "sessions") {
+      // set/reset the inclusion of the scrub sessions counter in 'query' output
+      m_publish_sessions = (cmd == "set");
+
+    } else if (param == "block") {
+      if (cmd == "set") {
+        // set a flag that will cause the next 'select_range' to report a blocked object
+        m_debug_blockrange = 1;
+      } else {
+      // send an 'unblock' event, as if a blocked range was freed
+        m_debug_blockrange = 0;
+        //m_fsm->process_event(Unblocked{});
+      }
+    }
+  }
   return 0;
 }
 
@@ -818,6 +1006,10 @@ void PgScrubber::add_delayed_scheduling() {}
 void PgScrubber::get_replicas_maps(bool replica_can_preempt) {}
 
 void PgScrubber::on_digest_updates() {}
+
+
+
+
 
 ScrubMachineListener::MsgAndEpoch PgScrubber::prep_replica_map_msg(
   Scrub::PreemptionNoted was_preempted)

@@ -152,6 +152,9 @@ class ReservedByRemotePrimary {
   std::ostream& gen_prefix(std::ostream& out) const;
 };
 
+#endif
+
+
 /**
  * Once all replicas' scrub maps are received, we go on to compare the maps.
  * That is - unless we we have not yet completed building our own scrub map.
@@ -160,6 +163,7 @@ class ReservedByRemotePrimary {
  */
 class MapsCollectionStatus {
 
+public: // RRR for now - fix this!
   bool m_local_map_ready{false};
   std::vector<pg_shard_t> m_maps_awaited_for;
 
@@ -189,10 +193,9 @@ class MapsCollectionStatus {
   std::string dump() const;
 
   friend std::ostream& operator<<(std::ostream& out,
-                                  const MapsCollectionStatus& sf);
+                                  const ::Scrub::MapsCollectionStatus& sf);
 };
 
-#endif
 
 }  // namespace Scrub
 
@@ -361,7 +364,13 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void handle_query_state(ceph::Formatter* f) final;
 
-  void dump(ceph::Formatter* f) const override;
+  pg_scrubbing_status_t get_schedule() const final;
+
+  void dump_scrubber(ceph::Formatter* f,
+			     const requested_scrub_t& request_flags) const final;
+
+
+  //void dump(ceph::Formatter* f) const override;
 
   // used if we are a replica
 
@@ -512,7 +521,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   utime_t scrub_begin_stamp;
 
- protected:
+ private:
   bool state_test(uint64_t m) const
   { /*return m_pg->recovery_state.state_test(m);*/
     return false;
@@ -698,6 +707,17 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    */
   Scrub::act_token_t m_current_token{1};
 
+  /**
+   *  (primary/replica) a test aid. A counter that is incremented whenever a scrub starts,
+   *  and again when it terminates. Exposed as part of the 'pg query' command, to be used
+   *  by test scripts.
+   *
+   *  @ATTN: not guaranteed to be accurate. To be only used for tests. This is why it
+   *  is initialized to a meaningless number;
+   */
+  int32_t m_sessions_counter{(int32_t)((int64_t)(this) & 0x0000'0000'00ff'fff0)};
+  bool m_publish_sessions{false}; //< will the counter be part of 'query' output?
+
   scrub_flags_t m_flags;
 
   bool m_active{false};
@@ -828,9 +848,9 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
                           bool allow_preemption);
 
 
-#ifdef NOT_YET
+//#ifdef NOT_YET
   Scrub::MapsCollectionStatus m_maps_status;
-#endif
+//#endif
 
   omap_stat_t m_omap_stats = (const struct omap_stat_t){0};
 
@@ -855,6 +875,11 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   Scrub::scrub_prio_t m_replica_request_priority;
 
 
+  // 'query' command data for an active scrub
+  void dump_active_scrubber(ceph::Formatter* f, bool is_deep) const;
+
+
+
 
   // DEBUG
 public:
@@ -876,7 +901,7 @@ private:
   class preemption_data_t : public Scrub::preemption_t {
    public:
     explicit preemption_data_t(
-      /*::crimson::osd::*/ PG* pg);  // the PG access is used for conf access (and logs)
+      PG* pg);  // the PG access is used for conf access (and logs)
 
     [[nodiscard]] bool is_preemptable() const final { return m_preemptable; }
 
@@ -929,7 +954,7 @@ private:
 
     void adjust_parameters() final
     {
-      // std::lock_guard<std::mutex> lk{m_preemption_lock};
+      std::lock_guard<ceph::mutex> lk{m_preemption_lock};
 
       if (m_preempted) {
         m_preempted = false;
@@ -941,7 +966,7 @@ private:
 
    private:
     PG* m_pg;
-    //mutable ceph::mutex m_preemption_lock;
+    mutable ceph::mutex m_preemption_lock;
     bool m_preemptable{false};
     bool m_preempted{false};
     int m_left;
