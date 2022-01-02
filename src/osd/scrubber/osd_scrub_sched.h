@@ -11,15 +11,10 @@
 
 #include "common/RefCountedObj.h"
 #include "common/ceph_atomic.h"
-#include "osd/osd_types.h"
-#include "osd/scrubber_common.h"
-//#include <fmt/format.h>
-//#include "common/hobject.h"
-//#include "include/types_fmt.h"
-#include "osd/osd_types_fmt.h"
 #include "include/utime_fmt.h"
-
-#include "utime.h"
+#include "osd/osd_types.h"
+#include "osd/osd_types_fmt.h"
+#include "osd/scrubber_common.h"
 
 class PG;
 
@@ -363,10 +358,11 @@ struct fmt::formatter<ScrubQueue::ScrubJob> {
   template <typename FormatContext>
   auto format(const ScrubQueue::ScrubJob& sjob, FormatContext& ctx)
   {
-    return fmt::format_to(ctx.out(), "{}, {} dead: {} - {} / failure: {} / pen. t.o.: {} / queue state: {}",
-                          sjob.pgid, sjob.schedule.scheduled_at,
-                          sjob.schedule.deadline, sjob.registration_state(),
-                          sjob.resources_failure, sjob.penalty_timeout,
-                          ScrubQueue::qu_state_text(sjob.state));
+    return fmt::format_to(
+      ctx.out(),
+      "{}, {} dead: {} - {} / failure: {} / pen. t.o.: {} / queue state: {}",
+      sjob.pgid, sjob.schedule.scheduled_at, sjob.schedule.deadline,
+      sjob.registration_state(), sjob.resources_failure, sjob.penalty_timeout,
+      ScrubQueue::qu_state_text(sjob.state));
   }
 };

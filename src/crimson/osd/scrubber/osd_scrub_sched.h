@@ -8,9 +8,11 @@
 #include <memory>
 #include <optional>
 #include <vector>
+#include <ostream>
 
 #include "common/RefCountedObj.h"
 #include "common/ceph_atomic.h"
+#include "common/ceph_mutex.h"
 #include "osd/osd_types.h"
 #ifdef WITH_SEASTAR
 #include "crimson/osd/scrubber_common_cr.h"
@@ -75,7 +77,7 @@ class ScrubQueue {
 		     // under lock
   };
 
-  ScrubQueue(CephContext* cct, OSDService& osds);
+  ScrubQueue(CephContext* cct, OSDSvc& osds);
 
   struct scrub_schedule_t {
     utime_t scheduled_at{};
