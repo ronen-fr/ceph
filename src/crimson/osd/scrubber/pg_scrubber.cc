@@ -26,7 +26,7 @@
 
 
 #include "crimson/osd/osd_operations/scrub_event.h"
-#include "crimson/osd/scrubber/scrub_machine_cr.h"
+//#include "crimson/osd/scrubber/scrub_machine_cr.h"
 
 
 // using std::list;

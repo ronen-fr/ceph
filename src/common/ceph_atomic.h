@@ -98,12 +98,6 @@ namespace ceph {
 
 #else  // WITH_SEASTAR
 
-#if defined(WITH_SEASTAR)
-
-//xxx shouldn't happen
-
-#endif
-
 namespace ceph {
   template <class T> using atomic = ::std::atomic<T>;
 } // namespace ceph

@@ -1347,7 +1347,6 @@ seastar::future<Scrub::schedule_result_t> PG::sched_scrub_this_pg()
 
   // for now - faking an N seconds scrub.
 
-  // classic: osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
   (void)shard_services.start_operation<ScrubEvent>(
     this, get_shard_services(), pgid,
     (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_fake_scrub_session),

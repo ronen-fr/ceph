@@ -52,6 +52,14 @@ namespace crimson::net {
   class Messenger;
 }
 
+namespace Scrub {
+  class Store;
+  class ReplicaReservations;
+  class LocalReservation;
+  class ReservedByRemotePrimary;
+  enum class schedule_result_t;
+}
+
 namespace crimson::os {
   class FuturizedStore;
 }

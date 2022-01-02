@@ -11,6 +11,7 @@
 #include "msg/MessageRef.h"
 #include "crimson/common/exception.h"
 #include "crimson/os/futurized_collection.h"
+#include "crimson/osd/scrubber/osd_scrub_sched.h"
 #include "osd/PeeringState.h"
 #include "crimson/osd/osdmap_service.h"
 #include "crimson/osd/object_context.h"
