@@ -316,7 +316,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   void send_get_next_chunk(epoch_t epoch_queued) final;
 
-  void send_scrub_is_finished(epoch_t epoch_queued) final;
+  void send_scrub_is_finished(epoch_t epoch_queued);
 
   /**
    *  we allow some number of preemptions of the scrub, which mean we do
@@ -329,17 +329,17 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   bool range_intersects_scrub(const hobject_t& start,
                               const hobject_t& end) final;
 
-  void dispatch_reserve_message(Ref<crimson::osd::RemoteScrubEvent> op) final;
+  void dispatch_reserve_message(crimson::net::ConnectionRef, Ref<crimson::osd::RemoteScrubEvent> op) final;
 
 private:
   /**
    *  we are a replica being asked by the Primary to reserve OSD resources for
    *  scrubbing
    */
-  void handle_scrub_reserve_request(Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m);
+  void handle_scrub_reserve_request(crimson::net::ConnectionRef conn, Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m);
   void handle_scrub_reserve_grant(Ref<crimson::osd::RemoteScrubEvent> op, pg_shard_t from);
   void handle_scrub_reserve_reject(Ref<crimson::osd::RemoteScrubEvent> op, pg_shard_t from);
-  void handle_scrub_reserve_release(Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m);
+  void handle_scrub_reserve_release(crimson::net::ConnectionRef conn, Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m);
 
 
 public:
@@ -537,6 +537,9 @@ public:
 
   [[nodiscard]] bool is_scrub_registered() const;
 
+  void send_oninit_done(epoch_t epoch_queued);
+  void send_being_after_requests(epoch_t epoch_queued);
+
   /// the 'is-in-scheduling-queue' status, using relaxed-semantics access to the
   /// status
   std::string_view registration_state() const;
@@ -562,6 +565,9 @@ public:
 
  private:
   void reset_internal_state();
+
+  void send_internal_event(crimson::osd::ScrubEvent::ScrubEventFwdImm evt);
+  void send_internal_event(crimson::osd::ScrubEvent::ScrubEventFwdImm evt, std::chrono::milliseconds dly);
 
   /**
    *  the current scrubbing operation is done. We should mark that fact, so that
@@ -636,7 +642,7 @@ public:
   /**
    * return true if any inconsistency/missing is repaired, false otherwise
    */
-  [[nodiscard]] bool scrub_process_inconsistent();
+  [[nodiscard]] bool scrub_process_inconsistent() { return false; }
 
   void scrub_compare_maps();
 
@@ -659,9 +665,9 @@ public:
                              // Active->NotActive
 
   /// the part that actually finalizes a scrub
-  void scrub_finish();
+  void scrub_finish() override;
 
- protected:
+ private:
   PG* const m_pg;
 
   /**
@@ -747,7 +753,7 @@ public:
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
   /// Returns reference to current osdmap
-  const OSDMapRef& get_osdmap() const;
+  const OSDMapRef& get_osdmap() const { static OSDMapRef osdmap; return osdmap; }
   /// Returns shared pointer to current osdmap
   //OSDMapService::cached_map_t get_osdmap();
   //OSDMapService::cached_map_t get_osdmap() const;
@@ -826,7 +832,7 @@ public:
    *
    * The selected range is set directly into 'm_start' and 'm_end'
    */
-  bool select_range();
+  seastar::future<bool> select_range();
 
   std::list<Context*> m_callbacks;
 

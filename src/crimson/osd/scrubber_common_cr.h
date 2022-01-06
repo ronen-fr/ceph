@@ -205,7 +205,7 @@ struct ScrubPgIF {
 
   virtual void send_get_next_chunk(epoch_t epoch_queued) = 0;
 
-  virtual void send_scrub_is_finished(epoch_t epoch_queued) = 0;
+  //virtual void send_scrub_is_finished(epoch_t epoch_queued) = 0;
 
   virtual void send_maps_compared(epoch_t epoch_queued) = 0;
 
@@ -366,7 +366,7 @@ struct ScrubPgIF {
 
   virtual void on_maybe_registration_change(const requested_scrub_t& request_flags) = 0;
 
-  virtual void dispatch_reserve_message(Ref<crimson::osd::RemoteScrubEvent> op) = 0;
+  virtual void dispatch_reserve_message(crimson::net::ConnectionRef, Ref<crimson::osd::RemoteScrubEvent> op) = 0;
 
 
   // virtual void handle_scrub_reserve_op(Ref<MOSDScrubReserve> req, pg_shard_t from) = 0;

@@ -22,10 +22,10 @@ struct fmt::formatter<seastar::lowres_system_clock::time_point> {
               FormatContext& ctx) {
     std::time_t tt = std::chrono::duration_cast<std::chrono::seconds>(
       t.time_since_epoch()).count();
-    auto milliseconds = (t.time_since_epoch() %
+    auto milliseconds_ = (t.time_since_epoch() %
                          std::chrono::seconds(1)).count();
     return fmt::format_to(ctx.out(), "{:%Y-%m-%d %H:%M:%S} {:03d}",
-                          fmt::localtime(tt), milliseconds);
+                          fmt::localtime(tt), milliseconds_);
   }
 };
 
@@ -40,10 +40,10 @@ struct fmt::formatter<ceph::coarse_real_clock::time_point> {
               FormatContext& ctx) {
     std::time_t tt = std::chrono::duration_cast<std::chrono::seconds>(
       t.time_since_epoch()).count();
-    auto milliseconds = (t.time_since_epoch() %
+    auto milliseconds_ = (t.time_since_epoch() %
                          std::chrono::seconds(1)).count();
     return fmt::format_to(ctx.out(), "{:%Y-%m-%d %H:%M:%S} {:03d}",
-                          fmt::localtime(tt), milliseconds);
+                          fmt::localtime(tt), milliseconds_);
   }
 };
 

@@ -323,12 +323,17 @@ void WaitLastUpdate::on_new_updates(const UpdatesApplied&)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("WaitLastUpdate::on_new_updates(const UpdatesApplied&)");
 
+#if 1
+    post_event(InternalAllUpdates{});
+#else
+
   if (scrbr->has_pg_marked_new_updates()) {
     post_event(InternalAllUpdates{});
   } else {
     // will be requeued by op_applied
     logger().debug("{}: wait for EC read/modify/writes to queue", __func__);
   }
+#endif
 }
 
 /*
@@ -443,6 +448,9 @@ sc::result WaitReplicas::react(const GotReplicas&)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   logger().debug("WaitReplicas::react(const GotReplicas&)");
 
+  return transit<WaitDigestUpdate>();
+
+#ifdef NOT_YET
   if (!all_maps_already_called && scrbr->are_all_maps_available()) {
     logger().debug("scrubberFSM: {}: WaitReplicas::react(const GotReplicas&) got all", __func__);
 
@@ -464,6 +472,7 @@ sc::result WaitReplicas::react(const GotReplicas&)
   } else {
     return discard_event();
   }
+#endif
 }
 
 // ----------------------- WaitDigestUpdate -----------------------------------

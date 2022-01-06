@@ -206,7 +206,7 @@ struct DrainReplMaps;  ///< a problem during BuildMap. Wait for all replicas to 
 struct WaitReplicas;   ///< wait for all replicas to report
 struct WaitDigestUpdate;
 
-struct ActiveScrubbing : sc::state<ActiveScrubbing, ScrubMachine, PendingTimer> {
+struct ActiveScrubbing : sc::state<ActiveScrubbing, ScrubMachine, ActStartup> {
 
   explicit ActiveScrubbing(my_context ctx);
   ~ActiveScrubbing();
@@ -238,6 +238,7 @@ struct PendingTimer : sc::state<PendingTimer, ActiveScrubbing> {
 
   explicit PendingTimer(my_context ctx);
 
+  // the "real deal":
   using reactions = mpl::list<sc::transition<InternalSchedScrub, NewChunk>>;
 };
 
