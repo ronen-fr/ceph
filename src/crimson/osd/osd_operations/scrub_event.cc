@@ -367,7 +367,7 @@ seastar::future<> RemoteScrubEvent::do_op(int msg_type, Ref<PG> pg, crimson::net
   switch (msg_type) {
     case MSG_OSD_SCRUB_RESERVE:
       logger().info("{}: MSG_OSD_SCRUB_RESERVE", *this);
-      pg->m_scrubber->dispatch_reserve_message(op);
+      pg->m_scrubber->dispatch_reserve_message(conn, op);
       return seastar::make_ready_future<>();
 
     default:

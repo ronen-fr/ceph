@@ -329,17 +329,17 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   bool range_intersects_scrub(const hobject_t& start,
                               const hobject_t& end) final;
 
-  void dispatch_reserve_message(Ref<crimson::osd::RemoteScrubEvent> op) final;
+  void dispatch_reserve_message(crimson::net::ConnectionRef, Ref<crimson::osd::RemoteScrubEvent> op) final;
 
 private:
   /**
    *  we are a replica being asked by the Primary to reserve OSD resources for
    *  scrubbing
    */
-  void handle_scrub_reserve_request(Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m);
+  void handle_scrub_reserve_request(crimson::net::ConnectionRef conn, Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m);
   void handle_scrub_reserve_grant(Ref<crimson::osd::RemoteScrubEvent> op, pg_shard_t from);
   void handle_scrub_reserve_reject(Ref<crimson::osd::RemoteScrubEvent> op, pg_shard_t from);
-  void handle_scrub_reserve_release(Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m);
+  void handle_scrub_reserve_release(crimson::net::ConnectionRef conn, Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m);
 
 
 public:
@@ -636,7 +636,7 @@ public:
   /**
    * return true if any inconsistency/missing is repaired, false otherwise
    */
-  [[nodiscard]] bool scrub_process_inconsistent();
+  [[nodiscard]] bool scrub_process_inconsistent() { return false; }
 
   void scrub_compare_maps();
 
@@ -659,9 +659,9 @@ public:
                              // Active->NotActive
 
   /// the part that actually finalizes a scrub
-  void scrub_finish();
+  void scrub_finish() override;
 
- protected:
+ private:
   PG* const m_pg;
 
   /**
@@ -747,7 +747,7 @@ public:
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
   /// Returns reference to current osdmap
-  const OSDMapRef& get_osdmap() const;
+  const OSDMapRef& get_osdmap() const { static OSDMapRef osdmap; return osdmap; }
   /// Returns shared pointer to current osdmap
   //OSDMapService::cached_map_t get_osdmap();
   //OSDMapService::cached_map_t get_osdmap() const;

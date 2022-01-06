@@ -238,7 +238,8 @@ struct PendingTimer : sc::state<PendingTimer, ActiveScrubbing> {
 
   explicit PendingTimer(my_context ctx);
 
-  using reactions = mpl::list<sc::transition<InternalSchedScrub, NewChunk>>;
+  //using reactions = mpl::list<sc::transition<InternalSchedScrub, NewChunk>>;
+  using reactions = mpl::list<sc::transition<InternalSchedScrub, NotActive>>;
 };
 
 struct NewChunk : sc::state<NewChunk, ActiveScrubbing> {

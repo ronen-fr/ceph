@@ -445,7 +445,7 @@ ReplicaReservations::ReplicaReservations(PG* pg,
 
       auto reply = crimson::make_message<MOSDScrubReserve>(
         spg_t(m_pg_info.pgid.pgid, m_pg->get_primary().shard), epoch,
-        MOSDScrubReserve::RELEASE, m_pg->get_pg_whoami());
+        MOSDScrubReserve::REQUEST, m_pg->get_pg_whoami());
 
       std::ignore = m_osds.send_to_osd(p.osd, std::move(reply), epoch);
       m_waited_for_peers.push_back(p);
@@ -544,7 +544,6 @@ seastar::future<> ReplicaReservations::stop()
 void ReplicaReservations::handle_reserve_grant(Ref<crimson::osd::RemoteScrubEvent> op, pg_shard_t from)
 {
   logger().info("{}: pg[{}]: granted by {}", m_log_msg_prefix, m_pg->get_pgid(), from);
-  //op->mark_started();
 
   {
     // reduce the amount of extra release messages. Not a must, but the log is cleaner
@@ -767,8 +766,36 @@ void PgScrubber::initiate_regular_scrub(epoch_t epoch_queued)
   }
 }
 
+void PgScrubber::send_remotes_reserved(epoch_t epoch_queued)
+{
+  logger().debug("{}: epoch: {}", __func__, epoch_queued);
+  // note: scrub is not active yet
+  if (check_interval(epoch_queued)) {
+    logger().debug("{}: pg[{}]: scrubber event -->> RemotesReserved epoch: {}", __func__, m_pg->get_pgid(), epoch_queued);
+    m_fsm->process_event(RemotesReserved{});
+    logger().debug("{}: pg[{}]: scrubber event --<< RemotesReserved", __func__, m_pg->get_pgid());
+  }
+}
 
+void PgScrubber::send_reservation_failure(epoch_t epoch_queued)
+{
+  logger().debug("{}: epoch: {}", __func__, epoch_queued);
+  if (check_interval(epoch_queued)) {  // do not check for 'active'!
+    logger().debug("{}: pg[{}]: scrubber event -->> ReservationFailure epoch: {}", __func__, m_pg->get_pgid(), epoch_queued);
+    m_fsm->process_event(ReservationFailure{});
+    logger().debug("{}: pg[{}]: scrubber event --<< ReservationFailure", __func__, m_pg->get_pgid());
+  }
+}
 
+void PgScrubber::send_scrub_resched(epoch_t epoch_queued)
+{
+  logger().debug("{}: epoch: {}", __func__, epoch_queued);
+  if (is_message_relevant(epoch_queued)) {
+    logger().info("scrubber event -->> InternalSchedScrub epoch: {}", epoch_queued);
+    m_fsm->process_event(Scrub::InternalSchedScrub{});
+    logger().debug("scrubber event --<< {}", __func__);
+  }
+}
 
 // fakes
 
@@ -788,8 +815,6 @@ ScrubEIF PgScrubber::initiate_regular_scrub_v2(epoch_t epoch_queued)
 }
 
 void PgScrubber::initiate_scrub_after_repair(epoch_t epoch_queued) {}
-
-void PgScrubber::send_scrub_resched(epoch_t epoch_queued) {}
 
 void PgScrubber::active_pushes_notification(epoch_t epoch_queued) {}
 
@@ -838,15 +863,61 @@ bool PgScrubber::range_intersects_scrub(const hobject_t& start,
   return false;
 }
 
-void PgScrubber::dispatch_reserve_message(Ref<crimson::osd::RemoteScrubEvent> op)
+
+/**
+ *  if we are required to sleep:
+ *	arrange a callback sometimes later.
+ *	be sure to be able to identify a stale callback.
+ *  Otherwise: "requeue" (i.e. - send an FSM event) immediately.
+ */
+void PgScrubber::add_delayed_scheduling()
+{
+  m_end = m_start;  // not blocking any range now
+
+  milliseconds sleep_time{0ms};
+  if (m_needs_sleep) {
+    double scrub_sleep =
+      1000.0 * m_osds.get_scrub_services().scrub_sleep_time(m_flags.required);
+    sleep_time = milliseconds{int64_t(scrub_sleep)};
+  }
+  logger().debug(" sleep: {} ms. needed? {} this:{:p}", sleep_time.count(), m_needs_sleep,
+		 (void*)this);
+
+  m_needs_sleep = false;
+  m_sleep_started_at = ceph_clock_now();
+
+  // the following log line is used by osd-scrub-test.sh
+  logger().debug("scrubber: {} scrub state is PendingTimer, sleeping", __func__);
+
+  // scrub_send_scrub_resched
+
+  (void)m_pg->get_shard_services().start_operation<ScrubEvent>(
+        m_pg, m_pg->get_shard_services(), m_pg_id,
+        (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::send_scrub_resched), m_pg->get_osdmap_epoch(),
+        0, 10s);
+}
+
+
+
+void PgScrubber::update_op_mode_text()
+{
+  auto visible_repair = state_test(PG_STATE_REPAIR);
+  m_mode_desc = (visible_repair ? "repair" : (m_is_deep ? "deep-scrub" : "scrub"));
+// 
+//   dout(10) << __func__ << ": repair: visible: " << (visible_repair ? "true" : "false")
+// 	   << ", internal: " << (m_is_repair ? "true" : "false")
+// 	   << ". Displayed: " << m_mode_desc << dendl;
+}
+
+void PgScrubber::dispatch_reserve_message(crimson::net::ConnectionRef conn, Ref<crimson::osd::RemoteScrubEvent> op)
 {
   MOSDScrubReserve* m = static_cast<MOSDScrubReserve*>(op->get_payload_msg());
 
   switch (m->type) {
    case MOSDScrubReserve::REQUEST:
-    return handle_scrub_reserve_request(op, m);
+    return handle_scrub_reserve_request(conn, op, m);
    case MOSDScrubReserve::RELEASE:
-    return handle_scrub_reserve_release(op, m);
+    return handle_scrub_reserve_release(conn, op, m);
 
    case MOSDScrubReserve::GRANT:
     return handle_scrub_reserve_grant(op, m->from);
@@ -857,10 +928,11 @@ void PgScrubber::dispatch_reserve_message(Ref<crimson::osd::RemoteScrubEvent> op
 
 
 
-void PgScrubber::handle_scrub_reserve_request(Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m)
+void PgScrubber::handle_scrub_reserve_request(crimson::net::ConnectionRef conn, Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m)
 {
   logger().info("{}: pg[{}] got scrub reserve request", __func__, m_pg->get_pgid());
 
+  ceph_assert(conn);
   auto request_ep = m->map_epoch;
 
   /*
@@ -926,7 +998,7 @@ void PgScrubber::handle_scrub_reserve_request(Ref<crimson::osd::RemoteScrubEvent
     is_granted ? MOSDScrubReserve::GRANT : MOSDScrubReserve::REJECT, m_pg_whoami);
 
 
-  /*return*/(void) m->get_connection()->send(std::move(reply));
+  /*return*/(void) conn->send(std::move(reply));
 }
 
 void PgScrubber::handle_scrub_reserve_grant(Ref<crimson::osd::RemoteScrubEvent> op, pg_shard_t from)
@@ -951,7 +1023,7 @@ void PgScrubber::handle_scrub_reserve_reject(Ref<crimson::osd::RemoteScrubEvent>
   }
 }
 
-void PgScrubber::handle_scrub_reserve_release(Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m)
+void PgScrubber::handle_scrub_reserve_release(crimson::net::ConnectionRef conn, Ref<crimson::osd::RemoteScrubEvent> op, MOSDScrubReserve* m)
 {
   logger().info("{}: pg[{}] got scrub release", __func__, m_pg->get_pgid());
 
@@ -976,12 +1048,18 @@ void PgScrubber::clear_scrub_reservations()
   m_remote_osd_resource.reset();  // we as replica reserved for a Primary
 }
 
-void PgScrubber::unreserve_replicas() {}
-
 void PgScrubber::scrub_requested(scrub_level_t scrub_level,
                                  scrub_type_t scrub_type,
                                  requested_scrub_t& req_flags)
 {}
+
+void PgScrubber::request_rescrubbing(requested_scrub_t& request_flags)
+{
+  logger().info("{}: pg[{}]: flags: {}", __func__, m_pg->get_pgid(), request_flags);
+
+  request_flags.need_auto = true;
+  update_scrub_job(request_flags);
+}
 
 bool PgScrubber::reserve_local()
 {
@@ -1169,7 +1247,108 @@ unsigned int PgScrubber::scrub_requeue_priority(
   return 100;
 }
 
-void PgScrubber::scrub_clear_state() {}
+void PgScrubber::cleanup_on_finish()
+{
+ logger().debug("{}", __func__);
+
+  state_clear(PG_STATE_SCRUBBING);
+  state_clear(PG_STATE_DEEP_SCRUB);
+  m_pg->publish_stats_to_osd();
+
+  clear_scrub_reservations();
+  m_pg->publish_stats_to_osd();
+
+  requeue_waiting();
+
+  reset_internal_state();
+  m_flags = scrub_flags_t{};
+
+  m_scrub_cstat = object_stat_collection_t();
+}
+
+// uses process_event(), so must be invoked externally
+void PgScrubber::scrub_clear_state()
+{
+  logger().debug("{}", __func__);
+
+  clear_pgscrub_state();
+  m_fsm->process_event(FullReset{});
+}
+
+/*
+ * note: does not access the state-machine
+ */
+void PgScrubber::clear_pgscrub_state()
+{
+  logger().debug("{}", __func__);
+
+  state_clear(PG_STATE_SCRUBBING);
+  state_clear(PG_STATE_DEEP_SCRUB);
+
+  state_clear(PG_STATE_REPAIR);
+
+  clear_scrub_reservations();
+  m_pg->publish_stats_to_osd();
+
+  requeue_waiting();
+
+  reset_internal_state();
+  m_flags = scrub_flags_t{};
+
+  m_scrub_cstat = object_stat_collection_t();
+}
+
+void PgScrubber::replica_handling_done()
+{
+  logger().debug("{}", __func__);
+
+  state_clear(PG_STATE_SCRUBBING);
+  state_clear(PG_STATE_DEEP_SCRUB);
+
+  reset_internal_state();
+
+  m_pg->publish_stats_to_osd();
+}
+
+/*
+ * note: performs run_callbacks()
+ * note: reservations-related variables are not reset here
+ */
+void PgScrubber::reset_internal_state()
+{
+  logger().debug("{}", __func__);
+
+  preemption_data.reset();
+  m_maps_status.reset();
+  m_received_maps.clear();
+
+  m_start = hobject_t{};
+  m_end = hobject_t{};
+  m_max_end = hobject_t{};
+  m_subset_last_update = eversion_t{};
+  m_shallow_errors = 0;
+  m_deep_errors = 0;
+  m_fixed_count = 0;
+  // RRR m_omap_stats = (const struct omap_stat_t){0};
+
+  run_callbacks();
+
+  //m_inconsistent.clear();
+  //m_missing.clear();
+  m_authoritative.clear();
+  num_digest_updates_pending = 0;
+  m_primary_scrubmap = ScrubMap{};
+  m_primary_scrubmap_pos.reset();
+  replica_scrubmap = ScrubMap{};
+  replica_scrubmap_pos.reset();
+  //m_cleaned_meta_map = ScrubMap{};
+  m_needs_sleep = true;
+  m_sleep_started_at = utime_t{};
+
+  m_active = false;
+  clear_queued_or_active();
+  ++m_sessions_counter;
+}
 
 void PgScrubber::stats_of_handled_objects(const object_stat_sum_t& delta_stats,
                                           const hobject_t& soid)
@@ -1243,21 +1422,41 @@ int PgScrubber::pending_active_pushes() const
   return 0;
 }
 
-void PgScrubber::on_init() {}
+void PgScrubber::on_init()
+{
+  // going upwards from 'inactive'
+  ceph_assert(!is_scrub_active());
+
+  preemption_data.reset();
+  m_pg->publish_stats_to_osd();
+#ifdef NOT_YET
+  m_interval_start = m_pg->get_history().same_interval_since;
+#endif
+  logger().debug("{}: pg[{}]: starting interval: {}", __func__, m_pg->get_pgid(), m_interval_start);
+
+#ifdef NOT_YET
+  //  create a new store
+  {
+    ObjectStore::Transaction t;
+    cleanup_store(&t);
+    m_store.reset(
+      Scrub::Store::create(m_pg->osd->store, &t, m_pg->info.pgid, m_pg->coll));
+    m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
+  }
+
+  m_start = m_pg->info.pgid.pgid.get_hobj_start();
+#endif
+  m_active = true;
+  ++m_sessions_counter;
+  m_pg->publish_stats_to_osd();
+
+}
 
 void PgScrubber::on_replica_init() {}
-
-void PgScrubber::replica_handling_done() {}
-
-void PgScrubber::clear_pgscrub_state() {}
-
-void PgScrubber::add_delayed_scheduling() {}
 
 void PgScrubber::get_replicas_maps(bool replica_can_preempt) {}
 
 void PgScrubber::on_digest_updates() {}
-
-
 
 
 
@@ -1272,10 +1471,6 @@ void PgScrubber::send_replica_map(
 {}
 
 void PgScrubber::send_preempted_replica() {}
-
-void PgScrubber::send_remotes_reserved(epoch_t epoch_queued) {}
-
-void PgScrubber::send_reservation_failure(epoch_t epoch_queued) {}
 
 [[nodiscard]] bool PgScrubber::has_pg_marked_new_updates() const
 {
@@ -1303,7 +1498,18 @@ seastar::future<> PgScrubber::build_replica_map_chunk()
   return seastar::now();
 }
 
-void PgScrubber::reserve_replicas() {}
+
+void PgScrubber::unreserve_replicas()
+{
+  logger().debug("{}", __func__);
+  m_reservations.reset();
+}
+
+void PgScrubber::reserve_replicas()
+{
+  logger().debug("{}", __func__);
+  m_reservations.emplace(m_pg, m_pg_whoami, m_scrub_job);
+}
 
 void PgScrubber::set_reserving_now() {}
 void PgScrubber::clear_reserving_now() {}
@@ -1348,8 +1554,6 @@ void PgScrubber::set_scrub_duration() {}
 
 //  std::string_view PgScrubber::registration_state() const;
 
-void PgScrubber::reset_internal_state() {}
-
 void PgScrubber::advance_token() {}
 
 // bool PgScrubber::is_token_current(Scrub::act_token_t received_token) const {
@@ -1386,6 +1590,125 @@ bool PgScrubber::is_message_relevant(epoch_t epoch_to_verify)
 {
   return true;
 }
+
+// extracted from PrimaryLogScrub::_scrub_finish()
+
+bool PgScrubber::cstat_differs(sum_item_t e, bool is_valid)
+{
+  return is_valid && (m_scrub_cstat.sum.*e !=
+		      m_pg->get_peering_state().get_info().stats.stats.sum.*e);
+}
+
+std::string PgScrubber::cstat_diff_txt(sum_item_t e, std::string_view msg)
+{
+  return fmt::format("{}/{} {}", m_scrub_cstat.sum.*e,
+		     m_pg->get_peering_state().get_info().stats.stats.sum.*e, msg);
+}
+
+bool PgScrubber::cstat_details_mismatch(std::string_view mode_txt)
+{
+  auto& stats = m_pg->get_peering_state().get_info().stats;
+  const bool discrep =
+    cstat_differs(&object_stat_sum_t::num_objects, true) ||
+    cstat_differs(&object_stat_sum_t::num_object_clones, true) ||
+    cstat_differs(&object_stat_sum_t::num_objects_dirty, !stats.dirty_stats_invalid) ||
+    cstat_differs(&object_stat_sum_t::num_objects_omap, !stats.omap_stats_invalid) ||
+
+    cstat_differs(&object_stat_sum_t::num_objects_pinned, !stats.pin_stats_invalid) ||
+    cstat_differs(&object_stat_sum_t::num_objects_hit_set_archive,
+		  !stats.hitset_stats_invalid) ||
+    cstat_differs(&object_stat_sum_t::num_bytes_hit_set_archive,
+		  !stats.hitset_bytes_stats_invalid) ||
+    cstat_differs(&object_stat_sum_t::num_objects_manifest,
+		  !stats.manifest_stats_invalid) ||
+
+    cstat_differs(&object_stat_sum_t::num_whiteouts, true) ||
+    cstat_differs(&object_stat_sum_t::num_bytes, true);
+
+  if (discrep) {
+
+    ++m_shallow_errors;
+
+    // log an error
+    std::string log_msg =
+      fmt::format("{}: {} : stat mismatch, got ", m_pg_id, mode_txt) +
+      cstat_diff_txt(&object_stat_sum_t::num_objects, "objects, ") +
+      cstat_diff_txt(&object_stat_sum_t::num_object_clones, "clones, ") +
+      cstat_diff_txt(&object_stat_sum_t::num_objects_dirty, "dirty, ") +
+      cstat_diff_txt(&object_stat_sum_t::num_objects_omap, "omap, ") +
+      cstat_diff_txt(&object_stat_sum_t::num_objects_pinned, "pinned, ") +
+      cstat_diff_txt(&object_stat_sum_t::num_objects_hit_set_archive,
+		     "hit_set_archive, ") +
+      cstat_diff_txt(&object_stat_sum_t::num_whiteouts, " whiteouts, ") +
+      cstat_diff_txt(&object_stat_sum_t::num_bytes, " bytes, ") +
+      cstat_diff_txt(&object_stat_sum_t::num_objects_manifest, " manifest objects, ") +
+      cstat_diff_txt(&object_stat_sum_t::num_bytes_hit_set_archive,
+		     " hit_set_archive bytes.");
+  }
+
+  return discrep;
+}
+
+void PgScrubber::verify_cstat(bool repair,
+			      scrub_level_t shallow_or_deep,
+			      std::string_view mode_txt)
+{
+  auto& stats = m_pg->get_peering_state().get_info().stats;
+  // const bool repair = state_test(PG_STATE_REPAIR);
+
+  // if the whole info.stats object is marked invalid, recover it
+
+  if (stats.stats_invalid) {
+    m_pg->get_peering_state().update_stats(
+      [=](auto& history, auto& stats) {
+	/// the [] is called with PeeringState::info.history & PS::info.stats
+	stats.stats = m_scrub_cstat;
+	stats.stats_invalid = false;
+	return false;
+      },
+      nullptr);
+
+    // RRR if (m_pg->agent_state)
+    // RRR   m_pg->agent_choose_mode();
+  }
+
+  // RRR seems to me there cannot be a difference between info-stats
+  //  and scrub_stats in the 'stats_invalid' branch
+  else {
+
+    // const bool deep_scrub = state_test(PG_STATE_DEEP_SCRUB);
+    // const char* mode = (repair ? "repair" : (deep_scrub ? "deep-scrub" : "scrub"));
+
+    if (cstat_details_mismatch(mode_txt) && repair) {
+
+      ++m_fixed_count;
+      m_pg->get_peering_state().update_stats(
+	[this](auto& history, auto& stats) {
+	  stats.stats = m_scrub_cstat;
+	  stats.dirty_stats_invalid = false;
+	  stats.omap_stats_invalid = false;
+	  stats.hitset_stats_invalid = false;
+	  stats.hitset_bytes_stats_invalid = false;
+	  stats.pin_stats_invalid = false;
+	  stats.manifest_stats_invalid = false;
+	  return false;	 // RRR ask why not just say' true' and have update_stats()
+			 // publish the results
+	},
+	nullptr);
+
+      m_pg->publish_stats_to_osd();
+      m_pg->get_peering_state().share_pg_info();  // RRR understand
+    }
+  }
+
+
+  // Clear object context cache to get repair information
+  // if (repair)
+  //  m_pg->object_contexts.clear();
+  // ... RRR
+}
+
+
 
 void PgScrubber::final_cstat_update(scrub_level_t shallow_or_deep)
 {
