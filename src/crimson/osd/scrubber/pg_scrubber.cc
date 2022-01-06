@@ -26,7 +26,7 @@
 
 
 #include "crimson/osd/osd_operations/scrub_event.h"
-//#include "crimson/osd/scrubber/scrub_machine_cr.h"
+#include "crimson/osd/scrubber/scrub_machine_cr.h"
 
 
 // using std::list;
@@ -111,10 +111,14 @@ PgScrubber::PgScrubber(PG* pg)
 
   logger().debug("{}: creating PgScrubber for {} / {}", __func__, pg->get_pgid(),
 		 m_pg_whoami);
-  // RRR not yet m_fsm = std::make_unique<Scrub::ScrubMachine>(m_pg, this);
-  // RRR not yet m_fsm->initiate();
+  m_fsm = std::make_unique<Scrub::ScrubMachine>(m_pg, this);
+  m_fsm->initiate();
   m_scrub_job = ceph::make_ref<ScrubQueue::ScrubJob>(m_pg->get_cct(), m_pg_id, m_pg_whoami.shard);
 }
+
+// src/crimson/osd/CMakeFiles/crimson-osd.dir/scrubber/pg_scrubber.cc.o: In function `PgScrubber::PgScrubber(crimson::osd::PG*)':
+// /opt/rh/gcc-toolset-9/root/usr/include/c++/9/bits/unique_ptr.h:849: undefined reference to `Scrub::ScrubMachine::ScrubMachine(crimson::osd::PG*, ScrubMachineListener*)'
+
 
 ostream& PgScrubber::show(ostream& out) const
 {
@@ -193,6 +197,11 @@ bool PgScrubber::is_primary() const
   return m_pg->is_primary();
   //return m_pg->recovery_state.is_primary(); 
 }
+
+
+  bool PgScrubber::state_test(uint64_t m) const { return m_pg->state_test(m); };
+  void PgScrubber::state_set(uint64_t m) { m_pg->state_set(m); }
+  void PgScrubber::state_clear(uint64_t m) { m_pg->state_clear(m); }
 
 
 // ///////////////////////////////////////////////////////////////////// //
@@ -707,17 +716,14 @@ ostream& operator<<(ostream& out, const ::Scrub::MapsCollectionStatus& sf)
   return out << " ] ";
 }
 
-//#endif
-
-}
 
 // ///////////////////// blocked_range_t ///////////////////////////////
 
-#ifdef NOT_YET
 
 blocked_range_t::blocked_range_t(crimson::osd::ShardServices* osds, ceph::timespan waittime, spg_t pg_id)
     : m_osds{osds}
 {
+#ifdef NOT_YET
   auto now_is = std::chrono::system_clock::now();
   m_callbk = new LambdaContext([now_is, pg_id, osds]([[maybe_unused]] int r) {
     std::time_t now_c = std::chrono::system_clock::to_time_t(now_is);
@@ -732,21 +738,39 @@ blocked_range_t::blocked_range_t(crimson::osd::ShardServices* osds, ceph::timesp
 
   //std::lock_guard l(m_osds->sleep_lock);
   m_osds->sleep_timer.add_event_after(waittime, m_callbk);
+#endif
+
 }
 
 blocked_range_t::~blocked_range_t()
 {
-  //std::lock_guard l(m_osds->sleep_lock);
-  m_osds->sleep_timer.cancel_event(m_callbk);
+  // not yet : m_osds->sleep_timer.cancel_event(m_callbk);
 }
 
-#endif
+}
+
+void PgScrubber::initiate_regular_scrub(epoch_t epoch_queued)
+{
+  logger().debug("{}: epoch: {}", __func__, epoch_queued);
+
+  // not sure we really need to check for interval changes, as this is part of the
+  // interruptible_future work.
+
+  // we may have lost our Primary status while the message languished in the queue
+  if (check_interval(epoch_queued)) {
+    logger().info("scrubber event -->> StartScrub epoch: {}", epoch_queued);
+    reset_epoch(epoch_queued);
+    m_fsm->process_event(StartScrub{});
+    logger().info("scrubber event --<< StartScrub");
+  } else {
+    clear_queued_or_active(); // RRR make sure we do this if the interruptable future is interrupted
+  }
+}
+
+
 
 
 // fakes
-
-
-void PgScrubber::initiate_regular_scrub(epoch_t epoch_queued) {}
 
 ScrubEIF PgScrubber::initiate_regular_scrub_v2(epoch_t epoch_queued)
 {
@@ -1361,4 +1385,214 @@ bool PgScrubber::is_message_relevant(epoch_t epoch_to_verify)
 [[nodiscard]] bool PgScrubber::check_interval(epoch_t epoch_to_verify)
 {
   return true;
+}
+
+void PgScrubber::final_cstat_update(scrub_level_t shallow_or_deep)
+{
+  logger().debug("scrubber {}(): {}/{} {}", __func__, m_shallow_errors, m_deep_errors, (shallow_or_deep == scrub_level_t::deep));
+
+#ifdef NOT_YET___NEED_BE
+  // finish up
+  ObjectStore::Transaction t;
+  m_pg->get_peering_state().update_stats(
+    [this, shallow_or_deep](auto& history, auto& stats) {
+      logger().debug("m_pg->peering_state.update_stats()");
+      utime_t now = ceph_clock_now();
+      history.last_scrub = m_pg->get_peering_state().get_info().last_update;
+      history.last_scrub_stamp = now;
+      if (m_is_deep) {	// RRR why checking this and not the state flag?
+	history.last_deep_scrub = m_pg->peering_state.get_info().last_update;
+	history.last_deep_scrub_stamp = now;
+      }
+
+      if (shallow_or_deep == scrub_level_t::deep) {
+
+	if ((m_shallow_errors == 0) && (m_deep_errors == 0))
+	  history.last_clean_scrub_stamp = now;
+	stats.stats.sum.num_shallow_scrub_errors = m_shallow_errors;
+	stats.stats.sum.num_deep_scrub_errors = m_deep_errors;
+	stats.stats.sum.num_large_omap_objects = m_be->m_omap_stats.large_omap_objects;
+	stats.stats.sum.num_omap_bytes = m_be->m_omap_stats.omap_bytes;
+	stats.stats.sum.num_omap_keys = m_be->m_omap_stats.omap_keys;
+	logger().debug("scrub_finish shard {} num_omap_bytes = {} num_omap_keys = {}",
+		       m_pg_whoami, stats.stats.sum.num_omap_bytes,
+		       stats.stats.sum.num_omap_keys);
+      } else {
+	stats.stats.sum.num_shallow_scrub_errors = m_shallow_errors;
+	// XXX: last_clean_scrub_stamp doesn't mean the pg is not
+	// inconsistent because of deep-scrub errors
+	if (m_shallow_errors == 0)
+	  history.last_clean_scrub_stamp = now;
+      }
+
+      stats.stats.sum.num_scrub_errors =
+	stats.stats.sum.num_shallow_scrub_errors + stats.stats.sum.num_deep_scrub_errors;
+      if (m_flags.check_repair) {
+	m_flags.check_repair = false;
+	if (m_pg->get_peering_state().get_info().stats.stats.sum.num_scrub_errors) {
+	  state_set(PG_STATE_FAILED_REPAIR);
+	  logger().debug(
+	    "scrub_finish {} error(s) still present after re-scrub",
+	    m_pg->get_peering_state().get_info().stats.stats.sum.num_scrub_errors);
+	}
+      }
+      return true;
+    },
+    &t);
+
+  std::ignore =
+    m_osds.get_store().do_transaction(m_pg->get_collection_ref(), std::move(t));
+
+#ifdef NOT_YET_SNAPS
+  if (!m_pg->snap_trimq.empty()) {
+    logger().debug("scrub finished, requeuing snap_trimmer");
+    m_pg->snap_trimmer_scrub_complete();
+  }
+#endif
+
+#endif
+}
+
+
+void PgScrubber::log_results(bool repair,
+			     scrub_level_t shallow_or_deep,
+			     std::string_view mode_txt)
+{
+  auto& stats = m_pg->get_peering_state().get_info().stats;
+
+  fmt::memory_buffer out;
+  fmt::format_to(out, "{} {}", m_pg_id.pgid, mode_txt);
+
+  int total_errors = m_shallow_errors + m_deep_errors;
+  if (total_errors)
+    fmt::format_to(out, " {} errors", total_errors);
+  else
+    fmt::format_to(out, " ok");
+
+  if ((shallow_or_deep == scrub_level_t::shallow) &&
+      stats.stats.sum.num_deep_scrub_errors) {
+    fmt::format_to(out, " ({} remaining deep scrub error details lost)",
+		   stats.stats.sum.num_deep_scrub_errors);
+  }
+
+  if (repair) {
+    fmt::format_to(out, ", {} fixed", m_fixed_count);
+  }
+
+#ifdef NO_CLUSTER_LOGGER_YET
+  if (total_errors)
+    m_osds.clog->error(fmt::to_string(out));
+  else
+    m_osds.clog->debug(fmt::to_string(out));
+#endif
+
+  if (total_errors)
+   logger().error("scrubber: {}: {}", __func__, fmt::to_string(out));
+  else
+    logger().debug("scrubber: {}: {}", __func__, fmt::to_string(out));
+}
+
+void PgScrubber::scrub_finish()
+{
+//  dout(10) << __func__ << " before flags: " << m_flags
+//	   << ". repair state: " << (state_test(PG_STATE_REPAIR) ? "repair" : "no-repair")
+//	   << ". deep_scrub_on_error: " << m_flags.deep_scrub_on_error << dendl;
+  logger().debug("{}: before flags:{} deep_scrub_on_error:{}", __func__, m_flags,
+		 m_flags.deep_scrub_on_error);
+
+  ceph_assert(is_queued_or_active());
+
+  m_pg->m_planned_scrub = requested_scrub_t{};
+
+  // if the repair request comes from auto-repair and large number of errors,
+  // we would like to cancel auto-repair
+  if (m_is_repair && m_flags.auto_repair &&
+      m_authoritative.size() > local_conf()->osd_scrub_auto_repair_num_errors) {
+
+    logger().debug("{}: undoing the repair", __func__);
+    state_clear(PG_STATE_REPAIR); // not expected to be set, anyway
+    m_is_repair = false;
+    update_op_mode_text();
+  }
+
+
+  // RRR fix the copied lines below to match new handling of mode:
+  const bool deep_scrub_flag{state_test(PG_STATE_DEEP_SCRUB)};
+  const auto deep_scrub{deep_scrub_flag ? scrub_level_t::deep : scrub_level_t::shallow};
+  const char* mode = (m_is_repair ? "repair" : (deep_scrub_flag ? "deep-scrub" : "scrub"));
+
+  bool do_auto_scrub{false};
+
+  // if a regular scrub had errors within the limit, do a deep scrub to auto repair
+  if (m_flags.deep_scrub_on_error && !m_authoritative.empty() &&
+      m_authoritative.size() <= local_conf()->osd_scrub_auto_repair_num_errors) {
+
+    ceph_assert(!m_is_deep);
+    do_auto_scrub = true;
+    logger().debug("{}: Try to auto repair after scrub errors", __func__);
+  }
+
+  m_flags.deep_scrub_on_error = false;
+
+  verify_cstat(m_is_repair, deep_scrub, mode);
+
+  bool has_error = scrub_process_inconsistent();
+
+  log_results(m_is_repair, deep_scrub, mode);
+
+  // Since we don't know which errors were fixed, we can only clear them
+  // when every one has been fixed.
+  if (m_is_repair) {
+    if (m_fixed_count == m_shallow_errors + m_deep_errors) {
+
+      ceph_assert(m_is_deep);
+      m_shallow_errors = 0;
+      m_deep_errors = 0;
+      logger().debug("{}: All may be fixed", __func__);
+
+    } else if (has_error) {
+
+      // Deep scrub in order to get corrected error counts
+      m_pg->scrub_after_recovery = true;
+      m_pg->m_planned_scrub.req_scrub =
+	m_pg->m_planned_scrub.req_scrub || m_flags.required;
+
+      logger().debug("{}: Current 'required': {} Planned 'req_scrub': {}", __func__,
+		     m_flags.required, m_pg->m_planned_scrub.req_scrub);
+
+    } else if (m_shallow_errors || m_deep_errors) {
+
+      // We have errors but nothing can be fixed, so there is no repair
+      // possible.
+      state_set(PG_STATE_FAILED_REPAIR);
+      logger().debug("{}: {} error(s) present with no repair possible", __func__,
+		     (m_shallow_errors + m_deep_errors));
+    }
+  }
+
+  //  finish up
+  final_cstat_update(deep_scrub);
+
+  if (has_error) {
+    (void)m_osds.start_operation<crimson::osd::LocalPeeringEvent>(
+      m_pg, m_osds, m_pg->get_pg_whoami(), m_pg_id, get_osdmap_epoch(),
+      get_osdmap_epoch(), PeeringState::DoRecovery{});
+  } else {
+    m_is_repair = false;
+    state_clear(PG_STATE_REPAIR);
+    update_op_mode_text();
+  }
+
+  cleanup_on_finish();
+  if (do_auto_scrub) {
+    request_rescrubbing(m_pg->m_planned_scrub);
+  }/* else {
+    // adjust the time of the next scrub
+    m_scrub_reg_stamp = m_osds.m_scrub_queue.update_scrub_job(
+      m_pg_id, m_scrub_reg_stamp, ceph_clock_now(), ScrubQueue::must_scrub_t::not_mandatory);
+  }*/
+
+  if (m_pg->get_peering_state().is_active() && m_pg->is_primary()) {
+    m_pg->get_peering_state().share_pg_info();
+  }
 }

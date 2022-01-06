@@ -1349,7 +1349,8 @@ seastar::future<Scrub::schedule_result_t> PG::sched_scrub_this_pg()
 
   (void)shard_services.start_operation<ScrubEvent>(
     this, get_shard_services(), pgid,
-    (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_fake_scrub_session),
+    //(ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_fake_scrub_session),
+    (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::initiate_regular_scrub),
     get_osdmap_epoch(), 0, 10ms);
 
   // RRR ask how to guarantee that the scrub is not executed before we return?

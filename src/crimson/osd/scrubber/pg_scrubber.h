@@ -531,16 +531,9 @@ public:
   utime_t scrub_begin_stamp;
 
  private:
-  bool state_test(uint64_t m) const
-  { /*return m_pg->recovery_state.state_test(m);*/
-    return false;
-  }
-  void state_set(uint64_t m)
-  { /*m_pg->state_set(m);*/
-  }
-  void state_clear(uint64_t m)
-  { /*m_pg->state_clear(m); */
-  }
+  bool state_test(uint64_t m) const;
+  void state_set(uint64_t m);
+  void state_clear(uint64_t m);
 
   [[nodiscard]] bool is_scrub_registered() const;
 
@@ -548,7 +541,7 @@ public:
   /// status
   std::string_view registration_state() const;
 
-  utime_t m_scrub_reg_stamp;  ///< stamp we registered for
+  utime_t m_scrub_reg_stamp{utime_t{}};  ///< stamp we registered for
 
   ScrubQueue::ScrubJobRef
     m_scrub_job;  ///< the scrub-job used by the OSD to schedule us
@@ -690,7 +683,7 @@ public:
                             hobject_t end,
                             bool deep);
 
-  // RRR not yet std::unique_ptr<Scrub::ScrubMachine> m_fsm;
+  std::unique_ptr<Scrub::ScrubMachine> m_fsm;
   const spg_t m_pg_id;  ///< a local copy of m_pg->pg_id
   //OSDService* const m_osds;
   crimson::osd::ShardServices& m_osds;
@@ -755,6 +748,10 @@ public:
 
   /// Returns reference to current osdmap
   const OSDMapRef& get_osdmap() const;
+  /// Returns shared pointer to current osdmap
+  //OSDMapService::cached_map_t get_osdmap();
+  //OSDMapService::cached_map_t get_osdmap() const;
+
 
   /// Returns epoch of current osdmap
   epoch_t get_osdmap_epoch() const { return get_osdmap()->get_epoch(); }
@@ -772,7 +769,7 @@ public:
   // guaranteeing all internally-sent lambdas are executed and can be disposed off
   crimson::common::Gated gate;
 
- protected:
+ private:
   /**
    * 'm_is_deep' - is the running scrub a deep one?
    *
@@ -847,6 +844,9 @@ public:
 
   std::map<pg_shard_t, ScrubMap> m_received_maps;
 
+  // the backend, handling the details of comparing maps & fixing objects
+  // not yet std::unique_ptr<Scrub::ScrubberBE> m_be;
+
   /// Cleaned std::map pending snap metadata scrub
   ScrubMap m_cleaned_meta_map;
 
@@ -862,14 +862,29 @@ public:
   Scrub::MapsCollectionStatus m_maps_status;
 //#endif
 
-  omap_stat_t m_omap_stats = (const struct omap_stat_t){0};
+  // not in fx7: omap_stat_t m_omap_stats = (const struct omap_stat_t){0};
 
   /// Maps from objects with errors to inconsistent peers
-  HobjToShardSetMapping m_inconsistent;
+  // not in fx7: HobjToShardSetMapping m_inconsistent;
 
   /// Maps from object with errors to good peers
   std::map<hobject_t, std::list<std::pair<ScrubMap::object, pg_shard_t>>>
     m_authoritative;
+
+  object_stat_collection_t m_scrub_cstat;
+  void verify_cstat(bool repair,
+                    scrub_level_t shallow_or_deep,
+                    std::string_view mode_txt);
+  bool cstat_details_mismatch(
+    std::string_view mode_txt);  // 'true' if mismatch found
+  using sum_item_t = const int64_t object_stat_sum_t::*;
+  bool cstat_differs(sum_item_t e, bool is_invalid);
+  std::string cstat_diff_txt(sum_item_t e, std::string_view msg);
+
+  void log_results(bool repair,
+                   scrub_level_t shallow_or_deep,
+                   std::string_view mode_txt);
+  void final_cstat_update(scrub_level_t shallow_or_deep);
 
   // ------------ members used if we are a replica
 

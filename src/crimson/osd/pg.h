@@ -512,6 +512,12 @@ public:
   // -------------- some scrubber-related stuff --------------
   // ------------- which I don't know what interface it should implement -------------
 
+  bool state_test(uint64_t m) const { return peering_state.state_test(m); }
+  void state_set(uint64_t m) { peering_state.state_set(m); }
+  void state_clear(uint64_t m) { peering_state.state_clear(m); }
+  bool scrub_after_recovery{false};
+
+
   seastar::future<Scrub::schedule_result_t> sched_scrub_this_pg();
 
   bool is_scrub_queued_or_active() const {

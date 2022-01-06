@@ -88,7 +88,7 @@ struct ScrubMachineListener {
 
   virtual int pending_active_pushes() const = 0;
 
-  virtual seastar::future<> build_primary_map_chunk() = 0;
+  virtual seastar::future<> build_primary_map_chunk() = 0; // needed here?
 
   virtual seastar::future<> build_replica_map_chunk() = 0;
 
@@ -122,6 +122,10 @@ struct ScrubMachineListener {
   virtual void get_replicas_maps(bool replica_can_preempt) = 0;
 
   virtual void on_digest_updates() = 0;
+
+  /// the part that actually finalizes a scrub
+  virtual void scrub_finish() = 0;  // RRR did I really need to reinstate this?
+
 
   /**
    * Prepare a MOSDRepScrubMap message carrying the requested scrub map
@@ -180,6 +184,12 @@ struct ScrubMachineListener {
    */
   virtual void set_reserving_now() = 0;
   virtual void clear_reserving_now() = 0;
+
+  /**
+   * Manipulate the 'I am being scrubbed now' Scrubber's flag
+   */
+  virtual void set_queued_or_active() = 0;
+  virtual void clear_queued_or_active() = 0;
 
   /**
    * the FSM interface into the "are we waiting for maps, either our own or from
