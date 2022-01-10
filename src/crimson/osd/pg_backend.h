@@ -188,6 +188,14 @@ public:
   interruptible_future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects(
     const hobject_t& start,
     uint64_t limit) const;
+
+  // returns the vector of 'gen-objects' in this range.
+  // Vector 'ls' is updated with non-meta, non-temporary, no-gen objects
+  interruptible_future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects_range(hobject_t start,
+						 hobject_t end,
+						 std::vector<hobject_t>& ls) const;
+
+
   interruptible_future<> setxattr(
     ObjectState& os,
     const OSDOp& osd_op,

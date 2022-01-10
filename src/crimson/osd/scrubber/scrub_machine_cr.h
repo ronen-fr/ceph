@@ -46,6 +46,13 @@ void on_event_discard(std::string_view nm);
 #define MEV(E)                                          \
   struct E : sc::event<E> {                             \
     inline static int actv{0};                          \
+    Ref<PG> pg;                                         \
+    E(Ref<PG> pg)                                       \
+        : pg{std::move(pg)}                             \
+    {                                                   \
+      if (!actv++)                                      \
+	on_event_creation(#E);                          \
+    }                                                   \
     E()                                                 \
     {                                                   \
       if (!actv++)                                      \

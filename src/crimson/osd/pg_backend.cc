@@ -812,6 +812,53 @@ PGBackend::list_objects(const hobject_t& start, uint64_t limit) const
     });
 }
 
+PGBackend::interruptible_future<std::tuple<std::vector<hobject_t>, hobject_t>>
+PGBackend::list_objects_range(hobject_t start,
+                              hobject_t end,
+                              std::vector<hobject_t>& ls) const
+{
+  if (__builtin_expect(stopping, false)) {
+    throw crimson::common::system_shutdown_exception();
+  }
+
+  auto gstart = start.is_min() ? ghobject_t{} : ghobject_t{start, 0, shard};
+  return interruptor::make_interruptible(
+           store->list_objects(coll, gstart, ghobject_t::get_max(), INT_MAX))
+    .then_interruptible([&ls](auto ret) {
+      auto& [gobjects, next] = ret;
+      std::vector<hobject_t> objects;
+      boost::copy(gobjects | boost::adaptors::filtered([](const ghobject_t& o) {
+                    if (o.is_pgmeta()) {
+                      return false;
+                    } else if (o.hobj.is_temp()) {
+                      return false;
+                    } else {
+                      return o.is_no_gen();
+                    }
+                  }) |
+                    boost::adaptors::transformed(
+                      [](const ghobject_t& o) { return o.hobj; }),
+                  std::back_inserter(ls));
+
+      boost::copy(gobjects | boost::adaptors::filtered([](const ghobject_t& o) {
+                    if (o.is_pgmeta()) {
+                      return false;
+                    } else if (o.hobj.is_temp()) {
+                      return false;
+                    } else {
+                      return !o.is_no_gen();
+                    }
+                    //}) |
+                    // boost::adaptors::transformed([](const ghobject_t& o) {
+                    //  return o.hobj;
+                  }),
+                  std::back_inserter(objects));
+      return seastar::make_ready_future<
+        std::tuple<std::vector<hobject_t>, hobject_t>>(
+        std::make_tuple(objects, next.hobj));
+    });
+}
+
 PGBackend::interruptible_future<> PGBackend::setxattr(
   ObjectState& os,
   const OSDOp& osd_op,

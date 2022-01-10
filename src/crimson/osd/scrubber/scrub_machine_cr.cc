@@ -370,7 +370,11 @@ BuildMap::BuildMap(my_context ctx) : my_base(ctx)
 
   } else {
 
-    scrbr->initiate_primary_map_build();
+    auto evnt1 = dynamic_cast<const ReplicaRequestsSent*>(triggering_event());
+    //auto pg_ref = evnt1 ? evnt1->get_pg_ref() : scrbr->get_pg_ref();
+    auto pg_ref = evnt1->pg;
+
+    scrbr->initiate_primary_map_build(pg_ref);
 
     //    auto ret = scrbr->build_primary_map_chunk();
     //
@@ -581,7 +585,7 @@ sc::result ActiveReplica::react(const SchedReplica&)
     return transit<NotActive>();
   }
 
-  scrbr->build_replica_map_chunk();
+  // RRR scrbr->build_replica_map_chunk();
   logger().debug("ScrubberFSM: ActiveReplica::react(SchedReplica): after calling build_replica_map");
   return discard_event();
 }

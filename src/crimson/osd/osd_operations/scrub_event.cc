@@ -164,6 +164,9 @@ seastar::future<> ScrubEvent::start()
         if (std::holds_alternative<ScrubEvent::ScrubEventFwdImm>(event_fwd_func)) {
           (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdImm>(event_fwd_func))(epoch_queued);
           return seastar::make_ready_future<>();
+        if (std::holds_alternative<ScrubEvent::ScrubEventFwdImmPg>(event_fwd_func)) {
+          (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdImmPg>(event_fwd_func))(epoch_queued, pg);
+          return seastar::make_ready_future<>();
         } else {
           return (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdFut>(event_fwd_func))(epoch_queued);
         }

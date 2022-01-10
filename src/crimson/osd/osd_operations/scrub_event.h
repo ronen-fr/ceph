@@ -49,7 +49,8 @@ class ScrubEvent : public OperationT<ScrubEvent> {
 
   using ScrubEventFwdFut = interruptible_future<> (ScrubPgIF::*)(epoch_t);
   using ScrubEventFwdImm = void (ScrubPgIF::*)(epoch_t);
-  using ScrubEventFwd = std::variant<ScrubEventFwdFut, ScrubEventFwdImm>;
+  using ScrubEventFwdImmPg = void (ScrubPgIF::*)(epoch_t, Ref<PG>);
+  using ScrubEventFwd = std::variant<ScrubEventFwdFut, ScrubEventFwdImm, ScrubEventFwdImmPg>;
 
 
   class PGPipeline {

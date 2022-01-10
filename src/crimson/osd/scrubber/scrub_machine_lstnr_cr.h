@@ -7,6 +7,9 @@
  */
 #include <seastar/core/future.hh>
 
+
+#include "crimson/common/type_helpers.h"
+
 #include "common/version.h"
 #include "include/Context.h"
 #include "osd/osd_types.h"
@@ -79,7 +82,7 @@ struct ScrubMachineListener {
 
   virtual Scrub::BlockedRangeWarning acquire_blocked_alarm() = 0;
 
-  virtual void initiate_primary_map_build() = 0;
+  virtual void initiate_primary_map_build(Ref<crimson::osd::PG> pg) = 0;
 
   /// walk the log to find the latest update that affects our chunk
   virtual eversion_t search_log_for_updates() const = 0;
@@ -88,9 +91,9 @@ struct ScrubMachineListener {
 
   virtual int pending_active_pushes() const = 0;
 
-  virtual seastar::future<> build_primary_map_chunk() = 0; // needed here?
+//  virtual seastar::future<> build_primary_map_chunk(Ref<PG> pg) = 0; // needed here?
 
-  virtual seastar::future<> build_replica_map_chunk() = 0;
+//  virtual seastar::future<> build_replica_map_chunk() = 0;
 
   virtual void on_init() = 0;
 

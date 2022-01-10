@@ -24,6 +24,7 @@
 #include "crimson/os/futurized_store.h"
 #include "crimson/osd/osd_operations/scrub_event.h"
 #include "crimson/osd/pg.h"
+#include "crimson/osd/osd.h"
 #include "crimson/osd/scrubber/osd_scrub_sched.h"
 #include "crimson/osd/scrubber/scrub_machine_lstnr_cr.h"
 //#include "crimson/osd/scrubber/scrub_store.h"
@@ -37,11 +38,15 @@ BAD
 #include "osd_scrub_sched.h"
 #include "scrub_machine_lstnr.h"
 #endif
+
+//#include "crimson/osd/scrubber/scrub_backend_if.h"
+
 class Callback;
+class ScrubBackendIF;
+class ScrubBackend;
 
 namespace Scrub {
 class ScrubMachine;
-class ScrubBackend;
 struct BuildMap;
 
 //#ifdef NOT_YET
@@ -265,6 +270,8 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
  public:
   explicit PgScrubber(PG* pg);
+
+  friend class ScrubBackend;
 
   //  ------------------  the I/F exposed to the PG (ScrubPgIF) -------------
 
@@ -502,11 +509,7 @@ public:
 
   Scrub::preemption_t& get_preemptor() final;
 
-  seastar::future<> build_primary_map_chunk() final;
-
-  void initiate_primary_map_build() final;
-
-  seastar::future<> build_replica_map_chunk() final;
+  void initiate_primary_map_build(Ref<PG> pg) final;
 
   void reserve_replicas() final;
 
@@ -538,7 +541,11 @@ public:
   [[nodiscard]] bool is_scrub_registered() const;
 
   void send_oninit_done(epoch_t epoch_queued);
-  void send_being_after_requests(epoch_t epoch_queued);
+  void send_being_after_requests(epoch_t epoch_queued, Ref<PG> pg);
+  seastar::future<> build_primary_map_chunk(Ref<PG> pg);
+
+  seastar::future<> build_replica_map_chunk();
+
 
   /// the 'is-in-scheduling-queue' status, using relaxed-semantics access to the
   /// status
@@ -568,6 +575,8 @@ public:
 
   void send_internal_event(crimson::osd::ScrubEvent::ScrubEventFwdImm evt);
   void send_internal_event(crimson::osd::ScrubEvent::ScrubEventFwdImm evt, std::chrono::milliseconds dly);
+  void send_internal_event(crimson::osd::ScrubEvent::ScrubEventFwdImmPg evt);
+  void send_internal_event(crimson::osd::ScrubEvent::ScrubEventFwdImmPg evt, std::chrono::milliseconds dly);
 
   /**
    *  the current scrubbing operation is done. We should mark that fact, so that
@@ -683,11 +692,19 @@ public:
 
   // common code used by build_primary_map_chunk() and
   // build_replica_map_chunk():
-  int build_scrub_map_chunk(ScrubMap& map,  // primary or replica?
+  seastar::future<>  build_scrub_map_chunk(Ref<PG> pg,
+                            ScrubMap& map,  // primary or replica?
                             ScrubMapBuilder& pos,
                             hobject_t start,
                             hobject_t end,
-                            bool deep);
+                            scrub_level_t depth);
+
+  //using irpt_void_t = ::crimson::interruptible::
+  //  interruptible_future<::crimson::osd::IOInterruptCondition, void>;
+  //irpt_void_t fake_scan_list(ScrubMap& map, ScrubMapBuilder& pos);
+  // and the fake aux:
+  //irpt_void_t scan_obj_from_list(
+  //ScrubMap& map, hobject_t& obj_in_ls, bool is_deep, std::chrono::milliseconds deep_delay);
 
   std::unique_ptr<Scrub::ScrubMachine> m_fsm;
   const spg_t m_pg_id;  ///< a local copy of m_pg->pg_id
@@ -851,7 +868,7 @@ public:
   std::map<pg_shard_t, ScrubMap> m_received_maps;
 
   // the backend, handling the details of comparing maps & fixing objects
-  // not yet std::unique_ptr<Scrub::ScrubberBE> m_be;
+  std::unique_ptr<ScrubBackendIF> m_be;
 
   /// Cleaned std::map pending snap metadata scrub
   ScrubMap m_cleaned_meta_map;
