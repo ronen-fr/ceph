@@ -66,7 +66,6 @@ Main Scrubber interfaces:
 // clang-format on
 
 
-
 #include <cassert>
 #include <chrono>
 #include <memory>
@@ -83,9 +82,6 @@ Main Scrubber interfaces:
 #include "osd_scrub_sched.h"
 #include "scrub_backend.h"
 #include "scrub_machine_lstnr.h"
-
-class Callback;
-class ScrubBackend;
 
 namespace Scrub {
 class ScrubMachine;
