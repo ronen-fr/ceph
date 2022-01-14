@@ -632,7 +632,7 @@ void PgScrubber::on_applied_when_primary(const eversion_t& applied_version)
  */
 bool PgScrubber::select_range()
 {
-  m_primary_scrubmap = m_be->new_chunk();
+  m_be->new_chunk();
 
   /* get the start and end of our scrub chunk
    *
@@ -1001,7 +1001,7 @@ int PgScrubber::build_primary_map_chunk()
   dout(20) << __func__ << ": initiated at epoch " << map_building_since
            << dendl;
 
-  auto ret = build_scrub_map_chunk(*m_primary_scrubmap,
+  auto ret = build_scrub_map_chunk(m_be->get_primary_scrubmap(),
                                    m_primary_scrubmap_pos,
                                    m_start,
                                    m_end,
