@@ -29,8 +29,10 @@ class PrimaryLogScrub : public PgScrubber {
 
   void _scrub_finish() final;
 
-  bool get_store_errors(const scrub_ls_arg_t& arg,
-			scrub_ls_result_t& res_inout) const final;
+//   bool get_store_errors(const scrub_ls_arg_t& arg,
+// 			scrub_ls_result_t& res_inout) const final;
+  std::optional<scrub_ls_result_t> get_store_errors(const scrub_ls_arg_t& arg,
+                                                    epoch_t same_since) const final;
 
   void stats_of_handled_objects(const object_stat_sum_t& delta_stats,
 				const hobject_t& soid) final;

@@ -205,7 +205,10 @@ struct ScrubPgIF {
 
   virtual void set_op_parameters(requested_scrub_t&) = 0;
 
+  // two versions of scrub_clear_state(). The 'with transaction' version
+  // cleans the collected scrub inconsistencies in the OSD store.
   virtual void scrub_clear_state() = 0;
+  virtual void scrub_clear_state(ObjectStore::Transaction* t) = 0;
 
   virtual void handle_query_state(ceph::Formatter* f) = 0;
 
@@ -260,10 +263,12 @@ struct ScrubPgIF {
    */
   virtual void send_reservation_failure(epoch_t epoch_queued) = 0;
 
-  virtual void cleanup_store(ObjectStore::Transaction* t) = 0;
+  //virtual void cleanup_store(ObjectStore::Transaction* t) = 0;
 
-  virtual bool get_store_errors(const scrub_ls_arg_t& arg,
-				scrub_ls_result_t& res_inout) const = 0;
+  //virtual bool get_store_errors(const scrub_ls_arg_t& arg,
+  //				scrub_ls_result_t& res_inout) const = 0;
+  virtual std::optional<scrub_ls_result_t> get_store_errors(const scrub_ls_arg_t& arg,
+                                                    epoch_t same_since) const = 0;
 
   // --------------- reservations -----------------------------------
 

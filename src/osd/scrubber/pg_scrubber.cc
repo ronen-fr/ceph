@@ -129,6 +129,9 @@ bool PgScrubber::verify_against_abort(epoch_t epoch_to_verify)
 
   // if we were not aware of the abort before - kill the scrub.
   if (epoch_to_verify > m_last_aborted) {
+    // RRR a problem!!! we do not have a transaction to provide
+    // to scrub_clear_state(), so that we'll leave ScrubStore data in
+    // the OSD store!
     scrub_clear_state();
     m_last_aborted = std::max(epoch_to_verify, m_epoch_start);
   }
@@ -930,21 +933,21 @@ void PgScrubber::_request_scrub_map(pg_shard_t replica,
   m_osds->send_message_osd_cluster(replica.osd, repscrubop, get_osdmap_epoch());
 }
 
-void PgScrubber::cleanup_store(ObjectStore::Transaction* t)
-{
-  if (!m_store)
-    return;
-
-  struct OnComplete : Context {
-    std::unique_ptr<Scrub::Store> store;
-    explicit OnComplete(std::unique_ptr<Scrub::Store>&& store) : store(std::move(store))
-    {}
-    void finish(int) override {}
-  };
-  m_store->cleanup(t);
-  t->register_on_complete(new OnComplete(std::move(m_store)));
-  ceph_assert(!m_store);
-}
+// void PgScrubber::cleanup_store(ObjectStore::Transaction* t)
+// {
+//   if (!m_store)
+//     return;
+// 
+//   struct OnComplete : Context {
+//     std::unique_ptr<Scrub::Store> store;
+//     explicit OnComplete(std::unique_ptr<Scrub::Store>&& store) : store(std::move(store))
+//     {}
+//     void finish(int) override {}
+//   };
+//   m_store->cleanup(t);
+//   t->register_on_complete(new OnComplete(std::move(m_store)));
+//   ceph_assert(!m_store);
+// }
 
 void PgScrubber::on_init()
 {
@@ -957,8 +960,17 @@ void PgScrubber::on_init()
 
   dout(10) << __func__ << " start same_interval:" << m_interval_start << dendl;
 
+  m_start = m_pg->info.pgid.pgid.get_hobj_start();
+
+  ScrubStoreFactory store_creation = [this]() mutable -> std::unique_ptr<Scrub::Store> {
+    ObjectStore::Transaction t;
+    return Store::create_unique(m_pg->osd->store, &t, m_pg->info.pgid, m_pg->coll);
+    // for Crimson - create_unique will queue the next event
+  };
+
   m_be = std::make_unique<ScrubBackend>(
     *this,
+    store_creation,
     *(m_pg->get_pgbackend()),
     *m_pg,
     m_pg_whoami,
@@ -966,17 +978,7 @@ void PgScrubber::on_init()
     m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow,
     m_pg->get_acting_recovery_backfill());
 
-  //  create a new store
-  {
-    ObjectStore::Transaction t;
-    cleanup_store(&t);
-    m_store.reset(
-      Scrub::Store::create(m_pg->osd->store, &t, m_pg->info.pgid, m_pg->coll));
-    m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
-  }
-
-  m_start = m_pg->info.pgid.pgid.get_hobj_start();
-  m_active = true;
+   m_active = true;
   ++m_sessions_counter;
   m_pg->publish_stats_to_osd();
 }
@@ -1131,7 +1133,16 @@ void PgScrubber::run_callbacks()
 
 void PgScrubber::maps_compare_n_cleanup()
 {
-  m_be->scrub_compare_maps(m_end.is_max());
+  if (state_test(PG_STATE_REPAIR)) {
+    m_be->scrub_compare_maps(m_end.is_max(), nullptr);
+  } else {
+    ObjectStore::Transaction t;
+    if (m_be->scrub_compare_maps(m_end.is_max(), &t)) {
+      // there were some entries in the chunk's scrub-store
+      m_osds->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
+    }
+  }
+
   m_start = m_end;
   run_callbacks();
   requeue_waiting();
@@ -1942,6 +1953,15 @@ void PgScrubber::scrub_clear_state()
   dout(10) << __func__ << dendl;
 
   clear_pgscrub_state();
+  m_fsm->process_event(FullReset{});
+}
+
+void PgScrubber::scrub_clear_state(ObjectStore::Transaction* t)
+{
+  dout(10) << __func__ << dendl;
+
+  clear_pgscrub_state();
+  m_be->cleanup_store(t);
   m_fsm->process_event(FullReset{});
 }
 

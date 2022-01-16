@@ -23,9 +23,13 @@ public:
 		       ObjectStore::Transaction* t,
 		       const spg_t& pgid,
 		       const coll_t& coll);
+  static std::unique_ptr<Store> create_unique(ObjectStore* store,
+		       ObjectStore::Transaction* t,
+		       const spg_t& pgid,
+		       const coll_t& coll);
   void add_object_error(int64_t pool, const inconsistent_obj_wrapper& e);
   void add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e);
-  bool empty() const;
+  bool is_empty() const;
   void flush(ObjectStore::Transaction *);
   void cleanup(ObjectStore::Transaction *);
   std::vector<ceph::buffer::list> get_snap_errors(int64_t pool,

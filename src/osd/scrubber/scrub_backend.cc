@@ -43,6 +43,7 @@ std::ostream& ScrubBackend::logger_prefix(std::ostream* out,
 
 // for a Primary
 ScrubBackend::ScrubBackend(PgScrubber& scrubber,
+                           ScrubStoreFactory store_factory,
                            PGBackend& backend,
                            PG& pg,
                            pg_shard_t i_am,
@@ -71,6 +72,8 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
   m_mode_desc =
     (m_repair ? "repair"sv
               : (m_depth == scrub_level_t::deep ? "deep-scrub"sv : "scrub"sv));
+
+  m_store = store_factory();
 }
 
 // for a Replica
@@ -95,6 +98,58 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
   m_mode_desc =
     (m_repair ? "repair"sv
               : (m_depth == scrub_level_t::deep ? "deep-scrub"sv : "scrub"sv));
+}
+
+/**
+ * the scrub temporary data collection on the OSD store must be cleared. The
+ * only exception is when the OSD is being shutdown. In that specific case,
+ * the 't' parameter will be null.
+ */
+void ScrubBackend::cleanup_store(ObjectStore::Transaction* t)
+{
+  if (!m_store)
+    return;
+
+  struct OnComplete : Context {
+    std::unique_ptr<Scrub::Store> store;
+    explicit OnComplete(std::unique_ptr<Scrub::Store>&& store)
+        : store(std::move(store))
+    {}
+    void finish(int) override {}
+  };
+  m_store->cleanup(t);
+  if (t) {
+    t->register_on_complete(new OnComplete(std::move(m_store)));
+  } else {
+    m_store.reset();
+  }
+  ceph_assert(!m_store);
+}
+
+std::optional<scrub_ls_result_t> ScrubBackend::get_store_errors(
+  const scrub_ls_arg_t& arg, epoch_t same_since) const
+{
+  if (!m_store) {
+    return std::nullopt;
+  }
+
+  scrub_ls_result_t res{.interval = same_since};
+
+  if (arg.get_snapsets) {
+    res.vals =
+      m_store->get_snap_errors(m_pg_id.pool(), arg.start_after, arg.max_return);
+  } else {
+    res.vals = m_store->get_object_errors(m_pg_id.pool(),
+                                          arg.start_after,
+                                          arg.max_return);
+  }
+  return res;
+}
+
+ScrubBackend::~ScrubBackend()
+{
+  // the scrub-store should have been transactioned to oblivion earlier
+  // but as we have a problem with 'abort': ceph_assert(!m_store);
 }
 
 void ScrubBackend::update_repair_status(bool should_repair)
@@ -183,7 +238,8 @@ void ScrubBackend::replica_clean_meta(ScrubMap& repl_map,
 //
 // /////////////////////////////////////////////////////////////////////////////
 
-void ScrubBackend::scrub_compare_maps(bool max_reached)
+bool ScrubBackend::scrub_compare_maps(bool max_reached,
+                                      ObjectStore::Transaction* t)
 {
   dout(10) << __func__ << " has maps, analyzing" << dendl;
   ceph_assert(m_pg.is_primary());
@@ -208,22 +264,13 @@ void ScrubBackend::scrub_compare_maps(bool max_reached)
   // primary
   scan_snaps(for_meta_scrub);
 
-  if (!m_scrubber.m_store->empty()) {
-
-    if (m_scrubber.state_test(PG_STATE_REPAIR)) {
-      dout(10) << __func__ << ": discarding scrub results" << dendl;
-      m_scrubber.m_store->flush(nullptr);
-
-    } else {
-
-      dout(10) << __func__ << ": updating scrub object" << dendl;
-      ObjectStore::Transaction t;
-      m_scrubber.m_store->flush(&t);
-      m_scrubber.m_osds->store->queue_transaction(m_pg.ch,
-                                                  std::move(t),
-                                                  nullptr);
-    }
+  if (!m_store->is_empty()) {
+    m_store->flush(t);
+    return true;
   }
+
+  // no scrub-store data to write-out
+  return false;
 }
 
 void ScrubBackend::omap_checks()
@@ -844,7 +891,7 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
       ++m_scrubber.m_shallow_errors;
     }
 
-    m_scrubber.m_store->add_object_error(ho.pool, object_error);
+    m_store->add_object_error(ho.pool, object_error);
     errstream << m_scrubber.m_pg_id.pgid << " soid " << ho
               << " : failed to pick suitable object info\n";
     return;
@@ -891,7 +938,7 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
   }
 
   if (object_error.errors || object_error.union_shards.errors) {
-    m_scrubber.m_store->add_object_error(ho.pool, object_error);
+    m_store->add_object_error(ho.pool, object_error);
   }
 }
 
@@ -1584,7 +1631,7 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
       }
       ++m_scrubber.m_shallow_errors;
       soid_error.set_headless();
-      m_scrubber.m_store->add_snap_error(pool.id, soid_error);
+      m_store->add_snap_error(pool.id, soid_error);
       ++soid_error_count;
       if (head && soid.get_head() == head->get_head())
         head_error.set_clone(soid.snap);
@@ -1603,7 +1650,7 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
 
       // Save previous head error information
       if (head && (head_error.errors || soid_error_count))
-        m_scrubber.m_store->add_snap_error(pool.id, head_error);
+        m_store->add_snap_error(pool.id, head_error);
       // Set this as a new head object
       head = soid;
       missing = 0;
@@ -1712,7 +1759,7 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
       // what's next?
       ++curclone;
       if (soid_error.errors) {
-        m_scrubber.m_store->add_snap_error(pool.id, soid_error);
+        m_store->add_snap_error(pool.id, soid_error);
         ++soid_error_count;
       }
     }
@@ -1738,7 +1785,7 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
     log_missing(missing, head, __func__, allow_incomplete_clones);
   }
   if (head && (head_error.errors || soid_error_count))
-    m_scrubber.m_store->add_snap_error(pool.id, head_error);
+    m_store->add_snap_error(pool.id, head_error);
 
   // fix data/omap digests
   m_scrubber.submit_digest_fixes(this_chunk->missing_digest);
@@ -1954,3 +2001,5 @@ ScrubMap ScrubBackend::clean_meta_map(ScrubMap& cleaned, bool max_reached)
 
   return for_meta_scrub;
 }
+
+// (add_snap_error)|(add_object_error)|(\.m_store)|(>m_store)

@@ -25,21 +25,13 @@ static ostream& _prefix(std::ostream* _dout, T* t)
 
 using namespace Scrub;
 
-bool PrimaryLogScrub::get_store_errors(const scrub_ls_arg_t& arg,
-				       scrub_ls_result_t& res_inout) const
+std::optional<scrub_ls_result_t> PrimaryLogScrub::get_store_errors(const scrub_ls_arg_t& arg,
+                                                    epoch_t same_since) const
 {
-  if (!m_store) {
-    return false;
+  if (!m_be) {
+    return std::nullopt;
   }
-
-  if (arg.get_snapsets) {
-    res_inout.vals =
-      m_store->get_snap_errors(m_pg->get_pgid().pool(), arg.start_after, arg.max_return);
-  } else {
-    res_inout.vals = m_store->get_object_errors(m_pg->get_pgid().pool(), arg.start_after,
-						arg.max_return);
-  }
-  return true;
+  return m_be->get_store_errors(arg, same_since);
 }
 
 /// \todo combine the multiple transactions into a single one

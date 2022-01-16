@@ -388,6 +388,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   void map_from_replica(OpRequestRef op) final;
 
   void scrub_clear_state() final;
+  void scrub_clear_state(ObjectStore::Transaction* t) final;
 
   bool is_queued_or_active() const final;
 
@@ -408,12 +409,12 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
    */
   void set_op_parameters(requested_scrub_t& request) final;
 
-  void cleanup_store(ObjectStore::Transaction* t) final;
+  //void cleanup_store(ObjectStore::Transaction* t) final;
 
-  bool get_store_errors(const scrub_ls_arg_t& arg,
-			scrub_ls_result_t& res_inout) const override
+  std::optional<scrub_ls_result_t> get_store_errors(
+    const scrub_ls_arg_t& arg, epoch_t same_since) const override
   {
-    return false;
+    return std::nullopt;
   }
 
   int asok_debug(std::string_view cmd,
@@ -714,7 +715,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   eversion_t m_subset_last_update{};
 
-  std::unique_ptr<Scrub::Store> m_store;
+  // moved to the be: std::unique_ptr<Scrub::Store> m_store;
 
   int num_digest_updates_pending{0};
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
@@ -767,6 +768,10 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   std::string_view m_mode_desc;
 
   void update_op_mode_text();
+
+
+  // the backend, handling the details of comparing maps & fixing objects
+  std::unique_ptr<ScrubBackend> m_be;
 
 private:
 
@@ -825,9 +830,6 @@ private:
 
   ScrubMapBuilder replica_scrubmap_pos;
   ScrubMap replica_scrubmap;
-
-  // the backend, handling the details of comparing maps & fixing objects
-  std::unique_ptr<ScrubBackend> m_be;
 
   /**
    * we mark the request priority as it arrived. It influences the queuing priority

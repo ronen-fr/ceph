@@ -47,6 +47,7 @@
 
 #include "common/LogClient.h"
 #include "common/scrub_types.h"
+#include "osd/scrubber/ScrubStore.h"
 
 struct ScrubMap;
 
@@ -65,11 +66,14 @@ using shard_info_map_t = std::map<pg_shard_t, shard_info_wrapper>;
 using shard_to_scrubmap_t = std::map<pg_shard_t, ScrubMap>;
 
 
+/// the blueprint for creating the scrub-store
+using ScrubStoreFactory = std::function<std::unique_ptr<Scrub::Store>()>;
+
 /// omap-specific stats
 struct omap_stat_t {
- int large_omap_objects{0};
- int64_t omap_bytes{0};
- int64_t omap_keys{0};
+  int large_omap_objects{0};
+  int64_t omap_bytes{0};
+  int64_t omap_keys{0};
 };
 
 
@@ -195,6 +199,7 @@ class ScrubBackend {
  public:
   // Primary constructor
   ScrubBackend(PgScrubber& scrubber,
+               ScrubStoreFactory store_factory,
                PGBackend& backend,
                PG& pg,
                pg_shard_t i_am,
@@ -209,6 +214,9 @@ class ScrubBackend {
                pg_shard_t i_am,
                bool repair,
                scrub_level_t shallow_or_deep);
+
+  /// must clear the ScrubStore before destruction
+  ~ScrubBackend();
 
   friend class PgScrubber;
 
@@ -241,13 +249,16 @@ class ScrubBackend {
    */
   void decode_received_map(pg_shard_t from, const MOSDRepScrubMap& msg);
 
-  void scrub_compare_maps(bool max_reached);
+  bool scrub_compare_maps(bool max_reached, ObjectStore::Transaction* t);
 
   int scrub_process_inconsistent();
 
   void repair_oinfo_oid(ScrubMap& smap);
 
   const omap_stat_t& this_scrub_omapstats() const { return m_omap_stats; }
+
+  std::optional<scrub_ls_result_t> get_store_errors(const scrub_ls_arg_t& arg,
+                                                    epoch_t same_since) const;
 
   std::ostream& logger_prefix(std::ostream* _dout, const ScrubBackend* t);
 
@@ -264,7 +275,10 @@ class ScrubBackend {
   bool m_is_replicated{true};
   std::string_view m_mode_desc;
   std::string m_formatted_id;
- /// collecting some scrub-session-wide omap stats
+
+  std::unique_ptr<Scrub::Store> m_store;
+
+  /// collecting some scrub-session-wide omap stats
   omap_stat_t m_omap_stats;
 
   // shorthands:
@@ -401,4 +415,6 @@ class ScrubBackend {
   void scan_object_snaps(const hobject_t& hoid,
                          ScrubMap::object& scrmap_obj,
                          const SnapSet& snapset);
+
+  void cleanup_store(ObjectStore::Transaction* t);
 };

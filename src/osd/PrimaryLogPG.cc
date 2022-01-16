@@ -1609,6 +1609,7 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
   osd->send_message_osd_client(reply, m->get_connection());
 }
 
+
 int PrimaryLogPG::do_scrub_ls(const MOSDOp *m, OSDOp *osd_op)
 {
   if (m->get_pg() != info.pgid.pgid) {
@@ -1625,17 +1626,17 @@ int PrimaryLogPG::do_scrub_ls(const MOSDOp *m, OSDOp *osd_op)
   }
 
   int r = 0;
-  scrub_ls_result_t result = {.interval = info.history.same_interval_since};
 
   if (arg.interval != 0 && arg.interval != info.history.same_interval_since) {
     r = -EAGAIN;
+  } else if (m_scrubber) {
+    r = -ENOENT;
   } else {
-    bool store_queried = m_scrubber && m_scrubber->get_store_errors(arg, result);
-    if (store_queried) {
-      encode(result, osd_op->outdata); 
-    } else {
-      // the scrubber's store is not initialized
+    auto store_errors = m_scrubber->get_store_errors(arg, info.history.same_interval_since);
+    if (!store_errors) {
       r = -ENOENT;
+    } else {
+      encode(*store_errors, osd_op->outdata); 
     }
   }
 
@@ -12861,7 +12862,7 @@ void PrimaryLogPG::on_shutdown()
     osd->clear_queued_recovery(this);
   }
 
-  m_scrubber->scrub_clear_state();
+  m_scrubber->scrub_clear_state(nullptr);
   m_scrubber->rm_from_osd_scrubbing();
 
   vector<ceph_tid_t> tids;
@@ -13011,7 +13012,7 @@ void PrimaryLogPG::on_change(ObjectStore::Transaction &t)
   }
 
   // requeues waiting_for_scrub
-  m_scrubber->scrub_clear_state();
+  m_scrubber->scrub_clear_state(&t);
 
   for (auto p = waiting_for_blocked_object.begin();
        p != waiting_for_blocked_object.end();
@@ -13054,7 +13055,7 @@ void PrimaryLogPG::on_change(ObjectStore::Transaction &t)
   context_registry_on_change();
 
   pgbackend->on_change_cleanup(&t);
-  m_scrubber->cleanup_store(&t);
+  //m_scrubber->cleanup_store(&t);
   pgbackend->on_change();
 
   // clear snap_trimmer state

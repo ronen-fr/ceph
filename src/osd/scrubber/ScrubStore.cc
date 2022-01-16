@@ -112,6 +112,16 @@ Store::create(ObjectStore* store,
   return new Store{coll, oid, store};
 }
 
+std::unique_ptr<Store>
+Store::create_unique(ObjectStore* store,
+	      ObjectStore::Transaction* t,
+	      const spg_t& pgid,
+	      const coll_t& coll)
+{
+  auto p = Store::create(store, t, pgid, coll);
+  return std::unique_ptr<Store>(p);
+}
+
 Store::Store(const coll_t& coll, const ghobject_t& oid, ObjectStore* store)
   : coll(coll),
     hoid(oid),
@@ -138,7 +148,7 @@ void Store::add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e)
   results[to_snap_key(pool, e.object)] = bl;
 }
 
-bool Store::empty() const
+bool Store::is_empty() const
 {
   return results.empty();
 }
