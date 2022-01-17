@@ -1129,9 +1129,29 @@ void PgScrubber::run_callbacks()
   }
 }
 
+void PgScrubber::populate_store(inconsistent_objs_t&& all_errors)
+{
+  dout(10) << __func__ << " " << all_errors.size() << " errors" << dendl;
+  if (all_errors.empty()) {
+    return;
+  }
+  if (state_test(PG_STATE_REPAIR)) {
+    dout(10) << __func__ << ": discarding scrub results (repairing)" << dendl;
+    return;
+  }
+
+  for (auto& e : all_errors) {
+    std::visit([this](auto& e) { m_store->add_error(m_pg->pool.id, e); }, e);
+  }
+
+  ObjectStore::Transaction t;
+  m_store->flush(&t);
+  m_osds->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
+}
+
 void PgScrubber::maps_compare_n_cleanup()
 {
-  m_be->scrub_compare_maps(m_end.is_max());
+  populate_store(m_be->scrub_compare_maps(m_end.is_max()));
   m_start = m_end;
   run_callbacks();
   requeue_waiting();

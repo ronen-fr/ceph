@@ -64,6 +64,8 @@ using digests_fixes_t = std::vector<std::pair<hobject_t, data_omap_digests_t>>;
 using shard_info_map_t = std::map<pg_shard_t, shard_info_wrapper>;
 using shard_to_scrubmap_t = std::map<pg_shard_t, ScrubMap>;
 
+using wrapped_err_t = std::variant<inconsistent_obj_wrapper, inconsistent_snapset_wrapper>;
+using inconsistent_objs_t = std::vector<wrapped_err_t>;
 
 /// omap-specific stats
 struct omap_stat_t {
@@ -241,7 +243,7 @@ class ScrubBackend {
    */
   void decode_received_map(pg_shard_t from, const MOSDRepScrubMap& msg);
 
-  void scrub_compare_maps(bool max_reached);
+  inconsistent_objs_t scrub_compare_maps(bool max_reached);
 
   int scrub_process_inconsistent();
 
@@ -264,8 +266,11 @@ class ScrubBackend {
   bool m_is_replicated{true};
   std::string_view m_mode_desc;
   std::string m_formatted_id;
- /// collecting some scrub-session-wide omap stats
+
+  /// collecting some scrub-session-wide omap stats
   omap_stat_t m_omap_stats;
+
+  inconsistent_objs_t m_inconsistent_objs;
 
   // shorthands:
   ConfigProxy& m_conf;

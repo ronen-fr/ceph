@@ -183,7 +183,7 @@ void ScrubBackend::replica_clean_meta(ScrubMap& repl_map,
 //
 // /////////////////////////////////////////////////////////////////////////////
 
-void ScrubBackend::scrub_compare_maps(bool max_reached)
+inconsistent_objs_t ScrubBackend::scrub_compare_maps(bool max_reached)
 {
   dout(10) << __func__ << " has maps, analyzing" << dendl;
   ceph_assert(m_pg.is_primary());
@@ -208,22 +208,24 @@ void ScrubBackend::scrub_compare_maps(bool max_reached)
   // primary
   scan_snaps(for_meta_scrub);
 
-  if (!m_scrubber.m_store->empty()) {
+//   if (!m_scrubber.m_store->empty()) {
+// 
+//     if (m_scrubber.state_test(PG_STATE_REPAIR)) {
+//       dout(10) << __func__ << ": discarding scrub results" << dendl;
+//       m_scrubber.m_store->flush(nullptr);
+// 
+//     } else {
+// 
+//       dout(10) << __func__ << ": updating scrub object" << dendl;
+//       ObjectStore::Transaction t;
+//       m_scrubber.m_store->flush(&t);
+//       m_scrubber.m_osds->store->queue_transaction(m_pg.ch,
+//                                                   std::move(t),
+//                                                   nullptr);
+//     }
+//   }
 
-    if (m_scrubber.state_test(PG_STATE_REPAIR)) {
-      dout(10) << __func__ << ": discarding scrub results" << dendl;
-      m_scrubber.m_store->flush(nullptr);
-
-    } else {
-
-      dout(10) << __func__ << ": updating scrub object" << dendl;
-      ObjectStore::Transaction t;
-      m_scrubber.m_store->flush(&t);
-      m_scrubber.m_osds->store->queue_transaction(m_pg.ch,
-                                                  std::move(t),
-                                                  nullptr);
-    }
-  }
+  return std::move(m_inconsistent_objs);
 }
 
 void ScrubBackend::omap_checks()
@@ -844,7 +846,8 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
       ++m_scrubber.m_shallow_errors;
     }
 
-    m_scrubber.m_store->add_object_error(ho.pool, object_error);
+    m_inconsistent_objs.push_back(std::move(object_error));
+    //m_scrubber.m_store->add_object_error(ho.pool, object_error);
     errstream << m_scrubber.m_pg_id.pgid << " soid " << ho
               << " : failed to pick suitable object info\n";
     return;
@@ -891,7 +894,8 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
   }
 
   if (object_error.errors || object_error.union_shards.errors) {
-    m_scrubber.m_store->add_object_error(ho.pool, object_error);
+    //m_scrubber.m_store->add_object_error(ho.pool, object_error);
+    m_inconsistent_objs.push_back(std::move(object_error));
   }
 }
 
@@ -1584,7 +1588,8 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
       }
       ++m_scrubber.m_shallow_errors;
       soid_error.set_headless();
-      m_scrubber.m_store->add_snap_error(pool.id, soid_error);
+      //m_scrubber.m_store->add_snap_error(pool.id, soid_error);
+      m_inconsistent_objs.push_back(std::move(soid_error));
       ++soid_error_count;
       if (head && soid.get_head() == head->get_head())
         head_error.set_clone(soid.snap);
@@ -1602,8 +1607,11 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
       }
 
       // Save previous head error information
-      if (head && (head_error.errors || soid_error_count))
-        m_scrubber.m_store->add_snap_error(pool.id, head_error);
+      if (head && (head_error.errors || soid_error_count)) {
+        //m_scrubber.m_store->add_snap_error(pool.id, head_error);
+        m_inconsistent_objs.push_back(std::move(head_error));
+      }
+
       // Set this as a new head object
       head = soid;
       missing = 0;
@@ -1712,7 +1720,8 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
       // what's next?
       ++curclone;
       if (soid_error.errors) {
-        m_scrubber.m_store->add_snap_error(pool.id, soid_error);
+        //m_scrubber.m_store->add_snap_error(pool.id, soid_error);
+        m_inconsistent_objs.push_back(std::move(soid_error));
         ++soid_error_count;
       }
     }
@@ -1737,8 +1746,10 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
   if (missing) {
     log_missing(missing, head, __func__, allow_incomplete_clones);
   }
-  if (head && (head_error.errors || soid_error_count))
-    m_scrubber.m_store->add_snap_error(pool.id, head_error);
+  if (head && (head_error.errors || soid_error_count)) {
+    //m_scrubber.m_store->add_snap_error(pool.id, head_error);
+    m_inconsistent_objs.push_back(std::move(head_error));
+  }
 
   // fix data/omap digests
   m_scrubber.submit_digest_fixes(this_chunk->missing_digest);

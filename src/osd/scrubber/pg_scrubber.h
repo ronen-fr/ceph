@@ -819,6 +819,8 @@ private:
   /// Maps from object with errors to good peers
   std::map<hobject_t, std::list<std::pair<ScrubMap::object, pg_shard_t>>> m_authoritative;
 
+  void populate_store(inconsistent_objs_t&& all_errors);
+
   // ------------ members used if we are a replica
 
   epoch_t m_replica_min_epoch;	///< the min epoch needed to handle this message
