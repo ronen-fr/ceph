@@ -64,14 +64,17 @@ using digests_fixes_t = std::vector<std::pair<hobject_t, data_omap_digests_t>>;
 using shard_info_map_t = std::map<pg_shard_t, shard_info_wrapper>;
 using shard_to_scrubmap_t = std::map<pg_shard_t, ScrubMap>;
 
-using wrapped_err_t = std::variant<inconsistent_obj_wrapper, inconsistent_snapset_wrapper>;
+using auth_peers_t = std::vector<std::pair<ScrubMap::object, pg_shard_t>>;
+
+using wrapped_err_t =
+  std::variant<inconsistent_obj_wrapper, inconsistent_snapset_wrapper>;
 using inconsistent_objs_t = std::vector<wrapped_err_t>;
 
 /// omap-specific stats
 struct omap_stat_t {
- int large_omap_objects{0};
- int64_t omap_bytes{0};
- int64_t omap_keys{0};
+  int large_omap_objects{0};
+  int64_t omap_bytes{0};
+  int64_t omap_keys{0};
 };
 
 
@@ -144,14 +147,10 @@ struct fmt::formatter<auth_selection_t> {
   template <typename FormatContext>
   auto format(auth_selection_t const& aus, FormatContext& ctx)
   {
-    return fmt::format_to(ctx.out(),
-                          " {{AU-S: {}->{:x} OI({:x}:{}) {} dm:{}}} ",
-                          aus.auth->first,
-                          (uint64_t)(&aus.auth->second),
-                          (uint64_t)(&aus.auth_oi),
-                          aus.auth_oi,
-                          aus.shard_map.size(),
-                          aus.digest_match);
+    return fmt::format_to(
+      ctx.out(), " {{AU-S: {}->{:x} OI({:x}:{}) {} dm:{}}} ", aus.auth->first,
+      (uint64_t)(&aus.auth->second), (uint64_t)(&aus.auth_oi), aus.auth_oi,
+      aus.shard_map.size(), aus.digest_match);
   }
 };
 
@@ -251,6 +250,8 @@ class ScrubBackend {
 
   const omap_stat_t& this_scrub_omapstats() const { return m_omap_stats; }
 
+  int authoritative_peers_count() const { return m_auth_peers.size(); };
+
   std::ostream& logger_prefix(std::ostream* _dout, const ScrubBackend* t);
 
  private:
@@ -271,6 +272,9 @@ class ScrubBackend {
   omap_stat_t m_omap_stats;
 
   inconsistent_objs_t m_inconsistent_objs;
+
+  /// Mapping from object with errors to good peers
+  std::map<hobject_t, auth_peers_t> m_auth_peers;
 
   // shorthands:
   ConfigProxy& m_conf;
@@ -337,7 +341,7 @@ class ScrubBackend {
 
   void repair_object(
     const hobject_t& soid,
-    const std::list<std::pair<ScrubMap::object, pg_shard_t>>& ok_peers,
+    const auth_peers_t& ok_peers,
     const std::set<pg_shard_t>& bad_peers);
 
   /**
