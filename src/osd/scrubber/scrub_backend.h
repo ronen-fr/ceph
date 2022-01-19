@@ -53,6 +53,7 @@ struct ScrubMap;
 class PG;
 class PgScrubber;
 class PGBackend;
+class PGPool;
 
 
 using data_omap_digests_t =
@@ -77,6 +78,10 @@ struct omap_stat_t {
   int64_t omap_keys{0};
 };
 
+struct errors_duo_t {
+  int shallow_errors{0};
+  int deep_errors{0};
+};
 
 /**
  * A structure used internally by select_auth_object()
@@ -177,6 +182,10 @@ struct scrub_chunk_t {
   /// Map from object with errors to good peers
   std::map<hobject_t, std::list<pg_shard_t>> authoritative;
 
+  inconsistent_objs_t m_inconsistent_objs;
+
+  /// shallow/deep error counters
+  errors_duo_t m_error_counts;
 
   // these must be reset for each element:
 
@@ -267,11 +276,11 @@ class ScrubBackend {
   bool m_is_replicated{true};
   std::string_view m_mode_desc;
   std::string m_formatted_id;
+  const PGPool& m_pool;
+  bool m_incomplete_clones_allowed{false};
 
   /// collecting some scrub-session-wide omap stats
   omap_stat_t m_omap_stats;
-
-  inconsistent_objs_t m_inconsistent_objs;
 
   /// Mapping from object with errors to good peers
   std::map<hobject_t, auth_peers_t> m_auth_peers;
@@ -281,10 +290,11 @@ class ScrubBackend {
   LogChannelRef clog;
 
  private:
-  using auth_and_obj_errs_t =
-    std::tuple<std::list<pg_shard_t>,  ///< the auth-list
-               std::set<pg_shard_t>    ///< object_errors
-               >;
+
+  struct auth_and_obj_errs_t {
+    std::list<pg_shard_t> auth_list;
+    std::set<pg_shard_t> object_errors;
+  };
 
   std::optional<scrub_chunk_t> this_chunk;
 
@@ -299,6 +309,9 @@ class ScrubBackend {
 
   /// a reference to the primary map
   ScrubMap& my_map();
+
+  /// shallow/deep error counters
+  errors_duo_t get_error_counts() const { return this_chunk->m_error_counts; }
 
   /**
    *  merge_to_authoritative_set() updates
@@ -381,7 +394,6 @@ class ScrubBackend {
 
   int process_clones_to(const std::optional<hobject_t>& head,
                         const std::optional<SnapSet>& snapset,
-                        bool allow_incomplete_clones,
                         std::optional<snapid_t> target,
                         std::vector<snapid_t>::reverse_iterator* curclone,
                         inconsistent_snapset_wrapper& e);
@@ -402,12 +414,14 @@ class ScrubBackend {
 
   void log_missing(int missing,
                    const std::optional<hobject_t>& head,
-                   const char* logged_func_name,
-                   bool allow_incomplete_clones);
+                   const char* logged_func_name);
 
   void scan_snaps(ScrubMap& smap);
 
   void scan_object_snaps(const hobject_t& hoid,
                          ScrubMap::object& scrmap_obj,
                          const SnapSet& snapset);
+
+  // accessing the PG backend for this translation service
+  uint64_t logical_to_ondisk_size(uint64_t logical_size) const;
 };

@@ -1152,6 +1152,11 @@ void PgScrubber::populate_store(inconsistent_objs_t&& all_errors)
 void PgScrubber::maps_compare_n_cleanup()
 {
   populate_store(m_be->scrub_compare_maps(m_end.is_max()));
+
+  auto chunk_err_counts = m_be->get_error_counts();
+  m_shallow_errors += chunk_err_counts.shallow_errors;
+  m_deep_errors += chunk_err_counts.deep_errors;
+
   m_start = m_end;
   run_callbacks();
   requeue_waiting();
@@ -1547,7 +1552,7 @@ void PgScrubber::scrub_finish()
   // we would like to cancel auto-repair
   if (m_is_repair && m_flags.auto_repair &&
       m_be->authoritative_peers_count() >
-        m_pg->cct->_conf->osd_scrub_auto_repair_num_errors) {
+        static_cast<int>(m_pg->cct->_conf->osd_scrub_auto_repair_num_errors)) {
 
     dout(10) << __func__ << " undoing the repair" << dendl;
     state_clear(PG_STATE_REPAIR);  // not expected to be set, anyway
@@ -1562,7 +1567,7 @@ void PgScrubber::scrub_finish()
   bool do_auto_scrub = false;
   if (m_flags.deep_scrub_on_error && m_be->authoritative_peers_count() &&
       m_be->authoritative_peers_count() <=
-        m_pg->cct->_conf->osd_scrub_auto_repair_num_errors) {
+        static_cast<int>(m_pg->cct->_conf->osd_scrub_auto_repair_num_errors)) {
     ceph_assert(!m_is_deep);
     do_auto_scrub = true;
     dout(15) << __func__ << " Try to auto repair after scrub errors" << dendl;
@@ -1572,6 +1577,20 @@ void PgScrubber::scrub_finish()
 
   // type-specific finish (can tally more errors)
   _scrub_finish();
+
+  // RRR temp - just for the test sake:
+
+  if (m_be->authoritative_peers_count()) {
+
+    auto err_msg = fmt::format("{} {} {} missing, {} inconsistent objects",
+                             m_pg->info.pgid,
+                             m_mode_desc,
+                             m_be->m_missing.size(),
+                             m_be->m_inconsistent.size());
+
+    dout(2) << err_msg << dendl;
+    m_osds->clog->error() << fmt::to_string(err_msg);
+    }
 
   // note that the PG_STATE_REPAIR might have changed above
   if (m_be->authoritative_peers_count() && m_is_repair) {
