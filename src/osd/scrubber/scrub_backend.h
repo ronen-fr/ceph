@@ -83,6 +83,42 @@ struct errors_duo_t {
   int deep_errors{0};
 };
 
+
+/*
+ * snaps-related aux structures:
+ * the scrub-backend scans the snaps associated with each scrubbed object, and
+ * fixes corrupted snap-sets.
+ * The actual access to the PG's snap_mapper, and the actual I/O transactions,
+ * are performed by the main PgScrubber object.
+ * the following aux structures are used to facilitate the required exchanges:
+ * - pre-fix snap-sets are accessed by the scrub-backend, and:
+ * - a list of fix-orders (either insert or replace operations) are returned
+ */
+
+struct snap_mapper_accessor_t {
+  virtual int get_snaps(const hobject_t& hoid, std::set<snapid_t>& snaps_set) const = 0;
+  virtual ~snap_mapper_accessor_t() = default; // RRR any way to avoid this?
+};
+
+enum class snap_mapper_op_t {
+  add,
+  update,
+};
+
+struct snap_mapper_fix_t {
+  snap_mapper_op_t op;
+  hobject_t hoid;
+  std::set<snapid_t> snaps;
+  std::set<snapid_t> wrong_snaps; // only collected & returned for logging sake
+};
+
+// and - as the main scrub-backend entry point - scrub_compare_maps() - must
+// be able to return both a list of snap fixes and a list of inconsistent objects:
+struct objs_fix_list_t {
+  inconsistent_objs_t inconsistent_objs;
+  std::vector<snap_mapper_fix_t> snap_fix_list;
+};
+
 /**
  * A structure used internally by select_auth_object()
  *
@@ -239,9 +275,11 @@ class ScrubBackend {
    */
   void update_repair_status(bool should_repair);
 
-  void replica_clean_meta(ScrubMap& smap,
-                          bool max_reached,
-                          const hobject_t& start);
+  std::vector<snap_mapper_fix_t> replica_clean_meta(
+    ScrubMap& smap,
+    bool max_reached,
+    const hobject_t& start,
+    snap_mapper_accessor_t& snaps_getter);
 
   /**
    * decode the arriving MOSDRepScrubMap message, placing the replica's
@@ -251,7 +289,8 @@ class ScrubBackend {
    */
   void decode_received_map(pg_shard_t from, const MOSDRepScrubMap& msg);
 
-  inconsistent_objs_t scrub_compare_maps(bool max_reached);
+  //inconsistent_objs_t scrub_compare_maps(bool max_reached);
+  objs_fix_list_t scrub_compare_maps(bool max_reached, snap_mapper_accessor_t& snaps_getter);
 
   int scrub_process_inconsistent();
 
@@ -421,6 +460,13 @@ class ScrubBackend {
   void scan_object_snaps(const hobject_t& hoid,
                          ScrubMap::object& scrmap_obj,
                          const SnapSet& snapset);
+
+  std::vector<snap_mapper_fix_t> scan_snaps(ScrubMap& smap, snap_mapper_accessor_t& snaps_getter);
+
+  std::optional<snap_mapper_fix_t> scan_object_snaps(const hobject_t& hoid,
+                         ScrubMap::object& scrmap_obj,
+                         const SnapSet& snapse,
+                         snap_mapper_accessor_t& snaps_getter);
 
   // accessing the PG backend for this translation service
   uint64_t logical_to_ondisk_size(uint64_t logical_size) const;

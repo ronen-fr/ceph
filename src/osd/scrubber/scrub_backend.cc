@@ -169,9 +169,11 @@ void ScrubBackend::decode_received_map(pg_shard_t from,
 }
 
 
-void ScrubBackend::replica_clean_meta(ScrubMap& repl_map,
-                                      bool max_reached,
-                                      const hobject_t& start)
+std::vector<snap_mapper_fix_t> ScrubBackend::replica_clean_meta(
+  ScrubMap& repl_map,
+  bool max_reached,
+  const hobject_t& start,
+  snap_mapper_accessor_t& snaps_getter)
 {
   dout(15) << __func__ << ": REPL META # " << m_cleaned_meta_map.objects.size()
            << " objects" << dendl;
@@ -179,7 +181,7 @@ void ScrubBackend::replica_clean_meta(ScrubMap& repl_map,
   m_cleaned_meta_map.clear_from(start);  // RRR how can this be required?
   m_cleaned_meta_map.insert(repl_map);
   auto for_meta_scrub = clean_meta_map(m_cleaned_meta_map, max_reached);
-  scan_snaps(for_meta_scrub);
+  return scan_snaps(for_meta_scrub, snaps_getter);
 }
 
 
@@ -189,7 +191,8 @@ void ScrubBackend::replica_clean_meta(ScrubMap& repl_map,
 //
 // /////////////////////////////////////////////////////////////////////////////
 
-inconsistent_objs_t ScrubBackend::scrub_compare_maps(bool max_reached)
+objs_fix_list_t ScrubBackend::scrub_compare_maps(
+  bool max_reached, snap_mapper_accessor_t& snaps_getter)
 {
   dout(10) << __func__ << " has maps, analyzing" << dendl;
   ceph_assert(m_pg.is_primary());
@@ -210,10 +213,35 @@ inconsistent_objs_t ScrubBackend::scrub_compare_maps(bool max_reached)
   // (Validates consistency of the object info and snap sets)
   scrub_snapshot_metadata(for_meta_scrub);
 
-  scan_snaps(for_meta_scrub);
-
-  return std::move(this_chunk->m_inconsistent_objs);
+  return objs_fix_list_t{std::move(this_chunk->m_inconsistent_objs),
+                         scan_snaps(for_meta_scrub, snaps_getter)};
 }
+
+// inconsistent_objs_t ScrubBackend::scrub_compare_maps(bool max_reached)
+// {
+//   dout(10) << __func__ << " has maps, analyzing" << dendl;
+//   ceph_assert(m_pg.is_primary());
+// 
+//   // construct authoritative scrub map for type-specific scrubbing
+// 
+//   m_cleaned_meta_map.insert(my_map());
+//   merge_to_authoritative_set();
+// 
+//   // collect some omap statistics into m_omap_stats
+//   omap_checks();
+// 
+//   update_authoritative();
+//   auto for_meta_scrub = clean_meta_map(m_cleaned_meta_map, max_reached);
+// 
+//   // ok, do the pg-type specific scrubbing
+// 
+//   // (Validates consistency of the object info and snap sets)
+//   scrub_snapshot_metadata(for_meta_scrub);
+// 
+//   scan_snaps(for_meta_scrub);
+// 
+//   return std::move(this_chunk->m_inconsistent_objs);
+// }
 
 void ScrubBackend::omap_checks()
 {
@@ -1889,6 +1917,95 @@ void ScrubBackend::scan_object_snaps(const hobject_t& hoid,
   }
 }
 
+std::vector<snap_mapper_fix_t> ScrubBackend::scan_snaps(ScrubMap& smap, snap_mapper_accessor_t& snaps_getter)
+{
+  std::vector<snap_mapper_fix_t> out_orders;
+  hobject_t head;
+  SnapSet snapset;
+
+  // Test qa/standalone/scrub/osd-scrub-snaps.sh greps for the strings
+  // in this function
+  dout(15) << "_scan_snaps starts" << dendl;
+
+  for (auto i = smap.objects.rbegin(); i != smap.objects.rend(); ++i) {
+
+    const hobject_t& hoid = i->first;
+    ScrubMap::object& o = i->second;
+
+    dout(20) << __func__ << " " << hoid << dendl;
+
+    ceph_assert(!hoid.is_snapdir());
+
+    if (hoid.is_head()) {
+      // parse the SnapSet
+      bufferlist bl;
+      if (o.attrs.find(SS_ATTR) == o.attrs.end()) {
+        continue;
+      }
+      bl.push_back(o.attrs[SS_ATTR]);
+      auto p = bl.cbegin();
+      try {
+        decode(snapset, p);
+      } catch (...) {
+        continue;
+      }
+      head = hoid.get_head();
+      continue;
+    }
+
+    /// \todo document why guaranteed to have initialized 'head' at this point
+
+    if (hoid.snap < CEPH_MAXSNAP) {
+
+      if (hoid.get_head() != head) {
+        derr << __func__ << " no head for " << hoid << " (have " << head << ")"
+             << dendl;
+        continue;
+      }
+
+      if (auto maybe_fix_order = scan_object_snaps(hoid, o, snapset, snaps_getter); maybe_fix_order) {
+        out_orders.push_back(std::move(*maybe_fix_order));
+      }
+
+    }
+  }
+
+  dout(15) << __func__ << " " << out_orders.size() << " fix orders" << dendl;
+  return out_orders;
+}
+
+std::optional<snap_mapper_fix_t> ScrubBackend::scan_object_snaps(
+  const hobject_t& hoid,
+  ScrubMap::object& scrmap_obj,
+  const SnapSet& snapset,
+  snap_mapper_accessor_t& snaps_getter)
+{
+  // check and if necessary fix snap_mapper
+
+  auto p = snapset.clone_snaps.find(hoid.snap);
+  if (p == snapset.clone_snaps.end()) {
+    derr << __func__ << " no clone_snaps for " << hoid << " in " << snapset
+         << dendl;
+    return std::nullopt;
+  }
+  set<snapid_t> obj_snaps{p->second.begin(), p->second.end()}; // RRR make this into a vector
+
+  set<snapid_t> cur_snaps;
+  int r = m_pg.snap_mapper.get_snaps(hoid, &cur_snaps);
+  if (r != 0 && r != -ENOENT) {
+    derr << __func__ << ": get_snaps returned " << cpp_strerror(r) << dendl;
+    ceph_abort();
+  }
+  if (r == -ENOENT || cur_snaps != obj_snaps) {
+
+    // add this object to the list of snapsets that needs fixing. Note
+    // that we also collect the existing (bogus) list, as legacy log lines show those
+    snap_mapper_op_t fixing_op =
+      (r == -ENOENT ? snap_mapper_op_t::add : snap_mapper_op_t::update);
+    return snap_mapper_fix_t{fixing_op, hoid, obj_snaps, cur_snaps};
+  }
+  return std::nullopt;
+}
 
 /*
  * Process:
