@@ -2255,7 +2255,8 @@ void PgScrubber::set_scrub_duration()
 void PgScrubber::reserve_replicas()
 {
   dout(10) << __func__ << dendl;
-  m_reservations.emplace(m_pg, m_pg_whoami, m_scrub_job);
+  // the 2'000 will be replaced by a config parameter
+  m_reservations.emplace(m_pg, m_pg_whoami, m_scrub_job, 2'000ms);
 }
 
 void PgScrubber::cleanup_on_finish()
@@ -2534,15 +2535,18 @@ void ReplicaReservations::release_replica(pg_shard_t peer, epoch_t epoch)
   m_osds->send_message_osd_cluster(peer.osd, m, epoch);
 }
 
-ReplicaReservations::ReplicaReservations(PG* pg,
-					 pg_shard_t whoami,
-					 ScrubQueue::ScrubJobRef scrubjob)
+ReplicaReservations::ReplicaReservations(
+  PG* pg,
+  pg_shard_t whoami,
+  ScrubQueue::ScrubJobRef scrubjob,
+  std::chrono::milliseconds response_timeout)
     : m_pg{pg}
     , m_acting_set{pg->get_actingset()}
     , m_osds{m_pg->get_pg_osd(ScrubberPasskey())}
     , m_pending{static_cast<int>(m_acting_set.size()) - 1}
     , m_pg_info{m_pg->get_pg_info(ScrubberPasskey())}
     , m_scrub_job{scrubjob}
+    , m_timeout{response_timeout}
 {
   epoch_t epoch = m_pg->get_osdmap_epoch();
 
@@ -2593,6 +2597,25 @@ void ReplicaReservations::discard_all()
 			    // events
   m_reserved_peers.clear();
   m_waited_for_peers.clear();
+}
+
+/*
+ * The following holds when update_latecomers() is called:
+ * - we are still waiting for replies from some replicas;
+ * - we might have already set a timer. If so, we should restart it.
+ * - we might or might not have received responses from 50% of the replicas.
+ */
+std::optional<ReplicaReservations::clock_base::time_point>
+ReplicaReservations::update_latecomers(clock_base::time_point now_is)
+{
+  if (m_reserved_peers.size() > m_waited_for_peers.size()) {
+    // at least half of the replicas have already responded. Time we flag
+    // latecomers.
+
+    return now_is + m_timeout;
+  } else {
+    return std::nullopt;
+  }
 }
 
 ReplicaReservations::~ReplicaReservations()
@@ -2655,8 +2678,26 @@ void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
     dout(10) << __func__ << ": osd." << from << " scrub reserve = success"
 	     << dendl;
     m_reserved_peers.push_back(from);
+
+    // was this response late?
+    auto now_is = clock_base::now();
+    if (m_timeout_point && (now_is > *m_timeout_point)) {
+
+      m_osds->clog->warn() << fmt::format(
+	"osd.{} scrubber pg[{}]: late reservation from osd.{}",
+	m_osds->whoami,
+	m_pg->pg_id,
+	from);
+
+      dout(10) << fmt::format(" late reservation from osd.{}", from) << dendl;
+    }
+    m_timeout_point.reset();
+
     if (--m_pending == 0) {
       send_all_done();
+    } else {
+      // possibly set a timer to warn about late-coming reservations
+      m_timeout_point = update_latecomers(now_is);
     }
   }
 }
