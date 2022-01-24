@@ -851,7 +851,7 @@ private:
       if (m_preempted || !m_preemptable)
 	return false;
 
-      std::lock_guard<std::mutex> lk{m_preemption_lock};
+      std::lock_guard<ceph::mutex> lk{m_preemption_lock};
       if (!m_preemptable)
 	return false;
 
@@ -865,7 +865,7 @@ private:
 
     void enable_preemption()
     {
-      std::lock_guard<std::mutex> lk{m_preemption_lock};
+      std::lock_guard<ceph::mutex> lk{m_preemption_lock};
       if (are_preemptions_left() && !m_preempted) {
 	m_preemptable = true;
       }
@@ -881,7 +881,7 @@ private:
 
     bool disable_and_test() final
     {
-      std::lock_guard<std::mutex> lk{m_preemption_lock};
+      std::lock_guard<ceph::mutex> lk{m_preemption_lock};
       m_preemptable = false;
       return m_preempted;
     }
@@ -894,7 +894,7 @@ private:
 
     void adjust_parameters() final
     {
-      std::lock_guard<std::mutex> lk{m_preemption_lock};
+      std::lock_guard<ceph::mutex> lk{m_preemption_lock};
 
       if (m_preempted) {
 	m_preempted = false;
