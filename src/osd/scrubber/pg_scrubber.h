@@ -95,6 +95,11 @@ struct BuildMap;
  * event. All previous requests, whether already granted or not, are explicitly
  * released.
  *
+ *  Slow Secondary Warning:
+ *  Once at least half of the replicas have accepted the reservation, we start
+ *  reporting any secondary that takes too long (more than <conf> milliseconds
+ *  after the prevoius response received) to respond to the reservation request.
+ *
  * A note re performance: I've measured a few container alternatives for
  * m_reserved_peers, with its specific usage pattern. Std::set is extremely
  * slow, as expected. flat_set is only slightly better. Surprisingly -
@@ -102,6 +107,8 @@ struct BuildMap;
  * std::vector: no need to pre-reserve.
  */
 class ReplicaReservations {
+   using clock_base = ceph::coarse_mono_clock;
+
   PG* m_pg;
   std::set<pg_shard_t> m_acting_set;
   OSDService* m_osds;
@@ -110,14 +117,19 @@ class ReplicaReservations {
   bool m_had_rejections{false};
   int m_pending{-1};
   const pg_info_t& m_pg_info;
-  ScrubQueue::ScrubJobRef m_scrub_job;	///< a ref to this PG's scrub job
+  ScrubQueue::ScrubJobRef m_scrub_job;  ///< a ref to this PG's scrub job
+  std::chrono::milliseconds m_timeout;
+  std::optional<clock_base::time_point> m_timeout_point;
 
   void release_replica(pg_shard_t peer, epoch_t epoch);
 
-  void send_all_done();	 ///< all reservations are granted
+  void send_all_done();  ///< all reservations are granted
 
   /// notify the scrubber that we have failed to reserve replicas' resources
   void send_reject();
+
+  std::optional<clock_base::time_point> update_latecomers(
+    clock_base::time_point now_is);
 
  public:
   std::string m_log_msg_prefix;
@@ -132,8 +144,9 @@ class ReplicaReservations {
   void discard_all();
 
   ReplicaReservations(PG* pg,
-		      pg_shard_t whoami,
-		      ScrubQueue::ScrubJobRef scrubjob);
+                      pg_shard_t whoami,
+                      ScrubQueue::ScrubJobRef scrubjob,
+                      std::chrono::milliseconds response_timeout);
 
   ~ReplicaReservations();
 
