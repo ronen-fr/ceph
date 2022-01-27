@@ -447,6 +447,22 @@ options:
   see_also:
   - osd_deep_scrub_large_omap_object_key_threshold
   with_legacy: true
+# when to warn about secondaries that are late in sending their scrub-map. Milliseconds.
+# Note that measured from the arrival time of the previous map.
+- name: osd_allowed_delay_to_repmap
+  type: int
+  level: advanced
+  desc: Maximum (milliseconds) delay for the last peer scrub-maps to arrive.
+  default: 2000
+  see_also:
+  - osd_excessive_delay_to_repmap
+- name: osd_excessive_delay_to_repmap
+  type: int
+  level: advanced
+  desc: Warn to cluster log if the last peer scrub-map arrives that late.
+  default: 5000
+  see_also:
+  - osd_allowed_delay_to_repmap
 # where rados plugins are stored
 - name: osd_class_dir
   type: str

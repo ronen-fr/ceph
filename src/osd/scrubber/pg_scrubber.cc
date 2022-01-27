@@ -25,7 +25,6 @@
 
 using std::list;
 using std::pair;
-using std::set;
 using std::stringstream;
 using std::vector;
 using namespace Scrub;
@@ -634,6 +633,12 @@ bool PgScrubber::select_range()
 {
   m_be->new_chunk();
 
+  // create the book-keeper of collected scrub-maps from the replicas
+  milliseconds allowed_delay = milliseconds(m_pg->get_cct()->_conf.get_val<int64_t>("osd_allowed_delay_to_repmap"));
+  milliseconds excessive_delay = milliseconds(m_pg->get_cct()->_conf.get_val<int64_t>("osd_excessive_delay_to_repmap"));
+  m_maps_status.emplace(this, m_osds, allowed_delay, excessive_delay);
+
+
   /* get the start and end of our scrub chunk
    *
    * Our scrub chunk has an important restriction we're going to need to
@@ -867,7 +872,7 @@ void PgScrubber::get_replicas_maps(bool replica_can_preempt)
     if (i == m_pg_whoami)
       continue;
 
-    m_maps_status.mark_replica_map_request(i);
+    m_maps_status->mark_replica_map_request(i);
     _request_scrub_map(i, m_subset_last_update, m_start, m_end, m_is_deep,
 		       replica_can_preempt);
   }
@@ -886,17 +891,17 @@ bool PgScrubber::was_epoch_changed() const
 
 void PgScrubber::mark_local_map_ready()
 {
-  m_maps_status.mark_local_map_ready();
+  m_maps_status->mark_local_map_ready();
 }
 
 bool PgScrubber::are_all_maps_available() const
 {
-  return m_maps_status.are_all_maps_available();
+  return m_maps_status->are_all_maps_available();
 }
 
 std::string PgScrubber::dump_awaited_maps() const
 {
-  return m_maps_status.dump();
+  return m_maps_status->dump();
 }
 
 void PgScrubber::update_op_mode_text()
@@ -1303,7 +1308,7 @@ void PgScrubber::map_from_replica(OpRequestRef op)
 
   if (m->map_epoch < m_pg->info.history.same_interval_since) {
     dout(10) << __func__ << " discarding old from " << m->map_epoch << " < "
-	     << m_pg->info.history.same_interval_since << dendl;
+             << m_pg->info.history.same_interval_since << dendl;
     return;
   }
 
@@ -1311,12 +1316,10 @@ void PgScrubber::map_from_replica(OpRequestRef op)
   // know m_be is initialized
   m_be->decode_received_map(m->from, *m);
 
-  auto [is_ok, err_txt] = m_maps_status.mark_arriving_map(m->from);
-  if (!is_ok) {
-    // previously an unexpected map was triggering an assert. Now, as scrubs can be
-    // aborted at any time, the chances of this happening have increased, and aborting is
-    // not justified
-    dout(1) << __func__ << err_txt << " from OSD " << m->from << dendl;
+  auto [map_was_expected, excessive_delay] =
+    m_maps_status->mark_arriving_map(m->from);
+  if (!map_was_expected) {
+    // the error message was already logged by mark_arriving_map()
     return;
   }
 
@@ -1325,9 +1328,20 @@ void PgScrubber::map_from_replica(OpRequestRef op)
     preemption_data.do_preempt();
   }
 
-  if (m_maps_status.are_all_maps_available()) {
+  if (m_maps_status->are_all_maps_available()) {
     dout(15) << __func__ << " all repl-maps available" << dendl;
     m_osds->queue_scrub_got_repl_maps(m_pg, m_pg->is_scrub_blocking_ops());
+  }
+
+  // should we issue a cluster-log warning about a late-coming rep-map?
+  if (excessive_delay && m_delay_warning_issued == false) {
+    m_osds->clog->warn() << fmt::format(
+      "{}: pg[{}]: replica {} is lagging significantly in sending its "
+      "scrub-map",
+      __func__,
+      m_pg_id,
+      m->from);
+    m_delay_warning_issued = true;
   }
 }
 
@@ -1777,7 +1791,7 @@ void PgScrubber::dump_active_scrubber(ceph::Formatter* f, bool is_deep) const
   f->dump_int("fixed", m_fixed_count);
   {
     f->open_array_section("waiting_on_whom");
-    for (const auto& p : m_maps_status.get_awaited()) {
+    for (const auto& p : m_maps_status->get_awaited()) {
       f->dump_stream("shard") << p;
     }
     f->close_section();
@@ -1860,7 +1874,7 @@ void PgScrubber::handle_query_state(ceph::Formatter* f)
   f->dump_bool("scrubber.deep", m_is_deep);
   {
     f->open_array_section("scrubber.waiting_on_whom");
-    for (const auto& p : m_maps_status.get_awaited()) {
+    for (const auto& p : m_maps_status->get_awaited()) {
       f->dump_stream("shard") << p;
     }
     f->close_section();
@@ -2349,22 +2363,65 @@ std::ostream& ReservedByRemotePrimary::gen_prefix(std::ostream& out) const
 
 // ///////////////////// MapsCollectionStatus ////////////////////////////////
 
-auto MapsCollectionStatus::mark_arriving_map(pg_shard_t from)
-  -> std::tuple<bool, std::string_view>
-{
-  auto fe = std::find(m_maps_awaited_for.begin(), m_maps_awaited_for.end(), from);
-  if (fe != m_maps_awaited_for.end()) {
-    // we are indeed waiting for a map from this replica
-    m_maps_awaited_for.erase(fe);
-    return std::tuple{true, ""sv};
-  } else {
-    return std::tuple{false, " unsolicited scrub-map"sv};
-  }
-}
+MapsCollectionStatus::MapsCollectionStatus(
+  const PgScrubber* scrubber,
+  OSDService* osds,
+  std::chrono::milliseconds delay_timeout,
+  std::chrono::milliseconds excessive_delay)
+    : m_scrubber{scrubber}
+    , m_osds{osds}
+    , m_delay_timeout{delay_timeout}
+    , m_excessive_delay{excessive_delay}
+{}
 
-void MapsCollectionStatus::reset()
+MapsCollectionStatus::map_arrival_ret_t MapsCollectionStatus::mark_arriving_map(
+  pg_shard_t from)
 {
-  *this = MapsCollectionStatus{};
+  auto fe =
+    std::find(m_maps_awaited_for.begin(), m_maps_awaited_for.end(), from);
+  if (fe == m_maps_awaited_for.end()) {
+    // it used to be that an unexpected map was triggering an assert. Now, as
+    // scrubs can be aborted at any time, the chances of this happening have
+    // increased, and aborting is not justified.
+    dout(1) << fmt::format(
+                 "{}: unexpected scrub-map from osd {}", __func__, from)
+            << dendl;
+    return {.arrival_is_ok = false, .excessive_delay = false};
+  }
+
+  // we are indeed waiting for a map from this replica
+  m_maps_awaited_for.erase(fe);
+
+  map_arrival_ret_t ret{.arrival_is_ok = true, .excessive_delay = false};
+
+  if (static_cast<int>(m_maps_awaited_for.size()) <=
+      (m_requests_sent_num / 2)) {
+    // most secondaries have sent us the map. We can start monitoring the
+    // stragglers.
+    auto now_is = clock_base::now();
+
+    // was this map late in arriving?
+    if (m_timeout_point && (now_is > *m_timeout_point)) {
+      dout(5) << fmt::format(" late arriving scrub-map from osd.{}", from)
+              << dendl;
+
+      // is the delay enough to trigger a cluste warning?
+      if (m_excessive_point && (now_is > *m_excessive_point)) {
+        // note that we only issue the cluster warning once per scrub. Thus -
+        // we cannot handle it internally here, as the MapsCollectionStatus
+        // object is per chunk.
+        // RRR add max() to ceph_clock
+        m_excessive_point = now_is + seconds(1'000'000);
+        ret.excessive_delay = true;
+      } else {
+        m_excessive_point = now_is + m_excessive_delay;
+      }
+    }
+
+    m_timeout_point = now_is + m_delay_timeout;
+  }
+
+  return ret;
 }
 
 std::string MapsCollectionStatus::dump() const
@@ -2387,6 +2444,12 @@ ostream& operator<<(ostream& out, const MapsCollectionStatus& sf)
   }
   return out << " ] ";
 }
+
+std::ostream& MapsCollectionStatus::gen_prefix(std::ostream& out) const
+{
+  return m_scrubber->gen_prefix(out);
+}
+
 
 // ///////////////////// blocked_range_t ///////////////////////////////
 

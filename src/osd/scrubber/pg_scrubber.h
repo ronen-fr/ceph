@@ -75,6 +75,7 @@ Main Scrubber interfaces:
 #include <string_view>
 #include <vector>
 
+#include "common/config_proxy.h"
 #include "osd/PG.h"
 #include "osd/scrubber_common.h"
 
@@ -176,17 +177,58 @@ class ReservedByRemotePrimary {
 };
 
 /**
- * Once all replicas' scrub maps are received, we go on to compare the maps. That is -
- * unless we we have not yet completed building our own scrub map. MapsCollectionStatus
- * combines the status of waiting for both the local map and the replicas, without
- * resorting to adding dummy entries into a list.
+ * Once all replicas' scrub maps are received, we go on to compare the maps.
+ * That is - unless we we have not yet completed building our own scrub map.
+ * MapsCollectionStatus combines the status of waiting for both the local map
+ * and the replicas, without resorting to adding dummy entries into a list.
+ *
+ * Slow responses:
+ * Once at least half of the replicas have sent their version of the scrub-map,
+ * we start reporting any secondary that takes too long (more than <conf>
+ * milliseconds after the previous response is recevied) to send its map. If the
+ * delay is excessive - a cluster-log warning is generated.
  */
 class MapsCollectionStatus {
+  using clock_base = ceph::coarse_mono_clock;
+
+  // logging support
+  const PgScrubber* m_scrubber;  ///< we will be using its gen_prefix()
+  //const PG* m_pg;
+  OSDService* m_osds;
 
   bool m_local_map_ready{false};
   std::vector<pg_shard_t> m_maps_awaited_for;
 
+  /// used to detect when most replicas have sent their maps
+  int m_requests_sent_num{0};
+
+  /// allowed (additional) delay for the last replica to send its map
+  const std::chrono::milliseconds m_delay_timeout;
+  std::optional<clock_base::time_point> m_timeout_point;
+
+  /// threshold for a cluster warning
+  const std::chrono::milliseconds m_excessive_delay;
+  std::optional<clock_base::time_point> m_excessive_point;
+
  public:
+  //   // MapsCollectionStatus does not have the mechanism to issue
+  //   // warnings. It is assumed that the caller will do that.
+  //   struct map_arrival_ret_t {
+  //     bool arrival_is_ok{false}; ///< true if the scrub-map was expected
+  //     std::optional<std::string_view> log_warning; ///< late-arriving map
+  //     std::optional<std::string> cluster_warning; ///< excessive delay
+  //   };
+  struct map_arrival_ret_t {
+    bool arrival_is_ok{false};    ///< true if the scrub-map was expected
+    bool excessive_delay{false};  ///< true if the delay is excessive
+  };
+
+  MapsCollectionStatus(const PgScrubber* scrubber,
+                       //const PG* pg,
+                       OSDService* osds,
+                       std::chrono::milliseconds delay_timeout,
+                       std::chrono::milliseconds excessive_delay);
+
   [[nodiscard]] bool are_all_maps_available() const
   {
     return m_local_map_ready && m_maps_awaited_for.empty();
@@ -196,17 +238,23 @@ class MapsCollectionStatus {
 
   void mark_replica_map_request(pg_shard_t from_whom)
   {
+    m_requests_sent_num++;
     m_maps_awaited_for.push_back(from_whom);
   }
 
-  /// @returns true if indeed waiting for this one. Otherwise: an error string
-  auto mark_arriving_map(pg_shard_t from) -> std::tuple<bool, std::string_view>;
+  /// @returns true if indeed waiting for this one.
+  map_arrival_ret_t mark_arriving_map(pg_shard_t from);
 
-  [[nodiscard]] std::vector<pg_shard_t> get_awaited() const { return m_maps_awaited_for; }
+  [[nodiscard]] std::vector<pg_shard_t> get_awaited() const
+  {
+    return m_maps_awaited_for;
+  }
 
-  void reset();
+//   void reset();
 
   std::string dump() const;
+
+  std::ostream& gen_prefix(std::ostream& out) const;
 
   friend ostream& operator<<(ostream& out, const MapsCollectionStatus& sf);
 };
@@ -813,8 +861,10 @@ private:
 			  bool allow_preemption);
 
 
-  Scrub::MapsCollectionStatus m_maps_status;
-
+  /// maintaing the status of requested scrub-maps arriving from replicas
+  std::optional<Scrub::MapsCollectionStatus> m_maps_status;
+  /// and, as we should only flag late-arriving once to cluster log:
+  bool m_delay_warning_issued{false};
 
   /// Maps from object with errors to good peers
   std::map<hobject_t, std::list<std::pair<ScrubMap::object, pg_shard_t>>> m_authoritative;
