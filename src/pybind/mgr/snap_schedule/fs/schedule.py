@@ -30,12 +30,12 @@ except AttributeError:
     log.info(('Couldn\'t find datetime.fromisoformat, falling back to '
               f'static timestamp parsing ({SNAP_DB_TS_FORMAT}'))
 
-    def ts_parser(ts):
+    def ts_parser(data_string: str) -> datetime:  # type: ignore
         try:
-            date = datetime.strptime(ts, SNAP_DB_TS_FORMAT)
+            date = datetime.strptime(data_string, SNAP_DB_TS_FORMAT)
             return date
         except ValueError:
-            msg = f'''The date string {ts} does not match the required format
+            msg = f'''The date string {data_string} does not match the required format
             {SNAP_DB_TS_FORMAT}. For more flexibel date parsing upgrade to
             python3.7 or install
             https://github.com/movermeyer/backports.datetime_fromisoformat'''
@@ -156,14 +156,14 @@ class Schedule(object):
         return json.dumps({'path': self.path, 'schedule': self.schedule,
                            'retention': dump_retention(self.retention)})
 
-    CREATE_TABLES = '''CREATE TABLE schedules(
+    CREATE_TABLES = '''CREATE TABLE IF NOT EXISTS schedules(
         id INTEGER PRIMARY KEY ASC,
         path TEXT NOT NULL UNIQUE,
         subvol TEXT,
         retention TEXT DEFAULT '{}',
         rel_path TEXT NOT NULL
     );
-    CREATE TABLE schedules_meta(
+    CREATE TABLE IF NOT EXISTS schedules_meta(
         id INTEGER PRIMARY KEY ASC,
         schedule_id INT,
         start TEXT NOT NULL,
@@ -221,7 +221,7 @@ class Schedule(object):
             data += (start,)
         with db:
             c = db.execute(query, data)
-        return [cls._from_db_row(row, fs) for row in c.fetchall()]
+            return [cls._from_db_row(row, fs) for row in c.fetchall()]
 
     @classmethod
     def list_schedules(cls, path, db, fs, recursive):
@@ -232,7 +232,7 @@ class Schedule(object):
             else:
                 c = db.execute(cls.PROTO_GET_SCHEDULES + ' path = ?',
                                (f'{path}',))
-        return [cls._from_db_row(row, fs) for row in c.fetchall()]
+            return [cls._from_db_row(row, fs) for row in c.fetchall()]
 
     INSERT_SCHEDULE = '''INSERT INTO
         schedules(path, subvol, retention, rel_path)
