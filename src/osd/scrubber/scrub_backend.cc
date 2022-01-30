@@ -395,7 +395,7 @@ int ScrubBackend::scrub_process_inconsistent()
                              m_inconsistent.size());
 
   dout(2) << err_msg << dendl;
-  clog->error() << fmt::to_string(err_msg);
+  clog->error() << fmt::to_string(err_msg); // RRR verify
 
   int fixed_cnt{0};
   if (m_repair) {
@@ -794,7 +794,8 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   }
 
   ceph_assert(!err);
-  return shard_as_auth_t{oi, j, errstream.str(), digest};
+  //return shard_as_auth_t{oi, j, errstream.str(), digest};
+  return shard_as_auth_t{oi, j, "", digest};
 }
 
 // re-implementation of PGBackend::be_compare_scrubmaps()
@@ -808,7 +809,11 @@ std::optional<std::string> ScrubBackend::compare_smaps()
   std::for_each(
     this_chunk->authoritative_set.begin(),
     this_chunk->authoritative_set.end(),
-    [this, &errstream](const auto& ho) { compare_obj_in_maps(ho, errstream); });
+    [this, &errstream](const auto& ho) { compare_obj_in_maps(ho, errstream);
+   /* DEBUG RRR */ dout(9) << __func__ << ": RRRRR DEBUG " << ho.oid << ": " << errstream.str() << "END" << dendl;
+});
+  dout(7) << fmt::format("{}: empty? {} <<{}>>", __func__, errstream.str().empty(), errstream.str())
+          << dendl;
 
   if (errstream.str().empty()) {
     return std::nullopt;
@@ -880,8 +885,8 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
   } else {
 
     // both the auth & errs containers are empty
-    errstream << m_scrubber.m_pg_id.pgid << " soid " << ho
-              << " : empty auth list\n";
+    //errstream << m_scrubber.m_pg_id.pgid << " soid " << ho
+    //        << " : empty auth list\n";
   }
 
   if (object_error.has_deep_errors()) {
