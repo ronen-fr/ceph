@@ -144,12 +144,23 @@ struct objs_fix_list_t {
  * Conveys the usability of a specific shard as an auth source.
  */
 struct shard_as_auth_t {
-  enum class usable_t : uint8_t { not_usable, usable };
+  // note: 'not_found' differs from 'not_usable' in that 'not_found'
+  // does not carry an error message to be cluster-logged.
+  enum class usable_t : uint8_t { not_usable, not_found, usable };
 
   // the ctor used when the shard should not be considered as auth
   explicit shard_as_auth_t(std::string err_msg)
       : possible_auth{usable_t::not_usable}
       , error_text{err_msg}
+      , oi{}
+      , auth_iter{}
+      , digest{std::nullopt}
+  {}
+
+  // the object cannot be found on the shard
+  explicit shard_as_auth_t()
+      : possible_auth{usable_t::not_found}
+      , error_text{}
       , oi{}
       , auth_iter{}
       , digest{std::nullopt}
@@ -204,9 +215,8 @@ struct fmt::formatter<shard_as_auth_t> {
       // note: 'if' chain, as hard to consistently (on all compilers) avoid some
       // warnings for a switch plus multiple return paths
       if (as_auth.possible_auth == shard_as_auth_t::usable_t::not_usable) {
-        return format_to(ctx.out(),
-                         "{{shard-not-usable:{}}}",
-                         as_auth.error_text);
+        return format_to(
+          ctx.out(), "{{shard-not-usable:{}}}", as_auth.error_text);
       }
       if (as_auth.possible_auth == shard_as_auth_t::usable_t::not_found) {
         return format_to(ctx.out(), "{{shard-not-found}}");
@@ -426,9 +436,10 @@ class ScrubBackend {
   // note: used by both Primary & replicas
   static ScrubMap clean_meta_map(ScrubMap& cleaned, bool max_reached);
 
-  std::optional<std::string> compare_smaps();
+  void compare_smaps();
 
-  void compare_obj_in_maps(const hobject_t& ho, std::stringstream& errstream);
+  /// might return error messages to be cluster-logged
+  std::optional<std::string> compare_obj_in_maps(const hobject_t& ho);
 
   void omap_checks();
 
