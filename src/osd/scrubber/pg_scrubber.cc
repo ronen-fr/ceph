@@ -2680,7 +2680,7 @@ void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
     m_reserved_peers.push_back(from);
 
     // was this response late?
-    auto now_is = ceph::coarse_mono_clock::now();
+    auto now_is = clock_base::now();
     if (m_timeout_point && (now_is > *m_timeout_point)) {
 
       m_osds->clog->warn() << fmt::format(
