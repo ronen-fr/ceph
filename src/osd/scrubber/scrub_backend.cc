@@ -296,11 +296,7 @@ void ScrubBackend::update_authoritative()
     return;
   }
 
-  auto maybe_err_msg = compare_smaps();
-  if (maybe_err_msg) {
-    dout(5) << __func__ << ": " << *maybe_err_msg << dendl;
-    clog->error() << *maybe_err_msg;
-  }
+  compare_smaps();  // note: might cluster-log errors
 
   /// \todo try replacing with algorithm-based code
 
@@ -395,7 +391,7 @@ int ScrubBackend::scrub_process_inconsistent()
                              m_inconsistent.size());
 
   dout(2) << err_msg << dendl;
-  clog->error() << fmt::to_string(err_msg);
+  clog->error() << fmt::to_string(err_msg); // RRR verify
 
   int fixed_cnt{0};
   if (m_repair) {
@@ -525,18 +521,25 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                << dendl;
     }
 
+    dout(14) << fmt::format(
+                  "{}: {} shard {} got:{}", __func__, ho, l, shard_ret)
+             << dendl;
+
     if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_usable) {
 
       // Don't use this particular shard due to previous errors
       // XXX: For now we can't pick one shard for repair and another's object
       // info or snapset
 
+      ceph_assert(shard_ret.error_text.length());
       errstream << m_pg_id.pgid << " shard " << l << " soid " << ho << " : "
                 << shard_ret.error_text << "\n";
 
+    } else if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_found) {
+      dout(15) << __func__ << " " << ho << " not found on shard " << l << dendl;
     } else {
 
-      dout(30) << __func__ << " consider using " << l
+      dout(/*30*/19) << __func__ << " consider using " << l
                << " srv: " << shard_ret.oi.version
                << " oi soid: " << shard_ret.oi.soid << dendl;
 
@@ -546,7 +549,7 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
           (shard_ret.oi.version == auth_version &&
            dcount(shard_ret.oi) > dcount(ret_auth.auth_oi))) {
 
-        dout(30) << __func__ << " using " << l << " moved auth oi " << std::hex
+        dout(/*30*/20) << __func__ << " using " << l << " moved auth oi " << std::hex
                  << (uint64_t)(&ret_auth.auth_oi) << " <-> "
                  << (uint64_t)(&shard_ret.oi) << std::dec << dendl;
 
@@ -619,7 +622,7 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
 {
   //  'maps' (called with this_chunk->maps originaly): this_chunk->maps
   //  'auth_oi' (called with 'auth_oi', which wasn't initialized at call site)
-  //     - will probably need to create and return
+  //     - create and return
   //  'shard_map' - the one created in select_auth_object()
   //     - used to access the 'shard_info'
 
@@ -628,7 +631,7 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   const auto& j_smap = j->second;
   auto i = j_smap.objects.find(obj);
   if (i == j_smap.objects.end()) {
-    return shard_as_auth_t{""s};
+    return shard_as_auth_t{};
   }
   const auto& smap_obj = i->second;
 
@@ -704,7 +707,7 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
       }
     } else {
       // debug@dev only
-      dout(30) << __func__ << " missing snap addr: " << std::hex
+      dout(/*30*/20) << __func__ << " missing snap addr: " << std::hex
                << (uint64_t)(&smap_obj)
                << " shard_info: " << (uint64_t)(&shard_info)
                << " er: " << shard_info.errors << std::dec << dendl;
@@ -794,38 +797,43 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   }
 
   ceph_assert(!err);
+  // note that the error text is made available to the caller, even
+  // for a successful shard selection
   return shard_as_auth_t{oi, j, errstream.str(), digest};
 }
 
 // re-implementation of PGBackend::be_compare_scrubmaps()
-std::optional<std::string> ScrubBackend::compare_smaps()
+void ScrubBackend::compare_smaps()
 {
   dout(10) << __func__
            << ": authoritative-set #: " << this_chunk->authoritative_set.size()
            << dendl;
 
-  std::stringstream errstream;
-  std::for_each(
-    this_chunk->authoritative_set.begin(),
-    this_chunk->authoritative_set.end(),
-    [this, &errstream](const auto& ho) { compare_obj_in_maps(ho, errstream); });
-
-  if (errstream.str().empty()) {
-    return std::nullopt;
-  } else {
-    return errstream.str();
-  }
+  std::for_each(this_chunk->authoritative_set.begin(),
+                this_chunk->authoritative_set.end(),
+                [this](const auto& ho) {
+                  if (auto maybe_clust_err = compare_obj_in_maps(ho);
+                      maybe_clust_err) {
+                    clog->error() << *maybe_clust_err;
+                  }
+                });
 }
 
-void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
-                                       stringstream& errstream)
+std::optional<std::string> ScrubBackend::compare_obj_in_maps(const hobject_t& ho)
 {
   // clear per-object data:
   this_chunk->cur_inconsistent.clear();
   this_chunk->cur_missing.clear();
   this_chunk->fix_digest = false;
 
-  auto auth_res = select_auth_object(ho, errstream);
+  stringstream errstream0;
+  auto auth_res = select_auth_object(ho, errstream0);
+  if (errstream0.str().size()) {
+    // a collection of shard-specific errors detected while
+    // finding the best shard to serve as authoritative
+    clog->error() << errstream0.str();
+    dout(18) << __func__ << ": cc[[" << errstream0.str() << "]]cc" << dendl;
+  }
 
   inconsistent_obj_wrapper object_error{ho};
   if (!auth_res.is_auth_available) {
@@ -845,11 +853,12 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
     }
 
     m_scrubber.m_store->add_object_error(ho.pool, object_error);
-    errstream << m_scrubber.m_pg_id.pgid << " soid " << ho
-              << " : failed to pick suitable object info\n";
-    return;
+    return fmt::format("{} soid {} : failed to pick suitable object info\n",
+                       m_scrubber.m_pg_id.pgid,
+                       ho);
   }
 
+  stringstream errstream;
   auto& auth = auth_res.auth;
 
   // an auth source was selected
@@ -879,9 +888,9 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
                   errstream);
   } else {
 
-    // both the auth & errs containers are empty
+    // both the auth & errs containers are empty  // RRR
     errstream << m_scrubber.m_pg_id.pgid << " soid " << ho
-              << " : empty auth list\n";
+            << " : empty auth list\n";
   }
 
   if (object_error.has_deep_errors()) {
@@ -893,6 +902,13 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
   if (object_error.errors || object_error.union_shards.errors) {
     m_scrubber.m_store->add_object_error(ho.pool, object_error);
   }
+
+  if (errstream.str().empty()) {
+    return std::nullopt;
+  } else {
+    return errstream.str();
+  }
+
 }
 
 
@@ -1141,6 +1157,7 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
         if (discrep_found) {
           // Only true if compare_obj_details() found errors and put something
           // in ss
+          dout(11) << __func__ << " in ss-str: A[[" << ss.str() << "]]" << dendl;
           errstream << m_pg_id << " shard " << srd << " soid " << ho << " : "
                     << ss.str() << "\n";
         }
@@ -1150,6 +1167,7 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
         // Track possible shards to use as authoritative, if needed
 
         // There are errors, without identifying the shard
+        dout(11) << __func__ << " in ss-str: B[[" << ss.str() << "]]" << dendl;
         object_errors.insert(srd);
         errstream << m_pg_id << " soid " << ho << " : " << ss.str() << "\n";
 
@@ -1168,11 +1186,12 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
 
       // Can't have any other errors if there is no information available
       ++m_scrubber.m_shallow_errors;
+      dout(11) << __func__ << " in ss-str: C[[--]]" << dendl;
       errstream << m_pg_id << " shard " << srd << " " << ho << " : missing\n";
     }
     obj_result.add_shard(srd, auth_sel.shard_map[srd]);
 
-    dout(30) << __func__ << ": soid " << ho << " : " << errstream.str()
+    dout(/*30*/12) << __func__ << ": soid " << ho << " : " << errstream.str()
              << dendl;
   }
 

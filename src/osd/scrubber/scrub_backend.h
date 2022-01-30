@@ -79,12 +79,23 @@ struct omap_stat_t {
  * Conveys the usability of a specific shard as an auth source.
  */
 struct shard_as_auth_t {
-  enum class usable_t : uint8_t { not_usable, usable };
+  // note: 'not_found' differs from 'not_usable' in that 'not_found'
+  // does not carry an error message to be cluster-logged.
+  enum class usable_t : uint8_t { not_usable, not_found, usable };
 
   // the ctor used when the shard should not be considered as auth
   explicit shard_as_auth_t(std::string err_msg)
       : possible_auth{usable_t::not_usable}
       , error_text{err_msg}
+      , oi{}
+      , auth_iter{}
+      , digest{std::nullopt}
+  {}
+
+  // the object cannot be found on the shard
+  explicit shard_as_auth_t()
+      : possible_auth{usable_t::not_found}
+      , error_text{}
       , oi{}
       , auth_iter{}
       , digest{std::nullopt}
@@ -118,6 +129,33 @@ struct shard_as_auth_t {
   std::optional<uint32_t> digest;
   // when used for Crimson, we'll probably want to return 'digest_match' (and
   // other in/out arguments) via this struct
+};
+
+// the following formatting support is currently only used in debug logs
+template <>
+struct fmt::formatter<shard_as_auth_t> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(shard_as_auth_t const& as_auth, FormatContext& ctx)
+  {
+    switch (as_auth.possible_auth) {
+      case shard_as_auth_t::usable_t::not_usable:
+        return format_to(
+          ctx.out(), "{{shard-not-usable:{}}}", as_auth.error_text);
+      case shard_as_auth_t::usable_t::not_found:
+        return format_to(ctx.out(), "{{shard-not-found}}");
+      case shard_as_auth_t::usable_t::usable:
+        return format_to(ctx.out(),
+                         "{{shard-usable: soid:{} {{txt:{}}} }}",
+                         as_auth.oi.soid,
+                         as_auth.error_text);
+    }
+  }
 };
 
 struct auth_selection_t {
@@ -301,9 +339,10 @@ class ScrubBackend {
   // note: used by both Primary & replicas
   static ScrubMap clean_meta_map(ScrubMap& cleaned, bool max_reached);
 
-  std::optional<std::string> compare_smaps();
+  void compare_smaps();
 
-  void compare_obj_in_maps(const hobject_t& ho, std::stringstream& errstream);
+  std::optional<std::string> compare_obj_in_maps(const hobject_t& ho);
+  //void compare_obj_in_maps(const hobject_t& ho, std::stringstream& errstream);
 
   void omap_checks();
 
