@@ -518,4 +518,7 @@ class ScrubBackend {
                          ScrubMap::object& scrmap_obj,
                          const SnapSet& snapse,
                          snap_mapper_accessor_t& snaps_getter);
+
+  // accessing the PG backend for this translation service
+  uint64_t logical_to_ondisk_size(uint64_t logical_size) const;
 };
