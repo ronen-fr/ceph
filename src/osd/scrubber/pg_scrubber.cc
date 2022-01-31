@@ -1621,20 +1621,23 @@ void PgScrubber::scrub_finish()
   // if the repair request comes from auto-repair and large number of errors,
   // we would like to cancel auto-repair
   if (m_is_repair && m_flags.auto_repair &&
-      m_authoritative.size() > m_pg->cct->_conf->osd_scrub_auto_repair_num_errors) {
+      m_be->authoritative_peers_count() >
+        static_cast<int>(m_pg->cct->_conf->osd_scrub_auto_repair_num_errors)) {
 
     dout(10) << __func__ << " undoing the repair" << dendl;
-    state_clear(PG_STATE_REPAIR); // not expected to be set, anyway
+    state_clear(PG_STATE_REPAIR);  // not expected to be set, anyway
     m_is_repair = false;
     update_op_mode_text();
   }
 
   m_be->update_repair_status(m_is_repair);
 
-  // if a regular scrub had errors within the limit, do a deep scrub to auto repair
+  // if a regular scrub had errors within the limit, do a deep scrub to auto
+  // repair
   bool do_auto_scrub = false;
-  if (m_flags.deep_scrub_on_error && !m_authoritative.empty() &&
-      m_authoritative.size() <= m_pg->cct->_conf->osd_scrub_auto_repair_num_errors) {
+  if (m_flags.deep_scrub_on_error && m_be->authoritative_peers_count() &&
+      m_be->authoritative_peers_count() <=
+        static_cast<int>(m_pg->cct->_conf->osd_scrub_auto_repair_num_errors)) {
     ceph_assert(!m_is_deep);
     do_auto_scrub = true;
     dout(15) << __func__ << " Try to auto repair after scrub errors" << dendl;
@@ -1645,9 +1648,33 @@ void PgScrubber::scrub_finish()
   // type-specific finish (can tally more errors)
   _scrub_finish();
 
+  // RRR temp - just for the test sake:
+
+  if (m_be->authoritative_peers_count()) {
+
+    auto err_msg = fmt::format("{} {} {} missing, {} inconsistent objects",
+                             m_pg->info.pgid,
+                             m_mode_desc,
+                             m_be->m_missing.size(),
+                             m_be->m_inconsistent.size());
+
+    dout(2) << err_msg << dendl;
+    m_osds->clog->error() << fmt::to_string(err_msg);
+    }
+
   // note that the PG_STATE_REPAIR might have changed above
+  if (m_be->authoritative_peers_count() && m_is_repair) {
+
+    state_clear(PG_STATE_CLEAN);
+    // we know we have a problem, so it's OK to set the user-visible flag
+    // even if we only reached here via auto-repair
+    state_set(PG_STATE_REPAIR);
+    update_op_mode_text();
+    m_be->update_repair_status(true);
   m_fixed_count += m_be->scrub_process_inconsistent();
-  bool has_error = !m_authoritative.empty() && m_is_repair;
+  }
+
+  bool has_error = (m_be->authoritative_peers_count() > 0) && m_is_repair;
 
   {
     stringstream oss;
@@ -2098,7 +2125,6 @@ void PgScrubber::reset_internal_state()
 
   run_callbacks();
 
-  m_authoritative.clear();
   num_digest_updates_pending = 0;
   m_primary_scrubmap_pos.reset();
   replica_scrubmap = ScrubMap{};
