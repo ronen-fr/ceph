@@ -1227,6 +1227,11 @@ void PgScrubber::maps_compare_n_cleanup()
   populate_store(std::move(required_fixes.inconsistent_objs));
   // actuate snap-mapper changes:
   snap_mapper_io(required_fixes.snap_fix_list);
+
+  auto chunk_err_counts = m_be->get_error_counts();
+  m_shallow_errors += chunk_err_counts.shallow_errors;
+  m_deep_errors += chunk_err_counts.deep_errors;
+
   m_start = m_end;
   run_callbacks();
   requeue_waiting();
@@ -1671,7 +1676,7 @@ void PgScrubber::scrub_finish()
     state_set(PG_STATE_REPAIR);
     update_op_mode_text();
     m_be->update_repair_status(true);
-  m_fixed_count += m_be->scrub_process_inconsistent();
+    m_fixed_count += m_be->scrub_process_inconsistent();
   }
 
   bool has_error = (m_be->authoritative_peers_count() > 0) && m_is_repair;
