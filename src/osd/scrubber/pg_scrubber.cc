@@ -25,7 +25,6 @@
 
 using std::list;
 using std::pair;
-using std::set;
 using std::stringstream;
 using std::vector;
 using namespace Scrub;
@@ -1227,6 +1226,11 @@ void PgScrubber::maps_compare_n_cleanup()
   populate_store(std::move(required_fixes.inconsistent_objs));
   // actuate snap-mapper changes:
   snap_mapper_io(required_fixes.snap_fix_list);
+
+  auto chunk_err_counts = m_be->get_error_counts();
+  m_shallow_errors += chunk_err_counts.shallow_errors;
+  m_deep_errors += chunk_err_counts.deep_errors;
+
   m_start = m_end;
   run_callbacks();
   requeue_waiting();
