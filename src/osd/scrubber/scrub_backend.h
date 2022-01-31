@@ -64,6 +64,11 @@ using digests_fixes_t = std::vector<std::pair<hobject_t, data_omap_digests_t>>;
 using shard_info_map_t = std::map<pg_shard_t, shard_info_wrapper>;
 using shard_to_scrubmap_t = std::map<pg_shard_t, ScrubMap>;
 
+using auth_peers_t = std::vector<std::pair<ScrubMap::object, pg_shard_t>>;
+
+using wrapped_err_t =
+  std::variant<inconsistent_obj_wrapper, inconsistent_snapset_wrapper>;
+using inconsistent_objs_t = std::vector<wrapped_err_t>;
 
 /// omap-specific stats
 struct omap_stat_t {
@@ -72,6 +77,45 @@ struct omap_stat_t {
  int64_t omap_keys{0};
 };
 
+struct errors_duo_t {
+  int shallow_errors{0};
+  int deep_errors{0};
+};
+
+/*
+ * snaps-related aux structures:
+ * the scrub-backend scans the snaps associated with each scrubbed object, and
+ * fixes corrupted snap-sets.
+ * The actual access to the PG's snap_mapper, and the actual I/O transactions,
+ * are performed by the main PgScrubber object.
+ * the following aux structures are used to facilitate the required exchanges:
+ * - pre-fix snap-sets are accessed by the scrub-backend, and:
+ * - a list of fix-orders (either insert or replace operations) are returned
+ */
+
+struct snap_mapper_accessor_t {
+  virtual int get_snaps(const hobject_t& hoid, std::set<snapid_t>& snaps_set) const = 0;
+  virtual ~snap_mapper_accessor_t() = default;
+};
+
+enum class snap_mapper_op_t {
+  add,
+  update,
+};
+
+struct snap_mapper_fix_t {
+  snap_mapper_op_t op;
+  hobject_t hoid;
+  std::set<snapid_t> snaps;
+  std::set<snapid_t> wrong_snaps; // only collected & returned for logging sake
+};
+
+// and - as the main scrub-backend entry point - scrub_compare_maps() - must
+// be able to return both a list of snap fixes and a list of inconsistent objects:
+struct objs_fix_list_t {
+  inconsistent_objs_t inconsistent_objs;
+  std::vector<snap_mapper_fix_t> snap_fix_list;
+};
 
 /**
  * A structure used internally by select_auth_object()
@@ -231,6 +275,8 @@ struct scrub_chunk_t {
   /// Map from object with errors to good peers
   std::map<hobject_t, std::list<pg_shard_t>> authoritative;
 
+  inconsistent_objs_t m_inconsistent_objs;
+
 
   // these must be reset for each element:
 
@@ -284,9 +330,11 @@ class ScrubBackend {
    */
   void update_repair_status(bool should_repair);
 
-  void replica_clean_meta(ScrubMap& smap,
+  std::vector<snap_mapper_fix_t> replica_clean_meta(
+    ScrubMap& smap,
                           bool max_reached,
-                          const hobject_t& start);
+    const hobject_t& start,
+    snap_mapper_accessor_t& snaps_getter);
 
   /**
    * decode the arriving MOSDRepScrubMap message, placing the replica's
@@ -296,7 +344,7 @@ class ScrubBackend {
    */
   void decode_received_map(pg_shard_t from, const MOSDRepScrubMap& msg);
 
-  void scrub_compare_maps(bool max_reached);
+  objs_fix_list_t scrub_compare_maps(bool max_reached, snap_mapper_accessor_t& snaps_getter);
 
   int scrub_process_inconsistent();
 
@@ -322,15 +370,19 @@ class ScrubBackend {
  /// collecting some scrub-session-wide omap stats
   omap_stat_t m_omap_stats;
 
+  /// Mapping from object with errors to good peers
+  std::map<hobject_t, auth_peers_t> m_auth_peers;
+
   // shorthands:
   ConfigProxy& m_conf;
   LogChannelRef clog;
 
  private:
-  using auth_and_obj_errs_t =
-    std::tuple<std::list<pg_shard_t>,  ///< the auth-list
-               std::set<pg_shard_t>    ///< object_errors
-               >;
+
+  struct auth_and_obj_errs_t {
+    std::list<pg_shard_t> auth_list;
+    std::set<pg_shard_t> object_errors;
+  };
 
   std::optional<scrub_chunk_t> this_chunk;
 
@@ -388,7 +440,7 @@ class ScrubBackend {
 
   void repair_object(
     const hobject_t& soid,
-    const std::list<std::pair<ScrubMap::object, pg_shard_t>>& ok_peers,
+    const auth_peers_t& ok_peers,
     const std::set<pg_shard_t>& bad_peers);
 
   /**
@@ -457,4 +509,11 @@ class ScrubBackend {
   void scan_object_snaps(const hobject_t& hoid,
                          ScrubMap::object& scrmap_obj,
                          const SnapSet& snapset);
+
+  std::vector<snap_mapper_fix_t> scan_snaps(ScrubMap& smap, snap_mapper_accessor_t& snaps_getter);
+
+  std::optional<snap_mapper_fix_t> scan_object_snaps(const hobject_t& hoid,
+                         ScrubMap::object& scrmap_obj,
+                         const SnapSet& snapse,
+                         snap_mapper_accessor_t& snaps_getter);
 };
