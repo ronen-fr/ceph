@@ -533,7 +533,7 @@ PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags)
     // we do not need the interval data in this case
 
   } else if (m_pg->info.stats.stats_invalid &&
-           m_pg->cct->_conf->osd_scrub_invalid_stats) {
+           m_pg->get_cct()->_conf->osd_scrub_invalid_stats) {
     res.proposed_time = ceph_clock_now();
     res.is_must = ScrubQueue::must_scrub_t::mandatory;
 
@@ -1471,7 +1471,7 @@ void PgScrubber::send_preempted_replica()
 				  m_replica_min_epoch, m_pg_whoami);
 
   reply->preempted = true;
-  ::encode(replica_scrubmap, reply->get_data()); // must not skip this
+  ::encode(replica_scrubmap, reply->get_data());  // skipping this crashes the scrubber
   m_pg->send_cluster_message(m_pg->get_primary().osd, reply, m_replica_min_epoch, false);
 }
 
