@@ -2244,7 +2244,7 @@ struct io_info {
 
 void pool_io_callback(completion_t cb, void *arg)
 {
-  AioCompletion *c = (AioCompletion*)cb;
+  //AioCompletion *c = (AioCompletion*)cb;
   io_info *info = (io_info *)arg;
   unsigned long i = info->i;
   int r = info->c->get_return_value();
@@ -2296,7 +2296,8 @@ TEST(LibRadosAio, PoolEIOFlag) {
 	});
     }
 
-    sleep(.01);
+    //sleep(.01);
+    sleep(1);
     my_lock.lock();
     if (r < 0) {
       inflight.erase(i);
