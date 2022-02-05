@@ -301,7 +301,7 @@ class ScrubBackend {
   // note: used by both Primary & replicas
   static ScrubMap clean_meta_map(ScrubMap& cleaned, bool max_reached);
 
-  std::optional<std::string> compare_smaps();
+  void compare_smaps();
 
   std::optional<std::string> compare_obj_in_maps(const hobject_t& ho);
   //void compare_obj_in_maps(const hobject_t& ho, std::stringstream& errstream);

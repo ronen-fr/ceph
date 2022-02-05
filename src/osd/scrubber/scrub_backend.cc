@@ -296,11 +296,7 @@ void ScrubBackend::update_authoritative()
     return;
   }
 
-  auto maybe_err_msg = compare_smaps();
-  if (maybe_err_msg) {
-    dout(5) << __func__ << ": " << *maybe_err_msg << dendl;
-    clog->error() << *maybe_err_msg;
-  }
+  compare_smaps();  // note: might cluster-log errors
 
   /// \todo try replacing with algorithm-based code
 
@@ -524,6 +520,10 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                << " != data_digest 0x" << *shard_ret.digest << std::dec
                << dendl;
     }
+
+    dout(14) << __func__ << " " << ho << " shard " << l << " errstr[["
+             << shard_ret.error_text << "]] status:" << (shard_ret.possible_auth == shard_as_auth_t::usable_t::usable ? "usable" : "unusable")
+             << dendl;
 
     if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_usable) {
 
@@ -794,38 +794,27 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   }
 
   ceph_assert(!err);
-  //return shard_as_auth_t{oi, j, errstream.str(), digest};
-  return shard_as_auth_t{oi, j, "", digest};
+  return shard_as_auth_t{oi, j, errstream.str(), digest};
+  //return shard_as_auth_t{oi, j, "", digest};
 }
 
 // re-implementation of PGBackend::be_compare_scrubmaps()
-std::optional<std::string> ScrubBackend::compare_smaps()
+void ScrubBackend::compare_smaps()
 {
   dout(10) << __func__
            << ": authoritative-set #: " << this_chunk->authoritative_set.size()
            << dendl;
 
-  std::stringstream errstream;
-  std::for_each(
-    this_chunk->authoritative_set.begin(),
-    this_chunk->authoritative_set.end(),
-    [this, &errstream](const auto& ho) { 
-      if (auto maybe_clust_err = compare_obj_in_maps(ho); maybe_clust_err) {
-        //errstream << *maybe_clust_err;
-        clog->error() << *maybe_clust_err;
-        dout(6) << __func__ << ": RRRR DEBUG " << ho.oid << ": xx " << *maybe_clust_err << "DNE" << dendl;
-        
-      }
-   /* DEBUG RRR */ dout(9) << __func__ << ": RRRRR DEBUG " << ho.oid << ": " << errstream.str() << "END" << dendl;
-});
-  dout(7) << fmt::format("{}: empty? {} <<{}>>", __func__, errstream.str().empty(), errstream.str())
-          << dendl;
-
-  //if (errstream.str().empty()) {
-    return std::nullopt;
-  //} else {
-   // return errstream.str();
-  //}
+  std::for_each(this_chunk->authoritative_set.begin(),
+                this_chunk->authoritative_set.end(),
+                [this](const auto& ho) {
+                  if (auto maybe_clust_err = compare_obj_in_maps(ho);
+                      maybe_clust_err) {
+                    clog->error() << *maybe_clust_err;
+                    dout(6) << "compare_smaps: RRRR DEBUG " << ho.oid << ": xx "
+                            << *maybe_clust_err << "DNE" << dendl;
+                  }
+                });
 }
 
 std::optional<std::string> ScrubBackend::compare_obj_in_maps(const hobject_t& ho)
@@ -837,6 +826,11 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(const hobject_t& ho
 
   stringstream errstream0;  // for this shard
   auto auth_res = select_auth_object(ho, errstream0);
+  if (errstream0.str().size()) {
+    clog->error() << errstream0.str();
+  }
+
+  //stringstream errstream1;
 
   inconsistent_obj_wrapper object_error{ho};
   if (!auth_res.is_auth_available) {
@@ -856,9 +850,11 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(const hobject_t& ho
     }
 
     m_scrubber.m_store->add_object_error(ho.pool, object_error);
-    errstream0 << m_scrubber.m_pg_id.pgid << " soid " << ho
-              << " : failed to pick suitable object info\n";
-    return errstream0.str();
+    //errstream1 << m_scrubber.m_pg_id.pgid << " soid " << ho
+    //          << " : failed to pick suitable object info\n";
+    return fmt::format("{} soid {} : failed to pick suitable object info\n",
+                       m_scrubber.m_pg_id.pgid,
+                       ho);
   }
 
   stringstream errstream;  // for this shard
