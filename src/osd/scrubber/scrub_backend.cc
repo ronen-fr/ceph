@@ -521,9 +521,9 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                << dendl;
     }
 
-     dout(14) << __func__ << " " << ho << " shard " << l << " errstr[["
-              << shard_ret.error_text << "]] status:" << (shard_ret.possible_auth == shard_as_auth_t::usable_t::usable ? "usable" : "unusable")
-              << dendl;
+    dout(14) << fmt::format(
+                  "{}: {} shard {} got:{}", __func__, ho, l, shard_ret)
+             << dendl;
 
     if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_usable) {
 
@@ -536,10 +536,10 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                 << shard_ret.error_text << "\n";
 
     } else if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_found) {
-     dout(15) << __func__ << " " << ho << " not found on shard " << l << dendl;
+      dout(15) << __func__ << " " << ho << " not found on shard " << l << dendl;
     } else {
 
-      dout(/*30*/20) << __func__ << " consider using " << l
+      dout(/*30*/19) << __func__ << " consider using " << l
                << " srv: " << shard_ret.oi.version
                << " oi soid: " << shard_ret.oi.soid << dendl;
 

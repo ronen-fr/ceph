@@ -131,6 +131,33 @@ struct shard_as_auth_t {
   // other in/out arguments) via this struct
 };
 
+// the following formatting support is currently only used in debug logs
+template <>
+struct fmt::formatter<shard_as_auth_t> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(shard_as_auth_t const& as_auth, FormatContext& ctx)
+  {
+    switch (as_auth.possible_auth) {
+      case shard_as_auth_t::usable_t::not_usable:
+        return format_to(
+          ctx.out(), "{{shard-not-usable:{}}}", as_auth.error_text);
+      case shard_as_auth_t::usable_t::not_found:
+        return format_to(ctx.out(), "{{shard-not-found}}");
+      case shard_as_auth_t::usable_t::usable:
+        return format_to(ctx.out(),
+                         "{{shard-usable: soid:{} {{txt:{}}} }}",
+                         as_auth.oi.soid,
+                         as_auth.error_text);
+    }
+  }
+};
+
 struct auth_selection_t {
   shard_to_scrubmap_t::iterator auth;  ///< an iter into one of this_chunk->maps
   pg_shard_t auth_shard;               // set to auth->first
