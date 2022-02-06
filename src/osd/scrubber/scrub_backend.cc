@@ -521,9 +521,9 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                << dendl;
     }
 
-    dout(14) << __func__ << " " << ho << " shard " << l << " errstr[["
-             << shard_ret.error_text << "]] status:" << (shard_ret.possible_auth == shard_as_auth_t::usable_t::usable ? "usable" : "unusable")
-             << dendl;
+     dout(14) << __func__ << " " << ho << " shard " << l << " errstr[["
+              << shard_ret.error_text << "]] status:" << (shard_ret.possible_auth == shard_as_auth_t::usable_t::usable ? "usable" : "unusable")
+              << dendl;
 
     if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_usable) {
 
@@ -531,12 +531,13 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
       // XXX: For now we can't pick one shard for repair and another's object
       // info or snapset
 
+      ceph_assert(shard_ret.error_text.length());
       errstream << m_pg_id.pgid << " shard " << l << " soid " << ho << " : "
                 << shard_ret.error_text << "\n";
 
     } else {
 
-      dout(30) << __func__ << " consider using " << l
+      dout(/*30*/20) << __func__ << " consider using " << l
                << " srv: " << shard_ret.oi.version
                << " oi soid: " << shard_ret.oi.soid << dendl;
 
@@ -546,7 +547,7 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
           (shard_ret.oi.version == auth_version &&
            dcount(shard_ret.oi) > dcount(ret_auth.auth_oi))) {
 
-        dout(30) << __func__ << " using " << l << " moved auth oi " << std::hex
+        dout(/*30*/20) << __func__ << " using " << l << " moved auth oi " << std::hex
                  << (uint64_t)(&ret_auth.auth_oi) << " <-> "
                  << (uint64_t)(&shard_ret.oi) << std::dec << dendl;
 
@@ -619,7 +620,7 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
 {
   //  'maps' (called with this_chunk->maps originaly): this_chunk->maps
   //  'auth_oi' (called with 'auth_oi', which wasn't initialized at call site)
-  //     - will probably need to create and return
+  //     - create and return
   //  'shard_map' - the one created in select_auth_object()
   //     - used to access the 'shard_info'
 
@@ -628,7 +629,7 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   const auto& j_smap = j->second;
   auto i = j_smap.objects.find(obj);
   if (i == j_smap.objects.end()) {
-    return shard_as_auth_t{""s};
+    return shard_as_auth_t{std::string{}};
   }
   const auto& smap_obj = i->second;
 
@@ -704,7 +705,7 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
       }
     } else {
       // debug@dev only
-      dout(30) << __func__ << " missing snap addr: " << std::hex
+      dout(/*30*/20) << __func__ << " missing snap addr: " << std::hex
                << (uint64_t)(&smap_obj)
                << " shard_info: " << (uint64_t)(&shard_info)
                << " er: " << shard_info.errors << std::dec << dendl;
@@ -794,8 +795,9 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   }
 
   ceph_assert(!err);
+  // note that the error text is made available to the caller, even
+  // for a successful shard selection
   return shard_as_auth_t{oi, j, errstream.str(), digest};
-  //return shard_as_auth_t{oi, j, "", digest};
 }
 
 // re-implementation of PGBackend::be_compare_scrubmaps()
@@ -811,8 +813,6 @@ void ScrubBackend::compare_smaps()
                   if (auto maybe_clust_err = compare_obj_in_maps(ho);
                       maybe_clust_err) {
                     clog->error() << *maybe_clust_err;
-                    dout(6) << "compare_smaps: RRRR DEBUG " << ho.oid << ": xx "
-                            << *maybe_clust_err << "DNE" << dendl;
                   }
                 });
 }
@@ -824,13 +824,14 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(const hobject_t& ho
   this_chunk->cur_missing.clear();
   this_chunk->fix_digest = false;
 
-  stringstream errstream0;  // for this shard
+  stringstream errstream0;
   auto auth_res = select_auth_object(ho, errstream0);
   if (errstream0.str().size()) {
+    // a collection of shard-specific errors detected while
+    // finding the best shard to serve as authoritative
     clog->error() << errstream0.str();
+    dout(18) << __func__ << ": cc[[" << errstream0.str() << "]]cc" << dendl;
   }
-
-  //stringstream errstream1;
 
   inconsistent_obj_wrapper object_error{ho};
   if (!auth_res.is_auth_available) {
@@ -850,14 +851,12 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(const hobject_t& ho
     }
 
     m_scrubber.m_store->add_object_error(ho.pool, object_error);
-    //errstream1 << m_scrubber.m_pg_id.pgid << " soid " << ho
-    //          << " : failed to pick suitable object info\n";
     return fmt::format("{} soid {} : failed to pick suitable object info\n",
                        m_scrubber.m_pg_id.pgid,
                        ho);
   }
 
-  stringstream errstream;  // for this shard
+  stringstream errstream;
   auto& auth = auth_res.auth;
 
   // an auth source was selected
