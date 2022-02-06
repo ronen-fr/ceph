@@ -535,6 +535,8 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
       errstream << m_pg_id.pgid << " shard " << l << " soid " << ho << " : "
                 << shard_ret.error_text << "\n";
 
+    } else if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_found) {
+     dout(15) << __func__ << " " << ho << " not found on shard " << l << dendl;
     } else {
 
       dout(/*30*/20) << __func__ << " consider using " << l
@@ -629,7 +631,7 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   const auto& j_smap = j->second;
   auto i = j_smap.objects.find(obj);
   if (i == j_smap.objects.end()) {
-    return shard_as_auth_t{std::string{}};
+    return shard_as_auth_t{};
   }
   const auto& smap_obj = i->second;
 

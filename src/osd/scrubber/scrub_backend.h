@@ -79,12 +79,23 @@ struct omap_stat_t {
  * Conveys the usability of a specific shard as an auth source.
  */
 struct shard_as_auth_t {
-  enum class usable_t : uint8_t { not_usable, usable };
+  // note: 'not_found' differs from 'not_usable' in that 'not_found'
+  // does not carry an error message to be cluster-logged.
+  enum class usable_t : uint8_t { not_usable, not_found, usable };
 
   // the ctor used when the shard should not be considered as auth
   explicit shard_as_auth_t(std::string err_msg)
       : possible_auth{usable_t::not_usable}
       , error_text{err_msg}
+      , oi{}
+      , auth_iter{}
+      , digest{std::nullopt}
+  {}
+
+  // the object cannot be found on the shard
+  explicit shard_as_auth_t()
+      : possible_auth{usable_t::not_found}
+      , error_text{}
       , oi{}
       , auth_iter{}
       , digest{std::nullopt}
