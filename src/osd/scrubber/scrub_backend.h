@@ -131,31 +131,48 @@ struct shard_as_auth_t {
   // other in/out arguments) via this struct
 };
 
-// the following formatting support is currently only used in debug logs
+// the format specifier {D} is used to request debug output
 template <>
 struct fmt::formatter<shard_as_auth_t> {
   template <typename ParseContext>
   constexpr auto parse(ParseContext& ctx)
   {
-    return ctx.begin();
+    auto it = ctx.begin();
+    if (it != ctx.end()) {
+      debug_log = (*it++) == 'D';
+    }
+    return it;
   }
-
   template <typename FormatContext>
   auto format(shard_as_auth_t const& as_auth, FormatContext& ctx)
   {
-    switch (as_auth.possible_auth) {
-      case shard_as_auth_t::usable_t::not_usable:
+    if (debug_log) {
+      // note: 'if' chain, as hard to consistently (on all compilers) avoid some
+      // warnings for a switch plus multiple return paths
+      if (as_auth.possible_auth == shard_as_auth_t::usable_t::not_usable) {
         return format_to(
           ctx.out(), "{{shard-not-usable:{}}}", as_auth.error_text);
-      case shard_as_auth_t::usable_t::not_found:
+      }
+      if (as_auth.possible_auth == shard_as_auth_t::usable_t::not_found) {
         return format_to(ctx.out(), "{{shard-not-found}}");
-      case shard_as_auth_t::usable_t::usable:
-        return format_to(ctx.out(),
-                         "{{shard-usable: soid:{} {{txt:{}}} }}",
-                         as_auth.oi.soid,
-                         as_auth.error_text);
+      }
+      return format_to(ctx.out(),
+                       "{{shard-usable: soid:{} {{txt:{}}} }}",
+                       as_auth.oi.soid,
+                       as_auth.error_text);
+
+    } else {
+      return format_to(
+        ctx.out(),
+        "usable:{} soid:{} {{txt:{}}}",
+        (as_auth.possible_auth == shard_as_auth_t::usable_t::usable) ? "yes"
+                                                                     : "no",
+        as_auth.oi.soid,
+        as_auth.error_text);
     }
   }
+
+  bool debug_log{false};
 };
 
 struct auth_selection_t {
@@ -341,8 +358,8 @@ class ScrubBackend {
 
   void compare_smaps();
 
+  /// might return error messages to be cluster-logged
   std::optional<std::string> compare_obj_in_maps(const hobject_t& ho);
-  //void compare_obj_in_maps(const hobject_t& ho, std::stringstream& errstream);
 
   void omap_checks();
 
