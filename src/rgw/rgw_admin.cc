@@ -611,6 +611,7 @@ enum class OPT {
   BUCKET_LIMIT_CHECK,
   BUCKET_LINK,
   BUCKET_UNLINK,
+  BUCKET_LAYOUT,
   BUCKET_STATS,
   BUCKET_CHECK,
   BUCKET_SYNC_CHECKPOINT,
@@ -817,6 +818,7 @@ static SimpleCmd::Commands all_cmds = {
   { "bucket limit check", OPT::BUCKET_LIMIT_CHECK },
   { "bucket link", OPT::BUCKET_LINK },
   { "bucket unlink", OPT::BUCKET_UNLINK },
+  { "bucket layout", OPT::BUCKET_LAYOUT },
   { "bucket stats", OPT::BUCKET_STATS },
   { "bucket check", OPT::BUCKET_CHECK },
   { "bucket sync checkpoint", OPT::BUCKET_SYNC_CHECKPOINT },
@@ -3914,6 +3916,7 @@ int main(int argc, const char **argv)
 			 OPT::USER_STATS,
 			 OPT::BUCKETS_LIST,
 			 OPT::BUCKET_LIMIT_CHECK,
+			 OPT::BUCKET_LAYOUT,
 			 OPT::BUCKET_STATS,
 			 OPT::BUCKET_SYNC_CHECKPOINT,
 			 OPT::BUCKET_SYNC_INFO,
@@ -6304,6 +6307,23 @@ int main(int argc, const char **argv)
 	"************************************" << std::endl;
       return -ret;
     }
+  }
+
+  if (opt_cmd == OPT::BUCKET_LAYOUT) {
+    if (bucket_name.empty()) {
+      cerr << "ERROR: bucket not specified" << std::endl;
+      return EINVAL;
+    }
+    RGWBucketInfo bucket_info;
+    int ret = init_bucket(tenant, bucket_name, bucket_id, bucket_info, bucket);
+    if (ret < 0) {
+      cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+    formatter->open_object_section("layout");
+    encode_json("layout", bucket_info.layout, formatter.get());
+    formatter->close_section();
+    formatter->flush(cout);
   }
 
   if (opt_cmd == OPT::BUCKET_STATS) {
