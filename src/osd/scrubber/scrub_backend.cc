@@ -390,25 +390,24 @@ int ScrubBackend::scrub_process_inconsistent()
 
   for (const auto& [hobj, shrd_list] : m_auth_peers) {
 
-      auto missing_entry = m_missing.find(hobj);
+    auto missing_entry = m_missing.find(hobj);
 
-      if (missing_entry != m_missing.end()) {
-        repair_object(hobj, shrd_list, missing_entry->second);
-        fixed_cnt += missing_entry->second.size();
-      }
-
-      if (m_inconsistent.count(hobj)) {
-        repair_object(hobj, shrd_list, m_inconsistent[hobj]);
-        fixed_cnt += m_inconsistent[hobj].size();
-      }
+    if (missing_entry != m_missing.end()) {
+      repair_object(hobj, shrd_list, missing_entry->second);
+      fixed_cnt += missing_entry->second.size();
     }
+
+    if (m_inconsistent.count(hobj)) {
+      repair_object(hobj, shrd_list, m_inconsistent[hobj]);
+      fixed_cnt += m_inconsistent[hobj].size();
+    }
+  }
   return fixed_cnt;
 }
 
-void ScrubBackend::repair_object(
-  const hobject_t& soid,
-  const auth_peers_t& ok_peers,
-  const set<pg_shard_t>& bad_peers)
+void ScrubBackend::repair_object(const hobject_t& soid,
+                                 const auth_peers_t& ok_peers,
+                                 const set<pg_shard_t>& bad_peers)
 {
   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
     // log the good peers
@@ -507,6 +506,10 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                << dendl;
     }
 
+    dout(20)
+      << fmt::format("{}: {} shard {} got:{:D}", __func__, ho, l, shard_ret)
+      << dendl;
+
     if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_usable) {
 
       // Don't use this particular shard due to previous errors
@@ -528,9 +531,12 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
           (shard_ret.oi.version == auth_version &&
            dcount(shard_ret.oi) > dcount(ret_auth.auth_oi))) {
 
-        dout(30) << __func__ << " using " << l << " moved auth oi " << std::hex
-                 << (uint64_t)(&ret_auth.auth_oi) << " <-> "
-                 << (uint64_t)(&shard_ret.oi) << std::dec << dendl;
+        dout(30) << fmt::format("{}: using {} moved auth oi {:p} <-> {:p}",
+                                __func__,
+                                l,
+                                (void*)&ret_auth.auth_oi,
+                                (void*)&shard_ret.oi)
+                 << dendl;
 
         ret_auth.auth = shard_ret.auth_iter;
         ret_auth.auth_shard = ret_auth.auth->first;
@@ -686,10 +692,13 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
       }
     } else {
       // debug@dev only
-      dout(30) << __func__ << " missing snap addr: " << std::hex
-               << (uint64_t)(&smap_obj)
-               << " shard_info: " << (uint64_t)(&shard_info)
-               << " er: " << shard_info.errors << std::dec << dendl;
+      dout(30) << fmt::format(
+                    "{} missing snap addr: {:p} shard_info: {:p} er: {:x}",
+                    __func__,
+                    (void*)&smap_obj,
+                    (void*)&shard_info,
+                    shard_info.errors)
+               << dendl;
     }
   }
 
@@ -799,8 +808,8 @@ std::optional<std::string> ScrubBackend::compare_smaps()
   }
 }
 
-void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
-                                       stringstream& errstream)
+std::optional<std::string> ScrubBackend::compare_obj_in_maps(
+  const hobject_t& ho)
 {
   // clear per-object data:
   this_chunk->cur_inconsistent.clear();
@@ -813,10 +822,12 @@ void ScrubBackend::compare_obj_in_maps(const hobject_t& ho,
   if (!auth_res.is_auth_available) {
     // no auth selected
     object_error.set_version(0);
-    object_error.set_auth_missing(
-      ho, this_chunk->received_maps, auth_res.shard_map,
-      this_chunk->m_error_counts.shallow_errors,
-      this_chunk->m_error_counts.deep_errors, m_pg_whoami);
+    object_error.set_auth_missing(ho,
+                                  this_chunk->received_maps,
+                                  auth_res.shard_map,
+                                  this_chunk->m_error_counts.shallow_errors,
+                                  this_chunk->m_error_counts.deep_errors,
+                                  m_pg_whoami);
 
     if (object_error.has_deep_errors()) {
       this_chunk->m_error_counts.deep_errors++;
@@ -1531,11 +1542,8 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
 
       // Log any clones we were expecting to be there up to target
       // This will set missing, but will be a no-op if snap.soid == *curclone.
-      missing += process_clones_to(head,
-                                   snapset,
-                                   target,
-                                   &curclone,
-                                   head_error);
+      missing +=
+        process_clones_to(head, snapset, target, &curclone, head_error);
     }
 
     bool expected;
@@ -1574,9 +1582,7 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
     if (soid.has_snapset()) {
 
       if (missing) {
-        log_missing(missing,
-                    head,
-                    __func__);
+        log_missing(missing, head, __func__);
       }
 
       // Save previous head error information
@@ -1703,11 +1709,8 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
     dout(10) << __func__ << " " << m_mode_desc << " " << m_pg_id
              << " No more objects while processing " << *head << dendl;
 
-    missing += process_clones_to(head,
-                                 snapset,
-                                 all_clones,
-                                 &curclone,
-                                 head_error);
+    missing +=
+      process_clones_to(head, snapset, all_clones, &curclone, head_error);
   }
 
   // There could be missing found by the test above or even
@@ -1829,7 +1832,6 @@ std::vector<snap_mapper_fix_t> ScrubBackend::scan_snaps(
       if (maybe_fix_order) {
         out_orders.push_back(std::move(*maybe_fix_order));
       }
-
     }
   }
 
@@ -1861,7 +1863,7 @@ std::optional<snap_mapper_fix_t> ScrubBackend::scan_object_snaps(
   if (r == -ENOENT || cur_snaps != obj_snaps) {
 
     // add this object to the list of snapsets that needs fixing. Note
-    // that we also collect the existing (bogus) list, as legacy log lines show those
+    // that we also collect the existing (bogus) list, for logging purposes
     snap_mapper_op_t fixing_op =
       (r == -ENOENT ? snap_mapper_op_t::add : snap_mapper_op_t::update);
     return snap_mapper_fix_t{fixing_op, hoid, obj_snaps, cur_snaps};
