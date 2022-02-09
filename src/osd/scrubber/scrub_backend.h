@@ -109,11 +109,12 @@ struct snap_mapper_fix_t {
   snap_mapper_op_t op;
   hobject_t hoid;
   std::set<snapid_t> snaps;
-  std::set<snapid_t> wrong_snaps; // only collected & returned for logging sake
+  std::set<snapid_t> wrong_snaps;  // only collected & returned for logging sake
 };
 
 // and - as the main scrub-backend entry point - scrub_compare_maps() - must
-// be able to return both a list of snap fixes and a list of inconsistent objects:
+// be able to return both a list of snap fixes and a list of inconsistent
+// objects:
 struct objs_fix_list_t {
   inconsistent_objs_t inconsistent_objs;
   std::vector<snap_mapper_fix_t> snap_fix_list;
@@ -196,8 +197,9 @@ struct fmt::formatter<shard_as_auth_t> {
       // note: 'if' chain, as hard to consistently (on all compilers) avoid some
       // warnings for a switch plus multiple return paths
       if (as_auth.possible_auth == shard_as_auth_t::usable_t::not_usable) {
-        return format_to(
-          ctx.out(), "{{shard-not-usable:{}}}", as_auth.error_text);
+        return format_to(ctx.out(),
+                         "{{shard-not-usable:{}}}",
+                         as_auth.error_text);
       }
       if (as_auth.possible_auth == shard_as_auth_t::usable_t::not_found) {
         return format_to(ctx.out(), "{{shard-not-found}}");
@@ -451,10 +453,9 @@ class ScrubBackend {
                            bool has_snapset);
 
 
-  void repair_object(
-    const hobject_t& soid,
-    const auth_peers_t& ok_peers,
-    const std::set<pg_shard_t>& bad_peers);
+  void repair_object(const hobject_t& soid,
+                     const auth_peers_t& ok_peers,
+                     const std::set<pg_shard_t>& bad_peers);
 
   /**
    * An auxiliary used by select_auth_object() to test a specific shard
