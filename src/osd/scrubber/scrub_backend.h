@@ -113,7 +113,8 @@ struct snap_mapper_fix_t {
 };
 
 // and - as the main scrub-backend entry point - scrub_compare_maps() - must
-// be able to return both a list of snap fixes and a list of inconsistent objects:
+// be able to return both a list of snap fixes and a list of inconsistent
+// objects:
 struct objs_fix_list_t {
   inconsistent_objs_t inconsistent_objs;
   std::vector<snap_mapper_fix_t> snap_fix_list;
@@ -452,10 +453,9 @@ class ScrubBackend {
                            bool has_snapset);
 
 
-  void repair_object(
-    const hobject_t& soid,
-    const auth_peers_t& ok_peers,
-    const std::set<pg_shard_t>& bad_peers);
+  void repair_object(const hobject_t& soid,
+                     const auth_peers_t& ok_peers,
+                     const std::set<pg_shard_t>& bad_peers);
 
   /**
    * An auxiliary used by select_auth_object() to test a specific shard
