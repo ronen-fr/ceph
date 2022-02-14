@@ -248,7 +248,7 @@ export class ServiceFormComponent extends CdForm implements OnInit {
         null,
         [
           CdValidators.requiredIf({
-            service_type: 'snmp-gateway',
+            snmp_version: 'V3',
             unmanaged: false
           })
         ]
@@ -257,25 +257,17 @@ export class ServiceFormComponent extends CdForm implements OnInit {
         'SHA',
         [
           CdValidators.requiredIf({
-            service_type: 'snmp-gateway',
+            snmp_version: 'V3',
             unmanaged: false
           })
         ]
       ],
-      privacy_protocol: [
-        null,
-        [
-          CdValidators.requiredIf({
-            service_type: 'snmp-gateway',
-            unmanaged: false
-          })
-        ]
-      ],
+      privacy_protocol: [null],
       snmp_community: [
         null,
         [
           CdValidators.requiredIf({
-            service_type: 'snmp-gateway',
+            snmp_version: 'V2c',
             unmanaged: false
           })
         ]
@@ -284,7 +276,7 @@ export class ServiceFormComponent extends CdForm implements OnInit {
         null,
         [
           CdValidators.requiredIf({
-            service_type: 'snmp-gateway',
+            snmp_version: 'V3',
             unmanaged: false
           })
         ]
@@ -293,7 +285,7 @@ export class ServiceFormComponent extends CdForm implements OnInit {
         null,
         [
           CdValidators.requiredIf({
-            service_type: 'snmp-gateway',
+            snmp_version: 'V3',
             unmanaged: false
           })
         ]
@@ -302,7 +294,7 @@ export class ServiceFormComponent extends CdForm implements OnInit {
         null,
         [
           CdValidators.requiredIf({
-            service_type: 'snmp-gateway',
+            privacy_protocol: { op: '!empty' },
             unmanaged: false
           })
         ]
