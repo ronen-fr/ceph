@@ -25,7 +25,6 @@
 
 using std::list;
 using std::pair;
-using std::set;
 using std::stringstream;
 using std::vector;
 using namespace Scrub;
@@ -1138,10 +1137,6 @@ void PgScrubber::persist_scrub_results(inconsistent_objs_t&& all_errors)
   if (all_errors.empty()) {
     return;
   }
-  if (state_test(PG_STATE_REPAIR)) {
-    dout(10) << __func__ << ": discarding scrub results (repairing)" << dendl;
-    return;
-  }
 
   for (auto& e : all_errors) {
     std::visit([this](auto& e) { m_store->add_error(m_pg->pool.id, e); }, e);
@@ -1234,7 +1229,12 @@ void PgScrubber::maps_compare_n_cleanup()
   }
 
   // actuate snap-mapper changes:
-  snap_mapper_io(required_fixes.snap_fix_list);
+  apply_snap_mapper_fixes(required_fixes.snap_fix_list);
+
+  auto chunk_err_counts = m_be->get_error_counts();
+  m_shallow_errors += chunk_err_counts.shallow_errors;
+  m_deep_errors += chunk_err_counts.deep_errors;
+
   m_start = m_end;
   run_callbacks();
   requeue_waiting();
