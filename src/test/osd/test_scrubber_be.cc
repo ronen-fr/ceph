@@ -20,13 +20,13 @@ class TestOSDScrub : public OSD {
 
  public:
   TestOSDScrub(std::unique_ptr<ObjectStore> store,
-          int id,
-          Messenger* msgrs,
-          Messenger* osdc_messenger,
-          MonClient* mc,
-          const std::string& dev,
-          const std::string& jdev,
-          ceph::async::io_context_pool& ictx)
+               int id,
+               Messenger* msgrs,
+               Messenger* osdc_messenger,
+               MonClient* mc,
+               const std::string& dev,
+               const std::string& jdev,
+               ceph::async::io_context_pool& ictx)
       : OSD(g_ceph_context,
             std::move(store),
             id,
@@ -44,18 +44,22 @@ class TestOSDScrub : public OSD {
 
   {}
 
-  bool scrub_time_permit(utime_t now) {
+  bool scrub_time_permit(utime_t now)
+  {
     return service.get_scrub_services().scrub_time_permit(now);
   }
 };
 
 using test_osd_t = std::unique_ptr<TestOSDScrub>;
 
-class ScrubberBeTest {
+class TestTScrubberBe : public ::testing::Test {
  public:
-  ScrubberBeTest(int num_osd) {}  // for now - handle only 1
+  // TestTScrubberBe(int num_osd) {}  // for now - handle only 1
 
-  ~ScrubberBeTest() { m_osd.reset() ; }
+  void SetUp() override;
+  void TearDown() override;
+
+  //~TestTScrubberBe() { m_osd.reset() ; }
  public:
   std::string cluster_msgr_type{g_conf()->ms_cluster_type.empty()
                                   ? g_conf().get_val<std::string>("ms_type")
@@ -67,7 +71,6 @@ class ScrubberBeTest {
   //                                     getpid());
 
   ceph::async::io_context_pool m_icp{1};
-  // MonClient mc{g_ceph_context, m_icp};
   std::unique_ptr<ObjectStore> m_store;
 
   MonClient* mc;
@@ -78,7 +81,79 @@ class ScrubberBeTest {
 };
 
 
-test_osd_t ScrubberBeTest::create_member_osd(int osd_id)
+void TestTScrubberBe::SetUp()
+{
+
+  g_ceph_context->_conf.set_val("osd_fast_shutdown", "false");
+  //16:03//g_ceph_context->_conf.set_val("osd_fast_shutdown", "0");
+  m_osd = create_member_osd(0);
+}
+
+void TestTScrubberBe::TearDown()
+{
+  //delete mc;
+  //std::cout << "TearDown" << std::endl;
+  //sleep(2);
+  // m_osd->shutdown();
+  //m_icp.finish();
+  //std::cout << "micp" << std::endl;
+  //sleep(2);
+  // must not: not started m_osd->service.agent_stop();
+  //m_osd->shutdown();
+  std::cout << "stop" << std::endl;
+   m_icp.finish();
+  sleep(1);
+  try {
+    //m_osd->shutdown();
+    m_osd.reset();
+  } catch (...) {
+    std::cout << "exception" << std::endl;
+  }
+  //EXPECT_EXIT(m_osd.reset(),  ::testing::ExitedWithCode(0), "osd down");
+  //auto xxx = m_osd.release();
+  std::cout << "mosd" << std::endl;
+  sleep(2);
+}
+
+#if 0
+void TestTScrubberBe::TearDown()
+{
+  //delete mc;
+  //std::cout << "TearDown" << std::endl;
+  //sleep(2);
+  // m_osd->shutdown();
+  m_icp.finish();
+  //std::cout << "micp" << std::endl;
+  sleep(2);
+  // must not: not started m_osd->service.agent_stop();
+  m_osd->shutdown();
+  std::cout << "stop" << std::endl;
+  sleep(2);
+  m_osd.reset();
+  std::cout << "mosd" << std::endl;
+  sleep(2);
+}
+
+void TestTScrubberBe::TearDown()
+{
+  delete mc;
+  std::cout << "TearDown" << std::endl;
+  sleep(2);
+  // m_osd->shutdown();
+  m_icp.finish();
+  std::cout << "micp" << std::endl;
+  sleep(2);
+  // must not: not started m_osd->service.agent_stop();
+  m_osd->shutdown();
+  std::cout << "stop" << std::endl;
+  sleep(2);
+  m_osd.reset();
+  std::cout << "mosd" << std::endl;
+  sleep(2);
+}
+#endif
+
+test_osd_t TestTScrubberBe::create_member_osd(int osd_id)
 {
   // create a new ObjectStore
   m_store = ObjectStore::create(g_ceph_context,
@@ -103,19 +178,54 @@ test_osd_t ScrubberBeTest::create_member_osd(int osd_id)
 
   // create a new OSD
   return std::make_unique<TestOSDScrub>(std::move(m_store),
-                                   osd_id,
-                                   ms,
-                                   ms,
-                                   mc,
-                                   g_conf()->osd_data,
-                                   g_conf()->osd_journal,
-                                   m_icp);
+                                        osd_id,
+                                        ms,
+                                        ms,
+                                        mc,
+                                        g_conf()->osd_data,
+                                        g_conf()->osd_journal,
+                                        m_icp);
 }
 
+
+TEST_F(TestTScrubberBe, tac)
+{
+  // TestTScrubberBe* sbt = new TestTScrubberBe(1);
+
+
+  ASSERT_TRUE(m_osd);
+
+  // sbt.m_osd->shutdown();
+  // sbt->m_osd.reset();
+  // delete sbt.mc;
+  sleep(1);
+  // sbt.m_icp.stop();
+  // sleep(2);
+  ASSERT_TRUE(true);
+}
+
+TEST_F(TestTScrubberBe, tac2)
+{
+  // TestTScrubberBe* sbt = new TestTScrubberBe(1);
+
+
+  ASSERT_TRUE(m_osd);
+
+  // sbt.m_osd->shutdown();
+  // sbt->m_osd.reset();
+  // delete sbt.mc;
+  sleep(1);
+  // sbt.m_icp.stop();
+  // sleep(2);
+  ASSERT_TRUE(true);
+}
+
+
+#if 0
 // GOOD!
 TEST(test_scrubber_be, tac)
 {
-  ScrubberBeTest* sbt = new ScrubberBeTest(1);
+  TestTScrubberBe* sbt = new TestTScrubberBe(1);
 
   sbt->m_osd = sbt->create_member_osd(0);
 
@@ -133,7 +243,7 @@ TEST(test_scrubber_be, tac)
 // failed
 TEST(test_scrubber_be, tad)
 {
-  ScrubberBeTest* sbt = new ScrubberBeTest(1);
+  TestTScrubberBe* sbt = new TestTScrubberBe(1);
 
   sbt->m_osd = sbt->create_member_osd(0);
 
@@ -151,7 +261,7 @@ TEST(test_scrubber_be, tad)
 
 TEST(test_scrubber_be, tae)
 {
-  ScrubberBeTest* sbt = new ScrubberBeTest(1);
+  TestTScrubberBe* sbt = new TestTScrubberBe(1);
 
   sbt->m_osd = sbt->create_member_osd(0);
 
@@ -170,7 +280,7 @@ TEST(test_scrubber_be, tae)
 
 TEST(test_scrubber_be, taa)
 {
-  ScrubberBeTest* sbt = new ScrubberBeTest(1);
+  TestTScrubberBe* sbt = new TestTScrubberBe(1);
 
   sbt->m_osd = sbt->create_member_osd(0);
 
@@ -187,7 +297,7 @@ TEST(test_scrubber_be, taa)
 
 TEST(test_scrubber_be, tab)
 {
-  ScrubberBeTest* sbt = new ScrubberBeTest(1);
+  TestTScrubberBe* sbt = new TestTScrubberBe(1);
 
   sbt->m_osd = sbt->create_member_osd(0);
 
@@ -205,7 +315,7 @@ TEST(test_scrubber_be, tab)
 
 TEST(test_scrubber_be, t0)
 {
-  ScrubberBeTest sbt{1};
+  TestTScrubberBe sbt{1};
 
   sbt.m_osd = sbt.create_member_osd(0);
 
@@ -223,7 +333,7 @@ TEST(test_scrubber_be, t0)
 
 TEST(test_scrubber_be, t1)
 {
-  ScrubberBeTest sbt{0};
+  TestTScrubberBe sbt{0};
 
   sbt.m_osd = sbt.create_member_osd(0);
 
@@ -240,7 +350,7 @@ TEST(test_scrubber_be, t1)
 
 TEST(test_scrubber_be, t2)
 {
-  ScrubberBeTest sbt{0};
+  TestTScrubberBe sbt{0};
 
   sbt.m_osd = sbt.create_member_osd(0);
 
@@ -261,7 +371,7 @@ TEST(test_scrubber_be, t2)
 
 TEST(test_scrubber_be, t3)
 {
-  ScrubberBeTest sbt{0};
+  TestTScrubberBe sbt{0};
 
   sbt.m_osd = sbt.create_member_osd(0);
 
@@ -279,7 +389,7 @@ TEST(test_scrubber_be, t3)
 
 TEST(test_scrubber_be, is_it_there)
 {
-  ScrubberBeTest sbt{0};
+  TestTScrubberBe sbt{0};
 
   sbt.m_osd = sbt.create_member_osd(0);
 
@@ -293,16 +403,7 @@ TEST(test_scrubber_be, is_it_there)
 #endif
 
 
-
-
-
-
-
-
-
-
-
-
+#endif
 
 
 #if 0

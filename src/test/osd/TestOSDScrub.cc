@@ -29,6 +29,9 @@
 #include "common/ceph_argparse.h"
 #include "msg/Messenger.h"
 
+
+
+#if 1
 class TestOSDScrub: public OSD {
 
 public:
@@ -197,6 +200,7 @@ TEST(TestOSDScrub, scrub_time_permit) {
   ret = osd->scrub_time_permit(now);
   ASSERT_FALSE(ret);
 }
+#endif
 
 // Local Variables:
 // compile-command: "cd ../.. ; make unittest_osdscrub ; ./unittest_osdscrub --log-to-stderr=true  --debug-osd=20 # --gtest_filter=*.* "

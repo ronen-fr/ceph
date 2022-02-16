@@ -4250,6 +4250,7 @@ int OSD::shutdown()
     if (cct->_conf->osd_fast_shutdown_notify_mon)
       service.prepare_to_stop();
     cct->_log->flush();
+    //return 0;
     _exit(0);
   }
 
