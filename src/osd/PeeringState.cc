@@ -3855,6 +3855,8 @@ std::optional<pg_stat_t> PeeringState::prepare_stats_for_publish(
   psdout(20) << __func__ << " reporting purged_snaps "
 	     << pre_publish.purged_snaps << dendl;
 
+  //pre_publish.scrub_sched_status = scrubber->get_schedule();
+
   if (pg_stats_publish && pre_publish == *pg_stats_publish &&
       info.stats.last_fresh > cutoff) {
     psdout(15) << "publish_stats_to_osd " << pg_stats_publish->reported_epoch

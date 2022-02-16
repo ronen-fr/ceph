@@ -1220,6 +1220,8 @@ void PgScrubber::snap_mapper_io(const std::vector<snap_mapper_fix_t>& fix_list)
 
 void PgScrubber::maps_compare_n_cleanup()
 {
+  m_pg->add_objects_scrubbed_count(m_be->get_primary_scrubmap().objects.size());
+
   auto required_fixes = m_be->scrub_compare_maps(m_end.is_max(), *this);
   // perform the ordered scrub-store I/O:
   populate_store(std::move(required_fixes.inconsistent_objs));
@@ -1917,6 +1919,10 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
     return pg_scrubbing_status_t{};
   }
 
+  dout(9) << fmt::format("{}: pg[{}]:  m_active: {}", __func__,
+                         m_pg->get_pgid(), m_active)
+          << dendl;
+
   auto now_is = ceph_clock_now();
 
   if (m_active) {
@@ -2055,6 +2061,7 @@ void PgScrubber::cleanup_on_finish()
   requeue_waiting();
 
   reset_internal_state();
+  m_pg->publish_stats_to_osd();
   m_flags = scrub_flags_t{};
 
   // type-specific state clear
@@ -2093,6 +2100,7 @@ void PgScrubber::clear_pgscrub_state()
 
   // type-specific state clear
   _scrub_clear_state();
+  m_pg->publish_stats_to_osd();
 }
 
 void PgScrubber::replica_handling_done()
@@ -2126,6 +2134,7 @@ void PgScrubber::reset_internal_state()
 
   run_callbacks();
 
+  //m_authoritative.clear();
   num_digest_updates_pending = 0;
   m_primary_scrubmap_pos.reset();
   replica_scrubmap = ScrubMap{};

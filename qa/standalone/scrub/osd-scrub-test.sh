@@ -620,6 +620,65 @@ function TEST_dump_scrub_schedule() {
 
 function TEST_pg_dump_objects_scrubbed() {
     local dir=$1
+    local -A cluster_conf=(
+        ['osds_num']="3" 
+        ['pgs_in_pool']="1"
+        ['pool_name']="test"
+    )
+
+    local OSDS=3
+    local objects=15
+    local timeout=10
+
+    standard_scrub_cluster $dir cluster_conf
+    local poolid=${cluster_conf['pool_id']}
+    local poolname=${cluster_conf['pool_name']}
+    echo "Pool: $poolname : $poolid"
+
+    TESTDATA="testdata.$$"
+    local objects=15
+    dd if=/dev/urandom of=$TESTDATA bs=1032 count=1
+    for i in `seq 1 $objects`
+    do
+        rados -p $poolname put obj${i} $TESTDATA
+    done
+    rm -f $TESTDATA
+
+    local pgid="${poolid}.0"
+    local now_is=`date -I"ns"`
+
+    # before the scrubbing starts
+
+    declare -A expct_starting=( ['query_active']="false" ['query_is_future']="true" ['query_schedule']="scrub scheduled" )
+    declare -A sched_data
+    extract_published_sch $pgid $now_is "2019-10-12T20:32:43.645168+0000" sched_data
+    schedule_against_expected sched_data expct_starting "initial"
+    (( ${sched_data['dmp_last_duration']} == 0)) || return 1
+    echo "last-scrub  --- " ${sched_data['query_last_scrub']}
+
+    # trigger a scrub. Expect the number of scrubbed objects to be reported.
+
+    saved_last_stamp=${sched_data['query_last_stamp']}
+    ceph tell osd.* config set osd_scrub_sleep "0"
+    #ceph pg deep-scrub $pgid
+    ceph pg scrub $pgid
+
+    sleep 5
+    sched_data=()
+    declare -A expct_qry_duration=( ['query_last_duration']="0" ['query_last_duration_neg']="not0" )
+    wait_any_cond $pgid 10 $saved_last_stamp expct_qry_duration "WaitingAfterScrub " sched_data || return 1
+
+    # we should see a non-zero number of scrubbed objects
+    # (( ${sched_data['dmp_objects_scrubbed']} > 0 )) || return 1
+    ceph pg $pgid query > /tmp/obs1.qry
+    ceph pg dump pgs -f json-pretty > /tmp/pgs.json
+    ceph pg dump pgs  >> /tmp/pgs.txt
+    test "$(ceph pg $pgid query | jq '.info.stats.objects_scrubbed')" '=' $objects || return 1
+}
+
+
+function TEST_pg_dump_objects_scrubbed_v0() {
+    local dir=$1
     local poolname=test
     local OSDS=3
     local objects=15

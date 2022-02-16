@@ -2965,7 +2965,7 @@ bool operator==(const pg_scrubbing_status_t& l, const pg_scrubbing_status_t& r)
 
 void pg_stat_t::encode(ceph::buffer::list &bl) const
 {
-  ENCODE_START(27, 22, bl);
+  ENCODE_START(28, 22, bl);
   encode(version, bl);
   encode(reported_seq, bl);
   encode(reported_epoch, bl);
@@ -3029,7 +3029,7 @@ void pg_stat_t::decode(ceph::buffer::list::const_iterator &bl)
 {
   bool tmp;
   uint32_t old_state;
-  DECODE_START(27, bl);
+  DECODE_START(28, bl);
   decode(version, bl);
   decode(reported_seq, bl);
   decode(reported_epoch, bl);
@@ -3109,6 +3109,8 @@ void pg_stat_t::decode(ceph::buffer::list::const_iterator &bl)
       scrub_sched_status.m_is_deep = tmp ? scrub_level_t::deep : scrub_level_t::shallow;
       decode(tmp, bl);
       scrub_sched_status.m_is_periodic = tmp;
+    }
+    if (struct_v >= 28) {
       decode(objects_scrubbed, bl);
     }
   }

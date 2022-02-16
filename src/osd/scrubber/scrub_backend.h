@@ -262,8 +262,6 @@ class ScrubBackend {
    * reset the per-chunk data structure (scrub_chunk_t).
    * Create an empty scrub-map for this shard, and place it
    * in the appropriate entry in 'received_maps'.
-   *
-   * @returns a pointer to the newly created ScrubMap.
    */
   void new_chunk();
 

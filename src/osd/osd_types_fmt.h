@@ -132,3 +132,26 @@ struct fmt::formatter<spg_t> {
     }
   }
 };
+
+// template <>
+// struct fmt::formatter<pg_scrub_sched_status_t> {
+//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+// 
+//   template <typename FormatContext>
+//   auto format(const pg_scrub_sched_status_t& stt, FormatContext& ctx)
+//   {
+//     switch (stt) {
+//       case pg_scrub_sched_status_t::unknown:
+//         return fmt::format_to(ctx.out(), "unknown");
+//       case pg_scrub_sched_status_t::not_queued:
+//         return fmt::format_to(ctx.out(), "not_queued");
+//       case pg_scrub_sched_status_t::active:
+//         return fmt::format_to(ctx.out(), "active");
+//       case pg_scrub_sched_status_t::scheduled:
+//         return fmt::format_to(ctx.out(), "scheduled");
+//       case pg_scrub_sched_status_t::queued:
+//       default:
+//         return fmt::format_to(ctx.out(), "queued");
+//     }
+//   }
+// };
