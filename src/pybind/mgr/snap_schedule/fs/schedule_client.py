@@ -160,42 +160,37 @@ class SnapSchedClient(CephfsClient):
         if fs not in self.sqlite_connections:
             poolid = self.get_metadata_pool(fs)
             assert poolid, f'fs "{fs}" not found'
-            uri = f"file:///*{poolid}:/{SNAP_DB_OBJECT_NAME}.db?vfs=ceph"
-            log.debug(f"using uri {uri}")
-            db = sqlite3.connect(uri, check_same_thread=False, uri=True)
+            db = sqlite3.connect(':memory:', check_same_thread=False)
             db.execute('PRAGMA FOREIGN_KEYS = 1')
-            db.execute('PRAGMA JOURNAL_MODE = PERSIST')
             db.execute('PRAGMA PAGE_SIZE = 65536')
             db.execute('PRAGMA CACHE_SIZE = 256')
             db.row_factory = sqlite3.Row
             # check for legacy dump store
-            pool_param = cast(Union[int, str], poolid)
-            with open_ioctx(self, pool_param) as ioctx:
-                try:
-                    size, _mtime = ioctx.stat(SNAP_DB_OBJECT_NAME)
-                    dump = ioctx.read(SNAP_DB_OBJECT_NAME, size).decode('utf-8')
-                    db.executescript(dump)
-                    ioctx.remove(SNAP_DB_OBJECT_NAME)
-                except rados.ObjectNotFound:
-                    log.debug(f'No legacy schedule DB found in {fs}')
-            db.executescript(Schedule.CREATE_TABLES)
+            with db:
+                pool = self.get_metadata_pool(fs)
+                with open_ioctx(self, pool) as ioctx:
+                    try:
+                        size, _mtime = ioctx.stat(SNAP_DB_OBJECT_NAME)
+                        ddl = ioctx.read(SNAP_DB_OBJECT_NAME,
+                                         size).decode('utf-8')
+                        db.executescript(ddl)
+                    except rados.ObjectNotFound:
+                        log.debug(f'No schedule DB found in {fs}, creating one.')
+                        db.executescript(Schedule.CREATE_TABLES)
             self.sqlite_connections[fs] = DBInfo(fs, db)
         dbinfo = self.sqlite_connections[fs]
         self.conn_lock.release()
         return DBConnectionManager(dbinfo)
 
-    def store_schedule_db(self, fs):
+    def store_schedule_db(self, fs, db):
         # only store db is it exists, otherwise nothing to do
         metadata_pool = self.get_metadata_pool(fs)
         if not metadata_pool:
             raise CephfsConnectionException(
                 -errno.ENOENT, "Filesystem {} does not exist".format(fs))
-        if fs in self.sqlite_connections:
-            db_content = []
-            db = self.sqlite_connections[fs]
-            with db:
-                for row in db.iterdump():
-                    db_content.append(row)
+        db_content = []
+        for row in db.iterdump():
+            db_content.append(row)
         with open_ioctx(self, metadata_pool) as ioctx:
             ioctx.write_full(SNAP_DB_OBJECT_NAME,
                              '\n'.join(db_content).encode('utf-8'))
@@ -345,6 +340,7 @@ class SnapSchedClient(CephfsClient):
         with self.get_schedule_db(fs) as conn_mgr:
             db = conn_mgr.dbinfo.db
             sched.store_schedule(db)
+            self.store_schedule_db(sched.fs, db)
 
     @updates_schedule_db
     def rm_snap_schedule(self,
