@@ -68,58 +68,6 @@ class CephadmServe:
         self.mgr.config_checker.load_network_config()
 
         while self.mgr.run:
-            if not self.mgr.ibm:
-                # block anyone trying to use this image who doesn't know the workaround
-                upgrade_block_str = 'This version of RHCS is not intended for general use. Please check the release notes'
-                if self.mgr.upgrade.upgrade_state is None:
-                    t = self.mgr.get_store('upgrade_state')
-                    if t:
-                        self.mgr.upgrade.upgrade_state = self.mgr.upgrade_state.from_json(json.loads(t))
-                    else:
-                        self.mgr.upgrade.upgrade_state = self.mgr.upgrade_state(
-                            target_name='',
-                            progress_id=str(uuid.uuid4())
-                        )
-                assert self.mgr.upgrade.upgrade_state is not None
-                if (
-                    self.mgr.upgrade.upgrade_state.error != upgrade_block_str
-                    or self.mgr.upgrade.upgrade_state.paused is False
-                    or 'NON_GENERAL_USE_RHCS_VERSION' not in self.mgr.health_checks
-                ):
-                    image_rec_str = ''
-                    if self.mgr.cache.get_daemons_by_service('mon'):
-                        image_name = self.mgr._get_container_image(self.mgr.cache.get_daemons_by_service('mon')[0].name())
-                        image_rec_str = f'Recommended image name to use (found in use on mon daemon) is {image_name}'
-                    alert_id = 'NON_GENERAL_USE_RHCS_VERSION'
-                    alert = {
-                        'severity': 'error',
-                        'summary': 'Upgrade: Upgrade attempted to RHCS version not intended for general use. Check "ceph health detail"',
-                        'count': 1,
-                        'detail': ['Please check the release notes for more information on this build and why it is not supported',
-                                    'If this is a new cluster it is recommended to purge and start over with a different image',
-                                    'If this is a functional cluster you have upgraded, try the command "ceph cephadm fallback" ',
-                                    'followed by "ceph orch daemon redeploy <daemon-name> <previous-image-name>" for each ceph daemon',
-                                    'showing the newer version in "ceph orch ps" (will likely be just one mgr)',
-                                    f'{image_rec_str}'],
-                    }
-                    self.mgr.log.info('Invalid version of RHCS. Setting health warnings and upgrade failure')
-                    self.mgr.upgrade.upgrade_state.error = upgrade_block_str
-                    self.mgr.upgrade.upgrade_state.paused = True
-                    upgrade_json = self.mgr.upgrade.upgrade_state.to_json()
-                    ##############################
-                    # Need to alter a couple of things to make sure a downgrade
-                    # of the mgr back to 5.0 is possible but also thingss will
-                    # function normally if the ibm setting is set to true
-                    upgrade_json.pop('fs_original_max_mds', None)
-                    upgrade_json.pop('fs_original_allow_standby_replay', None)
-                    self.mgr.set_store('upgrade_state', json.dumps(upgrade_json))
-                    self.mgr.set_module_option('migration_current', 1)
-                    self.mgr.migration_current = 1
-                    ##############################
-                    self.mgr.health_checks[alert_id] = alert
-                    self.mgr.set_health_checks(self.mgr.health_checks)
-                self._serve_sleep()
-                continue
 
             try:
 
