@@ -681,10 +681,11 @@ private:
   double next_deepscrub_interval() const;
 
   /// should we perform deep scrub?
-  bool is_time_for_deep(bool allow_deep_scrub,
-		        bool allow_scrub,
-		        bool has_deep_errors,
-		        const requested_scrub_t& planned) const;
+  bool is_time_for_deep(bool allow_shallow_scrub) const;
+//   bool is_time_for_deep(bool allow_deep_scrub,
+// 		        bool allow_scrub,
+// 		        bool has_deep_errors,
+// 		        const requested_scrub_t& planned) const;
 
   /**
    * Verify the various 'next scrub' flags in m_planned_scrub against configuration

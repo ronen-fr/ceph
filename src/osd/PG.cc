@@ -1385,102 +1385,225 @@ double PG::next_deepscrub_interval() const
   return info.history.last_deep_scrub_stamp + deep_scrub_interval;
 }
 
-bool PG::is_time_for_deep(bool allow_deep_scrub,
-			  bool allow_scrub,
-			  bool has_deep_errors,
-			  const requested_scrub_t& planned) const
+// bool PG::is_time_for_deep0(bool allow_deep_scrub,
+// 			  bool allow_scrub,
+// 			  bool has_deep_errors,
+// 			  const requested_scrub_t& planned) const
+// {
+//   dout(10) << __func__ << ": need_auto?" << planned.need_auto << " allow_deep_scrub? "
+// 	   << allow_deep_scrub << dendl;
+// 
+//   if (!allow_deep_scrub)
+//     return false;
+// 
+//   if (planned.need_auto) {
+//     dout(10) << __func__ << ": need repair after scrub errors" << dendl;
+//     return true;
+//   }
+// 
+//   if (ceph_clock_now() >= next_deepscrub_interval()) {
+//     dout(20) << __func__ << ": now (" << ceph_clock_now() << ") >= time for deep ("
+// 	     << next_deepscrub_interval() << ")" << dendl;
+//     return true;
+//   }
+// 
+//   if (has_deep_errors) {
+//     osd->clog->info() << "osd." << osd->whoami << " pg " << info.pgid
+// 		      << " Deep scrub errors, upgrading scrub to deep-scrub";
+//     return true;
+//   }
+// 
+//   // we only flip coins if 'allow_scrub' is asserted. Otherwise - as this function is
+//   // called often, we will probably be deep-scrubbing most of the time.
+//   if (allow_scrub) {
+//     bool deep_coin_flip =
+//       (rand() % 100) < cct->_conf->osd_deep_scrub_randomize_ratio * 100;
+// 
+//     dout(15) << __func__ << ": time_for_deep=" << planned.time_for_deep
+// 	     << " deep_coin_flip=" << deep_coin_flip << dendl;
+// 
+//     if (deep_coin_flip)
+//       return true;
+//   }
+// 
+//   return false;
+// }
+
+// bool PG::verify_periodic_scrub_mode0(bool allow_deep_scrub,
+// 			      bool try_to_auto_repair,
+// 			      bool allow_shallow_scrub,
+// 			      bool has_deep_errors,
+// 			      requested_scrub_t& planned) const
+// 
+// {
+//   ceph_assert(!planned.must_deep_scrub && !planned.must_repair);
+// 
+//   if (!allow_deep_scrub && has_deep_errors) {
+//       osd->clog->error()
+// 	<< "osd." << osd->whoami << " pg " << info.pgid
+// 	<< " Regular scrub skipped due to deep-scrub errors and nodeep-scrub set";
+//       return false;
+//   }
+// 
+//   if (allow_deep_scrub) {
+//     // Initial entry and scheduled scrubs without nodeep_scrub set get here
+// 
+//     planned.time_for_deep =
+//       is_time_for_deep(allow_deep_scrub, allow_shallow_scrub, has_deep_errors, planned);
+// 
+//     if (try_to_auto_repair) {
+//       if (planned.time_for_deep) {
+// 	dout(20) << __func__ << ": auto repair with deep scrubbing" << dendl;
+// 	planned.auto_repair = true;
+//       } else if (allow_shallow_scrub) {
+// 	dout(20) << __func__ << ": auto repair with scrubbing, rescrub if errors found"
+// 		 << dendl;
+// 	planned.deep_scrub_on_error = true;
+//       }
+//     }
+//   }
+// 
+//   dout(20) << __func__ << " updated flags: " << planned
+// 	   << " allow_shallow_scrub: " << allow_shallow_scrub << dendl;
+// 
+//   // NOSCRUB so skip regular scrubs
+//   if (!allow_shallow_scrub && !planned.time_for_deep) {
+//     return false;
+//   }
+// 
+//   return true;
+// }
+
+bool PG::is_time_for_deep(bool allow_shallow_scrub) const
 {
-  dout(10) << __func__ << ": need_auto?" << planned.need_auto << " allow_deep_scrub? "
-	   << allow_deep_scrub << dendl;
-
-  if (!allow_deep_scrub)
-    return false;
-
-  if (planned.need_auto) {
-    dout(10) << __func__ << ": need repair after scrub errors" << dendl;
-    return true;
-  }
-
   if (ceph_clock_now() >= next_deepscrub_interval()) {
-    dout(20) << __func__ << ": now (" << ceph_clock_now() << ") >= time for deep ("
-	     << next_deepscrub_interval() << ")" << dendl;
+    dout(20) << __func__ << ": now (" << ceph_clock_now()
+             << ") >= time for deep (" << next_deepscrub_interval() << ")"
+             << dendl;
     return true;
   }
 
-  if (has_deep_errors) {
-    osd->clog->info() << "osd." << osd->whoami << " pg " << info.pgid
-		      << " Deep scrub errors, upgrading scrub to deep-scrub";
-    return true;
-  }
-
-  // we only flip coins if 'allow_scrub' is asserted. Otherwise - as this function is
-  // called often, we will probably be deep-scrubbing most of the time.
-  if (allow_scrub) {
-    bool deep_coin_flip =
+  // we only flip coins if 'allow_scrub' is asserted. Otherwise - as this
+  // function is called often, we will probably be deep-scrubbing most of the
+  // time.
+  if (allow_shallow_scrub) {
+    const bool deep_coin_flip =
       (rand() % 100) < cct->_conf->osd_deep_scrub_randomize_ratio * 100;
 
-    dout(15) << __func__ << ": time_for_deep=" << planned.time_for_deep
-	     << " deep_coin_flip=" << deep_coin_flip << dendl;
-
-    if (deep_coin_flip)
+    if (deep_coin_flip) {
+      dout(10) << __func__ << " deep_coin_flip calls deep-scrub" << dendl;
       return true;
+    }
   }
 
   return false;
 }
 
+
+/*
+ clang-format off
+
+   for periodic scrubs:
+
+   Periodic  type     |  none    |  no-scrub  | no-scrub+no-deep | no-deep
+   ------------------------------------------------------------------------
+   ------------------------------------------------------------------------
+   periodic           |  shallow |  x         |  x               | shallow
+   ------------------------------------------------------------------------
+   periodic + t.f.deep|  deep    |  deep      |  x               | shallow
+   ------------------------------------------------------------------------
+
+ clang-format on
+*/
 bool PG::verify_periodic_scrub_mode(bool allow_deep_scrub,
-			      bool try_to_auto_repair,
-			      bool allow_regular_scrub,
-			      bool has_deep_errors,
-			      requested_scrub_t& planned) const
+                                    bool try_to_auto_repair,
+                                    bool allow_shallow_scrub,
+                                    bool has_deep_errors,
+                                    requested_scrub_t& planned) const
 
 {
   ceph_assert(!planned.must_deep_scrub && !planned.must_repair);
 
   if (!allow_deep_scrub && has_deep_errors) {
-      osd->clog->error()
-	<< "osd." << osd->whoami << " pg " << info.pgid
-	<< " Regular scrub skipped due to deep-scrub errors and nodeep-scrub set";
-      return false;
+    osd->clog->error()
+      << "osd." << osd->whoami << " pg " << info.pgid
+      << " Regular scrub skipped due to deep-scrub errors and nodeep-scrub set";
+    return false;  // no scrubbing
   }
 
-  if (allow_deep_scrub) {
-    // Initial entry and scheduled scrubs without nodeep_scrub set get here
+  auto time_for_deep = is_time_for_deep(allow_shallow_scrub);
+  dout(20) << fmt::format("{}: allowed:{}/{} t.f.d:{}",
+                          __func__,
+                          allow_shallow_scrub,
+                          allow_deep_scrub,
+                          time_for_deep)
+           << dendl;
 
-    planned.time_for_deep =
-      is_time_for_deep(allow_deep_scrub, allow_regular_scrub, has_deep_errors, planned);
-
-    if (try_to_auto_repair) {
-      if (planned.time_for_deep) {
-	dout(20) << __func__ << ": auto repair with deep scrubbing" << dendl;
-	planned.auto_repair = true;
-      } else if (allow_regular_scrub) {
-	dout(20) << __func__ << ": auto repair with scrubbing, rescrub if errors found"
-		 << dendl;
-	planned.deep_scrub_on_error = true;
+  // should we perform a shallow scrub?
+  if (allow_shallow_scrub) {
+    if (!time_for_deep || !allow_deep_scrub) {
+      if (try_to_auto_repair /*&& allow_deep_scrub*/) {
+        dout(10) << __func__
+                 << ": auto repair with scrubbing, rescrub if errors found"
+                 << dendl;
+        planned.deep_scrub_on_error = true;
       }
+      dout(20) << __func__
+               << " will do shallow scrub (time_for_deep = " << time_for_deep
+               << ")" << dendl;
+      return true;
     }
+
+    // else - either deep-scrub or nothing
   }
 
-  dout(20) << __func__ << " updated flags: " << planned
-	   << " allow_regular_scrub: " << allow_regular_scrub << dendl;
-
-  // NOSCRUB so skip regular scrubs
-  if (!allow_regular_scrub && !planned.time_for_deep) {
+  if (time_for_deep) {
+    if (allow_deep_scrub) {
+      if (try_to_auto_repair) {
+        dout(20) << __func__ << ": auto repair with deep scrubbing" << dendl;
+        planned.auto_repair = true;
+      }
+      planned.time_for_deep = true;
+      return true;
+    }
+    if (allow_shallow_scrub) {
+      // not needed: planned.time_for_deep = false;
+      return true;
+    }
     return false;
   }
 
-  return true;
+  return false;  // no scrubbing
 }
 
+
+/*
+ clang-format off
+
+   Desired no-scrub flags & scrub type interactions:
+
+   Periodic  type     |  none    |  no-scrub  | no-scrub+no-deep | no-deep
+   ------------------------------------------------------------------------
+   ------------------------------------------------------------------------
+   periodic           |  shallow |  x         |  x               | shallow
+   ------------------------------------------------------------------------
+   periodic + t.f.deep|  deep    |  deep      |  x               | shallow
+   ------------------------------------------------------------------------
+   initiated          |  shallow |  shallow   |  shallow         | shallow
+   ------------------------------------------------------------------------
+   init. + t.f.deep   |  deep    |  deep      |  shallow         | shallow
+   ------------------------------------------------------------------------
+   initiated deep     |  deep    |  deep      |  deep            | deep
+   ------------------------------------------------------------------------
+
+ clang-format on
+*/
 std::optional<requested_scrub_t> PG::verify_scrub_mode() const
 {
-  const bool allow_regular_scrub =
+  const bool allow_shallow_scrub =
     !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
       pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
   const bool allow_deep_scrub =
-    allow_regular_scrub &&
     !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
       pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
   const bool has_deep_errors = (info.stats.stats.sum.num_deep_scrub_errors > 0);
@@ -1488,12 +1611,15 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
                                    get_pgbackend()->auto_repair_supported());
 
   dout(10) << __func__ << " pg: " << info.pgid
-           << " allow: " << allow_regular_scrub << "/" << allow_deep_scrub
+           << " allow: " << allow_shallow_scrub << "/" << allow_deep_scrub
            << " deep errs: " << has_deep_errors
            << " auto-repair: " << try_to_auto_repair << " ("
            << cct->_conf->osd_scrub_auto_repair << ")" << dendl;
 
   auto upd_flags = m_planned_scrub;
+
+  /// \todo: move the clearing of these 3 flags to verify_periodic_scrub_mode()
+  ///   and clarify the interface of that function
 
   upd_flags.time_for_deep = false;
   // Clear these in case user issues the scrub/repair command during
@@ -1511,9 +1637,14 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
     // All periodic scrub handling goes here because must_scrub is
     // always set for must_deep_scrub and must_repair.
 
-    const bool can_start_periodic = verify_periodic_scrub_mode(
-      allow_deep_scrub, try_to_auto_repair, allow_regular_scrub,
-      has_deep_errors, upd_flags);
+    ceph_assert(!upd_flags.need_auto);
+
+    const bool can_start_periodic =
+      verify_periodic_scrub_mode(allow_deep_scrub,
+                                 try_to_auto_repair,
+                                 allow_shallow_scrub,
+                                 has_deep_errors,
+                                 upd_flags);
     if (!can_start_periodic) {
       // "I don't want no scrub"
       dout(20) << __func__ << ": no periodic scrubs allowed" << dendl;

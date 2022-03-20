@@ -140,18 +140,21 @@ bool PgScrubber::should_abort() const
     return false;  // not stopping 'required' scrubs for configuration changes
   }
 
+  // note: deep scrubs are allowed even if 'no-scrub' is set (but not
+  // 'no-deepscrub')
   if (m_is_deep) {
     if (get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
-	m_pg->pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB)) {
+        m_pg->pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB)) {
       dout(10) << "nodeep_scrub set, aborting" << dendl;
       return true;
     }
-  }
+  } else {
 
-  if (get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
-      m_pg->pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB)) {
-    dout(10) << "noscrub set, aborting" << dendl;
-    return true;
+    if (get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
+        m_pg->pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB)) {
+      dout(10) << "noscrub set, aborting" << dendl;
+      return true;
+    }
   }
 
   return false;
@@ -1217,7 +1220,7 @@ void PgScrubber::maps_compare_n_cleanup()
 
   auto required_fixes = m_be->scrub_compare_maps(m_end.is_max(), *this);
   if (!required_fixes.inconsistent_objs.empty()) {
-    if (state_test(PG_STATE_REPAIR)) {
+    if (state_test(PG_STATE_REPAIR)) { // RRR ???
       dout(10) << __func__ << ": discarding scrub results (repairing)" << dendl;
     } else {
       // perform the ordered scrub-store I/O:
@@ -1315,7 +1318,7 @@ void PgScrubber::replica_scrub_op(OpRequestRef op)
                               m_flags.priority, m_current_token);
 }
 
-void PgScrubber::set_op_parameters(requested_scrub_t& request)
+void PgScrubber::set_op_parameters(const requested_scrub_t& request)
 {
   dout(10) << __func__ << " input: " << request << dendl;
 
@@ -1945,6 +1948,8 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 
   // Will next scrub surely be a deep one? note that deep-scrub might be
   // selected even if we report a regular scrub here.
+
+  // RRR fix
   bool deep_expected = (now_is >= m_pg->next_deepscrub_interval()) ||
                        m_planned_scrub.must_deep_scrub ||
                        m_planned_scrub.need_auto;

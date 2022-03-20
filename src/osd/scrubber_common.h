@@ -203,7 +203,7 @@ struct ScrubPgIF {
 
   virtual void replica_scrub_op(OpRequestRef op) = 0;
 
-  virtual void set_op_parameters(requested_scrub_t&) = 0;
+  virtual void set_op_parameters(const requested_scrub_t&) = 0;
 
   virtual void scrub_clear_state() = 0;
 
