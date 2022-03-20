@@ -717,9 +717,9 @@ private:
 
   /// should we perform deep scrub?
   bool is_time_for_deep(bool allow_deep_scrub,
-		        bool allow_scrub,
-		        bool has_deep_errors,
-		        const requested_scrub_t& planned) const;
+                        bool allow_shallow_scrub,
+                        bool has_deep_errors,
+                        const requested_scrub_t& planned) const;
 
   /**
    * Verify the various 'next scrub' flags in m_planned_scrub against configuration
@@ -729,11 +729,26 @@ private:
    */
   std::optional<requested_scrub_t> verify_scrub_mode() const;
 
-  bool verify_periodic_scrub_mode(bool allow_deep_scrub,
-				  bool try_to_auto_repair,
-				  bool allow_regular_scrub,
-				  bool has_deep_errors,
-				  requested_scrub_t& planned) const;
+  bool verify_periodic_scrub_modev0(bool allow_deep_scrub,
+                                    bool try_to_auto_repair,
+                                    bool allow_regular_scrub,
+                                    bool has_deep_errors,
+                                    requested_scrub_t& planned) const;
+
+  std::optional<requested_scrub_t> verify_periodic_scrub_mode(
+    bool allow_deep_scrub,
+    bool try_to_auto_repair,
+    bool allow_shallow_scrub,
+    bool time_for_deep,
+    bool has_deep_errors,
+    const requested_scrub_t& planned) const;
+
+  std::optional<requested_scrub_t> verify_initiated_scrub(
+    bool allow_deep_scrub,
+    bool try_to_auto_repair,
+    bool time_for_deep,
+    bool has_deep_errors,
+    const requested_scrub_t& planned) const;
 
   using ScrubAPI = void (ScrubPgIF::*)(epoch_t epoch_queued);
   void forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc);
