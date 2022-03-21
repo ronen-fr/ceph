@@ -243,6 +243,8 @@ struct scrub_flags_t {
    * process with the 'repair' flag set (in the RequestScrub event).
    */
   bool required{false};
+
+  scrub_level_t shallow_or_deep{scrub_level_t::shallow};
 };
 
 ostream& operator<<(ostream& out, const scrub_flags_t& sf);

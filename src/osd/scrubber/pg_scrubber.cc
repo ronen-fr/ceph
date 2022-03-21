@@ -1322,6 +1322,8 @@ void PgScrubber::set_op_parameters(const requested_scrub_t& request)
 {
   dout(10) << __func__ << " input: " << request << dendl;
 
+  set_queued_or_active(); // we are fully committed now.
+
   // write down the epoch of starting a new scrub. Will be used
   // to discard stale messages from previous aborted scrubs.
   m_epoch_start = m_pg->get_osdmap_epoch();
@@ -1339,6 +1341,8 @@ void PgScrubber::set_op_parameters(const requested_scrub_t& request)
   // will we be deep-scrubbing?
   if (request.must_deep_scrub || request.need_auto || request.time_for_deep) {
     state_set(PG_STATE_DEEP_SCRUB);
+    m_flags.shallow_or_deep = scrub_level_t::deep;
+    // why can't we set 'm_is_deep' here? (for the Primary, at least) RRR to rm
   }
 
   // m_is_repair is set for either 'must_repair' or 'repair-on-the-go' (i.e.
