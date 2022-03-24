@@ -681,8 +681,6 @@ private:
   double next_deepscrub_interval() const;
 
   /// should we perform deep scrub?
-  bool is_time_for_deep(bool allow_shallow_scrub) const;
-
   bool is_time_for_deep(bool allow_deep_scrub,
                         bool allow_shallow_scrub,
                         bool has_deep_errors,

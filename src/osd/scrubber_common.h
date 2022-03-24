@@ -94,7 +94,7 @@ struct requested_scrub_t {
   bool deep_scrub_on_error{false};
 
   /**
-   * If set, we should see must_deep_scrub and must_repair set, too
+   * If set, we should see must_deep_scrub & must_scrub, too
    *
    * - 'must_repair' is checked by the OSD when scheduling the scrubs.
    * - also checked & cleared at pg::queue_scrub()

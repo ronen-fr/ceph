@@ -405,7 +405,8 @@ void PgScrubber::reset_epoch(epoch_t epoch_queued)
 
   m_epoch_start = epoch_queued;
   m_needs_sleep = true;
-  m_is_deep = state_test(PG_STATE_DEEP_SCRUB);
+  //m_is_deep = state_test(PG_STATE_DEEP_SCRUB);
+  ceph_assert(m_is_deep == state_test(PG_STATE_DEEP_SCRUB));
   update_op_mode_text();
 }
 
@@ -1220,7 +1221,7 @@ void PgScrubber::maps_compare_n_cleanup()
 
   auto required_fixes = m_be->scrub_compare_maps(m_end.is_max(), *this);
   if (!required_fixes.inconsistent_objs.empty()) {
-    if (state_test(PG_STATE_REPAIR)) { // RRR ???
+    if (state_test(PG_STATE_REPAIR)) {
       dout(10) << __func__ << ": discarding scrub results (repairing)" << dendl;
     } else {
       // perform the ordered scrub-store I/O:
@@ -1320,7 +1321,7 @@ void PgScrubber::replica_scrub_op(OpRequestRef op)
 
 void PgScrubber::set_op_parameters(const requested_scrub_t& request)
 {
-  dout(10) << __func__ << " input: " << request << dendl;
+  dout(10) << fmt::format("{}: @ input: {}", __func__, request) << dendl;
 
   set_queued_or_active(); // we are fully committed now.
 
@@ -1339,11 +1340,25 @@ void PgScrubber::set_op_parameters(const requested_scrub_t& request)
   state_set(PG_STATE_SCRUBBING);
 
   // will we be deep-scrubbing?
-  if (request.must_deep_scrub || request.need_auto || request.time_for_deep) {
+  if (request.calculated_to_deep) {
     state_set(PG_STATE_DEEP_SCRUB);
     m_flags.shallow_or_deep = scrub_level_t::deep;
-    // why can't we set 'm_is_deep' here? (for the Primary, at least) RRR to rm
+    m_is_deep = true;
+  } else {
+    m_is_deep = false;
+
+    // RRR temporary - make sure we got the 'calculated_to_deep' flag right
+    ceph_assert(!request.must_deep_scrub);
+    //ceph_assert(!request.time_for_deep);
+    ceph_assert(!request.need_auto);
   }
+
+//   // will we be deep-scrubbing?
+//   if (request.must_deep_scrub || request.need_auto || request.time_for_deep) {
+//     state_set(PG_STATE_DEEP_SCRUB);
+//     m_flags.shallow_or_deep = scrub_level_t::deep;
+//     /// \todo (RF) why can't we set 'm_is_deep' here? (for the Primary, at least)
+//   }
 
   // m_is_repair is set for either 'must_repair' or 'repair-on-the-go' (i.e.
   // deep-scrub with the auto_repair configuration flag set). m_is_repair value
@@ -1953,7 +1968,6 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
   // Will next scrub surely be a deep one? note that deep-scrub might be
   // selected even if we report a regular scrub here.
 
-  // RRR fix
   bool deep_expected = (now_is >= m_pg->next_deepscrub_interval()) ||
                        m_planned_scrub.must_deep_scrub ||
                        m_planned_scrub.need_auto;
