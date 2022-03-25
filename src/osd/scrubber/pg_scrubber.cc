@@ -1793,11 +1793,6 @@ void PgScrubber::scrub_finish()
       &t);
     int tr = m_osds->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
     ceph_assert(tr == 0);
-
-    if (!m_pg->snap_trimq.empty()) {
-      dout(10) << "scrub finished, requeuing snap_trimmer" << dendl;
-      m_pg->snap_trimmer_scrub_complete();
-    }
   }
 
   if (has_error) {
@@ -1816,6 +1811,11 @@ void PgScrubber::scrub_finish()
 
   if (m_pg->is_active() && m_pg->is_primary()) {
     m_pg->recovery_state.share_pg_info();
+  }
+
+  if (!m_pg->snap_trimq.empty()) {
+    dout(10) << "scrub finished, requeuing snap_trimmer" << dendl;
+    m_pg->snap_trimmer_scrub_complete();
   }
 }
 
