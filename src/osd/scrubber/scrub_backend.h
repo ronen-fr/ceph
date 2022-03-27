@@ -46,15 +46,17 @@
 #include <string_view>
 
 #include "common/LogClient.h"
+#include "osd/OSDMap.h"
 #include "common/scrub_types.h"
+#include "osd/scrubber_common.h"
 
 struct ScrubMap;
 
 class PG;
 class PgScrubber;
-class PGBackend;
-class PGPool;
-
+//class PGBackend;
+struct PGPool;
+using Scrub::PgScrubBeListener;
 
 using data_omap_digests_t =
   std::pair<std::optional<uint32_t>, std::optional<uint32_t>>;
@@ -82,6 +84,21 @@ struct error_counters_t {
   int shallow_errors{0};
   int deep_errors{0};
 };
+
+// the PgScrubber services used by the backend
+struct ScrubBeListener {
+  virtual std::ostream& gen_prefix(std::ostream& out) const = 0;
+  virtual CephContext* get_pg_cct() const = 0;
+  virtual CephContext* get_osd_cct() const = 0;
+  virtual LogChannelRef get_logger() const = 0;
+  virtual bool is_primary() const = 0;
+  virtual spg_t get_pgid() const = 0;
+  virtual const OSDMapRef& get_osdmap() const = 0;
+  virtual void add_to_stats(const object_stat_sum_t& stat) = 0;
+  virtual void submit_digest_fixes(const digests_fixes_t& fixes) = 0;
+  virtual ~ScrubBeListener() = default;
+};
+
 
 /*
  * snaps-related aux structures:
@@ -301,23 +318,24 @@ struct scrub_chunk_t {
 class ScrubBackend {
  public:
   // Primary constructor
-  ScrubBackend(PgScrubber& scrubber,
-               PGBackend& backend,
-               PG& pg,
+  ScrubBackend(ScrubBeListener& scrubber,
+               //PGBackend& backend,
+               PgScrubBeListener& pg,
                pg_shard_t i_am,
                bool repair,
                scrub_level_t shallow_or_deep,
                const std::set<pg_shard_t>& acting);
 
   // Replica constructor: no primary map
-  ScrubBackend(PgScrubber& scrubber,
-               PGBackend& backend,
-               PG& pg,
+  ScrubBackend(ScrubBeListener& scrubber,
+               //PGBackend& backend,
+               PgScrubBeListener& pg,
                pg_shard_t i_am,
                bool repair,
                scrub_level_t shallow_or_deep);
 
   friend class PgScrubber;
+  friend class TestScrubBackend;
 
   /**
    * reset the per-chunk data structure (scrub_chunk_t).
@@ -355,7 +373,7 @@ class ScrubBackend {
 
   int scrub_process_inconsistent();
 
-  void repair_oinfo_oid(ScrubMap& smap);
+  // void repair_oinfo_oid(ScrubMap& smap);
 
   const omap_stat_t& this_scrub_omapstats() const { return m_omap_stats; }
 
@@ -365,9 +383,10 @@ class ScrubBackend {
 
  private:
   // set/constructed at the ctor():
-  PgScrubber& m_scrubber;
-  PGBackend& m_pgbe;
-  PG& m_pg;
+  ScrubBeListener& m_scrubber;
+  //PGBackend& m_pgbe;
+  //PG& m_pg;
+  Scrub::PgScrubBeListener& m_pg;
   const pg_shard_t m_pg_whoami;
   bool m_repair;
   const scrub_level_t m_depth;
