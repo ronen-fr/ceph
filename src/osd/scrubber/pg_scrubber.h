@@ -257,7 +257,8 @@ ostream& operator<<(ostream& out, const scrub_flags_t& sf);
  */
 class PgScrubber : public ScrubPgIF,
                    public ScrubMachineListener,
-                   public SnapMapperAccessor {
+                   public SnapMapperAccessor,
+                   public ScrubBeListener {
  public:
   explicit PgScrubber(PG* pg);
 
@@ -536,21 +537,32 @@ class PgScrubber : public ScrubPgIF,
   ostream& show(ostream& out) const override;
 
  public:
-  //  ------------------  the I/F used by the ScrubBackend (not named yet)  -------------
+  //  ------------------  the I/F used by the ScrubBackend (ScrubBeListener)  -------------
 
   // note: the reason we must have these forwarders, is because of the
   //  artificial PG vs. PrimaryLogPG distinction. Some of the services used
   //  by the scrubber backend are PrimaryLog-specific.
 
-  virtual void add_to_stats(const object_stat_sum_t& stat)
+  void add_to_stats(const object_stat_sum_t& stat) override
   {
     ceph_assert(0 && "expecting a PrimaryLogScrub object");
   }
 
-  virtual void submit_digest_fixes(const digests_fixes_t& fixes)
+  void submit_digest_fixes(const digests_fixes_t& fixes) override
   {
     ceph_assert(0 && "expecting a PrimaryLogScrub object");
   }
+
+  CephContext* get_pg_cct() const override { return m_pg->cct; }
+  CephContext* get_osd_cct() const override { return m_pg->cct; } // RRR
+
+  LogChannelRef get_logger() const override;
+
+  spg_t get_pgid() const override;
+
+  /// Returns reference to current osdmap
+  const OSDMapRef& get_osdmap() const override;
+
 
   // -------------------------------------------------------------------------------------
 
@@ -728,13 +740,8 @@ class PgScrubber : public ScrubPgIF,
   int num_digest_updates_pending{0};
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
-  /// Returns reference to current osdmap
-  const OSDMapRef& get_osdmap() const;
-
   /// Returns epoch of current osdmap
   epoch_t get_osdmap_epoch() const { return get_osdmap()->get_epoch(); }
-
-  CephContext* get_pg_cct() const { return m_pg->cct; }
 
   // collected statistics
   int m_shallow_errors{0};

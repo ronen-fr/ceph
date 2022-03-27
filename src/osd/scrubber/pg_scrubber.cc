@@ -2176,8 +2176,9 @@ const OSDMapRef& PgScrubber::get_osdmap() const
   return m_pg->get_osdmap();
 }
 
-ostream& operator<<(ostream& out, const PgScrubber& scrubber)
-{
+LogChannelRef PgScrubber::get_logger() const { return m_osds->clog; }
+
+ostream &operator<<(ostream &out, const PgScrubber &scrubber) {
   return out << scrubber.m_flags;
 }
 
