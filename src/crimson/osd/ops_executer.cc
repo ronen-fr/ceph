@@ -578,7 +578,7 @@ OpsExecuter::execute_op(OSDOp& osd_op)
     });
   case CEPH_OSD_OP_OMAPSETVALS:
 #if 0
-    if (!pg.get_pool().info.supports_omap()) {
+    if (!pg.get_pgpool().info.supports_omap()) {
       return crimson::ct_error::operation_not_supported::make();
     }
 #endif
@@ -587,7 +587,7 @@ OpsExecuter::execute_op(OSDOp& osd_op)
     }, true);
   case CEPH_OSD_OP_OMAPSETHEADER:
 #if 0
-    if (!pg.get_pool().info.supports_omap()) {
+    if (!pg.get_pgpool().info.supports_omap()) {
       return crimson::ct_error::operation_not_supported::make();
     }
 #endif
@@ -597,7 +597,7 @@ OpsExecuter::execute_op(OSDOp& osd_op)
     }, true);
   case CEPH_OSD_OP_OMAPRMKEYRANGE:
 #if 0
-    if (!pg.get_pool().info.supports_omap()) {
+    if (!pg.get_pgpool().info.supports_omap()) {
       return crimson::ct_error::operation_not_supported::make();
     }
 #endif
@@ -606,7 +606,7 @@ OpsExecuter::execute_op(OSDOp& osd_op)
     }, true);
   case CEPH_OSD_OP_OMAPRMKEYS:
     /** TODO: Implement supports_omap()
-    if (!pg.get_pool().info.supports_omap()) {
+    if (!pg.get_pgpool().info.supports_omap()) {
       return crimson::ct_error::operation_not_supported::make();
     }*/
     return do_write_op([&osd_op] (auto& backend, auto& os, auto& txn) {
@@ -644,7 +644,7 @@ OpsExecuter::execute_op(OSDOp& osd_op)
 
 // Defined here because there is a circular dependency between OpsExecuter and PG
 uint32_t OpsExecuter::get_pool_stripe_width() const {
-  return pg->get_pool().info.get_stripe_width();
+  return pg->get_pgpool().info.get_stripe_width();
 }
 
 // Defined here because there is a circular dependency between OpsExecuter and PG
@@ -838,7 +838,7 @@ static PG::interruptible_future<> do_pgnls(
   }
   const auto pg_start = pg.get_pgid().pgid.get_hobj_start();
   const auto pg_end = \
-    pg.get_pgid().pgid.get_hobj_end(pg.get_pool().info.get_pg_num());
+    pg.get_pgid().pgid.get_hobj_end(pg.get_pgpool().info.get_pg_num());
   return do_pgnls_common(pg_start,
                          pg_end,
                          pg.get_backend(),
@@ -882,7 +882,7 @@ static PG::interruptible_future<> do_pgnls_filtered(
   return seastar::do_with(std::move(filter),
     [&, lower_bound=std::move(lower_bound)](auto&& filter) {
       const auto pg_start = pg.get_pgid().pgid.get_hobj_start();
-      const auto pg_end = pg.get_pgid().pgid.get_hobj_end(pg.get_pool().info.get_pg_num());
+      const auto pg_end = pg.get_pgid().pgid.get_hobj_end(pg.get_pgpool().info.get_pg_num());
       return do_pgnls_common(pg_start,
                              pg_end,
                              pg.get_backend(),
@@ -967,7 +967,7 @@ static PG::interruptible_future<> do_pgls(
   }
   const auto pg_start = pg.get_pgid().pgid.get_hobj_start();
   const auto pg_end =
-    pg.get_pgid().pgid.get_hobj_end(pg.get_pool().info.get_pg_num());
+    pg.get_pgid().pgid.get_hobj_end(pg.get_pgpool().info.get_pg_num());
   return do_pgls_common(pg_start,
 			pg_end,
 			pg.get_backend(),
@@ -1011,7 +1011,7 @@ static PG::interruptible_future<> do_pgls_filtered(
   return seastar::do_with(std::move(filter),
     [&, lower_bound=std::move(lower_bound)](auto&& filter) {
       const auto pg_start = pg.get_pgid().pgid.get_hobj_start();
-      const auto pg_end = pg.get_pgid().pgid.get_hobj_end(pg.get_pool().info.get_pg_num());
+      const auto pg_end = pg.get_pgid().pgid.get_hobj_end(pg.get_pgpool().info.get_pg_num());
       return do_pgls_common(pg_start,
                             pg_end,
                             pg.get_backend(),
