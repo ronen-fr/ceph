@@ -25,7 +25,7 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 using namespace std::literals;
 
-#define dout_context (m_scrubber.m_osds->cct)
+#define dout_context (m_scrubber.get_osd_cct())
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 
@@ -40,7 +40,7 @@ std::ostream& ScrubBackend::logger_prefix(std::ostream* out,
 // ////////////////////////////////////////////////////////////////////////// //
 
 // for a Primary
-ScrubBackend::ScrubBackend(PgScrubber& scrubber,
+ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
                            PGBackend& backend,
                            PG& pg,
                            pg_shard_t i_am,
@@ -53,11 +53,11 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
     , m_pg_whoami{i_am}
     , m_repair{repair}
     , m_depth{shallow_or_deep}
-    , m_pg_id{scrubber.m_pg_id}
+    , m_pg_id{scrubber.get_pgid()}
     , m_pool{m_pg.get_pool()}
     , m_incomplete_clones_allowed{m_pool.info.allow_incomplete_clones()}
     , m_conf{m_scrubber.get_pg_cct()->_conf}
-    , clog{m_scrubber.m_osds->clog}
+    , clog{m_scrubber.get_logger()}
 {
   m_formatted_id = m_pg_id.calc_name_sring();
 
@@ -74,7 +74,7 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
 }
 
 // for a Replica
-ScrubBackend::ScrubBackend(PgScrubber& scrubber,
+ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
                            PGBackend& backend,
                            PG& pg,
                            pg_shard_t i_am,
@@ -86,10 +86,10 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
     , m_pg_whoami{i_am}
     , m_repair{repair}
     , m_depth{shallow_or_deep}
-    , m_pg_id{scrubber.m_pg_id}
+    , m_pg_id{scrubber.get_pgid()}
     , m_pool{m_pg.get_pool()}
     , m_conf{m_scrubber.get_pg_cct()->_conf}
-    , clog{m_scrubber.m_osds->clog}
+    , clog{m_scrubber.get_logger()}
 {
   m_formatted_id = m_pg_id.calc_name_sring();
   m_is_replicated = m_pool.info.is_replicated();
@@ -851,7 +851,7 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(
 
     this_chunk->m_inconsistent_objs.push_back(std::move(object_error));
     return fmt::format("{} soid {} : failed to pick suitable object info\n",
-                       m_scrubber.m_pg_id.pgid,
+                       m_scrubber.get_pgid().pgid,
                        ho);
   }
 

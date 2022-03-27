@@ -46,6 +46,7 @@
 #include <string_view>
 
 #include "common/LogClient.h"
+#include "osd/OSDMap.h"
 #include "common/scrub_types.h"
 
 struct ScrubMap;
@@ -82,6 +83,21 @@ struct error_counters_t {
   int shallow_errors{0};
   int deep_errors{0};
 };
+
+// the PgScrubber services used by the backend
+struct ScrubBeListener {
+  virtual std::ostream& gen_prefix(std::ostream& out) const = 0;
+  virtual CephContext* get_pg_cct() const = 0;
+  virtual CephContext* get_osd_cct() const = 0;
+  virtual LogChannelRef get_logger() const = 0;
+  virtual bool is_primary() const = 0;
+  virtual spg_t get_pgid() const = 0;
+  virtual const OSDMapRef& get_osdmap() const = 0;
+  virtual void add_to_stats(const object_stat_sum_t& stat) = 0;
+  virtual void submit_digest_fixes(const digests_fixes_t& fixes) = 0;
+  virtual ~ScrubBeListener() = default;
+};
+
 
 /*
  * snaps-related aux structures:
@@ -301,7 +317,7 @@ struct scrub_chunk_t {
 class ScrubBackend {
  public:
   // Primary constructor
-  ScrubBackend(PgScrubber& scrubber,
+  ScrubBackend(ScrubBeListener& scrubber,
                PGBackend& backend,
                PG& pg,
                pg_shard_t i_am,
@@ -310,7 +326,7 @@ class ScrubBackend {
                const std::set<pg_shard_t>& acting);
 
   // Replica constructor: no primary map
-  ScrubBackend(PgScrubber& scrubber,
+  ScrubBackend(ScrubBeListener& scrubber,
                PGBackend& backend,
                PG& pg,
                pg_shard_t i_am,
@@ -365,7 +381,7 @@ class ScrubBackend {
 
  private:
   // set/constructed at the ctor():
-  PgScrubber& m_scrubber;
+  ScrubBeListener& m_scrubber;
   PGBackend& m_pgbe;
   PG& m_pg;
   const pg_shard_t m_pg_whoami;
