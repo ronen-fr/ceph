@@ -20,6 +20,7 @@
 #include "PGStateUtils.h"
 #include "PGPeeringEvent.h"
 #include "osd_types.h"
+#include "osd_types_fmt.h"
 #include "os/ObjectStore.h"
 #include "OSDMap.h"
 #include "MissingLoc.h"
@@ -55,6 +56,39 @@ struct PGPool {
       return ceph::make_timespan(hbi * fac);
     }
   }
+};
+
+template <>
+struct fmt::formatter<PGPool> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    auto it = ctx.begin();
+    if (it != ctx.end()) {
+      include_snapset = (*it++) == 'l';
+    }
+    return it;
+  }
+
+  template <typename FormatContext>
+  auto format(const PGPool& pool, FormatContext& ctx)
+  {
+    if (include_snapset) {
+      return fmt::format_to(ctx.out(),
+                            "{}/{}({})",
+                            pool.id,
+                            pool.name,
+                            pool.info,
+                            0 /*pool.snapc*/);
+    }
+    return fmt::format_to(ctx.out(),
+                          "{}/{}({})",
+                          pool.id,
+                          pool.name,
+                          pool.info);
+  }
+
+  bool include_snapset{false};
 };
 
 struct PeeringCtx;
@@ -2136,7 +2170,7 @@ public:
     return last_rollback_info_trimmed_to_applied;
   }
   /// Returns stable reference to internal pool structure
-  const PGPool &get_pool() const {
+  const PGPool &get_pgpool() const {
     return pool;
   }
   /// Returns reference to current osdmap

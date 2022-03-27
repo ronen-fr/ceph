@@ -163,18 +163,7 @@ class PGRecoveryStats {
  *
  */
 
-/// Facilitating scrub-realated object access to private PG data
-class ScrubberPasskey {
-private:
-  friend class Scrub::ReplicaReservations;
-  friend class PrimaryLogScrub;
-  friend class PgScrubber;
-  ScrubberPasskey() {}
-  ScrubberPasskey(const ScrubberPasskey&) = default;
-  ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
-};
-
-class PG : public DoutPrefixProvider, public PeeringState::PeeringListener {
+class PG : public DoutPrefixProvider, public PeeringState::PeeringListener, public Scrub::PgScrubBeListener {
   friend struct NamedState;
   friend class PeeringState;
   friend class PgScrubber;
@@ -245,7 +234,7 @@ public:
     return pg_id;
   }
 
-  const PGPool& get_pool() const {
+  const PGPool& get_pgpool() const final {
     return pool;
   }
   uint64_t get_last_user_version() const {
@@ -346,7 +335,7 @@ public:
   int get_acting_primary() const {
     return recovery_state.get_acting_primary();
   }
-  pg_shard_t get_primary() const {
+  pg_shard_t get_primary() const override {
     return recovery_state.get_primary();
   }
   const std::vector<int> get_up() const {
@@ -1408,20 +1397,29 @@ protected:
   const pg_info_t &info;
 
 
-// ScrubberPasskey getters:
+// ScrubberPasskey getters/misc:
 public:
-  const pg_info_t& get_pg_info(ScrubberPasskey) const {
-    return info;
-  }
+ const pg_info_t& get_pg_info(ScrubberPasskey) const final { return info; }
 
-  OSDService* get_pg_osd(ScrubberPasskey) const {
-    return osd;
-  }
+ OSDService* get_pg_osd(ScrubberPasskey) const { return osd; }
 
-  requested_scrub_t& get_planned_scrub(ScrubberPasskey) {
-    return m_planned_scrub;
-  }
+ requested_scrub_t& get_planned_scrub(ScrubberPasskey)
+ {
+   return m_planned_scrub;
+ }
 
+ void force_object_missing(ScrubberPasskey,
+                           const std::set<pg_shard_t>& peer,
+                           const hobject_t& oid,
+                           eversion_t version) final
+ {
+   recovery_state.force_object_missing(peer, oid, version);
+ }
+
+ uint64_t logical_to_ondisk_size(uint64_t logical_size) const final
+ {
+   return get_pgbackend()->be_get_ondisk_size(logical_size);
+ }
 };
 
 #endif
