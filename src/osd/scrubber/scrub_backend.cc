@@ -25,7 +25,7 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 using namespace std::literals;
 
-#define dout_context (m_scrubber.m_osds->cct)
+#define dout_context (m_scrubber.get_pg_cct())
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 
@@ -40,24 +40,22 @@ std::ostream& ScrubBackend::logger_prefix(std::ostream* out,
 // ////////////////////////////////////////////////////////////////////////// //
 
 // for a Primary
-ScrubBackend::ScrubBackend(PgScrubber& scrubber,
-                           PGBackend& backend,
-                           PG& pg,
+ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
+                           PgScrubBeListener& pg,
                            pg_shard_t i_am,
                            bool repair,
                            scrub_level_t shallow_or_deep,
                            const std::set<pg_shard_t>& acting)
     : m_scrubber{scrubber}
-    , m_pgbe{backend}
     , m_pg{pg}
     , m_pg_whoami{i_am}
     , m_repair{repair}
     , m_depth{shallow_or_deep}
-    , m_pg_id{scrubber.m_pg_id}
-    , m_pool{m_pg.get_pool()}
+    , m_pg_id{scrubber.get_pgid()}
+    , m_pool{m_pg.get_pgpool()}
     , m_incomplete_clones_allowed{m_pool.info.allow_incomplete_clones()}
     , m_conf{m_scrubber.get_pg_cct()->_conf}
-    , clog{m_scrubber.m_osds->clog}
+    , clog{m_scrubber.get_logger()}
 {
   m_formatted_id = m_pg_id.calc_name_sring();
 
@@ -74,22 +72,20 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
 }
 
 // for a Replica
-ScrubBackend::ScrubBackend(PgScrubber& scrubber,
-                           PGBackend& backend,
-                           PG& pg,
+ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
+                           PgScrubBeListener& pg,
                            pg_shard_t i_am,
                            bool repair,
                            scrub_level_t shallow_or_deep)
     : m_scrubber{scrubber}
-    , m_pgbe{backend}
     , m_pg{pg}
     , m_pg_whoami{i_am}
     , m_repair{repair}
     , m_depth{shallow_or_deep}
-    , m_pg_id{scrubber.m_pg_id}
-    , m_pool{m_pg.get_pool()}
+    , m_pg_id{scrubber.get_pgid()}
+    , m_pool{m_pg.get_pgpool()}
     , m_conf{m_scrubber.get_pg_cct()->_conf}
-    , clog{m_scrubber.m_osds->clog}
+    , clog{m_scrubber.get_logger()}
 {
   m_formatted_id = m_pg_id.calc_name_sring();
   m_is_replicated = m_pool.info.is_replicated();
@@ -100,7 +96,7 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
 
 uint64_t ScrubBackend::logical_to_ondisk_size(uint64_t logical_size) const
 {
-  return m_pgbe.be_get_ondisk_size(logical_size);
+  return m_pg.logical_to_ondisk_size(logical_size);
 }
 
 void ScrubBackend::update_repair_status(bool should_repair)
@@ -311,53 +307,6 @@ void ScrubBackend::update_authoritative()
   }
 }
 
-void ScrubBackend::repair_oinfo_oid(ScrubMap& smap)
-{
-  for (auto i = smap.objects.rbegin(); i != smap.objects.rend(); ++i) {
-
-    const hobject_t& hoid = i->first;
-    ScrubMap::object& o = i->second;
-
-    if (o.attrs.find(OI_ATTR) == o.attrs.end()) {
-      continue;
-    }
-    bufferlist bl;
-    bl.push_back(o.attrs[OI_ATTR]);
-    object_info_t oi;
-    try {
-      oi.decode(bl);
-    } catch (...) {
-      continue;
-    }
-
-    if (oi.soid != hoid) {
-      ObjectStore::Transaction t;
-      OSDriver::OSTransaction _t(m_pg.osdriver.get_transaction(&t));
-
-      clog->error() << "osd." << m_pg_whoami
-                    << " found object info error on pg " << m_pg_id
-                    << " oid " << hoid << " oid in object info: " << oi.soid
-                    << "...repaired";
-      // Fix object info
-      oi.soid = hoid;
-      bl.clear();
-      encode(oi,
-             bl,
-             m_pg.get_osdmap()->get_features(CEPH_ENTITY_TYPE_OSD, nullptr));
-
-      bufferptr bp(bl.c_str(), bl.length());
-      o.attrs[OI_ATTR] = bp;
-
-      t.setattr(m_pg.coll, ghobject_t(hoid), OI_ATTR, bl);
-      int r = m_pg.osd->store->queue_transaction(m_pg.ch, std::move(t));
-      if (r != 0) {
-        derr << __func__ << ": queue_transaction got " << cpp_strerror(r)
-             << dendl;
-      }
-    }
-  }
-}
-
 int ScrubBackend::scrub_process_inconsistent()
 {
   dout(20) << fmt::format("{}: {} (m_repair:{}) good peers tbl #: {}",
@@ -438,13 +387,13 @@ void ScrubBackend::repair_object(const hobject_t& soid,
 
   if (bad_peers.count(m_pg.get_primary())) {
     // We should only be scrubbing if the PG is clean.
-    ceph_assert(m_pg.waiting_for_unreadable_object.empty());
+    ceph_assert(!m_pg.is_waiting_for_unreadable_object());
     dout(10) << __func__ << ": primary = " << m_pg.get_primary() << dendl;
   }
 
   // No need to pass ok_peers, they must not be missing the object, so
   // force_object_missing will add them to missing_loc anyway
-  m_pg.recovery_state.force_object_missing(bad_peers, soid, oi.version);
+  m_pg.force_object_missing(ScrubberPasskey{}, bad_peers, soid, oi.version);
 }
 
 
@@ -851,7 +800,7 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(
 
     this_chunk->m_inconsistent_objs.push_back(std::move(object_error));
     return fmt::format("{} soid {} : failed to pick suitable object info\n",
-                       m_scrubber.m_pg_id.pgid,
+                       m_scrubber.get_pgid().pgid,
                        ho);
   }
 
@@ -1449,7 +1398,8 @@ static inline bool doing_clones(
 void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
 {
   dout(10) << __func__ << " num stat obj "
-           << m_pg.info.stats.stats.sum.num_objects << dendl;
+	   << m_pg.get_pg_info(ScrubberPasskey{}).stats.stats.sum.num_objects
+	   << dendl;
 
   std::optional<snapid_t> all_clones;  // Unspecified snapid_t or std::nullopt
 
