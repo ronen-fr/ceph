@@ -2136,7 +2136,7 @@ public:
     return last_rollback_info_trimmed_to_applied;
   }
   /// Returns stable reference to internal pool structure
-  const PGPool &get_pool() const {
+  const PGPool &get_pgpool() const {
     return pool;
   }
   /// Returns reference to current osdmap

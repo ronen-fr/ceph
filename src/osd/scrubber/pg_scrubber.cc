@@ -534,9 +534,9 @@ PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
   } else {
     res.proposed_time = m_pg->info.history.last_scrub_stamp;
     res.min_interval =
-      m_pg->get_pool().info.opts.value_or(pool_opts_t::SCRUB_MIN_INTERVAL, 0.0);
+      m_pg->get_pgpool().info.opts.value_or(pool_opts_t::SCRUB_MIN_INTERVAL, 0.0);
     res.max_interval =
-      m_pg->get_pool().info.opts.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
+      m_pg->get_pgpool().info.opts.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
   }
 
   dout(15) << __func__ << " suggested: " << res.proposed_time << " hist: "
