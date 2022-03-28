@@ -48,14 +48,15 @@
 #include "common/LogClient.h"
 #include "osd/OSDMap.h"
 #include "common/scrub_types.h"
+#include "osd/scrubber_common.h"
 
 struct ScrubMap;
 
 class PG;
 class PgScrubber;
-class PGBackend;
-class PGPool;
-
+//class PGBackend;
+struct PGPool;
+using Scrub::PgScrubBeListener;
 
 using data_omap_digests_t =
   std::pair<std::optional<uint32_t>, std::optional<uint32_t>>;
@@ -318,8 +319,8 @@ class ScrubBackend {
  public:
   // Primary constructor
   ScrubBackend(ScrubBeListener& scrubber,
-               PGBackend& backend,
-               PG& pg,
+               //PGBackend& backend,
+               PgScrubBeListener& pg,
                pg_shard_t i_am,
                bool repair,
                scrub_level_t shallow_or_deep,
@@ -327,8 +328,8 @@ class ScrubBackend {
 
   // Replica constructor: no primary map
   ScrubBackend(ScrubBeListener& scrubber,
-               PGBackend& backend,
-               PG& pg,
+               //PGBackend& backend,
+               PgScrubBeListener& pg,
                pg_shard_t i_am,
                bool repair,
                scrub_level_t shallow_or_deep);
@@ -371,7 +372,7 @@ class ScrubBackend {
 
   int scrub_process_inconsistent();
 
-  void repair_oinfo_oid(ScrubMap& smap);
+  // void repair_oinfo_oid(ScrubMap& smap);
 
   const omap_stat_t& this_scrub_omapstats() const { return m_omap_stats; }
 
@@ -382,8 +383,9 @@ class ScrubBackend {
  private:
   // set/constructed at the ctor():
   ScrubBeListener& m_scrubber;
-  PGBackend& m_pgbe;
-  PG& m_pg;
+  //PGBackend& m_pgbe;
+  //PG& m_pg;
+  Scrub::PgScrubBeListener& m_pg;
   const pg_shard_t m_pg_whoami;
   bool m_repair;
   const scrub_level_t m_depth;
