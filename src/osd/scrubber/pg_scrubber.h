@@ -558,7 +558,8 @@ class PgScrubber : public ScrubPgIF,
 
   LogChannelRef get_logger() const override;
 
-  spg_t get_pgid() const override;
+  // RRR compare with how the scrubber fsm gets this info
+  spg_t get_pgid() const override { return m_pg->get_pgid(); }
 
   /// Returns reference to current osdmap
   const OSDMapRef& get_osdmap() const override;
@@ -681,6 +682,8 @@ class PgScrubber : public ScrubPgIF,
   const pg_shard_t m_pg_whoami;	 ///< a local copy of m_pg->pg_whoami;
 
   epoch_t m_interval_start{0};  ///< interval's 'from' of when scrubbing was first scheduled
+
+  void repair_oinfo_oid(ScrubMap& smap);
 
   /*
    * the exact epoch when the scrubbing actually started (started here - cleared checks
