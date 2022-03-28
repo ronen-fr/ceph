@@ -1068,6 +1068,7 @@ class TestBootstrap(object):
             '--allow-mismatched-release',
             '--skip-prepare-host',
             '--skip-dashboard',
+            '--yes-i-know',
             *args,
         ]
 

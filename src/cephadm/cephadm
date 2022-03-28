@@ -4404,6 +4404,11 @@ def _distribute_ssh_keys(ctx: CephadmContext, host_spec: Dict[str, str], bootstr
 @default_image
 def command_bootstrap(ctx):
     # type: (CephadmContext) -> int
+    if not ctx.yes_i_know:
+        raise Error('This release of Red Hat Ceph Storage does not allow installing for rgw multisite configuration, please see\n'
+                    'the following knowledge base article for additional details: https://access.redhat.com/articles/6850761\n'
+                    'If you do not plan to use rgw multisite or are okay with the regressions, rerun the bootstrap command with\n'
+                    'the flag "--yes-i-know" for it to run normally.')
 
     if not ctx.output_config:
         ctx.output_config = os.path.join(ctx.output_dir, 'ceph.conf')
@@ -4579,6 +4584,8 @@ def command_bootstrap(ctx):
         cli(['config-key', 'set', 'mgr/cephadm/registry_credentials', json.dumps(registry_credentials)])
 
     cli(['config', 'set', 'mgr', 'mgr/cephadm/container_init', str(ctx.container_init), '--force'])
+    if ctx.yes_i_know:
+        cli(['config', 'set', 'mgr', 'mgr/cephadm/yes_i_know', 'true', '--force'])
 
     if ctx.with_exporter:
         cli(['config-key', 'set', 'mgr/cephadm/exporter_enabled', 'true'])
@@ -8382,6 +8389,10 @@ def _get_parser():
         '--skip-admin-label',
         action='store_true',
         help='do not create admin label for ceph.conf and client.admin keyring distribution')
+    parser_bootstrap.add_argument(
+        '--yes-i-know',
+        action='store_true',
+        help='Set if you are aware of multisite regressions in this version of RHCS')
     parser_bootstrap.add_argument(
         '--skip-ssh',
         action='store_true',
