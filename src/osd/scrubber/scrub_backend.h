@@ -335,6 +335,7 @@ class ScrubBackend {
                scrub_level_t shallow_or_deep);
 
   friend class PgScrubber;
+  friend class TestScrubBackend;
 
   /**
    * reset the per-chunk data structure (scrub_chunk_t).

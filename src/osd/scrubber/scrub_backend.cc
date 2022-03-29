@@ -41,14 +41,12 @@ std::ostream& ScrubBackend::logger_prefix(std::ostream* out,
 
 // for a Primary
 ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
-                           //PGBackend& backend,
                            PgScrubBeListener& pg,
                            pg_shard_t i_am,
                            bool repair,
                            scrub_level_t shallow_or_deep,
                            const std::set<pg_shard_t>& acting)
     : m_scrubber{scrubber}
-    //, m_pgbe{backend}
     , m_pg{pg}
     , m_pg_whoami{i_am}
     , m_repair{repair}
@@ -75,13 +73,11 @@ ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
 
 // for a Replica
 ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
-                           //PGBackend& backend,
                            PgScrubBeListener& pg,
                            pg_shard_t i_am,
                            bool repair,
                            scrub_level_t shallow_or_deep)
     : m_scrubber{scrubber}
-    //, m_pgbe{backend}
     , m_pg{pg}
     , m_pg_whoami{i_am}
     , m_repair{repair}
