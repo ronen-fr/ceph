@@ -122,20 +122,31 @@ class TestScrubber : public ScrubBeListener {
 
 
   std::ostream& gen_prefix(std::ostream& out) const final { return out; }
+
   CephContext* get_pg_cct() const final { return g_ceph_context; }
+
   CephContext* get_osd_cct() const final { return g_ceph_context; }
-  LogChannelRef get_logger() const final;
+
+  LogChannelRef get_logger() const final
+  { /* RRR */
+    return m_logger;
+  }
+
   bool is_primary() const final { return m_primary; }
-  spg_t get_pgid() const final;
+
+  spg_t get_pgid() const final { return m_info.pgid; }
+
   const OSDMapRef& get_osdmap() const final { return m_osdmap; }
+
   void add_to_stats(const object_stat_sum_t& stat) final { m_stats.add(stat); }
+
   void submit_digest_fixes(const digests_fixes_t& fixes) final {}
 
 
   bool m_primary{true};
   spg_t m_spg;
   // CephContext* m_cct;
-  LogChannelRef m_logger;
+  LogChannelRef m_logger{nullptr};
   OSDMapRef m_osdmap;
   pg_info_t m_info;
   object_stat_sum_t m_stats;
@@ -151,7 +162,7 @@ struct TestTScrubberBeParams {
   bool m_primary{true};
   bool m_repair{false};
   scrub_level_t m_shallow_or_deep{scrub_level_t::deep};
-  std::set<pg_shard_t> m_acting{0,1,2};
+  // std::set<pg_shard_t> m_acting{0,1,2};
 };
 
 // note: the actual owner of the OSD "objects" that are used by
@@ -159,19 +170,27 @@ struct TestTScrubberBeParams {
 class TestTScrubberBe : public ::testing::Test {
  public:
   TestTScrubberBe(/*spg_t spg, pg_shard_t me, std::set<pg_shard_t> acting*/)
-      : i_am{me}
-      , acting{acting}
   {
     // create the OSDMap
 
     osdmap = setup_map(num_osds, pool_conf);
 
+    std::cout << "osdmap: " << osdmap << std::endl;
+
     // extract the pool from the osdmap
 
-    int64_t pid = osdmap->lookup_pg_pool_name(pool_conf.name);
+    pool_id = osdmap->lookup_pg_pool_name(pool_conf.name);
     const pg_pool_t* ext_pool_info = osdmap->get_pg_pool(pool_id);
+    pool = std::make_shared<PGPool>(osdmap,
+                                    i_am.shard.id,
+                                    *ext_pool_info,
+                                    pool_conf.name);
 
-    pool = std::make_shared<PGPool>(osdmap, ext_pool_info, pool_conf.name);
+    std::cout << "pool: " << pool << std::endl;
+
+    // a PG in that pool?
+    info = setup_pg_in_map();
+    std::cout << "info: " << info << std::endl;
 
     // now we can create the main mockers
 
@@ -179,8 +198,10 @@ class TestTScrubberBe : public ::testing::Test {
     test_scrubber = std::make_unique<TestScrubber>(spg, osdmap, logger);
 
     // the "Pg" (and its backend)
-    test_pg = std::make_unique<TestPg>(pool, test_scrubber->get_pg_info(), me);
+    test_pg = std::make_unique<TestPg>(pool, info, i_am);
   }
+
+  ~TestTScrubberBe() = default;
 
   void SetUp() override;
   void TearDown() override;
@@ -193,7 +214,9 @@ class TestTScrubberBe : public ::testing::Test {
   int num_osds{3};
   // std::string pool_name{"rep_pool"};
 
-  pg_shard_t i_am;
+  spg_t spg;
+
+  pg_shard_t i_am{0};
   std::set<pg_shard_t> acting;
 
   test_pool_conf_t pool_conf;
@@ -207,7 +230,7 @@ class TestTScrubberBe : public ::testing::Test {
   pg_info_t info;
 
 
-  //CephContext* cct{nullptr};
+  // CephContext* cct{nullptr};
   std::unique_ptr<TestScrubber> test_scrubber;
   LogChannelRef logger;
   std::unique_ptr<TestPg> test_pg;
@@ -264,7 +287,6 @@ OSDMapRef TestTScrubberBe::setup_map(int num_osds,
 
 pg_info_t TestTScrubberBe::setup_pg_in_map()
 {
-  pg_info_t info;
 
   pg_t rawpg(0, pool_id);
   pg_t pgid = osdmap->raw_pg_to_pg(rawpg);
@@ -279,46 +301,54 @@ pg_info_t TestTScrubberBe::setup_pg_in_map()
                                &acting_osds,
                                &acting_primary);
 
+  std::cout << fmt::format(
+    "{}: up_osds: {} up_primary: {} acting_osds: {} acting_primary: {}\n",
+    __func__,
+    1,
+    2,
+    3,
+    4);
 
-  /*
-          info.pgid = spg;
-          info.last_update = osdmap->get_epoch();
-          info.last_complete = osdmap->get_epoch();
-          info.last_user_version = 1;
-          info.purged_snaps = {};
-          info.last_user_version = 1;
-          info.last_osdmap_epoch = osdmap->get_epoch();
-          info.history.last_epoch_clean = osdmap->get_epoch();
-          info.history.last_epoch_split = osdmap->get_epoch();
-          info.history.last_epoch_marked_full = osdmap->get_epoch();
-          info.history.last_epoch_marked_removed = osdmap->get_epoch();
-          info.last_backfill = hobject_t::get_max();
-          info.stats.stats.sum.num_objects_degraded = 0;
-          info.stats.stats.sum.num_objects_misplaced = 0;
-          info.stats.stats.sum.num_objects_unfound = 0;
-          info.stats.stats.sum.num_bytes_used = 0;
-          info.stats.stats.sum.num_bytes = 0;
-          info.stats.stats.sum.num_objects = 0;
-          info.stats.stats.sum.num_object_clones = 0;
-          info.stats.stats.sum.num_object_copies = 0;
-          info.stats.stats.sum.num_objects_missing_on_primary = 0;
-          info.stats.stats.sum.num_objects_degraded = 0;
-          info.stats.stats.sum.num_objects_misplaced = 0;
-          info.stats.stats.sum.num_objects_unfound = 0;
-          info.stats.stats.sum.num_bytes_used = 0;
-          info.stats.stats.sum.num_bytes = 0;
-          info.stats.stats.sum.num_objects = 0;
-  */
+  spg = spg_t{pgid, shard_id_t{static_cast<int8_t>(acting_primary)}};
+  std::cout << fmt::format("{}: spg: {}\n", __func__, spg);
+  pg_info_t info;
+
+  info.pgid = spg;
+  // info.last_update = osdmap->get_epoch();
+  // info.last_complete = osdmap->get_epoch();
+  info.last_user_version = 1;
+  info.purged_snaps = {};
+  info.last_user_version = 1;
+  // info.last_osdmap_epoch = osdmap->get_epoch();
+  info.history.last_epoch_clean = osdmap->get_epoch();
+  info.history.last_epoch_split = osdmap->get_epoch();
+  info.history.last_epoch_marked_full = osdmap->get_epoch();
+  // info.history.last_epoch_marked_removed = osdmap->get_epoch();
+  info.last_backfill = hobject_t::get_max();
+  info.stats.stats.sum.num_objects_degraded = 0;
+  info.stats.stats.sum.num_objects_misplaced = 0;
+  info.stats.stats.sum.num_objects_unfound = 0;
+  info.stats.stats.sum.num_objects = 0;
+  info.stats.stats.sum.num_object_clones = 0;
+  info.stats.stats.sum.num_object_copies = 0;
+  info.stats.stats.sum.num_objects_missing_on_primary = 0;
+  info.stats.stats.sum.num_objects_degraded = 0;
+  info.stats.stats.sum.num_objects_misplaced = 0;
+  info.stats.stats.sum.num_objects_unfound = 0;
+  // info.stats.stats.sum.num_bytes_used = 0;
+  info.stats.stats.sum.num_bytes = 0;
+  info.stats.stats.sum.num_objects = 0;
+  return info;
 }
 
 void TestTScrubberBe::SetUp()
 {
-  sbe = std::make_unique<TestScrubBackend>(test_scrubber,
-                                           test_pg,
-                                           i_am,
-                                           false,
-                                           scrub_level_t::deep,
-                                           acting);
+  //   sbe = std::make_unique<TestScrubBackend>(test_scrubber,
+  //                                            test_pg,
+  //                                            i_am,
+  //                                            false,
+  //                                            scrub_level_t::deep,
+  //                                            acting);
 }
 
 void TestTScrubberBe::TearDown() {}
@@ -330,16 +360,15 @@ TEST_F(TestTScrubberBe, creation_1)
   // copy some osdmap tests from TestOSDMap.cc
 
 
-
-  ASSERT_TRUE(sbe);
-  ASSERT_FALSE(sbe->get_m_repair());
-  sbe->update_repair_status(true);
-  ASSERT_TRUE(sbe->get_m_repair());
+  //   ASSERT_TRUE(sbe);
+  //   ASSERT_FALSE(sbe->get_m_repair());
+  //   sbe->update_repair_status(true);
+  //   ASSERT_TRUE(sbe->get_m_repair());
 }
 
 
 // whitebox testing (OK if failing after a change to the backend internals)
-.
+
 
 // blackbox testing - testing the published functionality
 // (should not depend on internals of the backend)
