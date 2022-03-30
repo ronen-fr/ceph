@@ -79,10 +79,10 @@ class TestPg : public PgScrubBeListener {
  public:
   ~TestPg() = default;
 
-  TestPg(SharedPGPool pool, pg_info_t& pginfo, pg_shard_t pshard)
+  TestPg(SharedPGPool pool, pg_info_t& pginfo, pg_shard_t my_osd)
       : m_pool{pool}
       , m_info{pginfo}
-      , m_pshard{pshard}
+      , m_pshard{my_osd}
   {}
 
 
@@ -122,20 +122,30 @@ class TestScrubber : public ScrubBeListener {
 
 
   std::ostream& gen_prefix(std::ostream& out) const final { return out; }
+
   CephContext* get_pg_cct() const final { return g_ceph_context; }
+
   CephContext* get_osd_cct() const final { return g_ceph_context; }
-  LogChannelRef get_logger() const final;
+
+  LogChannelRef get_logger() const final
+  { /* RRR */
+    return m_logger;
+  }
+
   bool is_primary() const final { return m_primary; }
-  spg_t get_pgid() const final;
+
+  spg_t get_pgid() const final { return m_info.pgid; }
+
   const OSDMapRef& get_osdmap() const final { return m_osdmap; }
+
   void add_to_stats(const object_stat_sum_t& stat) final { m_stats.add(stat); }
+
   void submit_digest_fixes(const digests_fixes_t& fixes) final {}
 
 
   bool m_primary{true};
   spg_t m_spg;
-  // CephContext* m_cct;
-  LogChannelRef m_logger;
+  LogChannelRef m_logger{nullptr};
   OSDMapRef m_osdmap;
   pg_info_t m_info;
   object_stat_sum_t m_stats;
@@ -151,27 +161,33 @@ struct TestTScrubberBeParams {
   bool m_primary{true};
   bool m_repair{false};
   scrub_level_t m_shallow_or_deep{scrub_level_t::deep};
-  std::set<pg_shard_t> m_acting{0,1,2};
+  // std::set<pg_shard_t> m_acting{0,1,2};
 };
 
 // note: the actual owner of the OSD "objects" that are used by
 // the mockers
 class TestTScrubberBe : public ::testing::Test {
  public:
-  TestTScrubberBe(/*spg_t spg, pg_shard_t me, std::set<pg_shard_t> acting*/)
-      : i_am{me}
-      , acting{acting}
+  TestTScrubberBe()
   {
     // create the OSDMap
 
     osdmap = setup_map(num_osds, pool_conf);
 
+    std::cout << "osdmap: " << *osdmap << std::endl;
+
     // extract the pool from the osdmap
 
-    int64_t pid = osdmap->lookup_pg_pool_name(pool_conf.name);
+    pool_id = osdmap->lookup_pg_pool_name(pool_conf.name);
     const pg_pool_t* ext_pool_info = osdmap->get_pg_pool(pool_id);
+    pool =
+      std::make_shared<PGPool>(osdmap, pool_id, *ext_pool_info, pool_conf.name);
 
-    pool = std::make_shared<PGPool>(osdmap, ext_pool_info, pool_conf.name);
+    std::cout << "pool: " << pool->info << std::endl;
+
+    // a PG in that pool?
+    info = setup_pg_in_map();
+    std::cout << "info: " << info << std::endl;
 
     // now we can create the main mockers
 
@@ -179,8 +195,10 @@ class TestTScrubberBe : public ::testing::Test {
     test_scrubber = std::make_unique<TestScrubber>(spg, osdmap, logger);
 
     // the "Pg" (and its backend)
-    test_pg = std::make_unique<TestPg>(pool, test_scrubber->get_pg_info(), me);
+    test_pg = std::make_unique<TestPg>(pool, info, i_am);
   }
+
+  ~TestTScrubberBe() = default;
 
   void SetUp() override;
   void TearDown() override;
@@ -193,7 +211,9 @@ class TestTScrubberBe : public ::testing::Test {
   int num_osds{3};
   // std::string pool_name{"rep_pool"};
 
-  pg_shard_t i_am;
+  spg_t spg;
+
+  pg_shard_t i_am;  // my osd and no shard
   std::set<pg_shard_t> acting;
 
   test_pool_conf_t pool_conf;
@@ -207,7 +227,7 @@ class TestTScrubberBe : public ::testing::Test {
   pg_info_t info;
 
 
-  //CephContext* cct{nullptr};
+  // CephContext* cct{nullptr};
   std::unique_ptr<TestScrubber> test_scrubber;
   LogChannelRef logger;
   std::unique_ptr<TestPg> test_pg;
@@ -264,7 +284,6 @@ OSDMapRef TestTScrubberBe::setup_map(int num_osds,
 
 pg_info_t TestTScrubberBe::setup_pg_in_map()
 {
-  pg_info_t info;
 
   pg_t rawpg(0, pool_id);
   pg_t pgid = osdmap->raw_pg_to_pg(rawpg);
@@ -279,719 +298,82 @@ pg_info_t TestTScrubberBe::setup_pg_in_map()
                                &acting_osds,
                                &acting_primary);
 
+  std::cout << fmt::format(
+    "{}: pg: {} up_osds: {} up_primary: {} acting_osds: {} acting_primary: "
+    "{}\n",
+    __func__,
+    pgid,
+    up_osds,
+    up_primary,
+    acting_osds,
+    acting_primary);
 
-  /*
-          info.pgid = spg;
-          info.last_update = osdmap->get_epoch();
-          info.last_complete = osdmap->get_epoch();
-          info.last_user_version = 1;
-          info.purged_snaps = {};
-          info.last_user_version = 1;
-          info.last_osdmap_epoch = osdmap->get_epoch();
-          info.history.last_epoch_clean = osdmap->get_epoch();
-          info.history.last_epoch_split = osdmap->get_epoch();
-          info.history.last_epoch_marked_full = osdmap->get_epoch();
-          info.history.last_epoch_marked_removed = osdmap->get_epoch();
-          info.last_backfill = hobject_t::get_max();
-          info.stats.stats.sum.num_objects_degraded = 0;
-          info.stats.stats.sum.num_objects_misplaced = 0;
-          info.stats.stats.sum.num_objects_unfound = 0;
-          info.stats.stats.sum.num_bytes_used = 0;
-          info.stats.stats.sum.num_bytes = 0;
-          info.stats.stats.sum.num_objects = 0;
-          info.stats.stats.sum.num_object_clones = 0;
-          info.stats.stats.sum.num_object_copies = 0;
-          info.stats.stats.sum.num_objects_missing_on_primary = 0;
-          info.stats.stats.sum.num_objects_degraded = 0;
-          info.stats.stats.sum.num_objects_misplaced = 0;
-          info.stats.stats.sum.num_objects_unfound = 0;
-          info.stats.stats.sum.num_bytes_used = 0;
-          info.stats.stats.sum.num_bytes = 0;
-          info.stats.stats.sum.num_objects = 0;
-  */
+  spg = spg_t{pgid};  // 0 /*static_cast<int8_t>(acting_primary)}};
+  i_am = pg_shard_t{up_primary};
+  std::cout << fmt::format("{}: spg: {}  and I am {}\n", __func__, spg, i_am);
+
+  pg_info_t info;
+  info.pgid = spg;
+  // info.last_update = osdmap->get_epoch();
+  // info.last_complete = osdmap->get_epoch();
+  info.last_user_version = 1;
+  info.purged_snaps = {};
+  info.last_user_version = 1;
+  // info.last_osdmap_epoch = osdmap->get_epoch();
+  info.history.last_epoch_clean = osdmap->get_epoch();
+  info.history.last_epoch_split = osdmap->get_epoch();
+  info.history.last_epoch_marked_full = osdmap->get_epoch();
+  // info.history.last_epoch_marked_removed = osdmap->get_epoch();
+  info.last_backfill = hobject_t::get_max();
+  info.stats.stats.sum.num_objects_degraded = 0;
+  info.stats.stats.sum.num_objects_misplaced = 0;
+  info.stats.stats.sum.num_objects_unfound = 0;
+  info.stats.stats.sum.num_objects = 0;
+  info.stats.stats.sum.num_object_clones = 0;
+  info.stats.stats.sum.num_object_copies = 0;
+  info.stats.stats.sum.num_objects_missing_on_primary = 0;
+  info.stats.stats.sum.num_objects_degraded = 0;
+  info.stats.stats.sum.num_objects_misplaced = 0;
+  info.stats.stats.sum.num_objects_unfound = 0;
+  // info.stats.stats.sum.num_bytes_used = 0;
+  info.stats.stats.sum.num_bytes = 0;
+  info.stats.stats.sum.num_objects = 0;
+  return info;
 }
 
 void TestTScrubberBe::SetUp()
 {
-  sbe = std::make_unique<TestScrubBackend>(test_scrubber,
-                                           test_pg,
-                                           i_am,
-                                           false,
-                                           scrub_level_t::deep,
-                                           acting);
+    sbe = std::make_unique<TestScrubBackend>(*test_scrubber,
+                                             *test_pg,
+                                             i_am,
+                                             /* repair? */ false,
+                                             scrub_level_t::deep,
+                                             acting);
 }
 
 void TestTScrubberBe::TearDown() {}
 
 // some basic sanity checks
+// (mainly testing the constructor)
 
 TEST_F(TestTScrubberBe, creation_1)
 {
   // copy some osdmap tests from TestOSDMap.cc
 
 
-
   ASSERT_TRUE(sbe);
-  ASSERT_FALSE(sbe->get_m_repair());
-  sbe->update_repair_status(true);
-  ASSERT_TRUE(sbe->get_m_repair());
+  //   ASSERT_FALSE(sbe->get_m_repair());
+  //   sbe->update_repair_status(true);
+  //   ASSERT_TRUE(sbe->get_m_repair());
 }
 
 
 // whitebox testing (OK if failing after a change to the backend internals)
-.
+
 
 // blackbox testing - testing the published functionality
 // (should not depend on internals of the backend)
 
-
-#if 0
-class TestOSDScrub : public OSD {
-
-  //  public:
-  //   static std::unique_ptr<TestOSDScrub> create(int osd_id);
-
- public:
-  TestOSDScrub(std::unique_ptr<ObjectStore> store,
-               int id,
-               Messenger* msgrs,
-               Messenger* osdc_messenger,
-               MonClient* mc,
-               const std::string& dev,
-               const std::string& jdev,
-               ceph::async::io_context_pool& ictx)
-      : OSD(g_ceph_context,
-            std::move(store),
-            id,
-            msgrs,
-            msgrs,
-            msgrs,
-            msgrs,
-            msgrs,
-            msgrs,
-            osdc_messenger,
-            mc,
-            dev,
-            jdev,
-            ictx)
-
-  {}
-
-  bool scrub_time_permit(utime_t now)
-  {
-    return service.get_scrub_services().scrub_time_permit(now);
-  }
-};
-
-using test_osd_t = std::unique_ptr<TestOSDScrub>;
-
-class TestTScrubberBe : public ::testing::Test {
- public:
-  // TestTScrubberBe(int num_osd) {}  // for now - handle only 1
-
-  void SetUp() override;
-  void TearDown() override;
-
-  //~TestTScrubberBe() { m_osd.reset() ; }
- public:
-  std::string cluster_msgr_type{g_conf()->ms_cluster_type.empty()
-                                  ? g_conf().get_val<std::string>("ms_type")
-                                  : g_conf()->ms_cluster_type};
-  //   Messenger* ms = Messenger::create(g_ceph_context,
-  //                                     cluster_msgr_type,
-  //                                     entity_name_t::OSD(0), // verify the '0'
-  //                                     "make_checker",
-  //                                     getpid());
-
-  ceph::async::io_context_pool m_icp{1};
-  std::unique_ptr<ObjectStore> m_store;
-
-  MonClient* mc;
-
-  test_osd_t m_osd;
-
-  test_osd_t create_member_osd(int osd_id);
-};
-
-
-void TestTScrubberBe::SetUp()
-{
-
-  g_ceph_context->_conf.set_val("osd_fast_shutdown", "false");
-  //16:03//g_ceph_context->_conf.set_val("osd_fast_shutdown", "0");
-  m_osd = create_member_osd(0);
-}
-
-void TestTScrubberBe::TearDown()
-{
-  //delete mc;
-  //std::cout << "TearDown" << std::endl;
-  //sleep(2);
-  // m_osd->shutdown();
-  //m_icp.finish();
-  //std::cout << "micp" << std::endl;
-  //sleep(2);
-  // must not: not started m_osd->service.agent_stop();
-  //m_osd->shutdown();
-  std::cout << "stop" << std::endl;
-   m_icp.finish();
-  sleep(1);
-  try {
-    //m_osd->shutdown();
-    m_osd.reset();
-  } catch (...) {
-    std::cout << "exception" << std::endl;
-  }
-  //EXPECT_EXIT(m_osd.reset(),  ::testing::ExitedWithCode(0), "osd down");
-  //auto xxx = m_osd.release();
-  std::cout << "mosd" << std::endl;
-  sleep(2);
-}
-
-#if 0
-void TestTScrubberBe::TearDown()
-{
-  //delete mc;
-  //std::cout << "TearDown" << std::endl;
-  //sleep(2);
-  // m_osd->shutdown();
-  m_icp.finish();
-  //std::cout << "micp" << std::endl;
-  sleep(2);
-  // must not: not started m_osd->service.agent_stop();
-  m_osd->shutdown();
-  std::cout << "stop" << std::endl;
-  sleep(2);
-  m_osd.reset();
-  std::cout << "mosd" << std::endl;
-  sleep(2);
-}
-
-void TestTScrubberBe::TearDown()
-{
-  delete mc;
-  std::cout << "TearDown" << std::endl;
-  sleep(2);
-  // m_osd->shutdown();
-  m_icp.finish();
-  std::cout << "micp" << std::endl;
-  sleep(2);
-  // must not: not started m_osd->service.agent_stop();
-  m_osd->shutdown();
-  std::cout << "stop" << std::endl;
-  sleep(2);
-  m_osd.reset();
-  std::cout << "mosd" << std::endl;
-  sleep(2);
-}
-#endif
-
-test_osd_t TestTScrubberBe::create_member_osd(int osd_id)
-{
-  // create a new ObjectStore
-  m_store = ObjectStore::create(g_ceph_context,
-                                g_conf()->osd_objectstore,
-                                g_conf()->osd_data,
-                                g_conf()->osd_journal);
-
-  // will we need access to the messenger?
-  Messenger* ms = Messenger::create(g_ceph_context,
-                                    cluster_msgr_type,
-                                    entity_name_t::OSD(0),  // verify the '0'
-                                    "make_checker",
-                                    getpid());
-
-  ms->set_cluster_protocol(CEPH_OSD_PROTOCOL);
-  ms->set_default_policy(Messenger::Policy::stateless_server(0));
-  ms->bind(g_conf()->public_addr);
-
-  mc = new MonClient(g_ceph_context, m_icp);
-  mc->build_initial_monmap();
-
-
-  // create a new OSD
-  return std::make_unique<TestOSDScrub>(std::move(m_store),
-                                        osd_id,
-                                        ms,
-                                        ms,
-                                        mc,
-                                        g_conf()->osd_data,
-                                        g_conf()->osd_journal,
-                                        m_icp);
-}
-
-
-TEST_F(TestTScrubberBe, tac)
-{
-  // TestTScrubberBe* sbt = new TestTScrubberBe(1);
-
-
-  ASSERT_TRUE(m_osd);
-
-  // sbt.m_osd->shutdown();
-  // sbt->m_osd.reset();
-  // delete sbt.mc;
-  sleep(1);
-  // sbt.m_icp.stop();
-  // sleep(2);
-  ASSERT_TRUE(true);
-}
-
-TEST_F(TestTScrubberBe, tac2)
-{
-  // TestTScrubberBe* sbt = new TestTScrubberBe(1);
-
-
-  ASSERT_TRUE(m_osd);
-
-  // sbt.m_osd->shutdown();
-  // sbt->m_osd.reset();
-  // delete sbt.mc;
-  sleep(1);
-  // sbt.m_icp.stop();
-  // sleep(2);
-  ASSERT_TRUE(true);
-}
-
-
-#if 0
-// GOOD!
-TEST(test_scrubber_be, tac)
-{
-  TestTScrubberBe* sbt = new TestTScrubberBe(1);
-
-  sbt->m_osd = sbt->create_member_osd(0);
-
-  ASSERT_TRUE(sbt->m_osd);
-
-  //sbt.m_osd->shutdown();
-  //sbt->m_osd.reset(); 
-  //delete sbt.mc;
-  sleep(2);
-  //sbt.m_icp.stop();
-  //sleep(2);
-  ASSERT_TRUE(true);
-}
-
-// failed
-TEST(test_scrubber_be, tad)
-{
-  TestTScrubberBe* sbt = new TestTScrubberBe(1);
-
-  sbt->m_osd = sbt->create_member_osd(0);
-
-  ASSERT_TRUE(sbt->m_osd);
-
-  //sbt.m_osd->shutdown();
-  //sbt->m_osd.reset(); 
-  //delete sbt.mc;
-  sleep(2);
-  //sbt.m_icp.stop();
-  //sleep(2);
-  ASSERT_TRUE(true);
-  delete sbt;
-}
-
-TEST(test_scrubber_be, tae)
-{
-  TestTScrubberBe* sbt = new TestTScrubberBe(1);
-
-  sbt->m_osd = sbt->create_member_osd(0);
-
-  ASSERT_TRUE(sbt->m_osd);
-
-  //sbt.m_osd->shutdown();
-  //sbt->m_osd.reset(); 
-  //delete sbt.mc;
-  sleep(2);
-  //sbt.m_icp.stop();
-  //sleep(2);
-  ASSERT_TRUE(true);
-  delete sbt;
-}
-
-
-TEST(test_scrubber_be, taa)
-{
-  TestTScrubberBe* sbt = new TestTScrubberBe(1);
-
-  sbt->m_osd = sbt->create_member_osd(0);
-
-  ASSERT_TRUE(sbt->m_osd);
-
-  //sbt.m_osd->shutdown();
-  sbt->m_osd.reset(); 
-  //delete sbt.mc;
-  sleep(2);
-  //sbt.m_icp.stop();
-  //sleep(2);
-  ASSERT_TRUE(true);
-}
-
-TEST(test_scrubber_be, tab)
-{
-  TestTScrubberBe* sbt = new TestTScrubberBe(1);
-
-  sbt->m_osd = sbt->create_member_osd(0);
-
-  ASSERT_TRUE(sbt->m_osd);
-
-  sbt->m_osd->shutdown();
-  sbt->m_osd.reset(); 
-  //delete sbt.mc;
-  sleep(2);
-  //sbt.m_icp.stop();
-  //sleep(2);
-  ASSERT_TRUE(true);
-}
-
-
-TEST(test_scrubber_be, t0)
-{
-  TestTScrubberBe sbt{1};
-
-  sbt.m_osd = sbt.create_member_osd(0);
-
-  ASSERT_TRUE(sbt.m_osd);
-
-  //sbt.m_osd->shutdown();
-  sbt.m_osd.reset(); 
-  //delete sbt.mc;
-  sleep(2);
-  //sbt.m_icp.stop();
-  //sleep(2);
-  ASSERT_TRUE(true);
-}
-
-
-TEST(test_scrubber_be, t1)
-{
-  TestTScrubberBe sbt{0};
-
-  sbt.m_osd = sbt.create_member_osd(0);
-
-  ASSERT_TRUE(sbt.m_osd);
-
-  sbt.m_osd->shutdown();
-  sbt.m_osd.reset(); 
-  delete sbt.mc;
-  sleep(2);
-  sbt.m_icp.stop();
-  sleep(2);
-  ASSERT_TRUE(true);
-}
-
-TEST(test_scrubber_be, t2)
-{
-  TestTScrubberBe sbt{0};
-
-  sbt.m_osd = sbt.create_member_osd(0);
-
-  ASSERT_TRUE(sbt.m_osd);
-   bool ret = sbt.m_osd->scrub_time_permit(utime_t{});
-  ASSERT_TRUE(ret);
-  sleep(2);
-
-  //sbt.m_osd->shutdown();
-  sbt.m_osd.reset(); 
-  delete sbt.mc;
-  //sleep(2);
-  sbt.m_icp.stop();
-  sleep(2);
-  ASSERT_TRUE(true);
-}
-
-
-TEST(test_scrubber_be, t3)
-{
-  TestTScrubberBe sbt{0};
-
-  sbt.m_osd = sbt.create_member_osd(0);
-
-  ASSERT_TRUE(sbt.m_osd);
-
-  sbt.m_osd->shutdown();
-  sbt.m_osd.reset(); 
-  delete sbt.mc;
-  sleep(2);
-  //sbt.m_icp.stop();
-  sleep(2);
-}
-
-#if 1
-
-TEST(test_scrubber_be, is_it_there)
-{
-  TestTScrubberBe sbt{0};
-
-  sbt.m_osd = sbt.create_member_osd(0);
-
-  ASSERT_TRUE(sbt.m_osd);
-  sbt.m_osd->shutdown();
-  delete sbt.mc;
-  sleep(2);
-  sbt.m_icp.stop();
-  sleep(2);
-}
-#endif
-
-
-#endif
-
-
-#if 0
-class SbeTestOsd : public OSD {
-
- public:
-  static std::unique_ptr<SbeTestOsd> create(int osd_id);
-
- public:
-  SbeTestOsd(/*CephContext *cct,*/
-             std::unique_ptr<ObjectStore> store,
-             int id,
-             Messenger* msgrs,
-             Messenger* osdc_messenger,
-             MonClient* mc,
-             const std::string& dev,
-             const std::string& jdev/*,
-             ceph::async::io_context_pool& ictx*/)
-      : OSD(g_ceph_context,
-            std::move(store),
-            id,
-            msgrs,
-            msgrs,
-            msgrs,
-            msgrs,
-            msgrs,
-            msgrs,
-            osdc_messenger,
-            mc,
-            dev,
-            jdev,
-            icp)
-
-  {}
-
-  void setup();
-
-
-  // private:
-
-  ceph::async::io_context_pool icp{1};
-  std::string cluster_msgr_type{g_conf()->ms_cluster_type.empty()
-                                  ? g_conf().get_val<std::string>("ms_type")
-                                  : g_conf()->ms_cluster_type};
-  Messenger* ms = Messenger::create(g_ceph_context,
-                                    cluster_msgr_type,
-                                    entity_name_t::OSD(0),
-                                    "make_checker",
-                                    getpid());
-};
-
-std::unique_ptr<SbeTestOsd> SbeTestOsd::create(int osd_id)
-{
-  ms->set_cluster_protocol(CEPH_OSD_PROTOCOL);
-  ms->set_default_policy(Messenger::Policy::stateless_server(0));  // RRR verify the '0'
-  ms->bind(g_conf()->public_addr);
-
-  MonClient mc{g_ceph_context, icp};
-  mc.build_initial_monmap();
-
-  std::unique_ptr<ObjectStore> store = ObjectStore::create(g_ceph_context,
-                                                           g_conf()->osd_objectstore,
-                                                           g_conf()->osd_data,
-                                                           g_conf()->osd_journal);
-
-  return std::make_unique<SbeTestOsd>(std::move(store), osd_id, ms, ms, &mc, "", "");
-}
-
-
-void SbeTestOsd::setup()
-{
-  // create a pool
-
-}
-
-TEST(test_scrubber_be, is_it_there)
-{
-  auto an_osd = SbeTestOsd::create(0);
-  ASSERT_TRUE(an_osd);
-}
-
-#endif
-
-#if 0
-class TestOSDScrub: public OSD {
-
-public:
-  TestOSDScrub(CephContext *cct_,
-      std::unique_ptr<ObjectStore> store_,
-      int id,
-      Messenger *internal,
-      Messenger *external,
-      Messenger *hb_front_client,
-      Messenger *hb_back_client,
-      Messenger *hb_front_server,
-      Messenger *hb_back_server,
-      Messenger *osdc_messenger,
-      MonClient *mc, const std::string &dev, const std::string &jdev,
-      ceph::async::io_context_pool& ictx) :
-      OSD(cct_, std::move(store_), id, internal, external,
-	  hb_front_client, hb_back_client,
-	  hb_front_server, hb_back_server,
-	  osdc_messenger, mc, dev, jdev, ictx)
-  {
-  }
-
-  bool scrub_time_permit(utime_t now) {
-    return service.get_scrub_services().scrub_time_permit(now);
-  }
-};
-
-TEST(TestOSDScrub, scrub_time_permit) {
-  ceph::async::io_context_pool icp(1);
-  std::unique_ptr<ObjectStore> store = ObjectStore::create(g_ceph_context,
-             g_conf()->osd_objectstore,
-             g_conf()->osd_data,
-             g_conf()->osd_journal);
-  std::string cluster_msgr_type = g_conf()->ms_cluster_type.empty() ? g_conf().get_val<std::string>("ms_type") : g_conf()->ms_cluster_type;
-  Messenger *ms = Messenger::create(g_ceph_context, cluster_msgr_type,
-				    entity_name_t::OSD(0), "make_checker",
-				    getpid());
-  ms->set_cluster_protocol(CEPH_OSD_PROTOCOL);
-  ms->set_default_policy(Messenger::Policy::stateless_server(0));
-  ms->bind(g_conf()->public_addr);
-  MonClient mc(g_ceph_context, icp);
-  mc.build_initial_monmap();
-  TestOSDScrub* osd = new TestOSDScrub(g_ceph_context, std::move(store), 0, ms, ms, ms, ms, ms, ms, ms, &mc, "", "", icp);
-
-  // These are now invalid
-  int err = g_ceph_context->_conf.set_val("osd_scrub_begin_hour", "24");
-  ASSERT_TRUE(err < 0);
-  //GTEST_LOG_(INFO) << " osd_scrub_begin_hour = " << g_ceph_context->_conf.get_val<int64_t>("osd_scrub_begin_hour");
-
-  err = g_ceph_context->_conf.set_val("osd_scrub_end_hour", "24");
-  ASSERT_TRUE(err < 0);
-  //GTEST_LOG_(INFO) << " osd_scrub_end_hour = " << g_ceph_context->_conf.get_val<int64_t>("osd_scrub_end_hour");
-
-  err = g_ceph_context->_conf.set_val("osd_scrub_begin_week_day", "7");
-  ASSERT_TRUE(err < 0);
-  //GTEST_LOG_(INFO) << " osd_scrub_begin_week_day = " << g_ceph_context->_conf.get_val<int64_t>("osd_scrub_begin_week_day");
-
-  err = g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "7");
-  ASSERT_TRUE(err < 0);
-  //GTEST_LOG_(INFO) << " osd_scrub_end_week_day = " << g_ceph_context->_conf.get_val<int64_t>("osd_scrub_end_week_day");
-
-  // Test all day
-  g_ceph_context->_conf.set_val("osd_scrub_begin_hour", "0");
-  g_ceph_context->_conf.set_val("osd_scrub_end_hour", "0");
-  g_ceph_context->_conf.apply_changes(nullptr);
-  tm tm;
-  tm.tm_isdst = -1;
-  strptime("2015-01-16 12:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  utime_t now = utime_t(mktime(&tm), 0);
-  bool ret = osd->scrub_time_permit(now);
-  ASSERT_TRUE(ret);
-
-  g_ceph_context->_conf.set_val("osd_scrub_begin_hour", "20");
-  g_ceph_context->_conf.set_val("osd_scrub_end_hour", "07");
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-16 01:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_TRUE(ret);
-
-  g_ceph_context->_conf.set_val("osd_scrub_begin_hour", "20");
-  g_ceph_context->_conf.set_val("osd_scrub_end_hour", "07");
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-16 20:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_TRUE(ret);
-
-  g_ceph_context->_conf.set_val("osd_scrub_begin_hour", "20");
-  g_ceph_context->_conf.set_val("osd_scrub_end_hour", "07");
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-16 08:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_FALSE(ret);
-
-  g_ceph_context->_conf.set_val("osd_scrub_begin_hour", "01");
-  g_ceph_context->_conf.set_val("osd_scrub_end_hour", "07");
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-16 20:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_FALSE(ret);
-
-  g_ceph_context->_conf.set_val("osd_scrub_begin_hour", "01");
-  g_ceph_context->_conf.set_val("osd_scrub_end_hour", "07");
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-16 00:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_FALSE(ret);
-
-  g_ceph_context->_conf.set_val("osd_scrub_begin_hour", "01");
-  g_ceph_context->_conf.set_val("osd_scrub_end_hour", "07");
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-16 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_TRUE(ret);
-
-  // Sun = 0, Mon = 1, Tue = 2, Wed = 3, Thu = 4m, Fri = 5, Sat = 6
-  // Jan 16, 2015 is a Friday (5)
-  // every day
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "0"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "0"); // not inclusive
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-16 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_TRUE(ret);
-
-  // test Sun - Thu
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "0"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "5"); // not inclusive
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-16 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_FALSE(ret);
-
-  // test Fri - Sat
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "5"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "0"); // not inclusive
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-16 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_TRUE(ret);
-
-  // Jan 14, 2015 is a Wednesday (3)
-  // test Tue - Fri
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "2"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "6"); // not inclusive
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-14 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_TRUE(ret);
-
-  // Test Sat - Sun
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "6"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "1"); // not inclusive
-  g_ceph_context->_conf.apply_changes(nullptr);
-  strptime("2015-01-14 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
-  now = utime_t(mktime(&tm), 0);
-  ret = osd->scrub_time_permit(now);
-  ASSERT_FALSE(ret);
-}
-#endif
-
-#endif
 
 // Local Variables:
 // compile-command: "cd ../.. ; make unittest_osdscrub ; ./unittest_osdscrub
