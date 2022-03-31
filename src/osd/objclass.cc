@@ -698,7 +698,7 @@ uint64_t cls_get_pool_stripe_width(cls_method_context_t hctx)
 {
   PrimaryLogPG::OpContext *ctx = *(PrimaryLogPG::OpContext **)hctx;
 
-  return ctx->pg->get_pool().stripe_width;
+  return ctx->pg->get_pgpool().stripe_width;
 }
 
 struct GatherFinisher : public PrimaryLogPG::OpFinisher {

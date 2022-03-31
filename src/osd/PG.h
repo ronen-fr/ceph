@@ -245,7 +245,7 @@ public:
     return pg_id;
   }
 
-  const PGPool& get_pool() const {
+  const PGPool& get_pgpool() const final {
     return pool;
   }
   uint64_t get_last_user_version() const {

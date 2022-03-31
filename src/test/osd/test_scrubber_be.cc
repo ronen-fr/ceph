@@ -9,10 +9,61 @@
 #include "mon/MonClient.h"
 #include "msg/Messenger.h"
 #include "os/ObjectStore.h"
-#include "osd/OSD.h"
 
-// testing isolated parts pf the Scrubber backend
+#include "osd/scrubber/scrub_backend.h"
 
+#include "osd/PG.h"
+#include "osd/PrimaryLogPG.h"
+#include "osd/osd_types_fmt.h"
+#include "osd/scrubber/pg_scrubber.h"
+
+
+//#include "osd/OSD.h"
+
+// testing isolated parts of the Scrubber backend
+
+
+
+class TestScrubBackend : public ScrubBackend {
+public:
+  TestScrubBackend();
+
+};
+
+
+// mocking the PG backend
+class TestPgBe {
+public:
+  uint64_t be_get_ondisk_size(uint64_t logical_size) {
+    return logical_size;
+  }
+
+};
+
+
+class TestTScrubberBe : public ::testing::Test {
+ public:
+
+  void SetUp() override;
+  void TearDown() override;
+
+ public:
+  std::unique_ptr<TestScrubBackend> sbe;
+
+ private:
+  TestPgBe pg_be;
+};
+
+
+void TestTScrubberBe::SetUp()
+{
+}
+
+void TestTScrubberBe::TearDown()
+{
+}
+
+#if 0
 class TestOSDScrub : public OSD {
 
   //  public:
@@ -656,6 +707,8 @@ TEST(TestOSDScrub, scrub_time_permit) {
   ret = osd->scrub_time_permit(now);
   ASSERT_FALSE(ret);
 }
+#endif
+
 #endif
 
 // Local Variables:

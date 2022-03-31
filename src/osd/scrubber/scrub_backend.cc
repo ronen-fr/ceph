@@ -54,7 +54,7 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
     , m_repair{repair}
     , m_depth{shallow_or_deep}
     , m_pg_id{scrubber.m_pg_id}
-    , m_pool{m_pg.get_pool()}
+    , m_pool{m_pg.get_pgpool()}
     , m_incomplete_clones_allowed{m_pool.info.allow_incomplete_clones()}
     , m_conf{m_scrubber.get_pg_cct()->_conf}
     , clog{m_scrubber.m_osds->clog}
@@ -87,7 +87,7 @@ ScrubBackend::ScrubBackend(PgScrubber& scrubber,
     , m_repair{repair}
     , m_depth{shallow_or_deep}
     , m_pg_id{scrubber.m_pg_id}
-    , m_pool{m_pg.get_pool()}
+    , m_pool{m_pg.get_pgpool()}
     , m_conf{m_scrubber.get_pg_cct()->_conf}
     , clog{m_scrubber.m_osds->clog}
 {
