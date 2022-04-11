@@ -60,7 +60,7 @@ struct clog_targets_conf_t {
  * Past queueing the LogEntry, the LogChannel is done with the whole thing.
  * LogClient will deal with sending and handling of LogEntries.
  */
-class LogChannel : public OstreamTemp::OstreamTempSink
+class LogChannel : /*public OstreamTemp::OstreamTempSink,*/ public LoggerSinksSet
 {
 public:
 
@@ -93,7 +93,7 @@ public:
         ceph_abort();
     }
   }
-  OstreamTemp info() {
+  OstreamTemp info() override {
     return OstreamTemp(CLOG_INFO, this);
   }
   void info(std::stringstream &s) {
