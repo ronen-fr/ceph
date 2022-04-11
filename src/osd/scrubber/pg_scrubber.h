@@ -587,7 +587,7 @@ class PgScrubber : public ScrubPgIF,
   CephContext* get_pg_cct() const override { return m_pg->cct; }
   CephContext* get_osd_cct() const override { return m_pg->cct; } // RRR
 
-  LogChannelRef get_logger() const override;
+  LoggerSinkSet* get_logger() const override;
 
   // RRR compare with how the scrubber fsm gets this info
   spg_t get_pgid() const override { return m_pg->get_pgid(); }
