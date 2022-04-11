@@ -91,7 +91,7 @@ struct ScrubBeListener {
   virtual std::ostream& gen_prefix(std::ostream& out) const = 0;
   virtual CephContext* get_pg_cct() const = 0;
   virtual CephContext* get_osd_cct() const = 0;
-  virtual LogChannelRef get_logger() const = 0;
+  virtual LoggerSinkSet* get_logger() const = 0;
   virtual bool is_primary() const = 0;
   virtual spg_t get_pgid() const = 0;
   virtual const OSDMapRef& get_osdmap() const = 0;
@@ -401,7 +401,7 @@ class ScrubBackend {
 
   // shorthands:
   ConfigProxy& m_conf;
-  LogChannelRef clog;
+  LoggerSinkSet* clog;
 
  private:
 
