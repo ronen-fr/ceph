@@ -2222,7 +2222,7 @@ const OSDMapRef& PgScrubber::get_osdmap() const
   return m_pg->get_osdmap();
 }
 
-LogChannelRef PgScrubber::get_logger() const { return m_osds->clog; }
+LoggerSinkSet* PgScrubber::get_logger() const { return m_osds->clog.get(); }
 
 ostream &operator<<(ostream &out, const PgScrubber &scrubber) {
   return out << scrubber.m_flags;
