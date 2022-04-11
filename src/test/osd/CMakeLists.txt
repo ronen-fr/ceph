@@ -70,7 +70,7 @@ target_link_libraries(unittest_osdscrub osd os global ${CMAKE_DL_LIBS} mon ${BLK
 # unittest_scrubber_be
 add_executable(unittest_scrubber_be
   test_scrubber_be.cc
-  #$<TARGET_OBJECTS:unit-main>
+  scrubber_generators.cc
   )
 add_ceph_unittest(unittest_scrubber_be)
 target_link_libraries(unittest_scrubber_be osd os global ${CMAKE_DL_LIBS} mon ${BLKID_LIBRARIES})

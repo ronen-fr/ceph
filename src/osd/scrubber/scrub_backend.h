@@ -384,8 +384,6 @@ class ScrubBackend {
  private:
   // set/constructed at the ctor():
   ScrubBeListener& m_scrubber;
-  //PGBackend& m_pgbe;
-  //PG& m_pg;
   Scrub::PgScrubBeListener& m_pg;
   const pg_shard_t m_pg_whoami;
   bool m_repair;
