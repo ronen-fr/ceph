@@ -4,6 +4,7 @@
 #include <signal.h>
 #include <stdio.h>
 
+#include "common/LogClient.h"
 #include "common/async/context_pool.h"
 #include "common/ceph_argparse.h"
 #include "global/global_context.h"
@@ -165,11 +166,16 @@ class TestScrubber : public ScrubBeListener {
 // I've learned how to use gtest's constructor-arguments)
 
 struct TestTScrubberBeParams {
-  pg_shard_t i_am;
-  bool m_primary{true};
-  bool m_repair{false};
-  scrub_level_t m_shallow_or_deep{scrub_level_t::deep};
-  // std::set<pg_shard_t> m_acting{0,1,2};
+  ScrubGenerator::pool_conf_t pool_conf;
+  ScrubGenerator::RealObjsConf objs_conf;
+  LogChannelRef logger;
+  int num_osds;
+
+  // pg_shard_t i_am;
+  // bool m_primary{true};
+  // bool m_repair{false};
+  // scrub_level_t m_shallow_or_deep{scrub_level_t::deep};
+  //  std::set<pg_shard_t> m_acting{0,1,2};
 };
 
 
@@ -181,11 +187,18 @@ struct TestTScrubberBeParams {
 // the mockers
 class TestTScrubberBe : public ::testing::Test {
  public:
-
   // the test data source
-  virtual ScrubGenerator::pool_conf_t inject_pool() = 0;
-  virtual const ScrubGenerator::RealObjsConf& inject_real_objs() = 0;
-  virtual LogChannelRef inject_logger() = 0;
+
+  virtual TestTScrubberBeParams inject_params() = 0;
+
+  // initial test data
+
+  // CephContext* cct{nullptr};
+  LogChannelRef logger;
+  ScrubGenerator::pool_conf_t pool_conf;
+  ScrubGenerator::RealObjsConf real_objs;
+  int num_osds{0};
+
 
   // ctor & initialization
 
@@ -194,10 +207,14 @@ class TestTScrubberBe : public ::testing::Test {
   ~TestTScrubberBe() = default;
 
   void SetUp() override
-{
-  // fetch test configuration
-    pool_conf = inject_pool();
-    auto real_objs = inject_real_objs();
+  {
+    std::cout << "TestTScrubberBe::SetUp()\n";
+    // fetch test configuration
+    auto params = inject_params();
+    pool_conf = params.pool_conf;
+    real_objs = params.objs_conf;
+    logger = params.logger;
+    num_osds = params.num_osds;
 
     // create the OSDMap
 
@@ -216,19 +233,32 @@ class TestTScrubberBe : public ::testing::Test {
 
     // a PG in that pool?
     info = setup_pg_in_map();
+    // std::cout << fmt::format("info: {}\n", info);
     std::cout << "info: " << info << std::endl;
 
     // now we can create the main mockers
 
     // the "PgScrubber"
     test_scrubber = std::make_unique<TestScrubber>(spg, osdmap, logger);
+    std::cout << "test_scrubber: "
+              << "test scrubber created" /* *test_scrubber*/ << std::endl;
 
     // the "Pg" (and its backend)
     test_pg = std::make_unique<TestPg>(pool, info, i_am);
-  
+    std::cout << fmt::format("{}: test_pg: OK\n", __func__);
+    sbe = std::make_unique<TestScrubBackend>(*test_scrubber,
+                                             *test_pg,
+                                             i_am,
+                                             /* repair? */ false,
+                                             scrub_level_t::deep,
+                                             acting);
 
+    sbe->new_chunk();
+    std::cout << fmt::format("{}: TestScrubBackend created\n", __func__);
+    fake_a_scrub_set(real_objs);
+    std::cout << fmt::format("{}: fake_a_scrub_set() done\n", __func__);
+  }
 
-}
   void TearDown() override;
 
   void fake_a_scrub_set(ScrubGenerator::RealObjsConf conf);
@@ -236,15 +266,14 @@ class TestTScrubberBe : public ::testing::Test {
   std::unique_ptr<TestScrubBackend> sbe;
 
   // I am the primary
-  int num_osds{3};
-  // std::string pool_name{"rep_pool"};
-
+  //      pg_shard_t i_am{0, pool_id};
   spg_t spg;
 
   pg_shard_t i_am;  // my osd and no shard
   std::set<pg_shard_t> acting;
 
-  ScrubGenerator::pool_conf_t pool_conf;
+  std::unique_ptr<TestScrubber> test_scrubber;
+
   int64_t pool_id;
   pg_pool_t pool_info;
 
@@ -255,9 +284,6 @@ class TestTScrubberBe : public ::testing::Test {
   pg_info_t info;
 
 
-  // CephContext* cct{nullptr};
-  std::unique_ptr<TestScrubber> test_scrubber;
-  LogChannelRef logger;
   std::unique_ptr<TestPg> test_pg;
 
  private:
@@ -374,21 +400,13 @@ pg_info_t TestTScrubberBe::setup_pg_in_map()
   return info;
 }
 
-void TestTScrubberBe::SetUp()
-{
-  sbe = std::make_unique<TestScrubBackend>(*test_scrubber,
-                                           *test_pg,
-                                           i_am,
-                                           /* repair? */ false,
-                                           scrub_level_t::deep,
-                                           acting);
-}
 
 void TestTScrubberBe::TearDown() {}
 
 
 void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConf conf)
 {
+  std::cout << fmt::format("{}: sbe:{}\n", __func__, (void*)(&sbe));
   for (int osd_num = 0; osd_num < pool_conf.size; ++osd_num) {
 
     ScrubMap smap;
@@ -396,11 +414,14 @@ void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConf conf)
     // fill the map with the objects relevant to this OSD
     for (auto& obj : conf.objs) {
 
+      std::cout << fmt::format("{}: object:\n", __func__);
       ScrubGenerator::add_object(smap, obj, osd_num);
     }
 
+    std::cout << fmt::format("{}: inserting\n", __func__);
     sbe->insert_faked_smap(pg_shard_t{osd_num}, smap);
   }
+  std::cout << fmt::format("{}: TTT\n", __func__);
 }
 
 
@@ -408,9 +429,13 @@ void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConf conf)
 
 void TestScrubBackend::insert_faked_smap(pg_shard_t shard, const ScrubMap& smap)
 {
+  // must have a valid this_chunk
+  std::cout << fmt::format("{}: this chunk {}\n",
+                           __func__,
+                           this_chunk.has_value());
   std::cout << fmt::format("{}: inserting faked smap for osd {}\n",
                            __func__,
-                           shard.get_osd());
+                           17 /*shard.get_osd()*/);
 
   this_chunk->received_maps[shard] = smap;
 }
@@ -420,10 +445,90 @@ void TestScrubBackend::insert_faked_smap(pg_shard_t shard, const ScrubMap& smap)
 // ///////////////////////////////////////////////////////////////////////////
 
 
+// a very simple set of objects, to test the created smaps
+using namespace ScrubGenerator;
+
+// static RealObj crpt_do_nothing(const RealObj& s, int osdn)
+// {
+//   return s;
+// }
+
+// the following will be changed to a set of funcs with a bounded index
+static RealObjVer crpt_fake_size(const RealObjVer& s, int osdn)
+{
+  RealObjVer ret = s;
+  if (osdn == 0) {
+    ret.data.size = s.data.size + 1;
+  }
+  return ret;
+}
+
+static CorruptFuncList crpt_funcs_set1 = {
+  {0, &crpt_fake_size}
+  // crpt_fake_size,
+};
+
+// the pool must be fixed for all entries.
+// Also - the shard.
+
+static hobject_t hobj1{"object1",
+                       "",
+                       CEPH_NOSNAP,
+                       0,  // or NO_GEN?
+                       0,
+                       ""};
+
+
+static ScrubGenerator::RealObjsConf set1{
+  /* RealObjsConf::objs */ {/* RealObj 1 */ {
+    /* RealObj::versions */ {RealObjVer{
+      ghobject_t{hobj1, 0, shard_id_t{0}}
+
+
+      ,
+      RealData{100,
+               0x17,
+               17,
+               21,
+               attr_t{{"om1k", "om1v"}, {"om1k", "om1v"}, {"om3k", "om3v"}},
+               attr_t{{"at1k", "at1v"}, {"at1k", "at1v"}, {"at3k", "at3v"}}
+
+
+      }}},
+    &crpt_funcs_set1
+
+
+  }}};
+
+
+class TestTScrubberBe_data_1 : public TestTScrubberBe {
+ public:
+  TestTScrubberBe_data_1() : TestTScrubberBe() {}
+
+  // test conf
+  pool_conf_t pl{3, 3, 3, 3, "rep_pool"};
+  LogClient log_client{nullptr,
+                       nullptr,
+                       nullptr,
+                       LogClient::logclient_flag_t::NO_FLAGS};
+  // ScrubGenerator::MockLog logc;
+  // LogChannelRef logcr = std::make_shared<ScrubGenerator::MockLog>();
+  LogChannelRef logc = log_client.create_channel();
+
+  TestTScrubberBeParams inject_params() override
+  {
+    std::cout << fmt::format("{}: injecting params (set1)\n", __func__);
+    return TestTScrubberBeParams{/* pool_conf */ pl,
+                                 /* real_objs_conf */ set1,
+                                 /* logger */ logc,
+                                 /*num_osds */ 3};
+  }
+};
+
 // some basic sanity checks
 // (mainly testing the constructor)
 
-TEST_F(TestTScrubberBe, creation_1)
+TEST_F(TestTScrubberBe_data_1, creation_1)
 {
   // copy some osdmap tests from TestOSDMap.cc
 
@@ -441,61 +546,8 @@ TEST_F(TestTScrubberBe, creation_1)
   ASSERT_EQ(others.end(), in_others);
 }
 
-// a very simple set of objects, to test the created smaps
-using namespace ScrubGenerator;
 
-static RealObj crpt_do_nothing(const RealObj& s, int osdn)
-{
-  return s;
-}
-
-// the following will be changed to a set of funcs with a bounded index
-static RealObj crpt_fake_size(const RealObj& s, int osdn)
-{
-  RealObj ret = s;
-  if (osdn == 0) {
-    ret.real_versions[0].data.size++;
-  }
-  return ret;
-}
-
-static CorruptFuncList crpt_funcs_set1 = {
-  {0, crpt_fake_size}
-  // crpt_fake_size,
-};
-
-// the pool must be fixed for all entries.
-// Also - the shard.
-
-static hobject_t hobj1{"object1",
-                       "",
-                       CEPH_NOSNAP,
-                       0,  // or NO_GEN?
-                       0,
-                       ""};
-
-
-static ScrubGenerator::RealObjsConf set1{
-  /* RealObjsConf::objs */ {/* RaelObj 1 */ {
-    /* RaelObj::versions */ {RealObjVer{ghobject_t{hobj1, 0, shard_id_t{0}}
-
-
-                                        ,
-                                        RealData{100, 0x17}}},
-    crpt_funcs_set1
-
-
-  }}};
-
-
-class TestTScrubberBe_data_1 : public TestTScrubberBe {
- public:
-  TestTScrubberBe_data_1() : TestTScrubberBe() {}
-};
-}
-;
-
-TEST_F(TestTScrubberBe, smaps_creation_1)
+TEST_F(TestTScrubberBe_data_1, smaps_creation_1)
 {
   ASSERT_TRUE(sbe);
 }
