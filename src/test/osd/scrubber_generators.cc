@@ -48,7 +48,7 @@ ScrubGenerator::SmapEntry ScrubGenerator::make_smap_entry(
   std::cout << fmt::format("{}: osd:{} gh:{} key:{}\n",
                            __func__,
                            osd_num,
-                           17/*objver.ghobj.hobj.oid*/,
+                           17 /*objver.ghobj.hobj.oid*/,
                            objver.ghobj.hobj.get_key());
 
   SmapEntry entry{};
@@ -66,7 +66,7 @@ void ScrubGenerator::add_object(ScrubMap& map,
 {
   using namespace ScrubGenerator;
 
-  // do we have data corruption recepie for this OSD?
+  // do we have data corruption recipe for this OSD?
   // \todo c++20: use contains()
   CorruptFunc relevant_fix = crpt_do_nothing;
 
@@ -78,14 +78,14 @@ void ScrubGenerator::add_object(ScrubMap& map,
   }
 
 
-  // RRR we should be creating multiple entries
+  // RRR should we keep the corrupted objects?
   for (auto obj_version : obj_versions.real_versions) {  // note: a copy
 
     obj_version = relevant_fix(obj_version, osd_num);
     std::cout << fmt::format("{}: osd:{} gh:{} key:{}\n",
                              __func__,
                              osd_num,
-                            17/*obj_version.ghobj.hobj.oid*/,
+                             17 /*obj_version.ghobj.hobj.oid*/,
                              obj_version.ghobj.hobj.get_key());
 
     auto entry = make_smap_entry(obj_versions, obj_version, osd_num);

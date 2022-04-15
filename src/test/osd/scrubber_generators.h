@@ -11,6 +11,8 @@
 
 #include <functional>
 #include <map>
+#include <sstream>
+#include <string>
 #include <vector>
 
 //
@@ -30,19 +32,52 @@
 
 namespace ScrubGenerator {
 
-#ifdef NOT_YET
-class MockLog : /*public*/ LogChannel {
+class MockLog : public LoggerSinksSet {
  public:
-  MockLog() : LogChannel(nullptr, nullptr, "x") {}
-  //     MockLog(CephContext *cct, LogClient *lc, const string &channel)
-  //       : LogChannel(cct, lc, channel) {}
-  //     MockLog(CephContext *cct, LogClient *lc,
-  //             const string &channel, const string &facility,
-  //             const string &prio)
-  //       : LogChannel(cct, lc, channel, facility, prio) {}
+  void info(std::stringstream& s)
+  {
+    std::cout << "<<info>> " << s.str() << std::endl;
+  }
+  void warn(std::stringstream& s)
+  {
+    std::cout << "<<warn>> " << s.str() << std::endl;
+  }
+  void error(std::stringstream& s)
+  {
+    std::cout << "<<error>> " << s.str() << std::endl;
+  }
+  void debug(std::stringstream& s)
+  {
+    std::cout << "<<debug>> " << s.str() << std::endl;
+  }
+  OstreamTemp info() { return OstreamTemp(CLOG_INFO, this); }
+  OstreamTemp warn() { return OstreamTemp(CLOG_WARN, this); }
+  OstreamTemp error() { return OstreamTemp(CLOG_ERROR, this); }
+  OstreamTemp debug() { return OstreamTemp(CLOG_DEBUG, this); }
+
+  void do_log(clog_type prio, std::stringstream& ss)
+  {
+    switch (prio) {
+      case CLOG_INFO:
+        info(ss);
+        break;
+      case CLOG_WARN:
+        warn(ss);
+        break;
+      case CLOG_ERROR:
+      default:
+        error(ss);
+        break;
+      case CLOG_DEBUG:
+        debug(ss);
+        break;
+    }
+  }
   virtual ~MockLog() {}
+
+ private:
+  OstreamTemp m_parent{clog_type::CLOG_UNKNOWN, nullptr};
 };
-#endif
 
 // ///////////////////////////////////////////////////////////////////////// //
 // ///////////////////////////////////////////////////////////////////////// //
@@ -94,7 +129,6 @@ struct TargetSmObject {
   __u32 data_digest;
   // ...
 };
-
 
 
 // an object in our "DB" - which its versioned snaps, "data" (size and hash),

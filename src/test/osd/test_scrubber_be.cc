@@ -65,22 +65,17 @@ class TestScrubBackend : public ScrubBackend {
   // FRIEND_TEST(TestTScrubberBe, creation_1);
   bool get_m_repair() const { return m_repair; }
   bool get_is_replicated() const { return m_is_replicated; }
+  auto get_omap_stats() const { return m_omap_stats; }
 
   const std::vector<pg_shard_t>& all_but_me() const { return m_acting_but_me; }
 
   void insert_faked_smap(pg_shard_t shard, const ScrubMap& smap);
+
+  void omap_checks() { return ScrubBackend::omap_checks(); }
 };
 
 
 using SharedPGPool = std::shared_ptr<PGPool>;
-
-// struct ScrubGenerator::pool_conf_t {
-//   int pg_num{3};
-//   int pgp_num{3};
-//   int size{3};
-//   int min_size{3};
-//   std::string name{"rep_pool"};
-// };
 
 
 // mocking the PG
@@ -115,15 +110,19 @@ class TestPg : public PgScrubBeListener {
   pg_shard_t m_pshard;
 };
 
+
+// ///////////////////////////////////////////////////////////////////////////
+// ///////////////////////////////////////////////////////////////////////////
+
 // and the scrubber
-class TestScrubber : public ScrubBeListener {
+class TestScrubber : public ScrubBeListener, public SnapMapperAccessor {
  public:
   ~TestScrubber() = default;
 
   TestScrubber(spg_t spg,
                // CephContext* cct,
                OSDMapRef osdmap,
-               LogChannelRef logger)
+               LoggerSinksSet* logger)
       : m_spg{spg}  //, m_cct{cct}
       , m_logger{logger}
       , m_osdmap{osdmap}
@@ -136,7 +135,7 @@ class TestScrubber : public ScrubBeListener {
 
   CephContext* get_osd_cct() const final { return g_ceph_context; }
 
-  LogChannelRef get_logger() const final
+  LoggerSinksSet* get_logger() const final
   { /* RRR */
     return m_logger;
   }
@@ -151,15 +150,41 @@ class TestScrubber : public ScrubBeListener {
 
   void submit_digest_fixes(const digests_fixes_t& fixes) final {}
 
+  int get_snaps(const hobject_t& hoid,
+                std::set<snapid_t>* snaps_set) const final;
+  void set_snaps(const hobject_t& hoid, const std::set<snapid_t>& snaps)
+  {
+    m_snaps[hoid] = snaps;
+  }
 
   bool m_primary{true};
   spg_t m_spg;
-  LogChannelRef m_logger{nullptr};
+  LoggerSinksSet* m_logger{nullptr};
   OSDMapRef m_osdmap;
   pg_info_t m_info;
   object_stat_sum_t m_stats;
+
+  std::map<hobject_t, std::set<snapid_t>>
+    m_snaps;  // to be returned when get_snaps is called
   // digests_fixes_t m_digest_fixes;
 };
+
+int TestScrubber::get_snaps(const hobject_t& hoid,
+                            std::set<snapid_t>* snaps_set) const
+{
+  auto it = m_snaps.find(hoid);
+  if (it == m_snaps.end()) {
+    return 0;  //-ENOENT;
+  }
+  for (const auto& snap : it->second) {
+    snaps_set->insert(snap);
+  }
+  return 0;
+}
+
+
+// ///////////////////////////////////////////////////////////////////////////
+// ///////////////////////////////////////////////////////////////////////////
 
 
 // parameters for TestTScrubberBe construction (until
@@ -168,7 +193,7 @@ class TestScrubber : public ScrubBeListener {
 struct TestTScrubberBeParams {
   ScrubGenerator::pool_conf_t pool_conf;
   ScrubGenerator::RealObjsConf objs_conf;
-  LogChannelRef logger;
+  LoggerSinksSet* logger;
   int num_osds;
 
   // pg_shard_t i_am;
@@ -194,8 +219,9 @@ class TestTScrubberBe : public ::testing::Test {
   // initial test data
 
   // CephContext* cct{nullptr};
-  LogChannelRef logger;
-  ScrubGenerator::pool_conf_t pool_conf;
+  //LogChannelRef logger;
+   ScrubGenerator::MockLog logger;
+   ScrubGenerator::pool_conf_t pool_conf;
   ScrubGenerator::RealObjsConf real_objs;
   int num_osds{0};
 
@@ -213,7 +239,7 @@ class TestTScrubberBe : public ::testing::Test {
     auto params = inject_params();
     pool_conf = params.pool_conf;
     real_objs = params.objs_conf;
-    logger = params.logger;
+    //logger = params.logger;
     num_osds = params.num_osds;
 
     // create the OSDMap
@@ -239,7 +265,7 @@ class TestTScrubberBe : public ::testing::Test {
     // now we can create the main mockers
 
     // the "PgScrubber"
-    test_scrubber = std::make_unique<TestScrubber>(spg, osdmap, logger);
+    test_scrubber = std::make_unique<TestScrubber>(spg, osdmap, &logger);
     std::cout << "test_scrubber: "
               << "test scrubber created" /* *test_scrubber*/ << std::endl;
 
@@ -410,6 +436,7 @@ void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConf conf)
   for (int osd_num = 0; osd_num < pool_conf.size; ++osd_num) {
 
     ScrubMap smap;
+    smap.has_omap_keys = true;  // to force omap checks
 
     // fill the map with the objects relevant to this OSD
     for (auto& obj : conf.objs) {
@@ -511,16 +538,15 @@ class TestTScrubberBe_data_1 : public TestTScrubberBe {
                        nullptr,
                        nullptr,
                        LogClient::logclient_flag_t::NO_FLAGS};
-  // ScrubGenerator::MockLog logc;
   // LogChannelRef logcr = std::make_shared<ScrubGenerator::MockLog>();
-  LogChannelRef logc = log_client.create_channel();
+  //LogChannelRef logc = log_client.create_channel();
 
   TestTScrubberBeParams inject_params() override
   {
     std::cout << fmt::format("{}: injecting params (set1)\n", __func__);
     return TestTScrubberBeParams{/* pool_conf */ pl,
                                  /* real_objs_conf */ set1,
-                                 /* logger */ logc,
+                                 /* logger */ &logger,
                                  /*num_osds */ 3};
   }
 };
@@ -550,6 +576,10 @@ TEST_F(TestTScrubberBe_data_1, creation_1)
 TEST_F(TestTScrubberBe_data_1, smaps_creation_1)
 {
   ASSERT_TRUE(sbe);
+  ASSERT_TRUE(sbe->get_omap_stats().omap_bytes == 0);
+  // sbe->omap_checks();
+  sbe->scrub_compare_maps(true, *test_scrubber);
+  ASSERT_TRUE(sbe->get_omap_stats().omap_bytes != 0);
 }
 
 
