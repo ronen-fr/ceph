@@ -18,15 +18,27 @@ hobject_t ScrubGenerator::make_hobject(
   return hobj;
 }
 
+///\todo dispose of the created buffer pointers
 
 ScrubMap::object ScrubGenerator::make_smobject(
   const ScrubGenerator::RealObj& blueprint,  // the whole set of versions
   const ScrubGenerator::RealObjVer& objver)  // the "fixed" object version
 {
   ScrubMap::object obj{};
-  for (const auto& at : objver.data.attrs) {
-    obj.attrs[at.first] =
-      ceph::buffer::copy(at.second.c_str(), at.second.length());
+  for (const auto& [at_k, at_v] : objver.data.attrs) {
+    obj.attrs[at_k] = ceph::buffer::copy(at_v.c_str(), at_v.size());
+
+    {
+      // verifying
+      auto bk = obj.attrs[at_k].clone();
+       std::string bkstr{bk.get()->get_data(), bk.get()->get_len()};
+       //std::string bkstr{bk.get()->raw_c_str(), bk.get()->raw_length()};
+       //bk->write(0, at_v.size(), std::cout);
+      //std::string s(bk->c_str(), bk->   length());
+      //ASSERT_EQ(s, at_v);
+
+      std::cout << "\nYYY " << bkstr << "\n";
+    }
   }
   obj.size = objver.data.size;
   obj.digest = objver.data.hash;
@@ -59,6 +71,32 @@ ScrubGenerator::SmapEntry ScrubGenerator::make_smap_entry(
   return entry;
 }
 
+#ifdef EXAMPLE_SCRUB_MAP
+void ScrubMap::generate_test_instances(list<ScrubMap*>& o)
+{
+  o.push_back(new ScrubMap);
+  o.push_back(new ScrubMap);
+  o.back()->valid_through = eversion_t(1, 2);
+  o.back()->incr_since = eversion_t(3, 4);
+  list<object*> obj;
+  object::generate_test_instances(obj);
+  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] =
+    *obj.back();
+  obj.pop_back();
+  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] =
+    *obj.back();
+}
+void ScrubMap::object::generate_test_instances(list<object*>& o)
+{
+  o.push_back(new object);
+  o.push_back(new object);
+  o.back()->negative = true;
+  o.push_back(new object);
+  o.back()->size = 123;
+  o.back()->attrs["foo"] = ceph::buffer::copy("foo", 3);
+  o.back()->attrs["bar"] = ceph::buffer::copy("barval", 6);
+}
+#endif
 
 void ScrubGenerator::add_object(ScrubMap& map,
                                 const ScrubGenerator::RealObj& obj_versions,
