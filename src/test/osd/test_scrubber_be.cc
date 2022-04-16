@@ -441,11 +441,11 @@ void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConf conf)
     // fill the map with the objects relevant to this OSD
     for (auto& obj : conf.objs) {
 
-      std::cout << fmt::format("{}: object:\n", __func__);
+      std::cout << fmt::format("{}: object: {}\n", __func__, obj);
       ScrubGenerator::add_object(smap, obj, osd_num);
     }
 
-    std::cout << fmt::format("{}: inserting\n", __func__);
+    std::cout << fmt::format("{}: {} inserting smap {:D}\n", __func__, osd_num, smap);
     sbe->insert_faked_smap(pg_shard_t{osd_num}, smap);
   }
   std::cout << fmt::format("{}: TTT\n", __func__);
@@ -517,8 +517,8 @@ static ScrubGenerator::RealObjsConf set1{
                0x17,
                17,
                21,
-               attr_t{{"om1k", "om1v"}, {"om1k", "om1v"}, {"om3k", "om3v"}},
-               attr_t{{"at1k", "at1v"}, {"at1k", "at1v"}, {"at3k", "at3v"}}
+               attr_t{{"_om1k", "om1v"}, {"om1k", "om1v"}, {"om3k", "om3v"}},
+               attr_t{{"_at1k", "_at1v"}, {"at1k", "at1v"}, {"at3k", "at3v"}}
 
 
       }}},

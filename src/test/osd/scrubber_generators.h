@@ -26,12 +26,79 @@
 // #include "osd/PG.h"
 // #include "osd/PGBackend.h"
 // #include "osd/PrimaryLogPG.h"
+#include "include/buffer.h"
+#include "include/buffer_raw.h"
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber/pg_scrubber.h"
 
 
+template <>
+struct fmt::formatter<ScrubMap::object> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const ScrubMap::object& so, FormatContext& ctx)
+  {
+
+    fmt::format_to(ctx.out(),
+                   "so{{ sz:{} dd:{} od:{} ",
+                   so.size,
+                   so.digest,
+                   so.digest_present);
+
+    for (auto [k, v] : so.attrs) {
+
+      // auto bk = obj.attrs[at_k].clone();
+      std::string bkstr{v.raw_c_str(), v.raw_length()};
+      fmt::format_to(ctx.out(), "{{{}:{} {} }} ", k, bkstr, bkstr.length());
+    }
+
+    return fmt::format_to(ctx.out(), "}}");
+  }
+};
+
+
+template <>
+struct fmt::formatter<ScrubMap> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    auto it = ctx.begin();
+    if (it != ctx.end() && *it == 'D') {
+      debug_log = true;  // list the objects
+      ++it;
+    }
+    return it;
+  }
+
+  template <typename FormatContext>
+  auto format(const ScrubMap& smap, FormatContext& ctx)
+  {
+    fmt::format_to(ctx.out(),
+                   "smap{{ valid:{} inc-since:{} #:{}",
+                   smap.valid_through,
+                   smap.incr_since,
+                   smap.objects.size());
+    if (debug_log) {
+      fmt::format_to(ctx.out(), " objects:");
+      for (const auto& [ho, so] : smap.objects) {
+        fmt::format_to(ctx.out(), "\n\th.o<{}>:<{}> ", ho, so);
+      }
+    }
+    return fmt::format_to(ctx.out(), "\n}}");
+  }
+
+
+  bool debug_log{false};
+};
+
+// ///////////////////////////////////////////////////////////////////////// //
+// ///////////////////////////////////////////////////////////////////////// //
+
+
 namespace ScrubGenerator {
 
+/// \todo fix the MockLog to capture the log messages
 class MockLog : public LoggerSinksSet {
  public:
   void info(std::stringstream& s)
@@ -74,9 +141,6 @@ class MockLog : public LoggerSinksSet {
     }
   }
   virtual ~MockLog() {}
-
- private:
-  OstreamTemp m_parent{clog_type::CLOG_UNKNOWN, nullptr};
 };
 
 // ///////////////////////////////////////////////////////////////////////// //
@@ -205,3 +269,32 @@ struct RealObjsConf {
 };
 
 }  // namespace ScrubGenerator
+
+template <>
+struct fmt::formatter<ScrubGenerator::RealObjVer> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const ScrubGenerator::RealObjVer& rlj, FormatContext& ctx)
+  {
+
+    return fmt::format_to(ctx.out(),
+                          "ROinstance({} / {})",
+                          rlj.ghobj.hobj,
+                          rlj.data.size);
+  }
+};
+
+template <>
+struct fmt::formatter<ScrubGenerator::RealObj> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const ScrubGenerator::RealObj& rlo, FormatContext& ctx)
+  {
+
+    return fmt::format_to(ctx.out(),
+                          "RealObj(versions: {})",
+                          rlo.real_versions.size());
+  }
+};
