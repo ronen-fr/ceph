@@ -96,7 +96,6 @@ ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
 
 uint64_t ScrubBackend::logical_to_ondisk_size(uint64_t logical_size) const
 {
-  //return m_pgbe.be_get_ondisk_size(logical_size);
   return m_pg.logical_to_ondisk_size(logical_size);
 }
 
@@ -310,6 +309,7 @@ void ScrubBackend::update_authoritative()
 
 #ifdef NOTYET
 
+// clang-format off
 temporarily moving this function "upwards", to the PgScrubber.
 It is using too many interfaces and should be refactored.
 For now - it is hard to test it if here.
@@ -360,6 +360,7 @@ void ScrubBackend::repair_oinfo_oid(ScrubMap& smap)
     }
   }
 }
+// clang-format on
 #endif
 
 int ScrubBackend::scrub_process_inconsistent()
@@ -871,12 +872,11 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(
   auto [auths, objerrs] =
     match_in_shards(ho, auth_res, object_error, errstream);
 
-  auto opt_ers =
-    for_empty_auth_list(std::move(auths),
-                        std::move(objerrs),
-                        auth,
-                        ho,
-                        errstream);
+  auto opt_ers = for_empty_auth_list(std::move(auths),
+                                     std::move(objerrs),
+                                     auth,
+                                     ho,
+                                     errstream);
 
   if (opt_ers.has_value()) {
 
@@ -1286,7 +1286,9 @@ bool ScrubBackend::compare_obj_details(pg_shard_t auth_shard,
     auth_bl.push_back(auth_attr->second);
 
     if (!can_bl.contents_equal(auth_bl)) {
-      format_to(std::back_inserter(out), "{}object info inconsistent ", sep(error));
+      format_to(std::back_inserter(out),
+                "{}object info inconsistent ",
+                sep(error));
       obj_result.set_object_info_inconsistency();
     }
   }
@@ -1306,7 +1308,9 @@ bool ScrubBackend::compare_obj_details(pg_shard_t auth_shard,
       auth_bl.push_back(auth_attr->second);
 
       if (!can_bl.contents_equal(auth_bl)) {
-        format_to(std::back_inserter(out), "{}snapset inconsistent ", sep(error));
+        format_to(std::back_inserter(out),
+                  "{}snapset inconsistent ",
+                  sep(error));
         obj_result.set_snapset_inconsistency();
       }
     }
@@ -1385,10 +1389,16 @@ bool ScrubBackend::compare_obj_details(pg_shard_t auth_shard,
 
     auto cand = candidate.attrs.find(k);
     if (cand == candidate.attrs.end()) {
-      format_to(std::back_inserter(out), "{}attr name mismatch '{}'", sep(error), k);
+      format_to(std::back_inserter(out),
+                "{}attr name mismatch '{}'",
+                sep(error),
+                k);
       obj_result.set_attr_name_mismatch();
     } else if (cand->second.cmp(v)) {
-      format_to(std::back_inserter(out), "{}attr value mismatch '{}'", sep(error), k);
+      format_to(std::back_inserter(out),
+                "{}attr value mismatch '{}'",
+                sep(error),
+                k);
       obj_result.set_attr_value_mismatch();
     }
   }
@@ -1401,7 +1411,10 @@ bool ScrubBackend::compare_obj_details(pg_shard_t auth_shard,
 
     auto in_auth = auth.attrs.find(k);
     if (in_auth == auth.attrs.end()) {
-      format_to(std::back_inserter(out), "{}attr name mismatch '{}'", sep(error), k);
+      format_to(std::back_inserter(out),
+                "{}attr name mismatch '{}'",
+                sep(error),
+                k);
       obj_result.set_attr_name_mismatch();
     }
   }

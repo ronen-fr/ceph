@@ -219,9 +219,9 @@ class TestTScrubberBe : public ::testing::Test {
   // initial test data
 
   // CephContext* cct{nullptr};
-  //LogChannelRef logger;
-   ScrubGenerator::MockLog logger;
-   ScrubGenerator::pool_conf_t pool_conf;
+  // LogChannelRef logger;
+  ScrubGenerator::MockLog logger;
+  ScrubGenerator::pool_conf_t pool_conf;
   ScrubGenerator::RealObjsConf real_objs;
   int num_osds{0};
 
@@ -239,7 +239,7 @@ class TestTScrubberBe : public ::testing::Test {
     auto params = inject_params();
     pool_conf = params.pool_conf;
     real_objs = params.objs_conf;
-    //logger = params.logger;
+    // logger = params.logger;
     num_osds = params.num_osds;
 
     // create the OSDMap
@@ -262,6 +262,10 @@ class TestTScrubberBe : public ::testing::Test {
     // std::cout << fmt::format("info: {}\n", info);
     std::cout << "info: " << info << std::endl;
 
+
+    real_objs_list =
+      ScrubGenerator::make_real_objs_conf(pool_id, real_objs, acting_osds);
+
     // now we can create the main mockers
 
     // the "PgScrubber"
@@ -272,22 +276,30 @@ class TestTScrubberBe : public ::testing::Test {
     // the "Pg" (and its backend)
     test_pg = std::make_unique<TestPg>(pool, info, i_am);
     std::cout << fmt::format("{}: test_pg: OK\n", __func__);
+    std::cout << fmt::format("{}: acting: {}\n", __func__, acting_shards);
     sbe = std::make_unique<TestScrubBackend>(*test_scrubber,
                                              *test_pg,
                                              i_am,
                                              /* repair? */ false,
                                              scrub_level_t::deep,
-                                             acting);
+                                             acting_shards);
+
+    // create a osd-num only copy of the relevant OSDs
+    acting_osds.reserve(acting_shards.size());
+    for (const auto& shard : acting_shards) {
+      acting_osds.push_back(shard.osd);
+    }
 
     sbe->new_chunk();
     std::cout << fmt::format("{}: TestScrubBackend created\n", __func__);
-    fake_a_scrub_set(real_objs);
+    fake_a_scrub_set(real_objs_list);
     std::cout << fmt::format("{}: fake_a_scrub_set() done\n", __func__);
   }
 
   void TearDown() override;
 
-  void fake_a_scrub_set(ScrubGenerator::RealObjsConf conf);
+  //void fake_a_scrub_set(ScrubGenerator::RealObjsConf conf);
+  void fake_a_scrub_set(ScrubGenerator::RealObjsConfList& all_sets);
 
   std::unique_ptr<TestScrubBackend> sbe;
 
@@ -296,7 +308,9 @@ class TestTScrubberBe : public ::testing::Test {
   spg_t spg;
 
   pg_shard_t i_am;  // my osd and no shard
-  std::set<pg_shard_t> acting;
+  std::set<pg_shard_t> acting_shards;
+  std::vector<int> acting_osds;
+  int acting_primary;
 
   std::unique_ptr<TestScrubber> test_scrubber;
 
@@ -311,6 +325,9 @@ class TestTScrubberBe : public ::testing::Test {
 
 
   std::unique_ptr<TestPg> test_pg;
+
+  // generated sets of "objects" for the active OSDs
+  ScrubGenerator::RealObjsConfList real_objs_list;
 
  private:
   // void setup_map(int num_osds, const ScrubGenerator::pool_conf_t& pconf);
@@ -373,9 +390,9 @@ pg_info_t TestTScrubberBe::setup_pg_in_map()
   pg_t rawpg(0, pool_id);
   pg_t pgid = osdmap->raw_pg_to_pg(rawpg);
   vector<int> up_osds;
-  vector<int> acting_osds;
+  // vector<int> acting_osds;
   int up_primary;
-  int acting_primary;
+  // int acting_primary;
 
   osdmap->pg_to_up_acting_osds(pgid,
                                &up_osds,
@@ -396,6 +413,12 @@ pg_info_t TestTScrubberBe::setup_pg_in_map()
   spg = spg_t{pgid};  // 0 /*static_cast<int8_t>(acting_primary)}};
   i_am = pg_shard_t{up_primary};
   std::cout << fmt::format("{}: spg: {}  and I am {}\n", __func__, spg, i_am);
+  // set the 'acting shards' set - the one actually used by the scrubber
+  std::for_each(acting_osds.begin(), acting_osds.end(),
+                [&](int osd) {
+                  acting_shards.insert(pg_shard_t{osd});
+                });
+        std::cout << fmt::format("{}: acting_shards: {}\n", __func__, acting_shards);
 
   pg_info_t info;
   info.pgid = spg;
@@ -429,27 +452,59 @@ pg_info_t TestTScrubberBe::setup_pg_in_map()
 
 void TestTScrubberBe::TearDown() {}
 
-
-void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConf conf)
+void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConfList& all_sets)
 {
   std::cout << fmt::format("{}: sbe:{}\n", __func__, (void*)(&sbe));
   for (int osd_num = 0; osd_num < pool_conf.size; ++osd_num) {
 
     ScrubMap smap;
+    smap.valid_through = eversion_t{1, 1};
+    // osdmap->get_epoch();
+    smap.incr_since = eversion_t{1, 1};
     smap.has_omap_keys = true;  // to force omap checks
 
     // fill the map with the objects relevant to this OSD
-    for (auto& obj : conf.objs) {
+    for (auto& obj : all_sets[osd_num]->objs) {
 
       std::cout << fmt::format("{}: object: {}\n", __func__, obj);
       ScrubGenerator::add_object(smap, obj, osd_num);
     }
 
-    std::cout << fmt::format("{}: {} inserting smap {:D}\n", __func__, osd_num, smap);
+    std::cout << fmt::format("{}: {} inserting smap {:D}\n",
+                             __func__,
+                             osd_num,
+                             smap);
     sbe->insert_faked_smap(pg_shard_t{osd_num}, smap);
   }
   std::cout << fmt::format("{}: TTT\n", __func__);
 }
+
+// void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConf conf)
+// {
+//   std::cout << fmt::format("{}: sbe:{}\n", __func__, (void*)(&sbe));
+//   for (int osd_num = 0; osd_num < pool_conf.size; ++osd_num) {
+// 
+//     ScrubMap smap;
+//     smap.valid_through = eversion_t{1, 1};
+//     // osdmap->get_epoch();
+//     smap.incr_since = eversion_t{1, 1};
+//     smap.has_omap_keys = true;  // to force omap checks
+// 
+//     // fill the map with the objects relevant to this OSD
+//     for (auto& obj : conf.objs) {
+// 
+//       std::cout << fmt::format("{}: object: {}\n", __func__, obj);
+//       ScrubGenerator::add_object(smap, obj, osd_num);
+//     }
+// 
+//     std::cout << fmt::format("{}: {} inserting smap {:D}\n",
+//                              __func__,
+//                              osd_num,
+//                              smap);
+//     sbe->insert_faked_smap(pg_shard_t{osd_num}, smap);
+//   }
+//   std::cout << fmt::format("{}: TTT\n", __func__);
+// }
 
 
 // --------------------
@@ -462,7 +517,7 @@ void TestScrubBackend::insert_faked_smap(pg_shard_t shard, const ScrubMap& smap)
                            this_chunk.has_value());
   std::cout << fmt::format("{}: inserting faked smap for osd {}\n",
                            __func__,
-                           17 /*shard.get_osd()*/);
+                           shard.osd);
 
   this_chunk->received_maps[shard] = smap;
 }
@@ -498,6 +553,13 @@ static CorruptFuncList crpt_funcs_set1 = {
 // the pool must be fixed for all entries.
 // Also - the shard.
 
+static hobject_t hobj2{object_t{"hobj2"},
+                        "keykey",     // key
+                        CEPH_NOSNAP,  // snap_id
+                        0,            // hash // or NO_GEN?
+                        0,            // pool
+                        ""};          // nspace
+
 static hobject_t hobj1{"object1",
                        "",
                        CEPH_NOSNAP,
@@ -518,14 +580,34 @@ static ScrubGenerator::RealObjsConf set1{
                17,
                21,
                attr_t{{"_om1k", "om1v"}, {"om1k", "om1v"}, {"om3k", "om3v"}},
-               attr_t{{"_at1k", "_at1v"}, {"at1k", "at1v"}, {"at3k", "at3v"}}
+               attr_t{{"_at1k", "_at1v"}, {"_at2k", "at2v"}, {"at3k", "at3v"}}
 
 
       }}},
     &crpt_funcs_set1
 
 
-  }}};
+  },
+  /* RealObjsConf::objs */ /* RealObj 2 */ {
+    /* RealObj::versions */ {RealObjVer{
+      ghobject_t{hobj2, 0, shard_id_t{0}}
+
+
+      ,
+      RealData{200,
+               0x37,
+               37,
+               42,
+               attr_t{{"_om1k", "om1v"}, {"om1k", "om1v"}, {"om3k", "om3v"}},
+               attr_t{{"_at21k", "_at21v"}, {"_at22k", "at22v"}, {"at23k", "at23v"}}
+
+
+      }}},
+    &crpt_funcs_set1
+
+
+  }
+}};
 
 
 class TestTScrubberBe_data_1 : public TestTScrubberBe {
@@ -539,7 +621,7 @@ class TestTScrubberBe_data_1 : public TestTScrubberBe {
                        nullptr,
                        LogClient::logclient_flag_t::NO_FLAGS};
   // LogChannelRef logcr = std::make_shared<ScrubGenerator::MockLog>();
-  //LogChannelRef logc = log_client.create_channel();
+  // LogChannelRef logc = log_client.create_channel();
 
   TestTScrubberBeParams inject_params() override
   {
