@@ -4,6 +4,47 @@
 
 #include "test/osd/scrubber_generators.h"
 
+using namespace ScrubGenerator;
+
+// ref: PGLogTestRebuildMissing()
+bufferptr create_object_info(const ScrubGenerator::RealObjVer& objver)
+{
+  object_info_t oi{};
+  oi.soid = objver.ghobj.hobj;
+  oi.version = eversion_t(objver.ghobj.generation, 0);
+  // oi.version = objver.ghobj.generation;
+  oi.size = objver.data.size;
+
+  bufferlist bl;
+  oi.encode(bl,
+            0 /*get_osdmap()->get_features(CEPH_ENTITY_TYPE_OSD, nullptr)*/);
+  bufferptr bp(bl.c_str(), bl.length());  // RRR check whether allocates
+  // bl.append(objver.oi_attr);
+  return bp;
+}
+
+RealObjsConfList ScrubGenerator::make_real_objs_conf(
+  int64_t pool_id,  // const pool_conf_t& pool_conf,
+  const RealObjsConf& blueprint,
+  std::vector<int32_t> active_osds)
+{
+  RealObjsConfList all_osds;
+
+  for (auto osd : active_osds) {
+    RealObjsConfRef this_osd_fakes = std::make_unique<RealObjsConf>(blueprint);
+    // now - fix & corrupt ever "object" in the blueprint
+    for (RealObj& robj : this_osd_fakes->objs) {
+      for (auto& obj_ver : robj.real_versions) {
+
+        obj_ver.ghobj.hobj.pool = pool_id;
+      }
+    }
+
+    all_osds[osd] = std::move(this_osd_fakes);
+  }
+  return all_osds;  // reconsider (maybe add a move ctor?)
+}
+
 
 hobject_t ScrubGenerator::make_hobject(
   const ScrubGenerator::TargetHObject& blueprint)
@@ -25,18 +66,22 @@ ScrubMap::object ScrubGenerator::make_smobject(
   const ScrubGenerator::RealObjVer& objver)  // the "fixed" object version
 {
   ScrubMap::object obj{};
+
+  // create the OI_ATTR (object info) entry
+  //{
+  // bufferlist bl = new bufferlist(create_object_info(objver)); // RRR where to
+  // dealloc? ceph::buffer::ptr bl = new bufferlist{};
+  //  auto bl = create_object_info(objver);
+  obj.attrs[OI_ATTR] = create_object_info(objver);
+  //}
+
   for (const auto& [at_k, at_v] : objver.data.attrs) {
     obj.attrs[at_k] = ceph::buffer::copy(at_v.c_str(), at_v.size());
 
     {
       // verifying
       auto bk = obj.attrs[at_k].clone();
-       std::string bkstr{bk.get()->get_data(), bk.get()->get_len()};
-       //std::string bkstr{bk.get()->raw_c_str(), bk.get()->raw_length()};
-       //bk->write(0, at_v.size(), std::cout);
-      //std::string s(bk->c_str(), bk->   length());
-      //ASSERT_EQ(s, at_v);
-
+      std::string bkstr{bk.get()->get_data(), bk.get()->get_len()};
       std::cout << "\nYYY " << bkstr << "\n";
     }
   }
@@ -108,18 +153,18 @@ void ScrubGenerator::add_object(ScrubMap& map,
   // \todo c++20: use contains()
   CorruptFunc relevant_fix = crpt_do_nothing;
 
-  auto p = obj_versions.corrupt_funcs->find(osd_num);
-  if (p != obj_versions.corrupt_funcs->end()) {
-    // yes, we have a corruption recepie for this OSD
-    // \todo c++20: use at()
-    relevant_fix = p->second;
-  }
+  //   auto p = obj_versions.corrupt_funcs->find(osd_num);
+  //   if (false && p != obj_versions.corrupt_funcs->end()) {
+  //     // yes, we have a corruption recepie for this OSD
+  //     // \todo c++20: use at()
+  //     relevant_fix = p->second;
+  //   }
 
 
-  // RRR should we keep the corrupted objects?
-  for (auto obj_version : obj_versions.real_versions) {  // note: a copy
+  // RRR should we persist the corrupted objects?
+  for (auto& obj_version : obj_versions.real_versions) {  // note: a copy
 
-    obj_version = relevant_fix(obj_version, osd_num);
+    // obj_version = relevant_fix(obj_version, osd_num);
     std::cout << fmt::format("{}: osd:{} gh:{} key:{}\n",
                              __func__,
                              osd_num,
