@@ -10,115 +10,48 @@
 #include <string>
 #include <vector>
 
-//
-// #include "common/async/context_pool.h"
-// #include "common/ceph_argparse.h"
-// #include "global/global_context.h"
-// #include "global/global_init.h"
-// #include "mon/MonClient.h"
-// #include "msg/Messenger.h"
-// #include "os/ObjectStore.h"
-// #include "osd/PG.h"
-// #include "osd/PGBackend.h"
-// #include "osd/PrimaryLogPG.h"
 #include "include/buffer.h"
 #include "include/buffer_raw.h"
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber/pg_scrubber.h"
 
-#ifdef MOVED_TO_OSD_TYPES
-template <>
-struct fmt::formatter<ScrubMap::object> {
-  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
-  template <typename FormatContext>
-  auto format(const ScrubMap::object& so, FormatContext& ctx)
-  {
-
-    fmt::format_to(ctx.out(),
-                   "so{{ sz:{} dd:{} od:{} ",
-                   so.size,
-                   so.digest,
-                   so.digest_present);
-
-    for (auto [k, v] : so.attrs) {
-
-      // auto bk = obj.attrs[at_k].clone();
-      std::string bkstr{v.raw_c_str(), v.raw_length()};
-      fmt::format_to(ctx.out(), "{{{}:{} {} }} ", k, bkstr, bkstr.length());
-      std::string bkstr2{v.raw_c_str(), v.raw_length()};
-      fmt::format_to(ctx.out(), "{{{}:{} {} }} ", k, bkstr2, bkstr2.length());
-    }
-
-    return fmt::format_to(ctx.out(), "}}");
-  }
-};
-
-template <>
-struct fmt::formatter<ScrubMap> {
-  template <typename ParseContext>
-  constexpr auto parse(ParseContext& ctx)
-  {
-    auto it = ctx.begin();
-    if (it != ctx.end() && *it == 'D') {
-      debug_log = true;  // list the objects
-      ++it;
-    }
-    return it;
-  }
-
-  template <typename FormatContext>
-  auto format(const ScrubMap& smap, FormatContext& ctx)
-  {
-    fmt::format_to(ctx.out(),
-                   "smap{{ valid:{} inc-since:{} #:{}",
-                   smap.valid_through,
-                   smap.incr_since,
-                   smap.objects.size());
-    if (debug_log) {
-      fmt::format_to(ctx.out(), " objects:");
-      for (const auto& [ho, so] : smap.objects) {
-        fmt::format_to(ctx.out(), "\n\th.o<{}>:<{}> ", ho, so);
-      }
-    }
-    return fmt::format_to(ctx.out(), "\n}}");
-  }
-
-  bool debug_log{false};
-};
-#endif
 
 // ///////////////////////////////////////////////////////////////////////// //
 // ///////////////////////////////////////////////////////////////////////// //
-
 
 namespace ScrubGenerator {
 
 /// \todo fix the MockLog to capture the log messages
 class MockLog : public LoggerSinksSet {
  public:
-  void info(std::stringstream& s)
+  void info(std::stringstream& s) override
   {
     std::cout << "\n<<info>> " << s.str() << std::endl;
   }
-  void warn(std::stringstream& s)
+  void warn(std::stringstream& s) override
   {
     std::cout << "\n<<warn>> " << s.str() << std::endl;
   }
-  void error(std::stringstream& s)
+  void error(std::stringstream& s) override
   {
+    err_count++;
     std::cout << "\n<<error>> " << s.str() << std::endl;
   }
-  void debug(std::stringstream& s)
+  void sec(std::stringstream& s) override
+  {
+    std::cout << "\n<<sec>> " << s.str() << std::endl;
+  }
+  void debug(std::stringstream& s) override
   {
     std::cout << "\n<<debug>> " << s.str() << std::endl;
   }
-  OstreamTemp info() { return OstreamTemp(CLOG_INFO, this); }
-  OstreamTemp warn() { return OstreamTemp(CLOG_WARN, this); }
-  OstreamTemp error() { return OstreamTemp(CLOG_ERROR, this); }
-  OstreamTemp debug() { return OstreamTemp(CLOG_DEBUG, this); }
+  OstreamTemp info() override { return OstreamTemp(CLOG_INFO, this); }
+  OstreamTemp warn() override { return OstreamTemp(CLOG_WARN, this); }
+  OstreamTemp error() override { return OstreamTemp(CLOG_ERROR, this); }
+  OstreamTemp sec() override { return OstreamTemp(CLOG_ERROR, this); }
+  OstreamTemp debug() override { return OstreamTemp(CLOG_DEBUG, this); }
 
-  void do_log(clog_type prio, std::stringstream& ss)
+  void do_log(clog_type prio, std::stringstream& ss) override
   {
     switch (prio) {
       case CLOG_INFO:
@@ -136,7 +69,29 @@ class MockLog : public LoggerSinksSet {
         break;
     }
   }
+
+  void do_log(clog_type prio, const std::string& ss) override
+  {
+    switch (prio) {
+      case CLOG_INFO:
+        info() << ss;
+        break;
+      case CLOG_WARN:
+        warn() << ss;
+        break;
+      case CLOG_ERROR:
+      default:
+        error() << ss;
+        break;
+      case CLOG_DEBUG:
+        debug() << ss;
+        break;
+    }
+  }
+
   virtual ~MockLog() {}
+
+  int err_count{0};
 };
 
 // ///////////////////////////////////////////////////////////////////////// //
@@ -181,15 +136,44 @@ struct TargetHObject {
 
 hobject_t make_hobject(const TargetHObject& blueprint);
 
-struct TargetSmObject {
-  TargetHObject hobj_bluep;
-  std::vector<std::string> attrs;
-  uint64_t size;
-  __u32 omap_digest;
-  __u32 data_digest;
-  // ...
-};
+struct RealObjVer;
+struct RealObj;
 
+struct SnapsetMockData {
+  snapid_t seq;
+  std::vector<snapid_t> snaps;   // descending
+  std::vector<snapid_t> clones;  // ascending
+  std::map<snapid_t, interval_set<uint64_t>>
+    clone_overlap;  // overlap w/ next newest
+  std::map<snapid_t, uint64_t> clone_size;
+  std::map<snapid_t, std::vector<snapid_t>> clone_snaps;  // descending
+
+  SnapsetMockData(snapid_t seq,
+                  std::vector<snapid_t> snaps,
+                  std::vector<snapid_t> clones,
+                  std::map<snapid_t, interval_set<uint64_t>> clone_overlap,
+                  std::map<snapid_t, uint64_t> clone_size,
+                  std::map<snapid_t, std::vector<snapid_t>> clone_snaps)
+      : seq(seq)
+      , snaps(snaps)
+      , clones(clones)
+      , clone_overlap(clone_overlap)
+      , clone_size(clone_size)
+      , clone_snaps(clone_snaps)
+  {}
+
+  SnapSet make_snapset(const RealObj& blueprint) const
+  {
+    SnapSet ss;
+    ss.seq = seq;
+    ss.snaps = snaps;
+    ss.clones = clones;
+    ss.clone_overlap = clone_overlap;
+    ss.clone_size = clone_size;
+    ss.clone_snaps = clone_snaps;
+    return ss;
+  }
+};
 
 // an object in our "DB" - which its versioned snaps, "data" (size and hash),
 // and "omap" (size and hash)
@@ -215,6 +199,7 @@ struct RealObjVer {
 struct RealObj {
   std::vector<RealObjVer> real_versions;
   const CorruptFuncList* corrupt_funcs;
+  const SnapsetMockData* snapset_mock_data;
   //   RealObj& operator=(const RealObj& other) {
   //     real_versions = other.real_versions;
   //     corrupt_funcs = other.corrupt_funcs;
@@ -271,11 +256,11 @@ using RealObjsConfRef = std::unique_ptr<RealObjsConf>;
 // activated on the data
 using RealObjsConfList = std::map<int, RealObjsConfRef>;
 
-RealObjsConfList make_real_objs_conf( int64_t pool_id,
+RealObjsConfList make_real_objs_conf(int64_t pool_id,
                                      const RealObjsConf& blueprint,
-std::vector<int32_t> active_osds
-);
+                                     std::vector<int32_t> active_osds);
 std::string list_multi_conf(const RealObjsConfList& confs);
+
 
 }  // namespace ScrubGenerator
 
