@@ -6,8 +6,8 @@
  */
 
 #include "common/hobject_fmt.h"
-#include "osd/osd_types.h"
 #include "include/types_fmt.h"
+#include "osd/osd_types.h"
 
 template <>
 struct fmt::formatter<osd_reqid_t> {
@@ -16,8 +16,11 @@ struct fmt::formatter<osd_reqid_t> {
   template <typename FormatContext>
   auto format(const osd_reqid_t& req_id, FormatContext& ctx)
   {
-    return fmt::format_to(ctx.out(), "{}.{}:{}", req_id.name, req_id.inc,
-			  req_id.tid);
+    return fmt::format_to(ctx.out(),
+                          "{}.{}:{}",
+                          req_id.name,
+                          req_id.inc,
+                          req_id.tid);
   }
 };
 
@@ -56,9 +59,12 @@ struct fmt::formatter<chunk_info_t> {
   template <typename FormatContext>
   auto format(const chunk_info_t& ci, FormatContext& ctx)
   {
-    return fmt::format_to(ctx.out(), "(len: {} oid: {} offset: {} flags: {})",
-			  ci.length, ci.oid, ci.offset,
-			  ci.get_flag_string(ci.flags));
+    return fmt::format_to(ctx.out(),
+                          "(len: {} oid: {} offset: {} flags: {})",
+                          ci.length,
+                          ci.oid,
+                          ci.offset,
+                          ci.get_flag_string(ci.flags));
   }
 };
 
@@ -86,9 +92,14 @@ struct fmt::formatter<object_info_t> {
   template <typename FormatContext>
   auto format(const object_info_t& oi, FormatContext& ctx)
   {
-    fmt::format_to(ctx.out(), "{}({} {} {} s {} uv {}", oi.soid, oi.version,
-		   oi.last_reqid, (oi.flags ? oi.get_flag_string() : ""), oi.size,
-		   oi.user_version);
+    fmt::format_to(ctx.out(),
+                   "{}({} {} {} s {} uv {}",
+                   oi.soid,
+                   oi.version,
+                   oi.last_reqid,
+                   (oi.flags ? oi.get_flag_string() : ""),
+                   oi.size,
+                   oi.user_version);
     if (oi.is_data_digest()) {
       fmt::format_to(ctx.out(), " dd {:x}", oi.data_digest);
     }
@@ -96,8 +107,11 @@ struct fmt::formatter<object_info_t> {
       fmt::format_to(ctx.out(), " od {:x}", oi.omap_digest);
     }
 
-    fmt::format_to(ctx.out(), " alloc_hint [{} {} {}]", oi.expected_object_size,
-		   oi.expected_write_size, oi.alloc_hint_flags);
+    fmt::format_to(ctx.out(),
+                   " alloc_hint [{} {} {}]",
+                   oi.expected_object_size,
+                   oi.expected_write_size,
+                   oi.alloc_hint_flags);
 
     if (oi.has_manifest()) {
       fmt::format_to(ctx.out(), " {}", oi.manifest);
@@ -150,9 +164,9 @@ struct fmt::formatter<ScrubMap::object> {
     // note the special handling of (1) OI_ATTR and (2) non-printables
     for (auto [k, v] : so.attrs) {
       std::string bkstr{v.raw_c_str(), v.raw_length()};
-        if (k == std::string{OI_ATTR}) {
-            bkstr = "<<OI_ATTR>>";
-        }
+      if (k == std::string{OI_ATTR}) {
+        bkstr = "<<OI_ATTR>>";
+      }
       fmt::format_to(ctx.out(), "{{{}:{}({})}} ", k, bkstr, bkstr.length());
     }
 
@@ -177,7 +191,7 @@ struct fmt::formatter<ScrubMap> {
   auto format(const ScrubMap& smap, FormatContext& ctx)
   {
     fmt::format_to(ctx.out(),
-                   "smap{{ valid:{} inc-since:{} #:{}",
+                   "smap{{ valid:{} incr-since:{} #:{}",
                    smap.valid_through,
                    smap.incr_since,
                    smap.objects.size());

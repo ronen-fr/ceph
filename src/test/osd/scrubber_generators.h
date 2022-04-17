@@ -112,6 +112,7 @@ class MockLog : public LoggerSinksSet {
   }
   void error(std::stringstream& s)
   {
+    err_count++;
     std::cout << "\n<<error>> " << s.str() << std::endl;
   }
   void debug(std::stringstream& s)
@@ -142,6 +143,8 @@ class MockLog : public LoggerSinksSet {
     }
   }
   virtual ~MockLog() {}
+
+  int err_count{0};
 };
 
 // ///////////////////////////////////////////////////////////////////////// //
@@ -196,6 +199,45 @@ struct TargetSmObject {
 };
 
 
+struct RealObjVer;
+struct RealObj;
+
+struct SnapsetMockData {
+  snapid_t seq;
+  std::vector<snapid_t> snaps;   // descending
+  std::vector<snapid_t> clones;  // ascending
+  std::map<snapid_t, interval_set<uint64_t>>
+    clone_overlap;  // overlap w/ next newest
+  std::map<snapid_t, uint64_t> clone_size;
+  std::map<snapid_t, std::vector<snapid_t>> clone_snaps;  // descending
+
+  SnapsetMockData(snapid_t seq,
+                  std::vector<snapid_t> snaps,
+                  std::vector<snapid_t> clones,
+                  std::map<snapid_t, interval_set<uint64_t>> clone_overlap,
+                  std::map<snapid_t, uint64_t> clone_size,
+                  std::map<snapid_t, std::vector<snapid_t>> clone_snaps)
+      : seq(seq)
+      , snaps(snaps)
+      , clones(clones)
+      , clone_overlap(clone_overlap)
+      , clone_size(clone_size)
+      , clone_snaps(clone_snaps)
+  {}
+
+  SnapSet make_snapset(const RealObj& blueprint) const
+  {
+    SnapSet ss;
+    ss.seq = seq;
+    ss.snaps = snaps;
+    ss.clones = clones;
+    ss.clone_overlap = clone_overlap;
+    ss.clone_size = clone_size;
+    ss.clone_snaps = clone_snaps;
+    return ss;
+  }
+};
+
 // an object in our "DB" - which its versioned snaps, "data" (size and hash),
 // and "omap" (size and hash)
 
@@ -220,6 +262,7 @@ struct RealObjVer {
 struct RealObj {
   std::vector<RealObjVer> real_versions;
   const CorruptFuncList* corrupt_funcs;
+  const SnapsetMockData* snapset_mock_data;
   //   RealObj& operator=(const RealObj& other) {
   //     real_versions = other.real_versions;
   //     corrupt_funcs = other.corrupt_funcs;
@@ -276,11 +319,13 @@ using RealObjsConfRef = std::unique_ptr<RealObjsConf>;
 // activated on the data
 using RealObjsConfList = std::map<int, RealObjsConfRef>;
 
-RealObjsConfList make_real_objs_conf( int64_t pool_id,
+RealObjsConfList make_real_objs_conf(int64_t pool_id,
                                      const RealObjsConf& blueprint,
-std::vector<int32_t> active_osds
-);
+                                     std::vector<int32_t> active_osds);
 std::string list_multi_conf(const RealObjsConfList& confs);
+
+
+
 
 }  // namespace ScrubGenerator
 

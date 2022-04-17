@@ -23,6 +23,16 @@ bufferptr create_object_info(const ScrubGenerator::RealObjVer& objver)
   return bp;
 }
 
+bufferptr create_object_snapset(const ScrubGenerator::RealObj& robj, const SnapsetMockData* snapset_mock_data)
+{
+  // RRR \todo fill in missing version/osd details from the robj
+  auto sns = snapset_mock_data->make_snapset(robj);
+  bufferlist bl;
+  encode(sns, bl);
+  bufferptr bp = bufferptr(bl.c_str(), bl.length());
+  return bp;
+}
+
 RealObjsConfList ScrubGenerator::make_real_objs_conf(
   int64_t pool_id,  // const pool_conf_t& pool_conf,
   const RealObjsConf& blueprint,
@@ -73,6 +83,7 @@ ScrubMap::object ScrubGenerator::make_smobject(
   // dealloc? ceph::buffer::ptr bl = new bufferlist{};
   //  auto bl = create_object_info(objver);
   obj.attrs[OI_ATTR] = create_object_info(objver);
+  obj.attrs[SS_ATTR] = create_object_snapset(blueprint, blueprint.snapset_mock_data);
   //}
 
   for (const auto& [at_k, at_v] : objver.data.attrs) {

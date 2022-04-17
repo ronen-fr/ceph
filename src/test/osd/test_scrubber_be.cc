@@ -235,6 +235,8 @@ class TestTScrubberBe : public ::testing::Test {
   void SetUp() override
   {
     std::cout << "TestTScrubberBe::SetUp()\n";
+    logger.err_count = 0;
+
     // fetch test configuration
     auto params = inject_params();
     pool_conf = params.pool_conf;
@@ -298,7 +300,7 @@ class TestTScrubberBe : public ::testing::Test {
 
   void TearDown() override;
 
-  //void fake_a_scrub_set(ScrubGenerator::RealObjsConf conf);
+  // void fake_a_scrub_set(ScrubGenerator::RealObjsConf conf);
   void fake_a_scrub_set(ScrubGenerator::RealObjsConfList& all_sets);
 
   std::unique_ptr<TestScrubBackend> sbe;
@@ -414,11 +416,10 @@ pg_info_t TestTScrubberBe::setup_pg_in_map()
   i_am = pg_shard_t{up_primary};
   std::cout << fmt::format("{}: spg: {}  and I am {}\n", __func__, spg, i_am);
   // set the 'acting shards' set - the one actually used by the scrubber
-  std::for_each(acting_osds.begin(), acting_osds.end(),
-                [&](int osd) {
-                  acting_shards.insert(pg_shard_t{osd});
-                });
-        std::cout << fmt::format("{}: acting_shards: {}\n", __func__, acting_shards);
+  std::for_each(acting_osds.begin(), acting_osds.end(), [&](int osd) {
+    acting_shards.insert(pg_shard_t{osd});
+  });
+  std::cout << fmt::format("{}: acting_shards: {}\n", __func__, acting_shards);
 
   pg_info_t info;
   info.pgid = spg;
@@ -450,9 +451,13 @@ pg_info_t TestTScrubberBe::setup_pg_in_map()
 }
 
 
-void TestTScrubberBe::TearDown() {}
+void TestTScrubberBe::TearDown()
+{
+  ASSERT_FALSE(logger.err_count);
+}
 
-void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConfList& all_sets)
+void TestTScrubberBe::fake_a_scrub_set(
+  ScrubGenerator::RealObjsConfList& all_sets)
 {
   std::cout << fmt::format("{}: sbe:{}\n", __func__, (void*)(&sbe));
   for (int osd_num = 0; osd_num < pool_conf.size; ++osd_num) {
@@ -483,20 +488,20 @@ void TestTScrubberBe::fake_a_scrub_set(ScrubGenerator::RealObjsConfList& all_set
 // {
 //   std::cout << fmt::format("{}: sbe:{}\n", __func__, (void*)(&sbe));
 //   for (int osd_num = 0; osd_num < pool_conf.size; ++osd_num) {
-// 
+//
 //     ScrubMap smap;
 //     smap.valid_through = eversion_t{1, 1};
 //     // osdmap->get_epoch();
 //     smap.incr_since = eversion_t{1, 1};
 //     smap.has_omap_keys = true;  // to force omap checks
-// 
+//
 //     // fill the map with the objects relevant to this OSD
 //     for (auto& obj : conf.objs) {
-// 
+//
 //       std::cout << fmt::format("{}: object: {}\n", __func__, obj);
 //       ScrubGenerator::add_object(smap, obj, osd_num);
 //     }
-// 
+//
 //     std::cout << fmt::format("{}: {} inserting smap {:D}\n",
 //                              __func__,
 //                              osd_num,
@@ -554,22 +559,32 @@ static CorruptFuncList crpt_funcs_set1 = {
 // Also - the shard.
 
 static hobject_t hobj2{object_t{"hobj2"},
-                        "keykey",     // key
-                        CEPH_NOSNAP,  // snap_id
-                        0,            // hash // or NO_GEN?
-                        0,            // pool
-                        ""};          // nspace
+                       "keykey",     // key
+                       CEPH_NOSNAP,  // snap_id
+                       0,            // hash // or NO_GEN?
+                       0,            // pool
+                       ""s};         // nspace
+
+// and the data required to create the snap-set of hobj2
+SnapsetMockData hobj2_snapset{
+   /* seq */ 1,
+   /* snaps */ {},
+  /* clones */ {},
+  /* clone overlap */ {},
+        /* clone size */ {},
+/* clone_snaps */ {}
+};
 
 static hobject_t hobj1{"object1",
                        "",
-                       CEPH_NOSNAP,
+                       0, //CEPH_NOSNAP,
                        0,  // or NO_GEN?
                        0,
-                       ""};
+                       ""s};
 
 
-static ScrubGenerator::RealObjsConf set1{
-  /* RealObjsConf::objs */ {/* RealObj 1 */ {
+static ScrubGenerator::RealObjsConf set1{/* RealObjsConf::objs */ {
+  /* RealObj 1 */ {
     /* RealObj::versions */ {RealObjVer{
       ghobject_t{hobj1, 0, shard_id_t{0}}
 
@@ -586,7 +601,7 @@ static ScrubGenerator::RealObjsConf set1{
       }}},
     &crpt_funcs_set1
 
-
+, &hobj2_snapset
   },
   /* RealObjsConf::objs */ /* RealObj 2 */ {
     /* RealObj::versions */ {RealObjVer{
@@ -594,20 +609,21 @@ static ScrubGenerator::RealObjsConf set1{
 
 
       ,
-      RealData{200,
-               0x37,
-               37,
-               42,
-               attr_t{{"_om1k", "om1v"}, {"om1k", "om1v"}, {"om3k", "om3v"}},
-               attr_t{{"_at21k", "_at21v"}, {"_at22k", "at22v"}, {"at23k", "at23v"}}
+      RealData{
+        200,
+        0x37,
+        37,
+        42,
+        attr_t{{"_om1k", "om1v"}, {"om1k", "om1v"}, {"om3k", "om3v"}},
+        attr_t{{"_at21k", "_at21v"}, {"_at22k", "at22v"}, {"at23k", "at23v"}}
 
 
       }}},
     &crpt_funcs_set1
 
+, &hobj2_snapset
 
-  }
-}};
+  }}};
 
 
 class TestTScrubberBe_data_1 : public TestTScrubberBe {
