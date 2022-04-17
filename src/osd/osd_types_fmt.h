@@ -132,3 +132,60 @@ struct fmt::formatter<spg_t> {
     }
   }
 };
+
+template <>
+struct fmt::formatter<ScrubMap::object> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const ScrubMap::object& so, FormatContext& ctx)
+  {
+
+    fmt::format_to(ctx.out(),
+                   "so{{ sz:{} dd:{} od:{} ",
+                   so.size,
+                   so.digest,
+                   so.digest_present);
+
+    for (auto [k, v] : so.attrs) {
+      std::string bkstr{v.raw_c_str(), v.raw_length()};
+      fmt::format_to(ctx.out(), "{{{}:{}({})}} ", k, bkstr, bkstr.length());
+    }
+
+    return fmt::format_to(ctx.out(), "}}");
+  }
+};
+
+template <>
+struct fmt::formatter<ScrubMap> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    auto it = ctx.begin();
+    if (it != ctx.end() && *it == 'D') {
+      debug_log = true;  // list the objects
+      ++it;
+    }
+    return it;
+  }
+
+  template <typename FormatContext>
+  auto format(const ScrubMap& smap, FormatContext& ctx)
+  {
+    fmt::format_to(ctx.out(),
+                   "smap{{ valid:{} inc-since:{} #:{}",
+                   smap.valid_through,
+                   smap.incr_since,
+                   smap.objects.size());
+    if (debug_log) {
+      fmt::format_to(ctx.out(), " objects:");
+      for (const auto& [ho, so] : smap.objects) {
+        fmt::format_to(ctx.out(), "\n\th.o<{}>:<{}> ", ho, so);
+      }
+      fmt::format_to(ctx.out(), "\n");
+    }
+    return fmt::format_to(ctx.out(), "}}");
+  }
+
+  bool debug_log{false};
+};
