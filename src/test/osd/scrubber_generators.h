@@ -31,7 +31,7 @@
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber/pg_scrubber.h"
 
-
+#ifdef MOVED_TO_OSD_TYPES
 template <>
 struct fmt::formatter<ScrubMap::object> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
@@ -51,12 +51,13 @@ struct fmt::formatter<ScrubMap::object> {
       // auto bk = obj.attrs[at_k].clone();
       std::string bkstr{v.raw_c_str(), v.raw_length()};
       fmt::format_to(ctx.out(), "{{{}:{} {} }} ", k, bkstr, bkstr.length());
+      std::string bkstr2{v.raw_c_str(), v.raw_length()};
+      fmt::format_to(ctx.out(), "{{{}:{} {} }} ", k, bkstr2, bkstr2.length());
     }
 
     return fmt::format_to(ctx.out(), "}}");
   }
 };
-
 
 template <>
 struct fmt::formatter<ScrubMap> {
@@ -88,9 +89,9 @@ struct fmt::formatter<ScrubMap> {
     return fmt::format_to(ctx.out(), "\n}}");
   }
 
-
   bool debug_log{false};
 };
+#endif
 
 // ///////////////////////////////////////////////////////////////////////// //
 // ///////////////////////////////////////////////////////////////////////// //
@@ -103,19 +104,19 @@ class MockLog : public LoggerSinksSet {
  public:
   void info(std::stringstream& s)
   {
-    std::cout << "<<info>> " << s.str() << std::endl;
+    std::cout << "\n<<info>> " << s.str() << std::endl;
   }
   void warn(std::stringstream& s)
   {
-    std::cout << "<<warn>> " << s.str() << std::endl;
+    std::cout << "\n<<warn>> " << s.str() << std::endl;
   }
   void error(std::stringstream& s)
   {
-    std::cout << "<<error>> " << s.str() << std::endl;
+    std::cout << "\n<<error>> " << s.str() << std::endl;
   }
   void debug(std::stringstream& s)
   {
-    std::cout << "<<debug>> " << s.str() << std::endl;
+    std::cout << "\n<<debug>> " << s.str() << std::endl;
   }
   OstreamTemp info() { return OstreamTemp(CLOG_INFO, this); }
   OstreamTemp warn() { return OstreamTemp(CLOG_WARN, this); }
@@ -267,6 +268,19 @@ using chunk_smap_setter_t =
 struct RealObjsConf {
   std::vector<RealObj> objs;
 };
+
+using RealObjsConfRef = std::unique_ptr<RealObjsConf>;
+
+// RealObjsConf will be "developed" into the following of per-osd sets,
+// now with the correct pool ID, and with the corrupting functions
+// activated on the data
+using RealObjsConfList = std::map<int, RealObjsConfRef>;
+
+RealObjsConfList make_real_objs_conf( int64_t pool_id,
+                                     const RealObjsConf& blueprint,
+std::vector<int32_t> active_osds
+);
+std::string list_multi_conf(const RealObjsConfList& confs);
 
 }  // namespace ScrubGenerator
 
