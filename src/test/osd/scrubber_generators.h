@@ -8,6 +8,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "include/buffer.h"
@@ -140,6 +141,15 @@ struct RealObjVer;
 struct RealObj;
 
 struct SnapsetMockData {
+
+  using cooked_clone_snaps =
+    std::tuple<std::map<snapid_t, uint64_t>,
+               std::map<snapid_t, std::vector<snapid_t>>,
+std::map<snapid_t, interval_set<uint64_t>>>;
+
+  using clone_snaps_cooker =
+    cooked_clone_snaps(*)(/*const RealObjVer&*/);
+
   snapid_t seq;
   std::vector<snapid_t> snaps;   // descending
   std::vector<snapid_t> clones;  // ascending
@@ -147,6 +157,7 @@ struct SnapsetMockData {
     clone_overlap;  // overlap w/ next newest
   std::map<snapid_t, uint64_t> clone_size;
   std::map<snapid_t, std::vector<snapid_t>> clone_snaps;  // descending
+
 
   SnapsetMockData(snapid_t seq,
                   std::vector<snapid_t> snaps,
@@ -161,6 +172,20 @@ struct SnapsetMockData {
       , clone_size(clone_size)
       , clone_snaps(clone_snaps)
   {}
+
+  SnapsetMockData(snapid_t seq,
+                  std::vector<snapid_t> snaps,
+                  std::vector<snapid_t> clones,
+                  clone_snaps_cooker func)
+      : seq{seq}
+      , snaps{snaps}
+      , clones(clones)
+  {
+    auto [clone_size_, clone_snaps_, clone_overlap_] = func();
+    clone_size = clone_size_;
+    clone_snaps = clone_snaps_;
+        clone_overlap = clone_overlap_;
+  }
 
   SnapSet make_snapset(const RealObj& blueprint) const
   {

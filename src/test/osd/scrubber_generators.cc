@@ -23,8 +23,12 @@ bufferptr create_object_info(const ScrubGenerator::RealObjVer& objver)
   return bp;
 }
 
-bufferptr create_object_snapset(const ScrubGenerator::RealObj& robj, const SnapsetMockData* snapset_mock_data)
+bufferptr create_object_snapset(const ScrubGenerator::RealObj& robj,
+                                const SnapsetMockData* snapset_mock_data)
 {
+  if (!snapset_mock_data) {
+    return bufferptr();
+  }
   // RRR \todo fill in missing version/osd details from the robj
   auto sns = snapset_mock_data->make_snapset(robj);
   bufferlist bl;
@@ -83,7 +87,11 @@ ScrubMap::object ScrubGenerator::make_smobject(
   // dealloc? ceph::buffer::ptr bl = new bufferlist{};
   //  auto bl = create_object_info(objver);
   obj.attrs[OI_ATTR] = create_object_info(objver);
-  obj.attrs[SS_ATTR] = create_object_snapset(blueprint, blueprint.snapset_mock_data);
+  if (blueprint.snapset_mock_data) {
+    // only for head
+    obj.attrs[SS_ATTR] =
+      create_object_snapset(blueprint, blueprint.snapset_mock_data);
+  }
   //}
 
   for (const auto& [at_k, at_v] : objver.data.attrs) {

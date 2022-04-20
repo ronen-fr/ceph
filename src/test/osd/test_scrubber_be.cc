@@ -558,6 +558,8 @@ static CorruptFuncList crpt_funcs_set1 = {
 // the pool must be fixed for all entries.
 // Also - the shard.
 
+// OBJ 2 - head & two snaps
+
 static hobject_t hobj2{object_t{"hobj2"},
                        "keykey",     // key
                        CEPH_NOSNAP,  // snap_id
@@ -565,13 +567,53 @@ static hobject_t hobj2{object_t{"hobj2"},
                        0,            // pool
                        ""s};         // nspace
 
+SnapsetMockData::cooked_clone_snaps snp2_fn()
+{
+  std::map<snapid_t, uint64_t> clnsz;
+  clnsz[0x20] = 222;
+  clnsz[0x30] = 333;
+
+  std::map<snapid_t, std::vector<snapid_t>> clnsn;
+        clnsn[0x20] = {0x20};
+        clnsn[0x30] = {0x30};
+
+std::map<snapid_t, interval_set<uint64_t>> overlaps;
+        overlaps[0x20] = {};
+        overlaps[0x30] = {};
+        return {clnsz, clnsn, overlaps};
+}
+
+SnapsetMockData hobj2_snapset{/* seq */ 0x40,
+                              /* snaps */ {0x30, 0x20},
+                              /* clones */ {0x20, 0x30},
+snp2_fn};
+
+
 // and the data required to create the snap-set of hobj2
-SnapsetMockData hobj2_snapset{/* seq */ 1,
-                              /* snaps */ {},
-                              /* clones */ {},
-                              /* clone overlap */ {},
-                              /* clone size */ {},
-                              /* clone_snaps */ {}};
+// SnapsetMockData hobj2_snapset{/* seq */ 0x40,
+//                               /* snaps */ {0x30, 0x20},
+//                               /* clones */ {0x20, 0x30},
+//                               /* clone overlap */ {},
+//                               /* clone size */ {},
+//                               /* clone_snaps */ {}};
+
+
+static hobject_t hobj2_snp30{object_t{"hobj2"},
+                       "keykey",     // key
+                       0x30,         // snap_id
+                       0,            // hash // or NO_GEN?
+                       0,            // pool
+                       ""s};         // nspace
+
+static hobject_t hobj2_snp20{object_t{"hobj2"},
+                       "keykey",     // key
+                       0x20,         // snap_id
+                       0,            // hash // or NO_GEN?
+                       0,            // pool
+                       ""s};         // nspace
+
+
+// OBJ 1
 
 static hobject_t hobj1{"object1",
                        "",
@@ -579,6 +621,7 @@ static hobject_t hobj1{"object1",
                        0,  // or NO_GEN?
                        0,
                        ""s};
+
 
 SnapsetMockData hobj1_snapset{
   /* seq */ 100,
@@ -590,6 +633,131 @@ SnapsetMockData hobj1_snapset{
   /* clone_snaps */ {{9, {90}}, {10, {100}}}
 
 };
+
+static ScrubGenerator::RealObjsConf set4{/* RealObjsConf::objs */ {
+
+  /* RealObj 1 */ {
+    /* RealObj::versions */ {RealObjVer{
+      ghobject_t{hobj2_snp30, 0, shard_id_t{0}}
+
+
+      ,
+      RealData{333,
+               0x17,
+               17,
+               21,
+               attr_t{/*{"_om1k", "om1v"}, {"om1k", "om1v"},*/ {"om3k", "om3v"}},
+               attr_t{{"_at1k", "_at1v"}, {"_at2k", "at2v"}, {"at3k", "at3v"}}
+
+
+      }}},
+    &crpt_funcs_set1
+
+    ,
+    nullptr},
+  /* RealObj 1 */ {
+    /* RealObj::versions */ {RealObjVer{
+      ghobject_t{hobj2_snp20, 0, shard_id_t{0}}
+
+
+      ,
+      RealData{222,
+               0x17,
+               17,
+               21,
+               attr_t{/*{"_om1k", "om1v"}, {"om1k", "om1v"},*/ {"om3k", "om3v"}},
+               attr_t{{"_at1k", "_at1v"}, {"_at2k", "at2v"}, {"at3k", "at3v"}}
+
+
+      }}},
+    &crpt_funcs_set1
+
+    ,
+    nullptr},
+
+
+  /* RealObj 1 */ {
+    /* RealObj::versions */ {RealObjVer{
+      ghobject_t{hobj2, 0, shard_id_t{0}}
+
+
+      ,
+      RealData{100,
+               0x17,
+               17,
+               21,
+               attr_t{{"_om1k", "om1v"}, {"om1k", "om1v"}, {"om3k", "om3v"}},
+               attr_t{{"_at1k", "_at1v"}, {"_at2k", "at2v"}, {"at3k", "at3v"}}
+
+
+      }}},
+    &crpt_funcs_set1
+
+    ,
+    &hobj2_snapset}
+
+}};
+
+static ScrubGenerator::RealObjsConf set3{/* RealObjsConf::objs */ {
+  /* RealObj 1 */ {
+    /* RealObj::versions */ {RealObjVer{
+      ghobject_t{hobj2, 0, shard_id_t{0}}
+
+
+      ,
+      RealData{100,
+               0x17,
+               17,
+               21,
+               attr_t{{"_om1k", "om1v"}, {"om1k", "om1v"}, {"om3k", "om3v"}},
+               attr_t{{"_at1k", "_at1v"}, {"_at2k", "at2v"}, {"at3k", "at3v"}}
+
+
+      }}},
+    &crpt_funcs_set1
+
+    ,
+    &hobj2_snapset},
+  /* RealObj 1 */ {
+    /* RealObj::versions */ {RealObjVer{
+      ghobject_t{hobj2_snp30, 0, shard_id_t{0}}
+
+
+      ,
+      RealData{100,
+               0x17,
+               17,
+               21,
+               attr_t{/*{"_om1k", "om1v"}, {"om1k", "om1v"},*/ {"om3k", "om3v"}},
+               attr_t{{"_at1k", "_at1v"}, {"_at2k", "at2v"}, {"at3k", "at3v"}}
+
+
+      }}},
+    &crpt_funcs_set1
+
+    ,
+    nullptr},
+  /* RealObj 1 */ {
+    /* RealObj::versions */ {RealObjVer{
+      ghobject_t{hobj2_snp20, 0, shard_id_t{0}}
+
+
+      ,
+      RealData{100,
+               0x17,
+               17,
+               21,
+               attr_t{/*{"_om1k", "om1v"}, {"om1k", "om1v"},*/ {"om3k", "om3v"}},
+               attr_t{{"_at1k", "_at1v"}, {"_at2k", "at2v"}, {"at3k", "at3v"}}
+
+
+      }}},
+    &crpt_funcs_set1
+
+    ,
+    nullptr},
+
+}};
 
 static ScrubGenerator::RealObjsConf set1{/* RealObjsConf::objs */ {
   /* RealObj 1 */ {
@@ -650,9 +818,9 @@ class TestTScrubberBe_data_1 : public TestTScrubberBe {
 
   TestTScrubberBeParams inject_params() override
   {
-    std::cout << fmt::format("{}: injecting params (set1)\n", __func__);
+    std::cout << fmt::format("{}: injecting params (set4)\n", __func__);
     return TestTScrubberBeParams{/* pool_conf */ pl,
-                                 /* real_objs_conf */ set1,
+                                 /* real_objs_conf */ set4,
                                  /* logger */ &logger,
                                  /*num_osds */ 3};
   }
