@@ -1,4 +1,4 @@
-// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:f -*-
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 #pragma once
 
@@ -13,6 +13,7 @@
 
 #include "include/buffer.h"
 #include "include/buffer_raw.h"
+#include "include/object_fmt.h"
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber/pg_scrubber.h"
 
@@ -111,6 +112,8 @@ using attr_t = std::map<std::string, std::string>;
 
 struct RealObjVer;
 
+using all_clones_snaps_t = std::map<hobject_t, std::vector<snapid_t>>;
+
 // a function to manipulate (i.e. corrupt) an object in a specific OSD
 using CorruptFunc = std::function<RealObjVer(const RealObjVer& s, int osd_num)>;
 using CorruptFuncList = std::map<int, CorruptFunc>;  // per OSD
@@ -145,10 +148,9 @@ struct SnapsetMockData {
   using cooked_clone_snaps =
     std::tuple<std::map<snapid_t, uint64_t>,
                std::map<snapid_t, std::vector<snapid_t>>,
-std::map<snapid_t, interval_set<uint64_t>>>;
+               std::map<snapid_t, interval_set<uint64_t>>>;
 
-  using clone_snaps_cooker =
-    cooked_clone_snaps(*)(/*const RealObjVer&*/);
+  using clone_snaps_cooker = cooked_clone_snaps (*)(/*const RealObjVer&*/);
 
   snapid_t seq;
   std::vector<snapid_t> snaps;   // descending
@@ -184,10 +186,11 @@ std::map<snapid_t, interval_set<uint64_t>>>;
     auto [clone_size_, clone_snaps_, clone_overlap_] = func();
     clone_size = clone_size_;
     clone_snaps = clone_snaps_;
-        clone_overlap = clone_overlap_;
+    clone_overlap = clone_overlap_;
   }
 
-  SnapSet make_snapset(const RealObj& blueprint) const
+  SnapSet make_snapset(
+    /* needed for corrupting? const RealObj& blueprint*/) const
   {
     SnapSet ss;
     ss.seq = seq;
@@ -222,24 +225,12 @@ struct RealObjVer {
 };
 
 struct RealObj {
-  std::vector<RealObjVer> real_versions;
+  // std::vector<RealObjVer> real_versions;  // replaced with only one RRR
+  /// \todo merge RealObjVer into RealObj
+  RealObjVer object_version;
   const CorruptFuncList* corrupt_funcs;
   const SnapsetMockData* snapset_mock_data;
-  //   RealObj& operator=(const RealObj& other) {
-  //     real_versions = other.real_versions;
-  //     corrupt_funcs = other.corrupt_funcs;
-  //     return *this;
-  //   }
-  //   RealObj(const RealObj& other) : real_versions(other.real_versions),
-  //                                   corrupt_funcs(other.corrupt_funcs) {}
 };
-
-
-ScrubMap::object make_smobject(
-  const ScrubGenerator::RealObj& blueprint,  // the whole set of versions
-  const ScrubGenerator::RealObjVer& objver   // the "fixed" object version
-);
-
 
 inline static RealObjVer crpt_do_nothing(const RealObjVer& s, int osdn)
 {
@@ -252,23 +243,20 @@ struct SmapEntry {
 };
 
 
-// need version boundaries for  the following func
-// std::vector<ScrubMap::object> make_smobjects(const RealObj& blueprint, int
-// osd_num);
-SmapEntry make_smap_entry(
+ScrubGenerator::SmapEntry make_smobject(
   const ScrubGenerator::RealObj& blueprint,  // the whole set of versions
   const ScrubGenerator::RealObjVer& objver,  // the "fixed" object version
   int osd_num);
 
-// void add_objects(ScrubMap& map, const RealObj& obj_versions, int osd_num);
+
+/**
+ * returns the object's snap-set
+ */
 void add_object(ScrubMap& map, const RealObj& obj_versions, int osd_num);
+
 
 using chunk_smap_setter_t =
   std::function<void(pg_shard_t shard, const ScrubMap& smap)>;
-
-// void add_to_smaps(const pool_conf_t& pool_conf,
-//                   const RealObj& blueprint,
-//                   chunk_smap_setter_t setter);
 
 struct RealObjsConf {
   std::vector<RealObj> objs;
@@ -284,9 +272,13 @@ using RealObjsConfList = std::map<int, RealObjsConfRef>;
 RealObjsConfList make_real_objs_conf(int64_t pool_id,
                                      const RealObjsConf& blueprint,
                                      std::vector<int32_t> active_osds);
-std::string list_multi_conf(const RealObjsConfList& confs);
 
-
+/**
+ * create the snap-ids set for all clones appearing in the head
+ * object's snapset (those will be injected into the scrubber's mock,
+ * to be used as the 'snap_mapper')
+ */
+all_clones_snaps_t all_clones(const RealObj& head_obj);
 }  // namespace ScrubGenerator
 
 template <>
@@ -311,9 +303,11 @@ struct fmt::formatter<ScrubGenerator::RealObj> {
   template <typename FormatContext>
   auto format(const ScrubGenerator::RealObj& rlo, FormatContext& ctx)
   {
-
+    using namespace ScrubGenerator;
     return fmt::format_to(ctx.out(),
-                          "RealObj(versions: {})",
-                          rlo.real_versions.size());
+                          "RealObj(gh:{}, dt:{}, snaps:{})",
+                          rlo.object_version.ghobj,
+                          rlo.object_version.data.size,
+                          rlo.snapset_mock_data->snaps);
   }
 };
