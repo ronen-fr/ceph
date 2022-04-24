@@ -136,6 +136,16 @@ void ScrubBackend::merge_to_authoritative_set()
                               this_chunk->received_maps[rpl].objects.size())
                << dendl;
     }
+
+    // RRR dev debugging (temp)
+    for (const auto& [pg, smap] : this_chunk->received_maps) {
+      dout(10) << fmt::format("{}: {} SMAP {:D} has {} objects",
+                              __func__,
+                              pg.osd,
+                              smap,
+                              smap.objects.size())
+               << dendl;
+    }
   }
 
   // Construct the authoritative set of objects
@@ -202,6 +212,7 @@ objs_fix_list_t ScrubBackend::scrub_compare_maps(
   // collect some omap statistics into m_omap_stats
   omap_checks();
 
+std::cout << fmt::format("{}: calling update_auth\n", __func__) << std::flush;
   update_authoritative();
   auto for_meta_scrub = clean_meta_map(m_cleaned_meta_map, max_reached);
 
@@ -233,6 +244,7 @@ void ScrubBackend::omap_checks()
   for (const auto& ho : this_chunk->authoritative_set) {
 
     for (const auto& [srd, smap] : this_chunk->received_maps) {
+//dout(20) << __func__ << ": checking " << srd << " vs " << m_pg_whoami << dendl;
       if (srd != m_pg_whoami) {
         // Only set omap stats for the primary
         continue;
@@ -289,6 +301,8 @@ void ScrubBackend::update_authoritative()
   // update the session-wide m_auth_peers with the list of good
   // peers for each object (i.e. the ones that are in this_chunks's auth list)
   for (auto& [obj, peers] : this_chunk->authoritative) {
+
+    /* RRR */ dout(11) << __func__ << ": " << obj << ": " << peers << dendl;
 
     auth_peers_t good_peers;
 
@@ -1444,8 +1458,8 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
     std::optional<object_info_t> oi;
     if (!p->second.attrs.count(OI_ATTR)) {
       oi = std::nullopt;
-      clog->error() << m_mode_desc << " " << m_pg_id << " " << soid
-                    << " : no '" << OI_ATTR << "' attr";
+      clog->error() << m_mode_desc << " " << m_pg_id << " " << soid << " : no '"
+                    << OI_ATTR << "' attr";
       this_chunk->m_error_counts.shallow_errors++;
       soid_error.set_info_missing();
     } else {

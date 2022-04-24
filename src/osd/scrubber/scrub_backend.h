@@ -56,7 +56,6 @@ struct ScrubMap;
 
 class PG;
 class PgScrubber;
-//class PGBackend;
 struct PGPool;
 using Scrub::PgScrubBeListener;
 
