@@ -154,7 +154,10 @@ struct requested_scrub_t {
    */
   bool check_repair{false};
 
-  // RRR is this the same as must_deep_scrub?:
+  /**
+   * Used to indicate, in client-facing listings, that the planned scrub
+   * will be a deep one.
+   */
   bool calculated_to_deep{false};
 };
 

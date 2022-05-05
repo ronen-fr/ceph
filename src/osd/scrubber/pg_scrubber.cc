@@ -136,6 +136,9 @@ bool PgScrubber::verify_against_abort(epoch_t epoch_to_verify)
 
 bool PgScrubber::should_abort() const
 {
+  // note that set_op_parameters() guarantees that we would never have
+  // must_scrub set (i.e. possibly have started a scrub even though noscrub
+  // was set), without having 'required' also set.
   if (m_flags.required) {
     return false;  // not stopping 'required' scrubs for configuration changes
   }
@@ -1423,8 +1426,6 @@ void PgScrubber::set_op_parameters(const requested_scrub_t& request)
 
   set_queued_or_active(); // we are fully committed now.
 
-  set_queued_or_active(); // we are fully committed now.
-
   // write down the epoch of starting a new scrub. Will be used
   // to discard stale messages from previous aborted scrubs.
   m_epoch_start = m_pg->get_osdmap_epoch();
@@ -1442,7 +1443,7 @@ void PgScrubber::set_op_parameters(const requested_scrub_t& request)
   // will we be deep-scrubbing?
   if (request.calculated_to_deep) {
     state_set(PG_STATE_DEEP_SCRUB);
-    m_flags.shallow_or_deep = scrub_level_t::deep;
+    //m_flags.shallow_or_deep = scrub_level_t::deep;
     m_is_deep = true;
   } else {
     m_is_deep = false;
@@ -1469,7 +1470,7 @@ void PgScrubber::set_op_parameters(const requested_scrub_t& request)
   m_is_repair = request.must_repair || m_flags.auto_repair;
   if (request.must_repair) {
     state_set(PG_STATE_REPAIR);
-    // not calling update_op_mode_text() yet, as m_is_deep not set yet
+    // not calling update_op_mode_text() yet, as m_is_deep not set yet RRR
   }
 
   // the publishing here is required for tests synchronization
@@ -1567,6 +1568,11 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
   dout(10) << __func__ << " " << *op->get_req() << dendl;
   op->mark_started();
   auto request_ep = op->get_req<MOSDScrubReserve>()->get_map_epoch();
+  dout(20) << fmt::format("{}: request_ep:{} recovery:{}",
+			  __func__,
+			  request_ep,
+			  m_osds->is_recovery_active())
+	   << dendl;
 
   /*
    *  if we are currently holding a reservation, then:
@@ -1594,13 +1600,18 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
 
   if (request_ep < m_pg->get_same_interval_since()) {
     // will not ack stale requests
+    dout(10) << fmt::format("{}: stale reservation (request ep{} < {}) denied",
+			    __func__,
+			    request_ep,
+			    m_pg->get_same_interval_since())
+	     << dendl;
     return;
   }
 
   bool granted{false};
   if (m_remote_osd_resource.has_value()) {
 
-    dout(10) << __func__ << " already reserved." << dendl;
+    dout(10) << __func__ << " already reserved. Reassigned." << dendl;
 
     /*
      * it might well be that we did not yet finish handling the latest scrub-op
@@ -1623,6 +1634,8 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
       m_remote_osd_resource.reset();
       dout(20) << __func__ << ": failed to reserve remotely" << dendl;
     }
+  } else {
+    dout(10) << __func__ << ": recovery is active; not granting" << dendl;
   }
 
   dout(10) << __func__ << " reserved? " << (granted ? "yes" : "no") << dendl;
