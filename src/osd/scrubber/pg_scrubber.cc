@@ -196,8 +196,8 @@ void PgScrubber::initiate_regular_scrub(epoch_t epoch_queued)
     dout(10) << "scrubber event --<< StartScrub" << dendl;
   } else {
     clear_queued_or_active();
-    // and just in case snap trimming was blocked by the aborted scrub
-    m_pg->snap_trimmer_scrub_complete();
+//     // and just in case snap trimming was blocked by the aborted scrub
+//     m_pg->snap_trimmer_scrub_complete();
   }
 }
 
@@ -214,8 +214,8 @@ void PgScrubber::initiate_scrub_after_repair(epoch_t epoch_queued)
     dout(10) << "scrubber event --<< AfterRepairScrub" << dendl;
   } else {
     clear_queued_or_active();
-    // and just in case snap trimming was blocked by the aborted scrub
-    m_pg->snap_trimmer_scrub_complete();
+//     // and just in case snap trimming was blocked by the aborted scrub
+//     m_pg->snap_trimmer_scrub_complete();
   }
 }
 
@@ -1555,6 +1555,11 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
   dout(10) << __func__ << " " << *op->get_req() << dendl;
   op->mark_started();
   auto request_ep = op->get_req<MOSDScrubReserve>()->get_map_epoch();
+  dout(20) << fmt::format("{}: request_ep:{} recovery:{}",
+			  __func__,
+			  request_ep,
+			  m_osds->is_recovery_active())
+	   << dendl;
 
   /*
    *  if we are currently holding a reservation, then:
@@ -1582,13 +1587,18 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
 
   if (request_ep < m_pg->get_same_interval_since()) {
     // will not ack stale requests
+    dout(10) << fmt::format("{}: stale reservation (request ep{} < {}) denied",
+			    __func__,
+			    request_ep,
+			    m_pg->get_same_interval_since())
+	     << dendl;
     return;
   }
 
   bool granted{false};
   if (m_remote_osd_resource.has_value()) {
 
-    dout(10) << __func__ << " already reserved." << dendl;
+    dout(10) << __func__ << " already reserved. Reassigned." << dendl;
 
     /*
      * it might well be that we did not yet finish handling the latest scrub-op
@@ -1611,6 +1621,8 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
       m_remote_osd_resource.reset();
       dout(20) << __func__ << ": failed to reserve remotely" << dendl;
     }
+  } else {
+    dout(10) << __func__ << ": recovery is active, not granting" << dendl;
   }
 
   dout(10) << __func__ << " reserved? " << (granted ? "yes" : "no") << dendl;
@@ -1729,6 +1741,8 @@ void PgScrubber::set_queued_or_active()
 void PgScrubber::clear_queued_or_active()
 {
   m_queued_or_active = false;
+  // and just in case snap trimming was blocked by the aborted scrub
+  m_pg->snap_trimmer_scrub_complete();
 }
 
 bool PgScrubber::is_queued_or_active() const
@@ -1942,9 +1956,9 @@ void PgScrubber::scrub_finish()
   if (m_pg->is_active() && m_pg->is_primary()) {
     m_pg->recovery_state.share_pg_info();
   }
-
-  // we may have blocked the snap trimmer
-  m_pg->snap_trimmer_scrub_complete();
+// 
+//   // we may have blocked the snap trimmer
+//   m_pg->snap_trimmer_scrub_complete();
 }
 
 void PgScrubber::on_digest_updates()
