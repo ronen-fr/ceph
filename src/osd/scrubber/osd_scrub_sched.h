@@ -137,6 +137,29 @@ enum class schedule_result_t {
   preconditions	       // time, configuration, etc.
 };
 
+// the OSD services provided to the scrub scheduler
+class ScrubSchedListener {
+ public:
+  virtual int get_nodeid() const = 0;  // returns the OSD number ('whoami')
+
+  /**
+   * A callback used by the ScrubQueue object to initiate a scrub on a specific
+   * PG.
+   *
+   * The request might fail for multiple reasons, as ScrubQueue cannot by its
+   * own check some of the PG-specific preconditions and those are checked here.
+   * See attempt_t definition.
+   *
+   * @return a Scrub::attempt_t detailing either a success, or the failure
+   * reason.
+   */
+  virtual schedule_result_t initiate_a_scrub(
+    spg_t pgid,
+    bool allow_requested_repair_only) = 0;
+
+  virtual ~ScrubSchedListener() {}
+};
+
 }  // namespace Scrub
 
 /**
@@ -161,7 +184,7 @@ class ScrubQueue {
 		     // under lock
   };
 
-  ScrubQueue(CephContext* cct, OSDService& osds);
+  ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds);
 
   struct scrub_schedule_t {
     utime_t scheduled_at{};
@@ -328,6 +351,10 @@ class ScrubQueue {
    */
   void update_job(ScrubJobRef sjob, const sched_params_t& suggested);
 
+  sched_params_t determine_scrub_time(const requested_scrub_t& request_flags,
+				      const pg_info_t& pg_info,
+				      const pool_opts_t pool_conf) const;
+
  public:
   void dump_scrubs(ceph::Formatter* f) const;
 
@@ -366,7 +393,7 @@ class ScrubQueue {
 
  private:
   CephContext* cct;
-  OSDService& osd_service;
+  Scrub::ScrubSchedListener& osd_service;
 
   /**
    *  jobs_lock protects the job containers and the relevant scrub-jobs state
