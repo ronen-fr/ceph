@@ -117,7 +117,8 @@ SqrubQueue interfaces (main functions):
 #include "common/ceph_atomic.h"
 #include "osd/osd_types.h"
 #include "osd/scrubber_common.h"
-
+#include "include/utime_fmt.h"
+#include "osd/osd_types_fmt.h"
 #include "utime.h"
 
 class PG;
@@ -185,6 +186,7 @@ class ScrubQueue {
   };
 
   ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds);
+  virtual ~ScrubQueue() = default;
 
   struct scrub_schedule_t {
     utime_t scheduled_at{};
@@ -276,6 +278,7 @@ class ScrubQueue {
   };
 
   friend class TestOSDScrub;
+  friend class ScrubSchedTestWrapper; ///< unit-tests structure
 
   using ScrubJobRef = ceph::ref_t<ScrubJob>;
   using ScrubQContainer = std::vector<ScrubJobRef>;
@@ -395,6 +398,12 @@ class ScrubQueue {
   CephContext* cct;
   Scrub::ScrubSchedListener& osd_service;
 
+#ifdef WITH_SEASTAR
+  auto& conf() const { return local_conf(); }
+#else
+  auto& conf() const { return cct->_conf; }
+#endif
+
   /**
    *  jobs_lock protects the job containers and the relevant scrub-jobs state
    *  variables. Specifically, the following are guaranteed:
@@ -481,4 +490,30 @@ class ScrubQueue {
     ScrubQContainer& group,
     const Scrub::ScrubPreconds& preconds,
     utime_t now_is);
+
+protected: // used by the unit-tests
+  /**
+   * unit-tests will override this function to return a mock time
+   */
+  virtual utime_t time_now() const { return ceph_clock_now(); }
+};
+
+template <>
+struct fmt::formatter<ScrubQueue::ScrubJob> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const ScrubQueue::ScrubJob& sjob, FormatContext& ctx)
+  {
+    return fmt::format_to(
+      ctx.out(),
+      "{}, {} dead: {} - {} / failure: {} / pen. t.o.: {} / queue state: {}",
+      sjob.pgid,
+      sjob.schedule.scheduled_at,
+      sjob.schedule.deadline,
+      sjob.registration_state(),
+      sjob.resources_failure,
+      sjob.penalty_timeout,
+      ScrubQueue::qu_state_text(sjob.state));
+  }
 };
