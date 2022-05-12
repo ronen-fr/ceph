@@ -79,11 +79,12 @@ std::string ScrubQueue::ScrubJob::scheduling_state(utime_t now_is,
 #undef dout_context
 #define dout_context (cct)
 #undef dout_prefix
-#define dout_prefix \
-  *_dout << "osd." << osd_service.whoami << " scrub-queue::" << __func__ << " "
+#define dout_prefix                                                            \
+  *_dout << "osd." << osd_service.get_nodeid() << " scrub-queue::" << __func__ \
+	 << " "
 
 
-ScrubQueue::ScrubQueue(CephContext* cct, OSDService& osds)
+ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
     : cct{cct}
     , osd_service{osds}
 {
@@ -219,6 +220,48 @@ void ScrubQueue::update_job(ScrubJobRef scrub_job,
   auto adjusted = adjust_target_time(suggested);
   scrub_job->update_schedule(adjusted);
 }
+
+ScrubQueue::sched_params_t ScrubQueue::determine_scrub_time(
+  const requested_scrub_t& request_flags,
+  const pg_info_t& pg_info,
+  const pool_opts_t pool_conf) const
+{
+  ScrubQueue::sched_params_t res;
+
+  //dout(15) << fmt::format(": requested_scrub_t: {}", request_flags) << dendl; // RRR
+  dout(15) << ": requested_scrub_t: {}" <<  request_flags << dendl; 
+
+
+  if (request_flags.must_scrub || request_flags.need_auto) {
+
+    // Set the smallest time that isn't utime_t()
+    res.proposed_time = PgScrubber::scrub_must_stamp();
+    res.is_must = ScrubQueue::must_scrub_t::mandatory;
+    // we do not need the interval data in this case
+
+  } else if (pg_info.stats.stats_invalid &&
+	     cct->_conf->osd_scrub_invalid_stats) {
+    res.proposed_time = ceph_clock_now();
+    res.is_must = ScrubQueue::must_scrub_t::mandatory;
+
+  } else {
+    res.proposed_time = pg_info.history.last_scrub_stamp;
+    res.min_interval = pool_conf.value_or(pool_opts_t::SCRUB_MIN_INTERVAL, 0.0);
+    res.max_interval = pool_conf.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
+  }
+
+  dout(15) << fmt::format(
+		": suggested: {} hist: {} v:{}/{} must:{} pool-min: {}",
+		res.proposed_time,
+		pg_info.history.last_scrub_stamp,
+		(bool)pg_info.stats.stats_invalid,
+		cct->_conf->osd_scrub_invalid_stats,
+		(res.is_must == must_scrub_t::mandatory ? "y" : "n"),
+		res.min_interval)
+	   << dendl;
+  return res;
+}
+
 
 // used under jobs_lock
 void ScrubQueue::move_failed_pgs(utime_t now_is)
