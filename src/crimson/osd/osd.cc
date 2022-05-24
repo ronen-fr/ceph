@@ -1471,12 +1471,16 @@ seastar::future<> OSD::prepare_to_stop()
 
 void OSD::scrub_tick()
 {
+  // the cpu load updating should be moved to the Heartbeat code
+  auto cla = get_shard_services().get_scrub_services().update_load_average();
+  logger().info("scrub_tick: load_avg={}", cla);
+
   static int down_counter = 0;
   if (down_counter > 0) {
     down_counter--;
     return;
   }
-  down_counter = 3; // RRR should be a config!
+  down_counter = 5; // RRR should be a config!
   // maybe: local_conf().get_val<int64_t>("osd_scrub_scheduling_period")");
   static thread_local seastar::semaphore limit(1);
   static int dbg_idx = 1000;

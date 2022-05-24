@@ -8,38 +8,17 @@
 #include <iostream>
 #include <variant>
 
-
-// copied - just because. probably not needed:
-#include "osd/osd_op_util.h"
-#include "crimson/net/Connection.h"
-#include "crimson/osd/object_context.h"
-#include "crimson/osd/osdmap_gate.h"
-#include "crimson/osd/osd_operation.h"
+#include "crimson/common/type_helpers.h"
 #include "crimson/osd/osd_operations/client_request_common.h"
 #include "crimson/osd/osd_operations/common/pg_pipeline.h"
+#include "crimson/osd/osdmap_gate.h"
 #include "crimson/osd/pg_activation_blocker.h"
 #include "crimson/osd/pg_map.h"
-#include "crimson/common/type_helpers.h"
 #include "messages/MOSDOp.h"
-// end copy
-
-
-#include "crimson/common/type_helpers.h"
-#include "crimson/osd/osd_operation.h"
-#include "crimson/osd/osdmap_gate.h"
-
-#include "crimson/osd/scrubber_common_cr.h"
-
-// #include "crimson/osd/osd_operations/client_request_common.h"
-
-
-#include "crimson/osd/osd_operations/common/pg_pipeline.h"
-
-
-
 #include "osd/PeeringState.h"
 #include "osd/osd_types.h"
 #include "osd/osd_types_fmt.h"
+#include "osd/scrubber_common.h"
 
 
 namespace crimson::osd {
@@ -61,22 +40,20 @@ class ShardServices;
 class PG;
 
 
-// to create two derived classes, one for local events (carrying a function
-// pointer) and one for remote (osd to osd) ones.
 class ScrubEvent : public PhasedOperationT<ScrubEvent> {
  public:
   static constexpr OperationTypeCode type = OperationTypeCode::scrub_event;
 
   template <typename T = void>
-   using interruptible_future = ::crimson::interruptible::
-     interruptible_future<::crimson::osd::IOInterruptCondition, T>;
+  using interruptible_future = ::crimson::interruptible::
+    interruptible_future<::crimson::osd::IOInterruptCondition, T>;
 
-   using ScrubEventFwdFut = interruptible_future<> (ScrubPgIF::*)(epoch_t);
-   using ScrubEventFwdImm = void (ScrubPgIF::*)(epoch_t);
-   using ScrubEventFwd = std::variant<ScrubEventFwdFut, ScrubEventFwdImm>;
+  using ScrubEventFwdFut = interruptible_future<> (ScrubPgIF::*)(epoch_t);
+  using ScrubEventFwdImm = void (ScrubPgIF::*)(epoch_t);
+  using ScrubEventFwd = std::variant<ScrubEventFwdFut, ScrubEventFwdImm>;
 
 
-  class PGPipeline: public CommonPGPipeline {
+  class PGPipeline : public CommonPGPipeline {
     struct AwaitMap : OrderedExclusivePhaseT<AwaitMap> {
       static constexpr auto type_name = "ScrubEvent::PGPipeline::await_map";
     } await_map;
@@ -90,18 +67,10 @@ class ScrubEvent : public PhasedOperationT<ScrubEvent> {
       static constexpr auto type_name = "ScrubEvent::PGPipeline::local_sync";
     } local_sync;
 
-//     struct WaitRepop : OrderedConcurrentPhaseT<WaitRepop> {
-//       static constexpr auto type_name = "ScrubEvent::PGPipeline::wait_repop";
-//     } wait_repop;
-
-//     struct Process : OrderedExclusivePhaseT<Process> {
-//       static constexpr auto type_name = "ScrubEvent::PGPipeline::process";
-//     } process;
     struct SendReply : OrderedExclusivePhaseT<SendReply> {
       static constexpr auto type_name = "ScrubEvent::PGPipeline::send_reply";
-    } send_reply;  
+    } send_reply;
 
-    //OrderedExclusivePhase process = {"ScrubEvent::PGPipeline::process"};
     friend class ScrubEvent;
   };
 
@@ -114,8 +83,6 @@ class ScrubEvent : public PhasedOperationT<ScrubEvent> {
   static PGPipeline& pp(PG& pg);  // should this one be static?
 
  public:
-  // using rett = decltype(std::declval<ScrubEventFwd>().index());
-  //// using rett = decltype(handle.enter(pp(*pg).local_sync));
   struct nullevent_tag_t {
   };
 
@@ -129,8 +96,8 @@ class ScrubEvent : public PhasedOperationT<ScrubEvent> {
   const spg_t get_pgid() const { return pgid; }
 
   virtual void on_pg_absent();
-  virtual ScrubEvent::interruptible_future<> complete_rctx(Ref<PG>);
-  virtual seastar::future<> complete_rctx_no_pg() { return seastar::now();}
+  // virtual ScrubEvent::interruptible_future<> complete_rctx(Ref<PG>);
+  virtual seastar::future<> complete_rctx_no_pg() { return seastar::now(); }
   virtual seastar::future<Ref<PG>> get_pg() final;
 
  public:
@@ -139,55 +106,43 @@ class ScrubEvent : public PhasedOperationT<ScrubEvent> {
 
  public:
   ScrubEvent(Ref<PG> pg,
-             ShardServices& shard_services,
-             const spg_t& pgid,
-             ScrubEventFwd func,
-             epoch_t epoch_queued,
-             Scrub::act_token_t tkn,
-             std::chrono::milliseconds delay);
+	     ShardServices& shard_services,
+	     const spg_t& pgid,
+	     ScrubEventFwd func,
+	     epoch_t epoch_queued,
+	     Scrub::act_token_t tkn,
+	     std::chrono::milliseconds delay);
 
   ScrubEvent(Ref<PG> pg,
-             ShardServices& shard_services,
-             const spg_t& pgid,
-             ScrubEventFwd func,
-             epoch_t epoch_queued,
-             Scrub::act_token_t tkn);
+	     ShardServices& shard_services,
+	     const spg_t& pgid,
+	     ScrubEventFwd func,
+	     epoch_t epoch_queued,
+	     Scrub::act_token_t tkn);
 
   // until I learn how to enter the pipeline w/o creating a new event
   ScrubEvent(nullevent_tag_t,
-             Ref<PG> pg,
-             ShardServices& shard_services,
-             const spg_t& pgid,
-             ScrubEventFwd func);
+	     Ref<PG> pg,
+	     ShardServices& shard_services,
+	     const spg_t& pgid,
+	     ScrubEventFwd func);
 
   void print(std::ostream&) const final;
   void dump_detail(ceph::Formatter* f) const final;
   seastar::future<> start();
 
-  // static seastar::future<PipelineHandle> lockout(PG& pg);
-  // static void unlock(PG& pg, PipelineHandle&& handle);
-  //rett lockout();
-  //void unlock();
-
-public:
-  std::tuple<
-    StartEvent,
-    PGPipeline::AwaitMap::BlockingEvent,
-    PG_OSDMapGate::OSDMapBlocker::BlockingEvent,
-    //PGPipeline::WaitForActive::BlockingEvent,
-    //PGActivationBlocker::BlockingEvent,
-    //PGPipeline::RecoverMissing::BlockingEvent,
-    //PGPipeline::GetOBC::BlockingEvent,
-    PGPipeline::Process::BlockingEvent,
-    //PGPipeline::WaitRepop::BlockingEvent,
-    PGPipeline::SendReply::BlockingEvent,
-    CompletionEvent
-  > tracking_events;
+ public:
+  std::tuple<StartEvent,
+	     PGPipeline::AwaitMap::BlockingEvent,
+	     PG_OSDMapGate::OSDMapBlocker::BlockingEvent,
+	     PGPipeline::Process::BlockingEvent,
+	     PGPipeline::SendReply::BlockingEvent,
+	     CompletionEvent>
+    tracking_events;
 
 
   friend fmt::formatter<ScrubEvent>;
 };
-
 
 }  // namespace crimson::osd
 
@@ -200,7 +155,10 @@ struct fmt::formatter<crimson::osd::ScrubEvent> {
     return format_to(
       ctx.out(),
       "ScrubEvent(pgid={}, epoch={}, delay={}, token={}, dbg_desc={})",
-      levt.get_pgid(), levt.epoch_queued, levt.delay, levt.act_token,
+      levt.get_pgid(),
+      levt.epoch_queued,
+      levt.delay,
+      levt.act_token,
       levt.dbg_desc);
   }
 };

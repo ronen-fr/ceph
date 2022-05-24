@@ -36,6 +36,8 @@
 #include "crimson/osd/pg_recovery.h"
 #include "crimson/osd/pg_recovery_listener.h"
 #include "crimson/osd/recovery_backend.h"
+//#include "crimson/osd/scrubber_common_cr.h"
+#include "osd/scrubber_common.h"
 
 struct MQuery;
 class OSDMap;
@@ -68,18 +70,6 @@ namespace crimson::os {
 namespace crimson::osd {
   class ScrubEvent;
 };
-
-namespace Scrub {
-class ScrubberPasskey {
- private:
-  friend class Scrub::ReplicaReservations;
-  friend class ::PgScrubber;
-  friend class ::crimson::osd::ScrubEvent;
-  ScrubberPasskey() {}
-  ScrubberPasskey(const ScrubberPasskey&) = default;
-  ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
-};
-}  // namespace Scrub
 
 namespace crimson::osd {
 class ClientRequest;
@@ -522,7 +512,7 @@ public:
     return m_scrubber->is_queued_or_active();
   }
 
-  ScrubPgIF* get_scrubber(Scrub::ScrubberPasskey) {
+  ScrubPgIF* get_scrubber(ScrubberPasskey) {
     return m_scrubber.get();
   }
 
@@ -860,16 +850,16 @@ private:
 
 // ScrubberPasskey getters:
 public:
-  const pg_info_t& get_pg_info(Scrub::ScrubberPasskey) const {
+  const pg_info_t& get_pg_info(ScrubberPasskey) const {
     return get_info();
   }
 
-  OSDService* get_pg_osd(Scrub::ScrubberPasskey) const {
+  OSDService* get_pg_osd(ScrubberPasskey) const {
     ceph_assert(0 && "not implemented");
     return nullptr; // osd;
   }
 
-  std::vector<pg_shard_t> get_actingset(Scrub::ScrubberPasskey) const;
+  std::vector<pg_shard_t> get_actingset(ScrubberPasskey) const;
 
   friend class IOInterruptCondition;
 };

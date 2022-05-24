@@ -120,12 +120,8 @@ SqrubQueue interfaces (main functions):
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber_common.h"
 
-// RRR verify if needed
-#include "include/utime_fmt.h"
-#include "osd/osd_types_fmt.h"
-#include "utime.h"
 
-class PG;
+//class PG;
 
 namespace Scrub {
 
@@ -305,7 +301,12 @@ class ScrubQueue {
    *
    * locking: locks jobs_lock
    */
+#ifdef WITH_SEASTAR
+  seastar::future<Scrub::schedule_result_t> select_pg_and_scrub(
+    Scrub::ScrubPreconds&& preconds);
+#else
   Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
+#endif
 
   /**
    * Translate attempt_ values into readable text
@@ -404,7 +405,8 @@ class ScrubQueue {
 
   // the following is required for Crimson compatibility
 #ifdef WITH_SEASTAR
-  ConfigProxy& conf() const { return crimson::common::local_conf(); }
+  //ConfigProxy& conf() const { return crimson::common::local_conf(); }
+  auto& conf() const { return local_conf(); }
 #else
   auto& conf() const { return cct->_conf; }
 #endif

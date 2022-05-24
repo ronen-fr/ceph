@@ -117,7 +117,7 @@ SqrubQueue interfaces (main functions):
 #include "common/ceph_atomic.h"
 #include "common/ceph_mutex.h"
 #include "osd/osd_types.h"
-#ifdef WITH_SEASTAR
+#ifdef WITH_SEASTAR___
 #include "crimson/osd/scrubber_common_cr.h"
 #else
 #include "osd/scrubber_common.h"
@@ -415,6 +415,7 @@ class ScrubQueue {
   CephContext* cct;  // RRR fix this faked, not really wanted, pointer
   Scrub::ScrubSchedListener& osd_service;
 
+  // the following is required for Crimson compatibility
 #ifdef WITH_SEASTAR
   auto& conf() const { return crimson::common::local_conf(); }
 #else
@@ -437,6 +438,8 @@ class ScrubQueue {
   bool restore_penalized{false};
 
   double daily_loadavg{0.0};
+  double current_loadavg{0.0};
+  double filtrd_loadavg{1.0}; // decaying-mean loadavg
 
   static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
     return jobref->state == qu_state_t::registered;

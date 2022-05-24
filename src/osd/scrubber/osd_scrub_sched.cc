@@ -98,7 +98,7 @@ ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
 std::optional<double> ScrubQueue::update_load_average()
 {
   int hb_interval = conf()->osd_heartbeat_interval;
-  int n_samples = 60 * 24 * 24;
+  int n_samples = 60 * 60 * 24;
   if (hb_interval > 1) {
     n_samples /= hb_interval;
     if (n_samples < 1)
@@ -225,7 +225,7 @@ ScrubQueue::sched_params_t ScrubQueue::determine_scrub_time(
   const pool_opts_t pool_conf) const
 {
   ScrubQueue::sched_params_t res;
-  dout(15) << ": requested_scrub_t: {}" <<  request_flags << dendl; 
+  dout(15) << ": requested_scrub_t: {}" << request_flags << dendl; 
 
   if (request_flags.must_scrub || request_flags.need_auto) {
 
