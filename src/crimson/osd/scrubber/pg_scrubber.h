@@ -4,8 +4,6 @@
 #pragma once
 
 #include "crimson/osd/shard_services.h"
-#undef WITH_SEASTAR
-#define WITH_SEASTAR 1
 
 #include <cassert>
 #include <chrono>
@@ -27,7 +25,8 @@
 #include "crimson/osd/scrubber/osd_scrub_sched.h"
 #include "crimson/osd/scrubber/scrub_machine_lstnr_cr.h"
 //#include "crimson/osd/scrubber/scrub_store.h"
-#include "crimson/osd/scrubber_common_cr.h"
+#include "osd/scrubber_common.h"
+
 #else
 BAD
 #include "osd/PG.h"

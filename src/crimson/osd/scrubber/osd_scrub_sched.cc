@@ -1,36 +1,11 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
-
-
-/********************************
-
-
-
-
-
-
-
-
-
-
-  CRIMSON
-
-
-
-
-
-
-
-
-
-
-*/
 #include "./osd_scrub_sched.h"
 
 #include <seastar/core/do_with.hh>
 #include <seastar/core/future.hh>
-#include <seastar/core/thread.hh>
 #include <seastar/core/scollectd_api.hh>
+#include <seastar/core/thread.hh>
 
 #include "common/dout.h"
 #include "crimson/common/log.h"
@@ -87,6 +62,8 @@ void ScrubQueue::ScrubJob::update_schedule(
 		pgid,
 		adjusted.scheduled_at,
 		registration_state());
+  dout(10) << " pg[" << pgid << "] adjusted: " << schedule.scheduled_at << "  "
+	   << registration_state() << dendl;
 }
 
 std::string ScrubQueue::ScrubJob::scheduling_state(utime_t now_is,
@@ -108,6 +85,7 @@ std::string ScrubQueue::ScrubJob::scheduling_state(utime_t now_is,
 		     (is_deep_expected ? "deep " : ""),
 		     schedule.scheduled_at);
 }
+
 
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubQueue
@@ -155,26 +133,26 @@ std::optional<double> ScrubQueue::update_load_average()
   //     dendl; return 100 * loadavg;
   //   }
 
-//     using registered_metric = seastar::metrics::impl::registered_metric;
-// 
-//   auto metrics_map = seastar::scollectd::get_value_map();
-//   auto family = metrics_map.find("reactor");
-//         if (family == metrics_map.end()) {
-//         return std::nullopt;
-//         }
-// for (const auto& [labels, metric] : family->second) {
-//   dout(20) << fmt::format("{} {}", labels, *metric) << dendl;
-//   metric->info()
-// 
-//   if (metric.type == registered_metric::type_t::gauge &&
-//       metric.name == "load_avg_1min") {
-//     return metric.value.get_double();
-//   }
-// }
-// auto& ttt = family->second;
-// 
-//         auto metric = family->second.find("utilization");
-// 
+  //    using registered_metric = seastar::metrics::impl::registered_metric;
+  //
+  //  auto metrics_map = seastar::scollectd::get_value_map();
+  //  auto family = metrics_map.find("reactor");
+  //        if (family == metrics_map.end()) {
+  //        return std::nullopt;
+  //        }
+  // for (const auto& [labels, metric] : family->second) {
+  //  dout(20) << fmt::format("{} {}", labels, *metric) << dendl;
+  //  metric->info()
+  //
+  //  if (metric.type == registered_metric::type_t::gauge &&
+  //      metric.name == "load_avg_1min") {
+  //    return metric.value.get_double();
+  //  }
+  // }
+  // auto& ttt = family->second;
+  //
+  //        auto metric = family->second.find("utilization");
+  //
 
 
   return std::nullopt;
@@ -290,7 +268,6 @@ ScrubQueue::sched_params_t ScrubQueue::determine_scrub_time(
 {
   ScrubQueue::sched_params_t res;
   dout(15) << ": requested_scrub_t: {}" << request_flags << dendl;
-
 
   if (request_flags.must_scrub || request_flags.need_auto) {
 
@@ -408,12 +385,11 @@ std::string_view ScrubQueue::qu_state_text(qu_state_t st)
 seastar::future<Scrub::schedule_result_t> ScrubQueue::select_pg_and_scrub(
   Scrub::ScrubPreconds&& preconds)
 {
+  using Scrub::schedule_result_t;
   dout(10) << " reg./pen. sizes: " << to_scrub.size() << " / "
 	   << penalized.size() << dendl;
 
   utime_t now_is = time_now();
-
-  // auto preconds = std::move(preconds_moved);
 
   preconds.time_permit = scrub_time_permit(now_is);
   preconds.load_is_low = scrub_load_below_threshold();
@@ -452,22 +428,21 @@ seastar::future<Scrub::schedule_result_t> ScrubQueue::select_pg_and_scrub(
 	       penalized_copy = std::move(penalized_copy),
 	       to_scrub_copy = std::move(to_scrub_copy),
 	       preconds,
-	       now_is](auto result) mutable
-	      -> seastar::future<Scrub::schedule_result_t> {
-	  if (result != Scrub::schedule_result_t::none_ready ||
+	       now_is](
+		auto result) mutable -> seastar::future<schedule_result_t> {
+	  if (result != schedule_result_t::none_ready ||
 	      penalized_copy.empty()) {
-	    return seastar::make_ready_future<Scrub::schedule_result_t>(result);
+	    return seastar::make_ready_future<schedule_result_t>(result);
 	  }
- return seastar::make_ready_future<Scrub::schedule_result_t>(
-            Scrub::schedule_result_t::none_ready);
-	  // return seastar::future<Scrub::schedule_result_t>(result);
+	  return seastar::make_ready_future<schedule_result_t>(
+	    schedule_result_t::none_ready);
+	  // return seastar::future<schedule_result_t>(result);
 	  // try the penalized queue
 	  return select_from_group(penalized_copy, preconds, now_is)
-	    .then([this](auto result) mutable
-		  -> seastar::future<Scrub::schedule_result_t> {
+	    .then([this](
+		    auto result) mutable -> seastar::future<schedule_result_t> {
 	      restore_penalized = true;
-	      return seastar::make_ready_future<Scrub::schedule_result_t>(
-		result);
+	      return seastar::make_ready_future<schedule_result_t>(result);
 	    });
 	});
     });
@@ -537,110 +512,111 @@ seastar::future<Scrub::schedule_result_t> ScrubQueue::select_from_group(
   const Scrub::ScrubPreconds& preconds,
   utime_t now_is)
 {
+  using Scrub::schedule_result_t;
+  using opt_sched_t = std::optional<Scrub::schedule_result_t>;
   logger().info("{}: jobs #: {} {}", __func__, group.size(), (void*)(&group));
 
   if (group.empty()) {
-    return seastar::make_ready_future<Scrub::schedule_result_t>(
-      Scrub::schedule_result_t::none_ready);
+    return seastar::make_ready_future<schedule_result_t>(
+      schedule_result_t::none_ready);
   }
 
-  return seastar::do_with(group.begin(), std::move(preconds),
-                 [this, &group, now_is](auto& candidate_it, auto& preconds) {
-  
-  return seastar::repeat_until_value([this,
-				      &candidate_it,
-				      &group,
-				      preconds,
-				      now_is]() mutable {
-    logger().warn("{}:  XXXXX {}", __func__, group.size());
-    if (group.size() == 0 || (candidate_it == group.end())) {
-      // the 'size==0' case is only if the group changed, which should only
-      // should happen during tests
-      return seastar::make_ready_future<
-	std::optional<Scrub::schedule_result_t>>(
-	std::optional<Scrub::schedule_result_t>{
-	  Scrub::schedule_result_t::none_ready});
-    }
+  return seastar::do_with(
+    group.begin(),
+    std::move(preconds),
+    [this, &group, now_is](auto& candidate_it, auto& preconds) {
+      return seastar::repeat_until_value(
+	[this, &candidate_it, &group, preconds, now_is]() mutable
+	-> seastar::future<opt_sched_t> {
+	  logger().debug("select_from_group():  XXXXX # {}",
+			 group.size());	 // RRR to rm
+	  if (group.size() == 0 || (candidate_it == group.end())) {
+	    // the 'size==0' case is only if the group changed, which should
+	    // should happen only during tests
+	    return seastar::make_ready_future<opt_sched_t>(
+	      schedule_result_t::none_ready);
+	  }
 
-    auto& candidate = *candidate_it;
+	  auto& candidate = *candidate_it;
 
-    logger().warn("{}: -- jobs #: {} {} ", __func__, group.size(), (void*)(&group));
-    logger().warn("{}:  XXXXX candidate: {}", __func__, candidate->pgid);
+	  logger().warn("select_from_group(): -- jobs #: {} {} ",
+			group.size(),
+			(void*)(&group));
+	//   logger().warn("select_from_group():  XXXXX candidate: {}",
+	// 		candidate->pgid);
 
-    if (preconds.only_deadlined && (candidate->schedule.deadline.is_zero() ||
-				    candidate->schedule.deadline >= now_is)) {
-      dout(15) << " not scheduling scrub for " << candidate->pgid << " due to "
-	       << (preconds.time_permit ? "high load" : "time not permitting")
-	       << dendl;
-      return seastar::make_ready_future<
-	std::optional<Scrub::schedule_result_t>>(
-	std::optional<Scrub::schedule_result_t>{std::nullopt});
-    }
+	  if (preconds.only_deadlined &&
+	      (candidate->schedule.deadline.is_zero() ||
+	       candidate->schedule.deadline >= now_is)) {
+	    dout(15) << " not scheduling scrub for " << candidate->pgid
+		     << " due to "
+		     << (preconds.time_permit ? "high load"
+					      : "time not permitting")
+		     << dendl;
+	    return seastar::make_ready_future<opt_sched_t>(std::nullopt);
+	  }
 
-    // candidate life?
-    // candidate_it life?
-    return osd_service
-      .initiate_a_scrub(candidate->pgid, preconds.allow_requested_repair_only)
-      .then([this, &candidate_it](auto&& init_result) mutable
-	    -> seastar::future<std::optional<Scrub::schedule_result_t>> {
-	auto& candidate = *candidate_it;
-	switch (init_result) {
+	  return osd_service
+	    .initiate_a_scrub(candidate->pgid,
+			      preconds.allow_requested_repair_only)
+	    .then([this, &candidate_it](auto&& init_result) mutable
+		  -> seastar::future<opt_sched_t> {
+	      auto& candidate = *candidate_it;
+	      switch (init_result) {
 
-	  case Scrub::schedule_result_t::scrub_initiated:
-	    // the happy path. We are done
-	    dout(20) << " initiated for " << candidate->pgid << dendl;
-	    logger().debug("ScrubQueue::select_from_group(): initiated for {}",
-			   candidate->pgid);
-	    return seastar::make_ready_future<
-	      std::optional<Scrub::schedule_result_t>>(
-	      std::make_optional<Scrub::schedule_result_t>(
-		Scrub::schedule_result_t::scrub_initiated));
+		case schedule_result_t::scrub_initiated:
+		  // the happy path. We are done
+		  dout(20) << " initiated for " << candidate->pgid << dendl;
+		  logger().debug(
+		    "ScrubQueue::select_from_group(): initiated for {}",
+		    candidate->pgid);
+		  return seastar::make_ready_future<opt_sched_t>(
+		    schedule_result_t::scrub_initiated);
 
-	  case Scrub::schedule_result_t::already_started:
-	  case Scrub::schedule_result_t::preconditions:
-	  case Scrub::schedule_result_t::bad_pg_state:
-	    // continue with the next job
-	    logger().debug(
-	      "ScrubQueue::select_from_group(): failed (state/cond/started) {}",
-	      candidate->pgid);
-	    break;
+		case schedule_result_t::already_started:
+		case schedule_result_t::preconditions:
+		case schedule_result_t::bad_pg_state:
+		  // continue with the next job
+		  logger().debug(
+		    "ScrubQueue::select_from_group(): failed "
+		    "(state/cond/started) {}",
+		    candidate->pgid);
+		  break;
 
-	  case Scrub::schedule_result_t::no_such_pg:
-	    // The pg is no longer there
-	    logger().debug("ScrubQueue::select_from_group(): failed (no pg) {}",
-			   candidate->pgid);
-	    break;
+		case schedule_result_t::no_such_pg:
+		  // The pg is no longer there
+		  logger().debug(
+		    "ScrubQueue::select_from_group(): failed (no pg) {}",
+		    candidate->pgid);
+		  break;
 
-	  case Scrub::schedule_result_t::no_local_resources:
-	    // failure to secure local resources. No point in trying the other
-	    // PGs at this time. Note that this is not the same as replica
-	    // resources failure!
-	    logger().debug("ScrubQueue::select_from_group(): failed (local) {}",
-			   candidate->pgid);
-	    return seastar::make_ready_future<
-	      std::optional<Scrub::schedule_result_t>>(
-	      std::make_optional<Scrub::schedule_result_t>(
-		Scrub::schedule_result_t::no_local_resources));
+		case schedule_result_t::no_local_resources:
+		  // failure to secure local resources. No point in trying the
+		  // other PGs at this time. Note that this is not the same as
+		  // replica resources failure!
+		  logger().debug(
+		    "ScrubQueue::select_from_group(): failed (local) {}",
+		    candidate->pgid);
+		  return seastar::make_ready_future<opt_sched_t>(
+		    schedule_result_t::no_local_resources);
 
-	  case Scrub::schedule_result_t::none_ready:
-	    // can't happen. Just for the compiler.
-	    logger().error("ScrubQueue::select_from_group(): failed !!! {}",
-			   candidate->pgid);
-	    return seastar::make_ready_future<
-	      std::optional<Scrub::schedule_result_t>>(
-	      std::make_optional<Scrub::schedule_result_t>(
-		Scrub::schedule_result_t::none_ready));
-	};
+		case schedule_result_t::none_ready:
+		  // can't happen. Just for the compiler.
+		  logger().error(
+		    "ScrubQueue::select_from_group(): failed !!! {}",
+		    candidate->pgid);
+		  return seastar::make_ready_future<opt_sched_t>(
+		    schedule_result_t::none_ready);
+	      };
 
-	++candidate_it;
-    logger().warn("{}:  XXXXX cand++", __func__);
+	      ++candidate_it;
+	      // logger().warn("ScrubQueue::select_from_group():  XXXXX
+	      // cand++"); // RRR to rm
 
-	return seastar::make_ready_future<
-	  std::optional<Scrub::schedule_result_t>>(
-	  std::optional<Scrub::schedule_result_t>{std::nullopt});
-      });
-  });
-                 });
+	      return seastar::make_ready_future<opt_sched_t>(std::nullopt);
+	    });
+	});
+    });
 }
 
 
@@ -660,7 +636,7 @@ ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
 	     << conf()->osd_scrub_interval_randomize_ratio << dendl;
   }
 
-  if (false && times.is_must == ScrubQueue::must_scrub_t::not_mandatory) {
+  if (times.is_must == ScrubQueue::must_scrub_t::not_mandatory) {
 
     // unless explicitly requested, postpone the scrub with a random delay
     double scrub_min_interval = times.min_interval > 0

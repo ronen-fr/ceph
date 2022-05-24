@@ -2,11 +2,21 @@
 // vim: ts=8 sw=2 smarttab
 #pragma once
 
+#include <fmt/format.h>
+
 #include "common/scrub_types.h"
+#ifdef WITH_SEASTAR
+#include "crimson/osd/osd_operations/osdop_params.h"
+#include "crimson/osd/pg_interval_interrupt_condition.h"
 #include "include/types.h"
 #include "os/ObjectStore.h"
 
+#else
+#include "include/types.h"
+#include "os/ObjectStore.h"
 #include "OpRequest.h"
+
+#endif
 
 namespace ceph {
 class Formatter;
@@ -18,6 +28,11 @@ namespace Scrub {
   class ReplicaReservations;
 }
 
+namespace crimson::osd {
+  class ScrubEvent;
+}
+
+
 /// Facilitating scrub-realated object access to private PG data
 class ScrubberPasskey {
 private:
@@ -25,6 +40,7 @@ private:
   friend class PrimaryLogScrub;
   friend class PgScrubber;
   friend class ScrubBackend;
+  friend class crimson::osd::ScrubEvent;
   ScrubberPasskey() {}
   ScrubberPasskey(const ScrubberPasskey&) = default;
   ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
@@ -151,7 +167,34 @@ struct requested_scrub_t {
   bool check_repair{false};
 };
 
+template <>
+struct fmt::formatter<requested_scrub_t> {
+
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const requested_scrub_t& plan, FormatContext& ctx)
+  {
+    return format_to(ctx.out(),
+		     "{}{}{}{}{}{}{}{}{}",
+		     plan.must_scrub ? " must_scrub" : "",
+		     plan.req_scrub ? " req_scrub" : "",
+		     plan.need_auto ? " need_auto" : "",
+		     plan.must_deep_scrub ? " must_deep_scrub" : "",
+		     plan.time_for_deep ? " time_for_deep" : "",
+		     plan.deep_scrub_on_error ? " deep_scrub_on_error" : "",
+		     plan.must_repair ? " must_repair" : "",
+		     plan.auto_repair ? " auto_repair" : "",
+		     plan.check_repair ? "check_repair" : "");
+  }
+};
+
 std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
+
+#ifdef WITH_SEASTAR
+using ScrubEIF = ::crimson::interruptible::interruptible_future<
+      ::crimson::osd::IOInterruptCondition, void>;
+#endif
 
 /**
  *  The interface used by the PG when requesting scrub-related info or services
@@ -170,6 +213,10 @@ struct ScrubPgIF {
   // --------------- triggering state-machine events:
 
   virtual void initiate_regular_scrub(epoch_t epoch_queued) = 0;
+
+#ifdef WITH_SEASTAR
+  virtual ScrubEIF initiate_regular_scrub_v2(epoch_t epoch_queued) = 0;
+#endif
 
   virtual void initiate_scrub_after_repair(epoch_t epoch_queued) = 0;
 
@@ -211,10 +258,8 @@ struct ScrubPgIF {
 
   // --------------------------------------------------
 
-  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	 // currently
-								 // only used
-								 // for an
-								 // assert
+  // currently only used for an assert:
+  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;
 
   /**
    * the scrubber is marked 'active':
@@ -243,10 +288,13 @@ struct ScrubPgIF {
   /// are we waiting for resource reservation grants form our replicas?
   [[nodiscard]] virtual bool is_reserving() const = 0;
 
+// not implemented yet on the Crimson side:
+#ifndef WITH_SEASTAR
   /// handle a message carrying a replica map
   virtual void map_from_replica(OpRequestRef op) = 0;
 
   virtual void replica_scrub_op(OpRequestRef op) = 0;
+#endif
 
   virtual void set_op_parameters(requested_scrub_t&) = 0;
 
@@ -360,6 +408,8 @@ struct ScrubPgIF {
   virtual void on_maybe_registration_change(
     const requested_scrub_t& request_flags) = 0;
 
+// not implemented yet on the Crimson side:
+#ifndef WITH_SEASTAR
   // on the replica:
   virtual void handle_scrub_reserve_request(OpRequestRef op) = 0;
   virtual void handle_scrub_reserve_release(OpRequestRef op) = 0;
@@ -368,6 +418,7 @@ struct ScrubPgIF {
   virtual void handle_scrub_reserve_grant(OpRequestRef op, pg_shard_t from) = 0;
   virtual void handle_scrub_reserve_reject(OpRequestRef op,
 					   pg_shard_t from) = 0;
+#endif
 
   virtual void rm_from_osd_scrubbing() = 0;
 
