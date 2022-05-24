@@ -29,8 +29,8 @@
 
 #include <seastar/core/do_with.hh>
 #include <seastar/core/future.hh>
-#include <seastar/core/thread.hh>
 #include <seastar/core/scollectd_api.hh>
+#include <seastar/core/thread.hh>
 
 #include "common/dout.h"
 #include "crimson/common/log.h"
@@ -458,8 +458,8 @@ seastar::future<Scrub::schedule_result_t> ScrubQueue::select_pg_and_scrub(
 	      penalized_copy.empty()) {
 	    return seastar::make_ready_future<Scrub::schedule_result_t>(result);
 	  }
- return seastar::make_ready_future<Scrub::schedule_result_t>(
-            Scrub::schedule_result_t::none_ready);
+  return seastar::make_ready_future<Scrub::schedule_result_t>(
+    Scrub::schedule_result_t::none_ready);
 	  // return seastar::future<Scrub::schedule_result_t>(result);
 	  // try the penalized queue
 	  return select_from_group(penalized_copy, preconds, now_is)
@@ -544,103 +544,111 @@ seastar::future<Scrub::schedule_result_t> ScrubQueue::select_from_group(
       Scrub::schedule_result_t::none_ready);
   }
 
-  return seastar::do_with(group.begin(), std::move(preconds),
-                 [this, &group, now_is](auto& candidate_it, auto& preconds) {
-  
-  return seastar::repeat_until_value([this,
-				      &candidate_it,
-				      &group,
-				      preconds,
-				      now_is]() mutable {
-    logger().warn("{}:  XXXXX {}", __func__, group.size());
-    if (group.size() == 0 || (candidate_it == group.end())) {
-      // the 'size==0' case is only if the group changed, which should only
-      // should happen during tests
-      return seastar::make_ready_future<
-	std::optional<Scrub::schedule_result_t>>(
-	std::optional<Scrub::schedule_result_t>{
-	  Scrub::schedule_result_t::none_ready});
-    }
-
-    auto& candidate = *candidate_it;
-
-    logger().warn("{}: -- jobs #: {} {} ", __func__, group.size(), (void*)(&group));
-    logger().warn("{}:  XXXXX candidate: {}", __func__, candidate->pgid);
-
-    if (preconds.only_deadlined && (candidate->schedule.deadline.is_zero() ||
-				    candidate->schedule.deadline >= now_is)) {
-      dout(15) << " not scheduling scrub for " << candidate->pgid << " due to "
-	       << (preconds.time_permit ? "high load" : "time not permitting")
-	       << dendl;
-      return seastar::make_ready_future<
-	std::optional<Scrub::schedule_result_t>>(
-	std::optional<Scrub::schedule_result_t>{std::nullopt});
-    }
-
-    // candidate life?
-    // candidate_it life?
-    return osd_service
-      .initiate_a_scrub(candidate->pgid, preconds.allow_requested_repair_only)
-      .then([this, &candidate_it](auto&& init_result) mutable
-	    -> seastar::future<std::optional<Scrub::schedule_result_t>> {
-	auto& candidate = *candidate_it;
-	switch (init_result) {
-
-	  case Scrub::schedule_result_t::scrub_initiated:
-	    // the happy path. We are done
-	    dout(20) << " initiated for " << candidate->pgid << dendl;
-	    logger().debug("ScrubQueue::select_from_group(): initiated for {}",
-			   candidate->pgid);
+  return seastar::do_with(
+    group.begin(),
+    std::move(preconds),
+    [this, &group, now_is](auto& candidate_it, auto& preconds) {
+      return seastar::repeat_until_value(
+	[this, &candidate_it, &group, preconds, now_is]() mutable {
+	  logger().warn("{}:  XXXXX {}", __func__, group.size());
+	  if (group.size() == 0 || (candidate_it == group.end())) {
+	    // the 'size==0' case is only if the group changed, which should
+	    // only should happen during tests
 	    return seastar::make_ready_future<
 	      std::optional<Scrub::schedule_result_t>>(
-	      std::make_optional<Scrub::schedule_result_t>(
-		Scrub::schedule_result_t::scrub_initiated));
+	      std::optional<Scrub::schedule_result_t>{
+		Scrub::schedule_result_t::none_ready});
+	  }
 
-	  case Scrub::schedule_result_t::already_started:
-	  case Scrub::schedule_result_t::preconditions:
-	  case Scrub::schedule_result_t::bad_pg_state:
-	    // continue with the next job
-	    logger().debug(
-	      "ScrubQueue::select_from_group(): failed (state/cond/started) {}",
-	      candidate->pgid);
-	    break;
+	  auto& candidate = *candidate_it;
 
-	  case Scrub::schedule_result_t::no_such_pg:
-	    // The pg is no longer there
-	    logger().debug("ScrubQueue::select_from_group(): failed (no pg) {}",
-			   candidate->pgid);
-	    break;
+	  logger().warn("{}: -- jobs #: {} {} ",
+			__func__,
+			group.size(),
+			(void*)(&group));
+	  logger().warn("{}:  XXXXX candidate: {}", __func__, candidate->pgid);
 
-	  case Scrub::schedule_result_t::no_local_resources:
-	    // failure to secure local resources. No point in trying the other
-	    // PGs at this time. Note that this is not the same as replica
-	    // resources failure!
-	    logger().debug("ScrubQueue::select_from_group(): failed (local) {}",
-			   candidate->pgid);
+	  if (preconds.only_deadlined &&
+	      (candidate->schedule.deadline.is_zero() ||
+	       candidate->schedule.deadline >= now_is)) {
+	    dout(15) << " not scheduling scrub for " << candidate->pgid
+		     << " due to "
+		     << (preconds.time_permit ? "high load"
+					      : "time not permitting")
+		     << dendl;
 	    return seastar::make_ready_future<
 	      std::optional<Scrub::schedule_result_t>>(
-	      std::make_optional<Scrub::schedule_result_t>(
-		Scrub::schedule_result_t::no_local_resources));
+	      std::optional<Scrub::schedule_result_t>{std::nullopt});
+	  }
 
-	  case Scrub::schedule_result_t::none_ready:
-	    // can't happen. Just for the compiler.
-	    logger().error("ScrubQueue::select_from_group(): failed !!! {}",
-			   candidate->pgid);
-	    return seastar::make_ready_future<
-	      std::optional<Scrub::schedule_result_t>>(
-	      std::make_optional<Scrub::schedule_result_t>(
-		Scrub::schedule_result_t::none_ready));
-	};
+	  return osd_service
+	    .initiate_a_scrub(candidate->pgid,
+			      preconds.allow_requested_repair_only)
+	    .then([this, &candidate_it](auto&& init_result) mutable
+		  -> seastar::future<std::optional<Scrub::schedule_result_t>> {
+	      auto& candidate = *candidate_it;
+	      switch (init_result) {
 
-	++candidate_it;
-    logger().warn("{}:  XXXXX cand++", __func__);
+		case Scrub::schedule_result_t::scrub_initiated:
+		  // the happy path. We are done
+		  dout(20) << " initiated for " << candidate->pgid << dendl;
+		  logger().debug(
+		    "ScrubQueue::select_from_group(): initiated for {}",
+		    candidate->pgid);
+		  return seastar::make_ready_future<
+		    std::optional<Scrub::schedule_result_t>>(
+		    std::make_optional<Scrub::schedule_result_t>(
+		      Scrub::schedule_result_t::scrub_initiated));
 
-	return seastar::make_ready_future<
-	  std::optional<Scrub::schedule_result_t>>(
-	  std::optional<Scrub::schedule_result_t>{std::nullopt});
-      });
-  });
-                 });
+		case Scrub::schedule_result_t::already_started:
+		case Scrub::schedule_result_t::preconditions:
+		case Scrub::schedule_result_t::bad_pg_state:
+		  // continue with the next job
+		  logger().debug(
+		    "ScrubQueue::select_from_group(): failed "
+		    "(state/cond/started) {}",
+		    candidate->pgid);
+		  break;
+
+		case Scrub::schedule_result_t::no_such_pg:
+		  // The pg is no longer there
+		  logger().debug(
+		    "ScrubQueue::select_from_group(): failed (no pg) {}",
+		    candidate->pgid);
+		  break;
+
+		case Scrub::schedule_result_t::no_local_resources:
+		  // failure to secure local resources. No point in trying the
+		  // other PGs at this time. Note that this is not the same as
+		  // replica resources failure!
+		  logger().debug(
+		    "ScrubQueue::select_from_group(): failed (local) {}",
+		    candidate->pgid);
+		  return seastar::make_ready_future<
+		    std::optional<Scrub::schedule_result_t>>(
+		    std::make_optional<Scrub::schedule_result_t>(
+		      Scrub::schedule_result_t::no_local_resources));
+
+		case Scrub::schedule_result_t::none_ready:
+		  // can't happen. Just for the compiler.
+		  logger().error(
+		    "ScrubQueue::select_from_group(): failed !!! {}",
+		    candidate->pgid);
+		  return seastar::make_ready_future<
+		    std::optional<Scrub::schedule_result_t>>(
+		    std::make_optional<Scrub::schedule_result_t>(
+		      Scrub::schedule_result_t::none_ready));
+	      };
+
+	      ++candidate_it;
+	      logger().warn("{}:  XXXXX cand++", __func__);
+
+	      return seastar::make_ready_future<
+		std::optional<Scrub::schedule_result_t>>(
+		std::optional<Scrub::schedule_result_t>{std::nullopt});
+	    });
+	});
+    });
 }
 
 

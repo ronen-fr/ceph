@@ -415,6 +415,7 @@ class ScrubQueue {
   CephContext* cct;  // RRR fix this faked, not really wanted, pointer
   Scrub::ScrubSchedListener& osd_service;
 
+  // the following is required for Crimson compatibility
 #ifdef WITH_SEASTAR
   auto& conf() const { return crimson::common::local_conf(); }
 #else

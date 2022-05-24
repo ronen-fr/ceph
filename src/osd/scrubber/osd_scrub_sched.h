@@ -305,7 +305,12 @@ class ScrubQueue {
    *
    * locking: locks jobs_lock
    */
+#ifdef WITH_SEASTAR
+  seastar::future<Scrub::schedule_result_t> select_pg_and_scrub(
+    Scrub::ScrubPreconds&& preconds);
+#else
   Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
+#endif
 
   /**
    * Translate attempt_ values into readable text

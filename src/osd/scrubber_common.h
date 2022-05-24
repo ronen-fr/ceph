@@ -2,11 +2,21 @@
 // vim: ts=8 sw=2 smarttab
 #pragma once
 
+#include <fmt/format.h>
+
 #include "common/scrub_types.h"
+#ifdef WITH_SEASTAR
+#include "crimson/osd/osd_operations/osdop_params.h"
+#include "crimson/osd/pg_interval_interrupt_condition.h"
 #include "include/types.h"
 #include "os/ObjectStore.h"
 
+#else
+#include "include/types.h"
+#include "os/ObjectStore.h"
 #include "OpRequest.h"
+
+#endif
 
 namespace ceph {
 class Formatter;
@@ -151,6 +161,28 @@ struct requested_scrub_t {
   bool check_repair{false};
 };
 
+template <>
+struct fmt::formatter<requested_scrub_t> {
+
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const requested_scrub_t& plan, FormatContext& ctx)
+  {
+    return format_to(ctx.out(),
+		     "{}{}{}{}{}{}{}{}{}",
+		     plan.must_scrub ? " must_scrub" : "",
+		     plan.req_scrub ? " req_scrub" : "",
+		     plan.need_auto ? " need_auto" : "",
+		     plan.must_deep_scrub ? " must_deep_scrub" : "",
+		     plan.time_for_deep ? " time_for_deep" : "",
+		     plan.deep_scrub_on_error ? " deep_scrub_on_error" : "",
+		     plan.must_repair ? " must_repair" : "",
+		     plan.auto_repair ? " auto_repair" : "",
+		     plan.check_repair ? "check_repair" : "");
+  }
+};
+
 std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
 
 /**
@@ -211,10 +243,8 @@ struct ScrubPgIF {
 
   // --------------------------------------------------
 
-  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	 // currently
-								 // only used
-								 // for an
-								 // assert
+  // currently only used for an assert:
+  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;
 
   /**
    * the scrubber is marked 'active':

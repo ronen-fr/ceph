@@ -1537,7 +1537,7 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
   return upd_flags;
 }
 
-std::vector<pg_shard_t> PG::get_actingset(Scrub::ScrubberPasskey) const
+std::vector<pg_shard_t> PG::get_actingset(ScrubberPasskey) const
 {
   const auto& aset = peering_state.get_actingset();
   std::vector<pg_shard_t> ret{aset.cbegin(), aset.cend()};

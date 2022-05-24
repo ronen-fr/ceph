@@ -21,6 +21,30 @@ namespace ceph {
 class Formatter;
 }
 
+struct PGPool;
+
+namespace Scrub {
+  class ReplicaReservations;
+}
+
+namespace crimson::osd {
+  class ScrubEvent;
+}
+
+
+/// Facilitating scrub-realated object access to private PG data
+class ScrubberPasskey {
+private:
+  friend class Scrub::ReplicaReservations;
+  friend class PrimaryLogScrub;
+  friend class PgScrubber;
+  friend class ScrubBackend;
+  friend class crimson::osd::ScrubEvent;
+  ScrubberPasskey() {}
+  ScrubberPasskey(const ScrubberPasskey&) = default;
+  ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
+};
+
 namespace Scrub {
 
 /// high/low OP priority
@@ -36,6 +60,25 @@ struct ScrubPreconds {
   bool load_is_low{true};
   bool time_permit{true};
   bool only_deadlined{false};
+};
+
+/// PG services used by the scrubber backend
+struct PgScrubBeListener {
+  virtual ~PgScrubBeListener() = default;
+
+  virtual const PGPool& get_pgpool() const = 0;
+  virtual pg_shard_t get_primary() const = 0;
+  virtual void force_object_missing(ScrubberPasskey,
+                                    const std::set<pg_shard_t>& peer,
+                                    const hobject_t& oid,
+                                    eversion_t version) = 0;
+  virtual const pg_info_t& get_pg_info(ScrubberPasskey) const = 0;
+
+  // query the PG backend for the on-disk size of an object
+  virtual uint64_t logical_to_ondisk_size(uint64_t logical_size) const = 0;
+
+  // used to verify our "cleaness" before scrubbing
+  virtual bool is_waiting_for_unreadable_object() const = 0;
 };
 
 }  // namespace Scrub
@@ -61,8 +104,8 @@ struct requested_scrub_t {
 
   /**
    * scrub must not be aborted.
-   * Set for explicitly requested scrubs, and for scrubs originated by the pairing
-   * process with the 'repair' flag set (in the RequestScrub event).
+   * Set for explicitly requested scrubs, and for scrubs originated by the
+   * pairing process with the 'repair' flag set (in the RequestScrub event).
    *
    * Will be copied into the 'required' scrub flag upon scrub start.
    */
@@ -73,14 +116,15 @@ struct requested_scrub_t {
    *  - scrub_requested() with need_auto param set, which only happens in
    *  - scrub_finish() - if deep_scrub_on_error is set, and we have errors
    *
-   * If set, will prevent the OSD from casually postponing our scrub. When scrubbing
-   * starts, will cause must_scrub, must_deep_scrub and auto_repair to be set.
+   * If set, will prevent the OSD from casually postponing our scrub. When
+   * scrubbing starts, will cause must_scrub, must_deep_scrub and auto_repair to
+   * be set.
    */
   bool need_auto{false};
 
   /**
-   * Set for scrub-after-recovery just before we initiate the recovery deep scrub,
-   * or if scrub_requested() was called with either need_auto ot repair.
+   * Set for scrub-after-recovery just before we initiate the recovery deep
+   * scrub, or if scrub_requested() was called with either need_auto ot repair.
    * Affects PG_STATE_DEEP_SCRUB.
    */
   bool must_deep_scrub{false};
@@ -107,8 +151,8 @@ struct requested_scrub_t {
   bool must_repair{false};
 
   /*
-   * the value of auto_repair is determined in sched_scrub() (once per scrub. previous
-   * value is not remembered). Set if
+   * the value of auto_repair is determined in sched_scrub() (once per scrub.
+   * previous value is not remembered). Set if
    * - allowed by configuration and backend, and
    * - must_scrub is not set (i.e. - this is a periodic scrub),
    * - time_for_deep was just set
@@ -154,7 +198,10 @@ struct ScrubPgIF {
 
   virtual ~ScrubPgIF() = default;
 
-  friend std::ostream& operator<<(std::ostream& out, const ScrubPgIF& s) { return s.show(out); }
+  friend std::ostream& operator<<(std::ostream& out, const ScrubPgIF& s)
+  {
+    return s.show(out);
+  }
 
   virtual std::ostream& show(std::ostream& out) const = 0;
 
@@ -163,8 +210,6 @@ struct ScrubPgIF {
   virtual void initiate_regular_scrub(epoch_t epoch_queued) = 0;
 
   virtual ScrubEIF initiate_regular_scrub_v2(epoch_t epoch_queued) = 0;
-
-  //virtual void queue_regular_scrub() = 0;  // crimson-specific (for now)
 
   virtual void initiate_scrub_after_repair(epoch_t epoch_queued) = 0;
 
@@ -182,9 +227,11 @@ struct ScrubPgIF {
 
   virtual void send_replica_pushes_upd(epoch_t epoch_queued) = 0;
 
-  virtual void send_start_replica(epoch_t epoch_queued, Scrub::act_token_t token) = 0;
+  virtual void send_start_replica(epoch_t epoch_queued,
+				  Scrub::act_token_t token) = 0;
 
-  virtual void send_sched_replica(epoch_t epoch_queued, Scrub::act_token_t token) = 0;
+  virtual void send_sched_replica(epoch_t epoch_queued,
+				  Scrub::act_token_t token) = 0;
 
   virtual void send_full_reset(epoch_t epoch_queued) = 0;
 
@@ -192,11 +239,7 @@ struct ScrubPgIF {
 
   virtual void send_chunk_busy(epoch_t epoch_queued) = 0;
 
-  //virtual void send_requests_sent(epoch_t epoch_queued) = 0; // crimson
-
   virtual void send_local_map_done(epoch_t epoch_queued) = 0;
-
-  //virtual void send_oninit_done(epoch_t epoch_queued) = 0; // crimson
 
   virtual void send_get_next_chunk(epoch_t epoch_queued) = 0;
 
@@ -204,12 +247,12 @@ struct ScrubPgIF {
 
   virtual void send_maps_compared(epoch_t epoch_queued) = 0;
 
-  virtual void on_applied_when_primary(const eversion_t &applied_version) = 0;
+  virtual void on_applied_when_primary(const eversion_t& applied_version) = 0;
 
   // --------------------------------------------------
 
-  [[nodiscard]] virtual bool are_callbacks_pending()
-    const = 0;	// currently only used for an assert
+  // currently only used for an assert:
+  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;
 
   /**
    * the scrubber is marked 'active':
@@ -258,20 +301,20 @@ struct ScrubPgIF {
   virtual void dump_scrubber(ceph::Formatter* f,
 			     const requested_scrub_t& request_flags) const = 0;
 
-  //virtual void dump(ceph::Formatter* f) const = 0;
-
   /**
-   * Return true if soid is currently being scrubbed and pending IOs should block.
-   * May have a side effect of preempting an in-progress scrub -- will return false
-   * in that case.
+   * Return true if soid is currently being scrubbed and pending IOs should
+   * block. May have a side effect of preempting an in-progress scrub -- will
+   * return false in that case.
    *
    * @param soid object to check for ongoing scrub
-   * @return boolean whether a request on soid should block until scrub completion
+   * @return boolean whether a request on soid should block until scrub
+   * completion
    */
   virtual bool write_blocked_by_scrub(const hobject_t& soid) = 0;
 
   /// Returns whether any objects in the range [begin, end] are being scrubbed
-  virtual bool range_intersects_scrub(const hobject_t& start, const hobject_t& end) = 0;
+  virtual bool range_intersects_scrub(const hobject_t& start,
+				      const hobject_t& end) = 0;
 
   /// the op priority, taken from the primary's request message
   virtual Scrub::scrub_prio_t replica_op_priority() const = 0;
@@ -279,22 +322,19 @@ struct ScrubPgIF {
   /// the priority of the on-going scrub (used when requeuing events)
   virtual unsigned int scrub_requeue_priority(
     Scrub::scrub_prio_t with_priority) const = 0;
-  virtual unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority,
-					      unsigned int suggested_priority) const = 0;
+  virtual unsigned int scrub_requeue_priority(
+    Scrub::scrub_prio_t with_priority,
+    unsigned int suggested_priority) const = 0;
 
   virtual void add_callback(Context* context) = 0;
-
-  // /// should we requeue blocked ops?
-  // [[nodiscard]] virtual bool should_requeue_blocked_ops(
-  //   eversion_t last_recovery_applied) const = 0;
 
   /// add to scrub statistics, but only if the soid is below the scrub start
   virtual void stats_of_handled_objects(const object_stat_sum_t& delta_stats,
 					const hobject_t& soid) = 0;
 
   /**
-   * the version of 'scrub_clear_state()' that does not try to invoke FSM services
-   * (thus can be called from FSM reactions)
+   * the version of 'scrub_clear_state()' that does not try to invoke FSM
+   * services (thus can be called from FSM reactions)
    */
   virtual void clear_pgscrub_state() = 0;
 
@@ -305,8 +345,8 @@ struct ScrubPgIF {
   virtual void send_remotes_reserved(epoch_t epoch_queued) = 0;
 
   /**
-   * triggers the 'ReservationFailure' (at least one replica denied us the requested
-   * resources) state-machine event
+   * triggers the 'ReservationFailure' (at least one replica denied us the
+   * requested resources) state-machine event
    */
   virtual void send_reservation_failure(epoch_t epoch_queued) = 0;
 
@@ -359,8 +399,8 @@ struct ScrubPgIF {
    */
   virtual void update_scrub_job(const requested_scrub_t& request_flags) = 0;
 
-  virtual void on_maybe_registration_change(const requested_scrub_t& request_flags) = 0;
-
+  virtual void on_maybe_registration_change(
+    const requested_scrub_t& request_flags) = 0;
 
   // virtual void handle_scrub_reserve_op(Ref<MOSDScrubReserve> req, pg_shard_t from) = 0;
   //virtual void handle_scrub_reserve_op(const MOSDScrubReserve& req, pg_shard_t from) = 0;

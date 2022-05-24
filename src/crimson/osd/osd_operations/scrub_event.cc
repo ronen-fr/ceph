@@ -177,10 +177,10 @@ seastar::future<> ScrubEvent::start()
 //         }).then_interruptible([this, pg]() mutable -> ScrubEvent::interruptible_future<> {
           logger().info("ScrubEvent::start() {} executing...", *this);
           if (std::holds_alternative<ScrubEvent::ScrubEventFwdImm>(event_fwd_func)) {
-            (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdImm>(event_fwd_func))(epoch_queued);
+            (*(pg->get_scrubber(ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdImm>(event_fwd_func))(epoch_queued);
             return seastar::make_ready_future<>();
           } else {
-            return (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdFut>(event_fwd_func))(epoch_queued);
+            return (*(pg->get_scrubber(ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdFut>(event_fwd_func))(epoch_queued);
           }
   
         }).then_interruptible([this, pg]() mutable {
@@ -244,10 +244,10 @@ seastar::future<> ScrubEvent::start()
 
         logger().info("ScrubEvent::start() {} executing...", *this);
         if (std::holds_alternative<ScrubEvent::ScrubEventFwdImm>(event_fwd_func)) {
-          (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdImm>(event_fwd_func))(epoch_queued);
+          (*(pg->get_scrubber(ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdImm>(event_fwd_func))(epoch_queued);
           return seastar::make_ready_future<>();
         } else {
-          return (*(pg->get_scrubber(Scrub::ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdFut>(event_fwd_func))(epoch_queued);
+          return (*(pg->get_scrubber(ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdFut>(event_fwd_func))(epoch_queued);
         }
 
       }).then_interruptible([this, pg]() mutable {
