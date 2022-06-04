@@ -13,6 +13,7 @@
 #include "crimson/osd/osd_operations/recovery_subrequest.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
 #include "crimson/osd/osd_operations/scrub_event.h"
+#include "crimson/osd/osd_operations/scrub_remote_event.h"
 #include "crimson/osd/pg_activation_blocker.h"
 #include "crimson/osd/pg_map.h"
 
@@ -310,6 +311,13 @@ struct EventBackendRegistry<osd::PGAdvanceMap> {
 
 template <>
 struct EventBackendRegistry<osd::ScrubEvent> {
+  static std::tuple<> get_backends() {
+    return {};
+  }
+};
+
+template <>
+struct EventBackendRegistry<osd::ScrubRemoteEvent> {
   static std::tuple<> get_backends() {
     return {};
   }

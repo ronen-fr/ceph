@@ -38,9 +38,7 @@ ScrubEvent::ScrubEvent(Ref<PG> pg,
     , epoch_queued{epoch_queued}
     , delay{delay}
 {
-  logger().debug("ScrubEvent: 1'st ctor {:p} delay:{}",
-		 (void*)this,
-		 delay);
+  logger().debug("ScrubEvent: 1'st ctor {:p} delay:{}", (void*)this, delay);
 }
 
 ScrubEvent::ScrubEvent(Ref<PG> pg,
@@ -114,7 +112,6 @@ seastar::future<> ScrubEvent::start()
     "scrubber: ScrubEvent::start(): {}: start (delay: {}) pg:{:p}", *this,
     delay, (void*)&(*pg));
 
-  //IRef ref = this;
   auto maybe_delay = seastar::now();
   if (delay.count() > 0) {
     maybe_delay = seastar::sleep(delay);
@@ -126,48 +123,58 @@ seastar::future<> ScrubEvent::start()
     return get_pg();
   }).then([this](Ref<PG> pg) {
       if (!pg) {
-        logger().warn("scrubber: ScrubEvent::start(): {}: pg absent, did not create", *this);
+        logger().warn("scrubber: ScrubEvent::start(): {}: pg absent, did not create",
+                        *this);
         on_pg_absent();
         handle.exit();
         return complete_rctx_no_pg();
       }
 
       logger().debug("scrubber: ScrubEvent::start(): {}: pg present", *this);
-      return interruptor::with_interruption([this, pg]() /*-> ScrubEvent::interruptible_future<>*/ {
-        return this->template enter_stage<interruptor>(
-          pp(*pg).await_map
-        ).then_interruptible([this, pg] {
-          return this->template with_blocking_event<PG_OSDMapGate::OSDMapBlocker::BlockingEvent>(
-            [this, pg] (auto&& trigger) {
-              return pg->osdmap_gate.wait_for_map(std::move(trigger),
-                                              epoch_queued);
-            });
-	
-       }).then_interruptible([this, pg](auto) {
-          return this->template enter_stage<interruptor>(pp(*pg).process);
-        }).then_interruptible([this, pg]()  mutable -> ScrubEvent::interruptible_future<> {
-          logger().info("ScrubEvent::start() {} executing...", *this);
-          if (std::holds_alternative<ScrubEvent::ScrubEventFwdImm>(event_fwd_func)) {
-            (*(pg->get_scrubber(ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdImm>(event_fwd_func))(epoch_queued);
-            return seastar::make_ready_future<>();
-          } else {
-            return (*(pg->get_scrubber(ScrubberPasskey{})).*std::get<ScrubEvent::ScrubEventFwdFut>(event_fwd_func))(epoch_queued);
-          }
-  
-        }).then_interruptible([this, pg]() mutable {
-          logger().info("ScrubEvent::start() {} after calling fwder", *this);
-          handle.exit();
-          logger().info("ScrubEvent::start() {} executing... exited", *this);
-          return seastar::now();//return complete_rctx(pg);
-        }).then_interruptible([pg]() -> ScrubEvent::interruptible_future<> {
-          return seastar::now();
-        });
-    },
-    [this](std::exception_ptr ep) {
-      logger().debug("ScrubEvent::start(): {} interrupted with {}", *this, ep);
-      return seastar::now();
-    },
-    pg);
+      return interruptor::with_interruption(
+	[this, pg]() /*-> ScrubEvent::interruptible_future<>*/ {
+	  return this->template enter_stage<interruptor>(pp(*pg).await_map)
+	    .then_interruptible([this, pg] {
+	      return this->template with_blocking_event<
+		PG_OSDMapGate::OSDMapBlocker::BlockingEvent>(
+		[this, pg](auto&& trigger) {
+		  return pg->osdmap_gate.wait_for_map(std::move(trigger),
+						      epoch_queued);
+		});
+	    }).then_interruptible([this, pg](auto) {
+	      return this->template enter_stage<interruptor>(pp(*pg).process);
+	    }).then_interruptible(
+	      [this, pg]() mutable -> ScrubEvent::interruptible_future<> {
+		logger().info("ScrubEvent::start() {} executing...", *this);
+		if (std::holds_alternative<ScrubEvent::ScrubEventFwdImm>(
+		      event_fwd_func)) {
+		  (*(pg->get_scrubber(ScrubberPasskey{})).*
+		   std::get<ScrubEvent::ScrubEventFwdImm>(
+		     event_fwd_func))(epoch_queued, act_token);
+		  return seastar::make_ready_future<>();
+		} else {
+		  return (*(pg->get_scrubber(ScrubberPasskey{})).*
+			  std::get<ScrubEvent::ScrubEventFwdFut>(
+			    event_fwd_func))(epoch_queued, act_token);
+		}
+	      }).then_interruptible([this, pg]() mutable {
+	      logger().info("ScrubEvent::start() {} after calling fwder",
+			    *this);
+	      handle.exit();
+	      logger().info("ScrubEvent::start() {} executing... exited",
+			    *this);
+	      return seastar::now();
+	    }).then_interruptible([pg]() -> ScrubEvent::interruptible_future<> {
+	      return seastar::now();
+	    });
+	},
+	[this](std::exception_ptr ep) {
+	  logger().debug("ScrubEvent::start(): {} interrupted with {}",
+			 *this,
+			 ep);
+	  return seastar::now();
+	},
+	pg);
   }).finally([this] {
     logger().debug("ScrubEvent::start(): {} complete", *this);
   });

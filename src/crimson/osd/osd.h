@@ -38,6 +38,7 @@ class MOSDMap;
 class MOSDRepOpReply;
 class MOSDRepOp;
 class MOSDScrub2;
+class MOSDScrubReserve;
 class OSDMap;
 class OSDMeta;
 class Heartbeat;
@@ -206,6 +207,8 @@ private:
 					   Ref<MOSDFastDispatchOp> m);
   seastar::future<> handle_scrub(crimson::net::ConnectionRef conn,
 				 Ref<MOSDScrub2> m);
+  seastar::future<> handle_scrub_reserve(crimson::net::ConnectionRef conn,
+				 Ref<MOSDScrubReserve> m);
   seastar::future<> handle_mark_me_down(crimson::net::ConnectionRef conn,
 					Ref<MOSDMarkMeDown> m);
 
@@ -274,6 +277,7 @@ public:
       std::forward<Args>(args)...);
     auto &logger = crimson::get_logger(ceph_subsys_osd);
     logger.debug("{}: starting {}", *op, __func__);
+    logger.warn("{}: starting {} {}", __func__, *op, op->get_pgid());
     auto &opref = *op;
 
     auto fut = opref.template enter_stage<>(
@@ -297,7 +301,7 @@ public:
     }).then([&logger, &opref](auto epoch) {
       logger.debug("{}: got map {}, entering get_pg", opref, epoch);
       return opref.template enter_stage<>(
-	opref.get_connection_pipeline().get_pg);
+	opref.get_connection_pipeline().get_pg);// get_pg is an object - the name of the piple stage
     }).then([this, &logger, &opref] {
       logger.debug("{}: in get_pg", opref);
       if constexpr (T::can_create()) {

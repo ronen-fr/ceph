@@ -43,8 +43,6 @@ class ScrubMachine;
 class ScrubBackend;
 struct BuildMap;
 
-#ifdef NOT_YET
-
 /**
  * Reserving/freeing scrub resources at the replicas.
  *
@@ -60,9 +58,8 @@ struct BuildMap;
  * std::vector: no need to pre-reserve.
  */
 class ReplicaReservations {
-  // using OrigSet = decltype(std::declval<PG>().get_actingset());
-
   PG* m_pg;
+  pg_shard_t m_whoami;
   std::vector<pg_shard_t> m_acting_set;
   crimson::osd::ShardServices& m_osds;
   std::vector<pg_shard_t> m_waited_for_peers;
@@ -97,17 +94,12 @@ class ReplicaReservations {
 
   ~ReplicaReservations();
 
+  void handle_reserve_grant(pg_shard_t from);
 
-  // replace the PeeringEvent with a remote version of the ScrubEvent
-  void handle_reserve_grant(crimson::osd::RemotePeeringEvent op,
-                            pg_shard_t from);
-
-  void handle_reserve_reject(crimson::osd::RemotePeeringEvent op,
-                             pg_shard_t from);
+  void handle_reserve_reject(pg_shard_t from);
 
   std::ostream& gen_prefix(std::ostream& out) const;
 };
-#endif
 
 /**
  *  wraps the local OSD scrub resource reservation in an RAII wrapper
@@ -259,6 +251,27 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
  public:
   explicit PgScrubber(PG* pg);
+
+
+  seastar::future<> handle_scrub_reserve_request(
+    crimson::net::ConnectionRef conn,
+    Ref<MOSDFastDispatchOp> op,
+    epoch_t epoch_queued,
+    pg_shard_t from) override;
+
+  seastar::future<> handle_scrub_reserve_grant(
+    crimson::net::ConnectionRef conn,
+    Ref<MOSDFastDispatchOp> op,
+    epoch_t epoch_queued,
+    pg_shard_t from) override;
+
+  seastar::future<> handle_unknown_req(crimson::net::ConnectionRef conn,
+				       Ref<MOSDFastDispatchOp>,
+				       epoch_t,
+				       pg_shard_t) override
+  {
+    return seastar::now();
+  }
 
   //  ------------------  the I/F exposed to the PG (ScrubPgIF) -------------
 
@@ -646,7 +659,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   // 'optional', as 'ReplicaReservations' & 'LocalReservation' are
   // 'RAII-designed' to guarantee un-reserving when deleted.
-  // RRR std::optional<Scrub::ReplicaReservations> m_reservations;
+  std::optional<Scrub::ReplicaReservations> m_reservations;
   std::optional<Scrub::LocalReservation> m_local_osd_resource;
 
 #ifdef NOT_YET
@@ -885,6 +898,7 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 public:
 
   void scrub_fake_scrub_session(epoch_t epoch_queued);
+  void fake_replicas_reserved(epoch_t epoch_queued, Scrub::act_token_t act_token);
   void scrub_fake_scrub_done(epoch_t epoch_queued);
 
   crimson::osd::ScrubEvent::interruptible_future<> scrub_echo(epoch_t epoch_queued);

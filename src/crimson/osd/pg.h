@@ -68,12 +68,10 @@ namespace crimson::os {
 }
 
 namespace crimson::osd {
-  class ScrubEvent;
-};
-
-namespace crimson::osd {
 class ClientRequest;
 class OpsExecuter;
+class ScrubEvent;
+class ScrubRemoteEvent;
 
 
 class PG : public boost::intrusive_ref_counter<
@@ -799,6 +797,7 @@ private:
   friend class ScrubInternalOp;
   friend PgScrubber;
   friend class ::crimson::osd::ScrubEvent;
+  friend class ::crimson::osd::ScrubRemoteEvent;
 
 private:
   seastar::future<bool> find_unfound() {

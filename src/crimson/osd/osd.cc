@@ -11,6 +11,7 @@
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 #include <seastar/core/timer.hh>
+#include <ostream>
 
 #include "common/pick_address.h"
 #include "include/util.h"
@@ -24,8 +25,10 @@
 #include "messages/MOSDPeeringOp.h"
 #include "messages/MOSDRepOpReply.h"
 #include "messages/MOSDScrub2.h"
+#include "messages/MOSDScrubReserve.h"
 #include "messages/MPGStats.h"
 
+#include "msg/Message.h"
 #include "os/Transaction.h"
 #include "osd/ClassHandler.h"
 #include "osd/OSDCap.h"
@@ -54,6 +57,7 @@
 #include "crimson/osd/osd_operations/replicated_request.h"
 #include "crimson/osd/osd_operation_external_tracking.h"
 #include "crimson/osd/scrubber/pg_scrubber.h"
+#include "osd/scrubber_common.h"
 
 namespace {
   seastar::logger& logger() {
@@ -785,6 +789,8 @@ OSD::ms_dispatch(crimson::net::ConnectionRef conn, MessageRef m)
       return handle_rep_op_reply(conn, boost::static_pointer_cast<MOSDRepOpReply>(m));
     case MSG_OSD_SCRUB2:
       return handle_scrub(conn, boost::static_pointer_cast<MOSDScrub2>(m));
+    case MSG_OSD_SCRUB_RESERVE:
+      return handle_scrub_reserve(conn, boost::static_pointer_cast<MOSDScrubReserve>(m));
     default:
       dispatched = false;
       return seastar::now();
@@ -1283,6 +1289,17 @@ seastar::future<> OSD::handle_scrub(crimson::net::ConnectionRef conn,
   });
 }
 
+seastar::future<> OSD::handle_scrub_reserve(crimson::net::ConnectionRef conn,
+					    Ref<MOSDScrubReserve> m)
+{
+  logger().warn("{}: for PG:{} from:{} epoch:{}", __func__, m->pgid, m->from,
+                m->map_epoch);
+  return start_pg_operation<ScrubRemoteEvent>(conn,
+					     m,
+					     shard_services,
+					     m->from, 0ms).second;
+}
+
 seastar::future<> OSD::handle_mark_me_down(crimson::net::ConnectionRef conn,
 					   Ref<MOSDMarkMeDown> m)
 {
@@ -1487,7 +1504,7 @@ void OSD::scrub_tick()
   down_counter = 5; // RRR should be a config!
   // maybe: local_conf().get_val<int64_t>("osd_scrub_scheduling_period")");
   static thread_local seastar::semaphore limit(1);
-  static int dbg_idx = 1000;
+  //static int dbg_idx = 1000;
   (void)seastar::with_semaphore(limit, 1,
                                 [this]() mutable { (void)sched_scrub(); });
 

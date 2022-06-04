@@ -6,10 +6,24 @@
 #include <cmath>
 #include <iostream>
 #include <vector>
+
 #include "debug.h"
+
+// maybe not needed:
+#include "common/dout.h"
 #include "crimson/common/log.h"
-#include "osd/osd_types_fmt.h"
+#include "crimson/osd/osd.h"
+#include "global/global_context.h"
+#include "include/utime.h"
+#include "include/utime_fmt.h"
+// --- end maybe not needed
+
+#include "crimson/common/log.h"
 #include "crimson/osd/osd_operations/scrub_event.h"
+#include "messages/MOSDScrubReserve.h"
+#include "msg/Message.h"
+#include "osd/osd_types_fmt.h"
+#include "osd/scrubber_common.h"
 using std::ostream;
 
 using namespace Scrub;
@@ -20,11 +34,14 @@ using namespace std::literals;
 using crimson::common::local_conf;
 using crimson::osd::ScrubEvent;
 
+#define dout_subsys ceph_subsys_osd
+
 namespace {
-  seastar::logger& logger() {
-    return crimson::get_logger(ceph_subsys_osd);
-  }
+seastar::logger& logger()
+{
+  return crimson::get_logger(ceph_subsys_osd);
 }
+}  // namespace
 
 ostream& operator<<(ostream& out, const scrub_flags_t& sf)
 {
@@ -81,18 +98,40 @@ PgScrubber::PgScrubber(PG* pg)
     , preemption_data{pg}
 {
 
-  logger().debug("{}: creating PgScrubber for {} / {}", __func__, pg->get_pgid(),
+  logger().debug("{}: creating PgScrubber for {} / {}",
+		 __func__,
+		 pg->get_pgid(),
 		 m_pg_whoami);
   // RRR not yet m_fsm = std::make_unique<Scrub::ScrubMachine>(m_pg, this);
   // RRR not yet m_fsm->initiate();
-  m_scrub_job = ceph::make_ref<ScrubQueue::ScrubJob>(m_pg->get_cct(), m_pg_id, m_pg_whoami.shard);
+  m_scrub_job = ceph::make_ref<ScrubQueue::ScrubJob>(m_pg->get_cct(),
+						     m_pg_id,
+						     m_pg_whoami.shard);
 }
 
 ostream& PgScrubber::show(ostream& out) const
 {
   return out << " [ " << m_pg_id << ": " << m_flags << " ] ";
 }
+#if 1
+void PgScrubber::scrub_fake_scrub_session(epoch_t epoch_queued)
+{
+  // mark us as scrubbing,
+  // send replica reservation requests
+  // when reserved:
+  // wait for 2 seconds,
+  // un-reserve,
+  // mark us as done scrubbing
 
+  logger().warn("{}: pg: {} - faking scrub session", __func__, m_pg_id);
+  set_scrub_begin_time();
+  m_active = true;
+
+  reserve_replicas();
+}
+#endif
+
+#if 0
 void PgScrubber::scrub_fake_scrub_session(epoch_t epoch_queued)
 {
   // mark us as scrubbing,
@@ -103,10 +142,32 @@ void PgScrubber::scrub_fake_scrub_session(epoch_t epoch_queued)
   set_scrub_begin_time();
   m_active = true;
 
- (void)m_pg->get_shard_services().start_operation<ScrubEvent>(
-        m_pg, m_pg->get_shard_services(), m_pg_id,
-        (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_fake_scrub_done), m_pg->get_osdmap_epoch(),
-        0, 10s);
+  (void)m_pg->get_shard_services().start_operation<ScrubEvent>(
+    m_pg,
+    m_pg->get_shard_services(),
+    m_pg_id,
+    (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_fake_scrub_done),
+    m_pg->get_osdmap_epoch(),
+    0,
+    10s);
+}
+#endif
+
+void PgScrubber::fake_replicas_reserved(epoch_t epoch_queued, act_token_t act_token)
+{
+  // wait some time, then
+  // un-reserve,
+  // mark us as done scrubbing
+
+  logger().warn("{}: pg: {} - faked all replicas on board ({})", __func__, m_pg_id, act_token);
+  (void)m_pg->get_shard_services().start_operation<ScrubEvent>(
+    m_pg,
+    m_pg->get_shard_services(),
+    m_pg_id,
+    (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::scrub_fake_scrub_done),
+    m_pg->get_osdmap_epoch(),
+    0,
+    1s);
 }
 
 
@@ -121,46 +182,65 @@ void PgScrubber::scrub_fake_scrub_done(epoch_t epoch_queued)
   m_pg->set_last_deep_scrub_stamp(ceph_clock_now());
 
   // this is the wrong function to call, but for now:
-  m_pg->scrub_requested(scrub_level_t::shallow, scrub_type_t::not_repair); // juts sends updates
+  m_pg->scrub_requested(scrub_level_t::shallow,
+			scrub_type_t::not_repair);  // juts sends updates
 
   m_pg->reschedule_scrub();
 }
 
 
-crimson::osd::ScrubEvent::interruptible_future<>
-PgScrubber::scrub_echo(epoch_t epoch_queued)
+crimson::osd::ScrubEvent::interruptible_future<> PgScrubber::scrub_echo(
+  epoch_t epoch_queued)
 {
-  logger().warn("{}: pg: {} epoch: {} echo block starts", __func__, m_pg_id, epoch_queued);
-  return seastar::sleep(1s).then([pg=m_pg_id, epoch_queued]() mutable -> crimson::osd::ScrubEvent::interruptible_future<> {
-    logger().warn("scrub_echo: pg: {} epoch: {} echo block done", pg, epoch_queued);
-    return seastar::make_ready_future();
-  });
+  logger().warn("{}: pg: {} epoch: {} echo block starts",
+		__func__,
+		m_pg_id,
+		epoch_queued);
+  return seastar::sleep(1s).then(
+    [pg = m_pg_id, epoch_queued]() mutable
+    -> crimson::osd::ScrubEvent::interruptible_future<> {
+      logger().warn("scrub_echo: pg: {} epoch: {} echo block done",
+		    pg,
+		    epoch_queued);
+      return seastar::make_ready_future();
+    });
 }
 
 // trying to debug a crash: this version works!
 void PgScrubber::scrub_echo_v(epoch_t epoch_queued)
 {
-  logger().warn("{}: pg: {} epoch: {} echo block starts", __func__, m_pg_id, epoch_queued);
-  (void) seastar::sleep(1s).then([pg=m_pg_id, epoch_queued]() /*mutable -> crimson::osd::ScrubEvent::interruptible_future<> */ {
-    logger().warn("scrub_echo: pg: {} epoch: {} echo block done", pg, epoch_queued);
-  });
+  logger().warn("{}: pg: {} epoch: {} echo block starts",
+		__func__,
+		m_pg_id,
+		epoch_queued);
+  (void)seastar::sleep(1s).then(
+    [pg = m_pg_id,
+     epoch_queued]() /*mutable ->
+			crimson::osd::ScrubEvent::interruptible_future<>
+		      */
+    {
+      logger().warn("scrub_echo: pg: {} epoch: {} echo block done",
+		    pg,
+		    epoch_queued);
+    });
 }
 
 
 // -------------------------------------------------------------------------------------------
-// the I/F used by the state-machine (i.e. the implementation of ScrubMachineListener)
+// the I/F used by the state-machine (i.e. the implementation of
+// ScrubMachineListener)
 
 // -----------------
 
 bool PgScrubber::is_reserving() const
 {
-  return false; // RRR m_fsm->is_reserving();
+  return false;	 // RRR m_fsm->is_reserving();
 }
 
 bool PgScrubber::is_primary() const
 {
   return m_pg->is_primary();
-  //return m_pg->recovery_state.is_primary(); 
+  // return m_pg->recovery_state.is_primary();
 }
 
 
@@ -196,31 +276,44 @@ void PgScrubber::rm_from_osd_scrubbing()
 
 void PgScrubber::on_primary_change(const requested_scrub_t& request_flags)
 {
-  logger().info("{}: {} flags:{}", __func__, (is_primary() ? " Primary " : " Replica "), request_flags);
+  logger().info("{}: {} flags:{}",
+		__func__,
+		(is_primary() ? " Primary " : " Replica "),
+		request_flags);
 
   if (!m_scrub_job) {
     return;
   }
 
-  logger().debug("{}: scrub-job state: {}", __func__, m_scrub_job->state_desc());
+  logger().debug("{}: scrub-job state: {}",
+		 __func__,
+		 m_scrub_job->state_desc());
 
   if (is_primary()) {
-    auto suggested =  determine_scrub_time(request_flags);
+    auto suggested = determine_scrub_time(request_flags);
     m_osds.get_scrub_services().register_with_osd(m_scrub_job, suggested);
   } else {
     m_osds.get_scrub_services().remove_from_osd_queue(m_scrub_job);
   }
 
-  logger().debug("{}: done (registration state: {})", __func__, registration_state());
+  logger().debug("{}: done (registration state: {})",
+		 __func__,
+		 registration_state());
 }
 
 
-void PgScrubber::on_maybe_registration_change(const requested_scrub_t& request_flags)
+void PgScrubber::on_maybe_registration_change(
+  const requested_scrub_t& request_flags)
 {
-  logger().info("{}: {} flags:{}", __func__, (is_primary() ? " Primary " : " Replica "), request_flags);
+  logger().info("{}: {} flags:{}",
+		__func__,
+		(is_primary() ? " Primary " : " Replica "),
+		request_flags);
 
   on_primary_change(request_flags);
-  logger().debug("{}: done (registration state: {})", __func__, registration_state());
+  logger().debug("{}: done (registration state: {})",
+		 __func__,
+		 registration_state());
 }
 
 void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
@@ -229,10 +322,10 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 
   {
     // verify that the 'in_q' status matches our "Primariority"
-    if (m_scrub_job && is_primary() &&  !m_scrub_job->in_queues) {
-      //dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
+    if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) {
+      // dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
       m_pg->get_clog_error() << m_pg->get_pgid() << " primary but not scheduled"
-                             << " flags:" << request_flags;
+			     << " flags:" << request_flags;
     }
   }
 
@@ -241,16 +334,18 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
     m_osds.get_scrub_services().update_job(m_scrub_job, suggested);
   }
 
-  logger().debug("{}: done (registration state: {})", __func__, registration_state());
+  logger().debug("{}: done (registration state: {})",
+		 __func__,
+		 registration_state());
 }
 
-ScrubQueue::sched_params_t
-PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
+ScrubQueue::sched_params_t PgScrubber::determine_scrub_time(
+  const requested_scrub_t& request_flags) const
 {
   ScrubQueue::sched_params_t res;
 
   if (!is_primary()) {
-    return res; // with ok_to_scrub set to 'false'
+    return res;	 // with ok_to_scrub set to 'false'
   }
 
   if (request_flags.must_scrub || request_flags.need_auto) {
@@ -261,27 +356,34 @@ PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
     // we do not need the interval data in this case
 
   } else if (m_pg->get_pg_info(ScrubberPasskey{}).stats.stats_invalid &&
-           local_conf()->osd_scrub_invalid_stats) {
+	     local_conf()->osd_scrub_invalid_stats) {
     res.proposed_time = ceph_clock_now();
     res.is_must = ScrubQueue::must_scrub_t::mandatory;
 
   } else {
-    res.proposed_time = m_pg->get_pg_info(ScrubberPasskey{}).history.last_scrub_stamp;
-    res.min_interval = /* RRR for now */ 100 +
-      m_pg->get_pgpool().info.opts.value_or(pool_opts_t::SCRUB_MIN_INTERVAL, 0.0);
-    res.max_interval = /* RRR for now */ 400 +
-      m_pg->get_pgpool().info.opts.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
+    res.proposed_time =
+      m_pg->get_pg_info(ScrubberPasskey{}).history.last_scrub_stamp;
+    res.min_interval =
+      /* RRR for now */ 100 +
+      m_pg->get_pgpool().info.opts.value_or(pool_opts_t::SCRUB_MIN_INTERVAL,
+					    0.0);
+    res.max_interval =
+      /* RRR for now */ 400 +
+      m_pg->get_pgpool().info.opts.value_or(pool_opts_t::SCRUB_MAX_INTERVAL,
+					    0.0);
   }
 
   logger().debug("{}: suggested: {} hist: {} v:{} must:{} pool min: {} max: {}",
-    __func__, res.proposed_time, m_pg->get_pg_info(ScrubberPasskey{}).history.last_scrub_stamp,
-    m_pg->get_pg_info(ScrubberPasskey{}).stats.stats_invalid,
-    res.is_must==ScrubQueue::must_scrub_t::mandatory ? "y" : "n",
-    res.min_interval, res.max_interval);
+		 __func__,
+		 res.proposed_time,
+		 m_pg->get_pg_info(ScrubberPasskey{}).history.last_scrub_stamp,
+		 m_pg->get_pg_info(ScrubberPasskey{}).stats.stats_invalid,
+		 res.is_must == ScrubQueue::must_scrub_t::mandatory ? "y" : "n",
+		 res.min_interval,
+		 res.max_interval);
 
   return res;
 }
-
 
 
 // ///////////////////// preemption_data_t //////////////////////////////////
@@ -289,34 +391,38 @@ PgScrubber::determine_scrub_time(const requested_scrub_t& request_flags) const
 PgScrubber::preemption_data_t::preemption_data_t(PG* pg) : m_pg{pg}
 {
   m_left = static_cast<int>(
-   local_conf().get_val<uint64_t>("osd_scrub_max_preemptions"));
+    local_conf().get_val<uint64_t>("osd_scrub_max_preemptions"));
 }
 
 void PgScrubber::preemption_data_t::reset()
 {
-  //std::lock_guard<std::mutex> lk{m_preemption_lock};
+  // std::lock_guard<std::mutex> lk{m_preemption_lock};
 
   m_preemptable = false;
   m_preempted = false;
-  m_left =
-    static_cast<int>(local_conf().get_val<uint64_t>("osd_scrub_max_preemptions"));
+  m_left = static_cast<int>(
+    local_conf().get_val<uint64_t>("osd_scrub_max_preemptions"));
   m_size_divisor = 1;
 }
-
-#ifdef NOT_YET
 
 // ///////////////////// ReplicaReservations //////////////////////////////////
 namespace Scrub {
 
 void ReplicaReservations::release_replica(pg_shard_t peer, epoch_t epoch)
 {
-//   auto m = new MOSDScrubReserve(spg_t(m_pg_info.pgid.pgid, peer.shard), epoch,
-// 				MOSDScrubReserve::RELEASE, m_pg->pg_whoami);
-//   m_osds->send_message_osd_cluster(peer.osd, m, epoch);
+  auto m = crimson::make_message<MOSDScrubReserve>(m_pg->get_pgid(),
+						   epoch,
+						   MOSDScrubReserve::RELEASE,
+						   m_whoami);
+
+  std::ignore = m_osds.send_to_osd(peer.osd, std::move(m), epoch);
 }
 
-ReplicaReservations::ReplicaReservations(PG* pg, pg_shard_t whoami, ScrubQueue::ScrubJobRef scrubjob)
+ReplicaReservations::ReplicaReservations(PG* pg,
+					 pg_shard_t whoami,
+					 ScrubQueue::ScrubJobRef scrubjob)
     : m_pg{pg}
+    , m_whoami{whoami}
     , m_acting_set{pg->get_actingset(ScrubberPasskey{})}
     , m_osds{m_pg->get_shard_services()}
     , m_pending{static_cast<int>(m_acting_set.size()) - 1}
@@ -342,9 +448,13 @@ ReplicaReservations::ReplicaReservations(PG* pg, pg_shard_t whoami, ScrubQueue::
     for (auto p : m_acting_set) {
       if (p == whoami)
 	continue;
-//       auto m = new MOSDScrubReserve(spg_t(m_pg_info.pgid.pgid, p.shard), epoch,
-// 				    MOSDScrubReserve::REQUEST, m_pg->pg_whoami);
-//       m_osds->send_message_osd_cluster(p.osd, m, epoch);
+      auto m =
+	crimson::make_message<MOSDScrubReserve>(m_pg->get_pgid(),
+						epoch,
+						MOSDScrubReserve::REQUEST,
+						m_whoami); // RRR me here? or the target>
+
+      std::ignore = m_osds.send_to_osd(p.osd, std::move(m), epoch);
       m_waited_for_peers.push_back(p);
       logger().info("{}reserve {}", m_log_msg_prefix, p.osd);
     }
@@ -353,31 +463,44 @@ ReplicaReservations::ReplicaReservations(PG* pg, pg_shard_t whoami, ScrubQueue::
 
 void ReplicaReservations::send_all_done()
 {
-  //m_osds->queue_for_scrub_granted(m_pg, scrub_prio_t::low_priority);
+  // m_osds->queue_for_scrub_granted(m_pg, scrub_prio_t::low_priority);
+  (void)m_osds.start_operation<ScrubEvent>(
+    m_pg,
+    m_osds,
+    m_pg->get_pgid(),
+    (ScrubEvent::ScrubEventFwdImm)(&PgScrubber::fake_replicas_reserved),
+    m_pg->get_osdmap_epoch(),  // RRR epoch queued?
+    0,			       // no token needed
+    0ms);
 }
 
 void ReplicaReservations::send_reject()
 {
   m_scrub_job->resources_failure = true;
-  //m_osds->queue_for_scrub_denied(m_pg, scrub_prio_t::low_priority);
+  // m_osds->queue_for_scrub_denied(m_pg, scrub_prio_t::low_priority);
 }
 
 void ReplicaReservations::discard_all()
 {
-  logger().info("{}/{}: reserved peers: {}", m_log_msg_prefix, __func__, m_reserved_peers);
+  logger().info("{}/{}: reserved peers: {}",
+		m_log_msg_prefix,
+		__func__,
+		m_reserved_peers);
 
-  m_had_rejections = true;  // preventing late-coming responses from triggering events
+  m_had_rejections = true;  // preventing late-coming responses from triggering
+			    // events
   m_reserved_peers.clear();
   m_waited_for_peers.clear();
 }
 
 ReplicaReservations::~ReplicaReservations()
 {
-  m_had_rejections = true;  // preventing late-coming responses from triggering events
+  m_had_rejections = true;  // preventing late-coming responses from triggering
+			    // events
 
-  // send un-reserve messages to all reserved replicas. We do not wait for answer (there
-  // wouldn't be one). Other incoming messages will be discarded on the way, by our
-  // owner.
+  // send un-reserve messages to all reserved replicas. We do not wait for
+  // answer (there wouldn't be one). Other incoming messages will be discarded
+  // on the way, by our owner.
   epoch_t epoch = m_pg->get_osdmap_epoch();
 
   for (auto& p : m_reserved_peers) {
@@ -385,9 +508,9 @@ ReplicaReservations::~ReplicaReservations()
   }
   m_reserved_peers.clear();
 
-  // note: the release will follow on the heels of the request. When tried otherwise,
-  // grants that followed a reject arrived after the whole scrub machine-state was
-  // reset, causing leaked reservations.
+  // note: the release will follow on the heels of the request. When tried
+  // otherwise, grants that followed a reject arrived after the whole scrub
+  // machine-state was reset, causing leaked reservations.
   for (auto& p : m_waited_for_peers) {
     release_replica(p, epoch);
   }
@@ -396,16 +519,17 @@ ReplicaReservations::~ReplicaReservations()
 
 
 /**
- *  @ATTN we would not reach here if the ReplicaReservation object managed by the
- * scrubber was reset.
+ *  @ATTN we would not reach here if the ReplicaReservation object managed by
+ * the scrubber was reset.
  */
-void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
+void ReplicaReservations::handle_reserve_grant(
+  pg_shard_t from)
 {
   dout(10) << __func__ << ": granted by " << from << dendl;
-  op->mark_started();
 
   {
-    // reduce the amount of extra release messages. Not a must, but the log is cleaner
+    // reduce the amount of extra release messages. Not a must, but the log is
+    // cleaner
     auto w = find(m_waited_for_peers.begin(), m_waited_for_peers.end(), from);
     if (w != m_waited_for_peers.end())
       m_waited_for_peers.erase(w);
@@ -414,14 +538,16 @@ void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
   // are we forced to reject the reservation?
   if (m_had_rejections) {
 
-    dout(10) << __func__ << ": rejecting late-coming reservation from "
-	     << from << dendl;
+    dout(10) << __func__ << ": rejecting late-coming reservation from " << from
+	     << dendl;
     release_replica(from, m_pg->get_osdmap_epoch());
 
-  } else if (std::find(m_reserved_peers.begin(), m_reserved_peers.end(), from) !=
-	     m_reserved_peers.end()) {
+  } else if (std::find(m_reserved_peers.begin(),
+		       m_reserved_peers.end(),
+		       from) != m_reserved_peers.end()) {
 
-    dout(10) << __func__ << ": already had osd." << from << " reserved" << dendl;
+    dout(10) << __func__ << ": already had osd." << from << " reserved"
+	     << dendl;
 
   } else {
 
@@ -434,33 +560,36 @@ void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
   }
 }
 
-void ReplicaReservations::handle_reserve_reject(OpRequestRef op, pg_shard_t from)
+void ReplicaReservations::handle_reserve_reject(
+  pg_shard_t from)
 {
   dout(10) << __func__ << ": rejected by " << from << dendl;
-  dout(15) << __func__ << ": " << *op->get_req() << dendl;
-  op->mark_started();
+  // dout(15) << __func__ << ": " << *op->get_req() << dendl;
 
-  {
-    // reduce the amount of extra release messages. Not a must, but the log is cleaner
-    auto w = find(m_waited_for_peers.begin(), m_waited_for_peers.end(), from);
-    if (w != m_waited_for_peers.end())
-      m_waited_for_peers.erase(w);
+  // reduce the amount of extra release messages. Not a must, but the log is
+  // cleaner
+  if (auto w = find(m_waited_for_peers.begin(), m_waited_for_peers.end(), from);
+      w != m_waited_for_peers.end()) {
+    m_waited_for_peers.erase(w);
   }
 
   if (m_had_rejections) {
 
     // our failure was already handled when the first rejection arrived
-    dout(15) << __func__ << ": ignoring late-coming rejection from "
-	     << from << dendl;
+    dout(15) << __func__ << ": ignoring late-coming rejection from " << from
+	     << dendl;
 
-  } else if (std::find(m_reserved_peers.begin(), m_reserved_peers.end(), from) !=
-	     m_reserved_peers.end()) {
+  } else if (std::find(m_reserved_peers.begin(),
+		       m_reserved_peers.end(),
+		       from) != m_reserved_peers.end()) {
 
-    dout(10) << __func__ << ": already had osd." << from << " reserved" << dendl;
+    dout(10) << __func__ << ": already had osd." << from << " reserved"
+	     << dendl;
 
   } else {
 
-    dout(10) << __func__ << ": osd." << from << " scrub reserve = fail" << dendl;
+    dout(10) << __func__ << ": osd." << from << " scrub reserve = fail"
+	     << dendl;
     m_had_rejections = true;  // preventing any additional notifications
     send_reject();
   }
@@ -471,8 +600,6 @@ std::ostream& ReplicaReservations::gen_prefix(std::ostream& out) const
 {
   return out << m_log_msg_prefix;
 }
-
-#endif
 
 
 // ///////////////////// LocalReservation //////////////////////////////////
@@ -498,10 +625,11 @@ LocalReservation::~LocalReservation()
 #ifdef NOT_YET
 // ///////////////////// ReservedByRemotePrimary ///////////////////////////////
 
-ReservedByRemotePrimary::ReservedByRemotePrimary(const PgScrubber* scrubber,
-						 PG* pg,
-						 crimson::osd::ShardServices* osds,
-						 epoch_t epoch)
+ReservedByRemotePrimary::ReservedByRemotePrimary(
+  const PgScrubber* scrubber,
+  PG* pg,
+  crimson::osd::ShardServices* osds,
+  epoch_t epoch)
     : m_scrubber{scrubber}
     , m_pg{pg}
     , m_osds{osds}
@@ -532,7 +660,7 @@ ReservedByRemotePrimary::~ReservedByRemotePrimary()
 
 std::ostream& ReservedByRemotePrimary::gen_prefix(std::ostream& out) const
 {
-  return out; // RRR m_scrubber->gen_prefix(out);
+  return out;  // RRR m_scrubber->gen_prefix(out);
 }
 
 #endif
@@ -544,7 +672,8 @@ std::ostream& ReservedByRemotePrimary::gen_prefix(std::ostream& out) const
 auto MapsCollectionStatus::mark_arriving_map(pg_shard_t from)
   -> std::tuple<bool, std::string_view>
 {
-  auto fe = std::find(m_maps_awaited_for.begin(), m_maps_awaited_for.end(), from);
+  auto fe =
+    std::find(m_maps_awaited_for.begin(), m_maps_awaited_for.end(), from);
   if (fe != m_maps_awaited_for.end()) {
     // we are indeed waiting for a map from this replica
     m_maps_awaited_for.erase(fe);
@@ -579,14 +708,16 @@ ostream& operator<<(ostream& out, const ::Scrub::MapsCollectionStatus& sf)
   }
   return out << " ] ";
 }
-
+}  // namespace Scrub
 //#endif
 
 // ///////////////////// blocked_range_t ///////////////////////////////
 
 #ifdef NOT_YET
 
-blocked_range_t::blocked_range_t(crimson::osd::ShardServices* osds, ceph::timespan waittime, spg_t pg_id)
+blocked_range_t::blocked_range_t(crimson::osd::ShardServices* osds,
+				 ceph::timespan waittime,
+				 spg_t pg_id)
     : m_osds{osds}
 {
   auto now_is = std::chrono::system_clock::now();
@@ -595,19 +726,21 @@ blocked_range_t::blocked_range_t(crimson::osd::ShardServices* osds, ceph::timesp
     char buf[50];
     strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&now_c));
     lgeneric_subdout(g_ceph_context, osd, 10)
-      << "PgScrubber: " << pg_id << " blocked on an object for too long (since " << buf
-      << ")" << dendl;
-    osds->clog->warn() << "osd." << osds->whoami << " PgScrubber: " << pg_id << " blocked on an object for too long (since " << buf << ")";
+      << "PgScrubber: " << pg_id << " blocked on an object for too long (since "
+      << buf << ")" << dendl;
+    osds->clog->warn() << "osd." << osds->whoami << " PgScrubber: " << pg_id
+		       << " blocked on an object for too long (since " << buf
+		       << ")";
     return;
   });
 
-  //std::lock_guard l(m_osds->sleep_lock);
+  // std::lock_guard l(m_osds->sleep_lock);
   m_osds->sleep_timer.add_event_after(waittime, m_callbk);
 }
 
 blocked_range_t::~blocked_range_t()
 {
-  //std::lock_guard l(m_osds->sleep_lock);
+  // std::lock_guard l(m_osds->sleep_lock);
   m_osds->sleep_timer.cancel_event(m_callbk);
 }
 
@@ -622,11 +755,12 @@ void PgScrubber::initiate_regular_scrub(epoch_t epoch_queued) {}
 ScrubEIF PgScrubber::initiate_regular_scrub_v2(epoch_t epoch_queued)
 {
   logger().debug("{}: epoch: {}", __func__, epoch_queued);
-  // we may have lost our Primary status while the message languished in the queue
+  // we may have lost our Primary status while the message languished in the
+  // queue
   if (check_interval(epoch_queued)) {
     logger().info("scrubber event -->> StartScrub epoch: {}", epoch_queued);
     reset_epoch(epoch_queued);
-    //m_fsm->process_event(StartScrub{});
+    // m_fsm->process_event(StartScrub{});
     logger().info("scrubber event --<< StartScrub");
   } else {
     clear_queued_or_active();
@@ -649,11 +783,11 @@ void PgScrubber::digest_update_notification(epoch_t epoch_queued) {}
 void PgScrubber::send_replica_maps_ready(epoch_t epoch_queued) {}
 
 void PgScrubber::send_start_replica(epoch_t epoch_queued,
-                                    Scrub::act_token_t token)
+				    Scrub::act_token_t token)
 {}
 
 void PgScrubber::send_sched_replica(epoch_t epoch_queued,
-                                    Scrub::act_token_t token)
+				    Scrub::act_token_t token)
 {}
 
 void PgScrubber::send_replica_pushes_upd(epoch_t epoch_queued) {}
@@ -680,26 +814,37 @@ bool PgScrubber::write_blocked_by_scrub(const hobject_t& soid)
 }
 
 bool PgScrubber::range_intersects_scrub(const hobject_t& start,
-                                        const hobject_t& end)
+					const hobject_t& end)
 {
   return false;
 }
 
-void PgScrubber::discard_replica_reservations() {}
+
+void PgScrubber::discard_replica_reservations()
+{
+  dout(10) << __func__ << dendl;
+  if (m_reservations.has_value()) {
+    m_reservations->discard_all();
+  }
+}
 
 void PgScrubber::clear_scrub_reservations()
 {
   logger().info("scrubber: clear_scrub_reservations");
-  //m_reservations.reset();	  // the remote reservations
-  m_local_osd_resource.reset();	  // the local reservation
-  //m_remote_osd_resource.reset();  // we as replica reserved for a Primary
+  m_reservations.reset();	  // the remote reservations
+  m_local_osd_resource.reset();	 // the local reservation
+  /// RRR not yet m_remote_osd_resource.reset();  // we as replica reserved for a Primary
 }
 
-void PgScrubber::unreserve_replicas() {}
+void PgScrubber::reserve_replicas()
+{
+  dout(10) << __func__ << dendl;
+  m_reservations.emplace(m_pg, m_pg_whoami, m_scrub_job);
+}
 
 void PgScrubber::scrub_requested(scrub_level_t scrub_level,
-                                 scrub_type_t scrub_type,
-                                 requested_scrub_t& req_flags)
+				 scrub_type_t scrub_type,
+				 requested_scrub_t& req_flags)
 {}
 
 bool PgScrubber::reserve_local()
@@ -713,7 +858,9 @@ bool PgScrubber::reserve_local()
     return true;
   }
 
-  logger().warn("{}: pg[{}]: failed to reserve local scrub resources", __func__, m_pg_id);
+  logger().warn("{}: pg[{}]: failed to reserve local scrub resources",
+		__func__,
+		m_pg_id);
   m_local_osd_resource.reset();
   return false;
 }
@@ -742,10 +889,11 @@ void PgScrubber::dump_scrubber(ceph::Formatter* f,
 
     f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time();
 
-    // note that we are repeating logic that is coded elsewhere (currently PG.cc).
-    // This is not optimal.
-    bool deep_expected = (ceph_clock_now() >= m_pg->next_deepscrub_interval()) ||
-			 request_flags.must_deep_scrub || request_flags.need_auto;
+    // note that we are repeating logic that is coded elsewhere (currently
+    // PG.cc). This is not optimal.
+    bool deep_expected =
+      (ceph_clock_now() >= m_pg->next_deepscrub_interval()) ||
+      request_flags.must_deep_scrub || request_flags.need_auto;
     auto sched_state =
       m_scrub_job->scheduling_state(ceph_clock_now(), deep_expected);
     f->dump_string("schedule", sched_state);
@@ -753,7 +901,7 @@ void PgScrubber::dump_scrubber(ceph::Formatter* f,
 
   if (m_publish_sessions) {
     f->dump_int("test_sequence",
-                m_sessions_counter);  // an ever-increasing number used by tests
+		m_sessions_counter);  // an ever-increasing number used by tests
   }
 
   f->close_section();
@@ -814,41 +962,41 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
   }
   if (m_scrub_job->state != ScrubQueue::qu_state_t::registered) {
     return pg_scrubbing_status_t{utime_t{},
-                                 0,
-                                 pg_scrub_sched_status_t::not_queued,
-                                 false,
-                                 scrub_level_t::shallow,
-                                 false};
+				 0,
+				 pg_scrub_sched_status_t::not_queued,
+				 false,
+				 scrub_level_t::shallow,
+				 false};
   }
 
   // Will next scrub surely be a deep one? note that deep-scrub might be
   // selected even if we report a regular scrub here.
   bool deep_expected = (now_is >= m_pg->next_deepscrub_interval()) ||
-                       m_pg->m_planned_scrub.must_deep_scrub ||
-                       m_pg->m_planned_scrub.need_auto;
+		       m_pg->m_planned_scrub.must_deep_scrub ||
+		       m_pg->m_planned_scrub.need_auto;
   scrub_level_t expected_level =
     deep_expected ? scrub_level_t::deep : scrub_level_t::shallow;
   bool periodic = !m_pg->m_planned_scrub.must_scrub &&
-                  !m_pg->m_planned_scrub.need_auto &&
-                  !m_pg->m_planned_scrub.must_deep_scrub;
+		  !m_pg->m_planned_scrub.need_auto &&
+		  !m_pg->m_planned_scrub.must_deep_scrub;
 
   // are we ripe for scrubbing?
   if (now_is > m_scrub_job->schedule.scheduled_at) {
     // we are waiting for our turn at the OSD.
     return pg_scrubbing_status_t{m_scrub_job->schedule.scheduled_at,
-                                 0,
-                                 pg_scrub_sched_status_t::queued,
-                                 false,
-                                 expected_level,
-                                 periodic};
+				 0,
+				 pg_scrub_sched_status_t::queued,
+				 false,
+				 expected_level,
+				 periodic};
   }
 
   return pg_scrubbing_status_t{m_scrub_job->schedule.scheduled_at,
-                               0,
-                               pg_scrub_sched_status_t::scheduled,
-                               false,
-                               expected_level,
-                               periodic};
+			       0,
+			       pg_scrub_sched_status_t::scheduled,
+			       false,
+			       expected_level,
+			       periodic};
 }
 
 void PgScrubber::handle_query_state(ceph::Formatter* f)
@@ -877,7 +1025,8 @@ void PgScrubber::handle_query_state(ceph::Formatter* f)
 }
 
 unsigned int PgScrubber::scrub_requeue_priority(
-  Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const
+  Scrub::scrub_prio_t with_priority,
+  unsigned int suggested_priority) const
 {
   return 100;
 }
@@ -891,34 +1040,35 @@ unsigned int PgScrubber::scrub_requeue_priority(
 void PgScrubber::scrub_clear_state() {}
 
 void PgScrubber::stats_of_handled_objects(const object_stat_sum_t& delta_stats,
-                                          const hobject_t& soid)
+					  const hobject_t& soid)
 {}
 void PgScrubber::set_op_parameters(requested_scrub_t& request) {}
 
 void PgScrubber::cleanup_store(ObjectStore::Transaction* t) {}
 
 bool PgScrubber::get_store_errors(const scrub_ls_arg_t& arg,
-                                  scrub_ls_result_t& res_inout) const
+				  scrub_ls_result_t& res_inout) const
 {
   return false;
 }
 
 
 int PgScrubber::asok_debug(std::string_view cmd,
-                           std::string param,
-                           Formatter* f,
-                           std::stringstream& ss)
+			   std::string param,
+			   Formatter* f,
+			   std::stringstream& ss)
 {
   logger().info("{}: cmd: {}, param: {}", __func__, cmd, param);
 
   if (cmd == "block") {
-    // set a flag that will cause the next 'select_range' to report a blocked object
+    // set a flag that will cause the next 'select_range' to report a blocked
+    // object
     m_debug_blockrange = 1;
 
   } else if (cmd == "unblock") {
     // send an 'unblock' event, as if a blocked range was freed
     m_debug_blockrange = 0;
-    //m_fsm->process_event(Unblocked{});
+    // m_fsm->process_event(Unblocked{});
 
   } else if ((cmd == "set") || (cmd == "unset")) {
 
@@ -928,12 +1078,13 @@ int PgScrubber::asok_debug(std::string_view cmd,
 
     } else if (param == "block") {
       if (cmd == "set") {
-        // set a flag that will cause the next 'select_range' to report a blocked object
-        m_debug_blockrange = 1;
+	// set a flag that will cause the next 'select_range' to report a
+	// blocked object
+	m_debug_blockrange = 1;
       } else {
-      // send an 'unblock' event, as if a blocked range was freed
-        m_debug_blockrange = 0;
-        //m_fsm->process_event(Unblocked{});
+	// send an 'unblock' event, as if a blocked range was freed
+	m_debug_blockrange = 0;
+	// m_fsm->process_event(Unblocked{});
       }
     }
   }
@@ -975,9 +1126,6 @@ void PgScrubber::add_delayed_scheduling() {}
 void PgScrubber::get_replicas_maps(bool replica_can_preempt) {}
 
 void PgScrubber::on_digest_updates() {}
-
-
-
 
 
 ScrubMachineListener::MsgAndEpoch PgScrubber::prep_replica_map_msg(
@@ -1022,7 +1170,12 @@ seastar::future<> PgScrubber::build_replica_map_chunk()
   return seastar::now();
 }
 
-void PgScrubber::reserve_replicas() {}
+
+void PgScrubber::unreserve_replicas()
+{
+  dout(10) << __func__ << dendl;
+  m_reservations.reset();
+}
 
 void PgScrubber::set_reserving_now() {}
 void PgScrubber::clear_reserving_now() {}
@@ -1113,4 +1266,49 @@ bool PgScrubber::is_message_relevant(epoch_t epoch_to_verify)
 [[nodiscard]] bool PgScrubber::check_interval(epoch_t epoch_to_verify)
 {
   return true;
+}
+
+seastar::future<> PgScrubber::handle_scrub_reserve_request(
+  crimson::net::ConnectionRef conn,
+  Ref<MOSDFastDispatchOp> op,
+  epoch_t epoch_queued,
+  pg_shard_t from)
+{
+  logger().info("{}: pg{} - from:{}", __func__, m_pg->pgid, from);
+
+  // for now: just the happy path:
+  auto reply = crimson::make_message<MOSDScrubReserve>(m_pg_id,
+						       m_pg->get_osdmap_epoch(),
+						       MOSDScrubReserve::GRANT,
+						       m_pg_whoami);
+
+  //   Message* reply = new MOSDScrubReserve(
+  //     spg_t(m_pg->info.pgid.pgid, m_pg->get_primary().shard),
+  //     request_ep,
+  //     //granted ? MOSDScrubReserve::GRANT : MOSDScrubReserve::REJECT,
+  //     MOSDScrubReserve::GRANT,
+  //     m_pg_whoami);
+
+  // RRR why am I allowed to ignore this future?
+  std::ignore = conn->send(std::move(reply));
+  return seastar::now();
+}
+
+seastar::future<> PgScrubber::handle_scrub_reserve_grant(
+  crimson::net::ConnectionRef conn,
+  Ref<MOSDFastDispatchOp> base_op,
+  epoch_t epoch_queued,
+  pg_shard_t from)
+{
+  auto op = boost::static_pointer_cast<MOSDScrubReserve>(base_op);
+  logger().info("{}: pg{} - from:{}", __func__, m_pg->pgid, from);
+
+  if (m_reservations.has_value()) {
+    m_reservations->handle_reserve_grant(from);
+  } else {
+    derr << __func__ << ": received unsolicited reservation grant from osd "
+	 << from << " (" << op << ")" << dendl;
+  }
+  return seastar::now(); // RRR should probably return the handle_reserve_grant, but for now
+// that's a void function
 }

@@ -14,6 +14,7 @@
 #else
 #include "include/types.h"
 #include "os/ObjectStore.h"
+
 #include "OpRequest.h"
 
 #endif
@@ -25,22 +26,24 @@ class Formatter;
 struct PGPool;
 
 namespace Scrub {
-  class ReplicaReservations;
+class ReplicaReservations;
 }
 
 namespace crimson::osd {
-  class ScrubEvent;
-}
+class ScrubEvent;
+class ScrubRemoteEvent;
+}  // namespace crimson::osd
 
 
 /// Facilitating scrub-realated object access to private PG data
 class ScrubberPasskey {
-private:
+ private:
   friend class Scrub::ReplicaReservations;
   friend class PrimaryLogScrub;
   friend class PgScrubber;
   friend class ScrubBackend;
   friend class crimson::osd::ScrubEvent;
+  friend class crimson::osd::ScrubRemoteEvent;
   ScrubberPasskey() {}
   ScrubberPasskey(const ScrubberPasskey&) = default;
   ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
@@ -70,9 +73,9 @@ struct PgScrubBeListener {
   virtual const PGPool& get_pgpool() const = 0;
   virtual pg_shard_t get_primary() const = 0;
   virtual void force_object_missing(ScrubberPasskey,
-                                    const std::set<pg_shard_t>& peer,
-                                    const hobject_t& oid,
-                                    eversion_t version) = 0;
+				    const std::set<pg_shard_t>& peer,
+				    const hobject_t& oid,
+				    eversion_t version) = 0;
   virtual const pg_info_t& get_pg_info(ScrubberPasskey) const = 0;
 
   // query the PG backend for the on-disk size of an object
@@ -192,8 +195,8 @@ struct fmt::formatter<requested_scrub_t> {
 std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
 
 #ifdef WITH_SEASTAR
-using ScrubEIF = ::crimson::interruptible::interruptible_future<
-      ::crimson::osd::IOInterruptCondition, void>;
+using ScrubEIF = ::crimson::interruptible::
+  interruptible_future<::crimson::osd::IOInterruptCondition, void>;
 #endif
 
 /**
@@ -411,7 +414,26 @@ struct ScrubPgIF {
     const requested_scrub_t& request_flags) = 0;
 
 // not implemented yet on the Crimson side:
-#ifndef WITH_SEASTAR
+#ifdef WITH_SEASTAR
+  virtual seastar::future<> handle_scrub_reserve_request(
+    crimson::net::ConnectionRef conn,
+    Ref<MOSDFastDispatchOp> msg,
+    epoch_t ep,
+    pg_shard_t from) = 0;
+
+  virtual seastar::future<> handle_scrub_reserve_grant(
+    crimson::net::ConnectionRef conn,
+    Ref<MOSDFastDispatchOp> msg,
+    epoch_t ep,
+    pg_shard_t from) = 0;
+
+  virtual seastar::future<> handle_unknown_req(crimson::net::ConnectionRef conn,
+					       Ref<MOSDFastDispatchOp> msg,
+					       epoch_t ep,
+					       pg_shard_t from) = 0;
+
+
+#else
   // on the replica:
   virtual void handle_scrub_reserve_request(OpRequestRef op) = 0;
   virtual void handle_scrub_reserve_release(OpRequestRef op) = 0;

@@ -23,6 +23,7 @@
 
 namespace crimson::osd {
 class ScrubEvent;
+class ScrubRemoteEvent; // uses the same pipeline
 }  // namespace crimson::osd
 
 namespace fmt {
@@ -48,8 +49,9 @@ class ScrubEvent : public PhasedOperationT<ScrubEvent> {
   using interruptible_future = ::crimson::interruptible::
     interruptible_future<::crimson::osd::IOInterruptCondition, T>;
 
-  using ScrubEventFwdFut = interruptible_future<> (ScrubPgIF::*)(epoch_t);
-  using ScrubEventFwdImm = void (ScrubPgIF::*)(epoch_t);
+  using ScrubEventFwdFut = interruptible_future<> (ScrubPgIF::*)(epoch_t,
+[[maybe_unused]] Scrub::act_token_t);
+  using ScrubEventFwdImm = void (ScrubPgIF::*)(epoch_t, [[maybe_unused]] Scrub::act_token_t);
   using ScrubEventFwd = std::variant<ScrubEventFwdFut, ScrubEventFwdImm>;
 
 
@@ -72,6 +74,7 @@ class ScrubEvent : public PhasedOperationT<ScrubEvent> {
     } send_reply;
 
     friend class ScrubEvent;
+    friend class ScrubRemoteEvent; // uses the same pipeline
   };
 
  private:
@@ -80,7 +83,7 @@ class ScrubEvent : public PhasedOperationT<ScrubEvent> {
   Scrub::act_token_t act_token;
 
   PipelineHandle handle;
-  static PGPipeline& pp(PG& pg);  // should this one be static?
+  static PGPipeline& pp(PG& pg);
 
  public:
   struct nullevent_tag_t {
