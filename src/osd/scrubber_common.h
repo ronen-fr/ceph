@@ -425,6 +425,18 @@ struct ScrubPgIF {
     epoch_t ep,
     pg_shard_t from) = 0;
 
+  virtual seastar::future<> handle_scrub_reserve_reject(
+    crimson::net::ConnectionRef conn,
+    Ref<MOSDFastDispatchOp> msg,
+    epoch_t ep,
+    pg_shard_t from) = 0;
+
+  virtual seastar::future<> handle_scrub_reserve_release(
+    crimson::net::ConnectionRef conn,
+    Ref<MOSDFastDispatchOp> msg,
+    epoch_t ep,
+    pg_shard_t from) = 0;
+
   virtual seastar::future<> handle_unknown_req(crimson::net::ConnectionRef conn,
 					       Ref<MOSDFastDispatchOp> msg,
 					       epoch_t ep,

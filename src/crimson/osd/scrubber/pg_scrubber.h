@@ -115,14 +115,13 @@ class LocalReservation {
 };
 
 
-#ifdef NOT_YET
 /**
  *  wraps the OSD resource we are using when reserved as a replica by a
  * scrubbing master.
  */
 class ReservedByRemotePrimary {
   const PgScrubber* m_scrubber;  ///< we will be using its gen_prefix()
-  PG* m_pg;
+  PG*  m_pg;
   crimson::osd::ShardServices* m_osds;
   bool m_reserved_by_remote_primary{false};
   const epoch_t m_reserved_at;
@@ -143,8 +142,6 @@ class ReservedByRemotePrimary {
 
   std::ostream& gen_prefix(std::ostream& out) const;
 };
-
-#endif
 
 
 /**
@@ -260,6 +257,18 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
     pg_shard_t from) override;
 
   seastar::future<> handle_scrub_reserve_grant(
+    crimson::net::ConnectionRef conn,
+    Ref<MOSDFastDispatchOp> op,
+    epoch_t epoch_queued,
+    pg_shard_t from) override;
+
+  seastar::future<> handle_scrub_reserve_reject(
+    crimson::net::ConnectionRef conn,
+    Ref<MOSDFastDispatchOp> op,
+    epoch_t epoch_queued,
+    pg_shard_t from) override;
+
+  seastar::future<> handle_scrub_reserve_release(
     crimson::net::ConnectionRef conn,
     Ref<MOSDFastDispatchOp> op,
     epoch_t epoch_queued,
@@ -662,11 +671,9 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
   std::optional<Scrub::ReplicaReservations> m_reservations;
   std::optional<Scrub::LocalReservation> m_local_osd_resource;
 
-#ifdef NOT_YET
   /// the 'remote' resource we, as a replica, grant our Primary when it is
   /// scrubbing
   std::optional<Scrub::ReservedByRemotePrimary> m_remote_osd_resource;
-#endif
 
   void cleanup_on_finish();  // scrub_clear_state() as called for a Primary when
                              // Active->NotActive
@@ -899,6 +906,7 @@ public:
 
   void scrub_fake_scrub_session(epoch_t epoch_queued);
   void fake_replicas_reserved(epoch_t epoch_queued, Scrub::act_token_t act_token);
+  void fake_replicas_rejected(epoch_t epoch_queued, Scrub::act_token_t act_token);
   void scrub_fake_scrub_done(epoch_t epoch_queued);
 
   crimson::osd::ScrubEvent::interruptible_future<> scrub_echo(epoch_t epoch_queued);

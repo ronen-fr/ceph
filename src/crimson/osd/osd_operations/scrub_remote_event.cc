@@ -58,11 +58,11 @@ void ScrubRemoteEvent::parse_into_event(ShardServices& shardservices,
 	  break;
 	case MOSDScrubReserve::REJECT:
 	  event_fwd_func =
-	    (ScrubRmtEventFwd)&PgScrubber::handle_scrub_reserve_request;  // RRR
+	    (ScrubRmtEventFwd)&PgScrubber::handle_scrub_reserve_reject;
 	  break;
 	case MOSDScrubReserve::RELEASE:
 	  event_fwd_func =
-	    (ScrubRmtEventFwd)&PgScrubber::handle_scrub_reserve_request;  // RRR
+	    (ScrubRmtEventFwd)&PgScrubber::handle_scrub_reserve_release;
 	  break;
       }
     } break;
