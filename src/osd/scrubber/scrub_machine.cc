@@ -63,6 +63,11 @@ bool ScrubMachine::is_reserving() const
   return state_cast<const ReservingReplicas*>();
 }
 
+bool ScrubMachine::is_blocked_on_object() const
+{
+  return state_cast<const RangeBlocked*>();
+}
+
 bool ScrubMachine::is_accepting_updates() const
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases

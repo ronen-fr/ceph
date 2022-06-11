@@ -149,6 +149,9 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   void assert_not_active() const;
   [[nodiscard]] bool is_reserving() const;
   [[nodiscard]] bool is_accepting_updates() const;
+
+  /// waiting for the selected chunk to be available for scrubbing
+  [[nodiscard]] bool is_blocked_on_object() const;
 };
 
 /**

@@ -800,3 +800,25 @@ void ScrubQueue::dump_scrub_reservations(ceph::Formatter* f) const
   f->dump_int("scrubs_remote", scrubs_remote);
   f->dump_int("osd_max_scrubs", conf()->osd_max_scrubs);
 }
+
+void ScrubQueue::clear_pg_blockage(spg_t blocked_pg)
+{
+  dout(5) << fmt::format("{}: pg[{}] is unblocked", __func__, blocked_pg)
+	  << dendl;
+  --a_pg_is_blocked;
+  ceph_assert(a_pg_is_blocked >= 0);
+}
+
+void ScrubQueue::mark_pg_blockage(spg_t blocked_pg)
+{
+  dout(5) << fmt::format("{}: pg[{}] is blocked on hobject",
+			 __func__,
+			 blocked_pg)
+	  << dendl;
+  ++a_pg_is_blocked;
+}
+
+int ScrubQueue::get_blocked_pgs_count() const
+{
+  return a_pg_is_blocked;
+}
