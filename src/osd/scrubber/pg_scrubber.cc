@@ -2667,18 +2667,23 @@ blocked_range_t::blocked_range_t(OSDService* osds,
 				 ceph::timespan waittime,
 				 spg_t pg_id)
     : m_osds{osds}
+    , m_pgid{pg_id}
 {
   auto now_is = std::chrono::system_clock::now();
-  m_callbk = new LambdaContext([now_is, pg_id, osds]([[maybe_unused]] int r) {
+  m_callbk = new LambdaContext([this, now_is]([[maybe_unused]] int r) {
     std::time_t now_c = std::chrono::system_clock::to_time_t(now_is);
     char buf[50];
     strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&now_c));
     lgeneric_subdout(g_ceph_context, osd, 10)
-      << "PgScrubber: " << pg_id << " blocked on an object for too long (since "
-      << buf << ")" << dendl;
-    osds->clog->warn() << "osd." << osds->whoami << " PgScrubber: " << pg_id
-		       << " blocked on an object for too long (since " << buf
-		       << ")";
+      << "PgScrubber: " << m_pgid
+      << " blocked on an object for too long (since " << buf << ")" << dendl;
+    m_osds->clog->warn() << "osd." << m_osds->whoami
+			 << " PgScrubber: " << m_pgid
+			 << " blocked on an object for too long (since " << buf
+			 << ")";
+
+    m_warning_issued = true;
+    m_osds->get_scrub_services().mark_pg_blockage(m_pgid);
     return;
   });
 
@@ -2688,6 +2693,9 @@ blocked_range_t::blocked_range_t(OSDService* osds,
 
 blocked_range_t::~blocked_range_t()
 {
+  if (m_warning_issued) {
+    m_osds->get_scrub_services().clear_pg_blockage(m_pgid);
+  }
   std::lock_guard l(m_osds->sleep_lock);
   m_osds->sleep_timer.cancel_event(m_callbk);
 }

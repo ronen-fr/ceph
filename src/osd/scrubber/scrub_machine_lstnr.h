@@ -50,7 +50,15 @@ struct blocked_range_t {
   ~blocked_range_t();
 
   OSDService* m_osds;
+
+  /// used to identify ourselves to the PG, when no longer blocked
+  spg_t m_pgid;
   Context* m_callbk;
+
+  // once timed-out, we flag the OSD's scrub-queue as having
+  // a problem. 'm_warning_issued' signals the need to clear
+  // that OSD-wide flag.
+  bool m_warning_issued{false};
 };
 
 using BlockedRangeWarning = std::unique_ptr<blocked_range_t>;
