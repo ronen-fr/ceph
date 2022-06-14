@@ -9,6 +9,7 @@
 
 #include "debug.h"
 
+#include "common/ceph_time.h"
 #include "common/errno.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDRepScrub.h"
@@ -17,6 +18,7 @@
 #include "messages/MOSDScrubReserve.h"
 #include "osd/OSD.h"
 #include "osd/PG.h"
+#include "include/utime_fmt.h"
 #include "osd/osd_types_fmt.h"
 
 #include "ScrubStore.h"
@@ -538,6 +540,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
       m_pg->info,
       m_pg->get_pgpool().info.opts);
     m_osds->get_scrub_services().update_job(m_scrub_job, suggested);
+   // RRR OK here? are we locked?
     m_pg->publish_stats_to_osd();
   }
 
@@ -2418,6 +2421,46 @@ int PgScrubber::asok_debug(std::string_view cmd,
 
   return 0;
 }
+
+void PgScrubber::update_stats(ceph::coarse_real_clock::time_point now_is)
+{
+  using clk = ceph::coarse_real_clock;
+  using namespace std::chrono;
+  if (!is_primary()) {
+    return;
+  }
+
+  const clk::duration period_active =
+    seconds(m_pg->get_cct()->_conf.get_val<int64_t>(
+      "osd_stats_update_period_scrubbing"));
+  if (!period_active.count()) {
+    // a way for the operator to disable these stats updates
+    return;
+  }
+  const clk::duration period_inactive =
+    seconds(m_pg->get_cct()->_conf.get_val<int64_t>(
+	      "osd_stats_update_period_not_scrubbing") +
+	    m_pg_id.pgid.m_seed % 30);
+
+  // determine the required update period, based on our current state
+  auto period{period_inactive};
+  if (m_active) {
+    period = m_debug_blockrange ? 2s : period_active;
+  }
+  dout(20) << fmt::format("{}: period: {}/{}-> {}s last:{}",
+			  __func__,
+			  std::chrono::duration_cast<seconds>(period_active),
+			  std::chrono::duration_cast<seconds>(period_inactive),
+			  std::chrono::duration_cast<seconds>(period),
+			  clk::to_time_t(m_last_stat_upd))
+	   << dendl;
+
+  if (now_is - m_last_stat_upd > period) {
+    m_pg->publish_stats_to_osd();
+    m_last_stat_upd = now_is;
+  }
+}
+
 // ///////////////////// preemption_data_t //////////////////////////////////
 
 PgScrubber::preemption_data_t::preemption_data_t(PG* pg) : m_pg{pg}
