@@ -315,6 +315,12 @@ struct ScrubPgIF {
   virtual bool get_store_errors(const scrub_ls_arg_t& arg,
 				scrub_ls_result_t& res_inout) const = 0;
 
+  /*
+   * force periodic 'publish_stats_to_osd()' to update scrub-related
+   * counters and statistics.
+   */
+  virtual void update_stats() = 0;
+
   // --------------- reservations -----------------------------------
 
   /**

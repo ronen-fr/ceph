@@ -2679,6 +2679,15 @@ void PG::dump_missing(Formatter *f)
 
 void PG::with_pg_stats(std::function<void(const pg_stat_t&, epoch_t lec)>&& f)
 {
+  dout(30) << __func__ << dendl;
+  // possibly update the scrub state & timers
+  if (m_scrubber) {
+    lock();
+    m_scrubber->update_stats();
+    unlock();
+  }
+
+  // now - the actual publishing
   std::lock_guard l{pg_stats_publish_lock};
   if (pg_stats_publish) {
     f(*pg_stats_publish, pg_stats_publish->get_effective_last_epoch_clean());

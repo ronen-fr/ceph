@@ -538,6 +538,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
       m_pg->info,
       m_pg->get_pgpool().info.opts);
     m_osds->get_scrub_services().update_job(m_scrub_job, suggested);
+   // RRR OK here? are we locked?
     m_pg->publish_stats_to_osd();
   }
 
@@ -2402,6 +2403,40 @@ int PgScrubber::asok_debug(std::string_view cmd,
 
   return 0;
 }
+
+// called only every 5 seconds!
+void PgScrubber::update_stats()
+{
+  if (!is_primary() || stat_upd_countdown < 0) {
+    return;
+  }
+
+  // determine the required update period, based on our current state
+  const int period = m_active ?
+			      /* conf RRR */ (m_debug_blockrange ? 1 : 2)
+			      :
+			      /* conf RRR */ 3;	 // std::chrono::seconds(120 +
+						 // m_pg_id.pgid.m_seed % 60);
+  // handle the case of newly-active PG
+  if (period /*.count()*/ < stat_upd_countdown) {
+    stat_upd_countdown = period;  //.count();
+    return;
+  }
+
+  dout(20) << fmt::format("{}: period:{} c.d.:{} pg?:{}",
+			  __func__,
+			  period,  //.count(),
+			  stat_upd_countdown,
+			  m_pg->is_locked())
+	   // ceph_mutex_is_locked(m_pg->_lock))
+	   << dendl;
+
+  if (--stat_upd_countdown <= 0) {
+    stat_upd_countdown = period;  //.count();
+    m_pg->publish_stats_to_osd();
+  }
+}
+
 // ///////////////////// preemption_data_t //////////////////////////////////
 
 PgScrubber::preemption_data_t::preemption_data_t(PG* pg) : m_pg{pg}
