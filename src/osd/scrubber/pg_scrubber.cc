@@ -9,6 +9,7 @@
 
 #include "debug.h"
 
+#include "common/ceph_time.h"
 #include "common/errno.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDRepScrub.h"
@@ -17,6 +18,7 @@
 #include "messages/MOSDScrubReserve.h"
 #include "osd/OSD.h"
 #include "osd/PG.h"
+#include "include/utime_fmt.h"
 #include "osd/osd_types_fmt.h"
 
 #include "ScrubStore.h"
@@ -538,6 +540,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
       m_pg->info,
       m_pg->get_pgpool().info.opts);
     m_osds->get_scrub_services().update_job(m_scrub_job, suggested);
+   // RRR OK here? are we locked?
     m_pg->publish_stats_to_osd();
   }
 
@@ -2402,6 +2405,39 @@ int PgScrubber::asok_debug(std::string_view cmd,
 
   return 0;
 }
+
+void PgScrubber::update_stats(ceph::coarse_mono_clock::time_point now_is)
+{
+  using namespace std::chrono;
+  if (!is_primary()) {
+    return;
+  }
+
+  // determine the required update period, based on our current state
+  const ceph::coarse_mono_clock::duration period =
+    m_active
+      ?
+      /* conf RRR */ (m_debug_blockrange ? 2s : 15s)
+      :
+      /* conf RRR */ seconds(120 + m_pg_id.pgid.m_seed % 60);
+
+  auto period_in_s = std::chrono::duration_cast<seconds>(period);
+  auto x = std::chrono::duration_cast<seconds>(last_stat_upd.time_since_epoch());
+
+  dout(20) << fmt::format("{}: period:{}{}s last:{}",
+			  __func__,
+			  period.count(),
+			  period_in_s,
+			  999//utime_t{last_stat_upd}
+			  )
+	   << dendl;
+
+  if (now_is - last_stat_upd > period) {
+    m_pg->publish_stats_to_osd();
+    last_stat_upd = now_is;
+  }
+}
+
 // ///////////////////// preemption_data_t //////////////////////////////////
 
 PgScrubber::preemption_data_t::preemption_data_t(PG* pg) : m_pg{pg}
