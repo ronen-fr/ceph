@@ -461,6 +461,7 @@ Scrub::schedule_result_t ScrubQueue::select_from_group(
   const Scrub::ScrubPreconds& preconds,
   utime_t now_is)
 {
+  using Scrub::schedule_result_t;
   dout(15) << "jobs #: " << group.size() << dendl;
 
   for (auto& candidate : group) {
@@ -484,39 +485,46 @@ Scrub::schedule_result_t ScrubQueue::select_from_group(
       osd_service.initiate_a_scrub(candidate->pgid,
 				   preconds.allow_requested_repair_only)) {
 
-      case Scrub::schedule_result_t::scrub_initiated:
+      case schedule_result_t::scrub_initiated:
 	// the happy path. We are done
 	dout(20) << " initiated for " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::scrub_initiated;
+	return schedule_result_t::scrub_initiated;
 
-      case Scrub::schedule_result_t::already_started:
-      case Scrub::schedule_result_t::preconditions:
-      case Scrub::schedule_result_t::bad_pg_state:
-	// continue with the next job
-	dout(20) << "failed (state/cond/started) " << candidate->pgid << dendl;
+      case schedule_result_t::bad_pg_state:
+        // the PG is not in a state that allows a scrub to be initiated.
+        // Modifying the scheduled time, so that the next rounds will not
+        // waste time locking and trying to scrub the same PG.
+        // As for this round: continue with the next job in the group.
+	dout(20) << "failed (PG state) " << candidate->pgid << dendl;
 	break;
 
-      case Scrub::schedule_result_t::no_such_pg:
+      case schedule_result_t::already_started:
+      case schedule_result_t::preconditions:
+	// continue with the next job
+	dout(20) << "failed (cond/started) " << candidate->pgid << dendl;
+	break;
+
+      case schedule_result_t::no_such_pg:
 	// The pg is no longer there
 	dout(20) << "failed (no pg) " << candidate->pgid << dendl;
 	break;
 
-      case Scrub::schedule_result_t::no_local_resources:
+      case schedule_result_t::no_local_resources:
 	// failure to secure local resources. No point in trying the other
 	// PGs at this time. Note that this is not the same as replica resources
 	// failure!
 	dout(20) << "failed (local) " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::no_local_resources;
+	return schedule_result_t::no_local_resources;
 
-      case Scrub::schedule_result_t::none_ready:
+      case schedule_result_t::none_ready:
 	// can't happen. Just for the compiler.
 	dout(5) << "failed !!! " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::none_ready;
+	return schedule_result_t::none_ready;
     }
   }
 
   dout(20) << " returning 'none ready' " << dendl;
-  return Scrub::schedule_result_t::none_ready;
+  return schedule_result_t::none_ready;
 }
 
 ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(

@@ -107,6 +107,49 @@ SqrubQueue interfaces (main functions):
  */
 // clang-format on
 
+/*
+
+
+Scheduling policy:
+------------------------
+
+Basic scheduling (w/o penalties):
+- Each job maintains three time stamps:
+  - XXX last scrub (which might be missing/invalid)
+  - base time: initialially set to the last scrub time, adjusted per pool
+    configs; Maintains this value, until scrubbed, as a sort key.
+    For 'must scrub' jobs, set to an OSD-wide counter, to serve as the
+    sort key.
+  - scheduled next scrub
+  - deadline
+ and
+  - an 'base time initialized' flag (initialized to false)
+
+- when registering with the OSD:
+  - the 'last scrub' data is fetched from the PG;
+  - sched time is determined, based on 'is must' and configuration;
+  - the deadline is determined based on the PG's last scrub stamp;
+  - the 'base time initialized' flag is set to true.
+
+- jobs are ripe for scrubbing if 'must' or if their scheduled time
+  is in the past.
+- ripe jobs are oredered by their 'base time' key.
+
+- note that the 'deadline' is not a sort key. Rather - it allows 'deadlined'
+  jobs to scrub even outside scrub hours and under heavy CPU load.
+
+- the data above is updated as follows:
+  - if a ripe job cannot be scrubbed due to incompatible PG state, the
+    'scheduled time' is updated to 'now + some time';
+  - when a scrub is complete, both 'base time' and the target scrub time
+    are updated;
+  - upon 'resched' request: 
+
+
+
+
+*/
+
 #include <atomic>
 #include <chrono>
 #include <memory>
