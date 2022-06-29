@@ -2438,6 +2438,8 @@ void PgScrubber::update_scrub_stats(ceph::coarse_real_clock::time_point now_is)
   using clk = ceph::coarse_real_clock;
   using namespace std::chrono;
 
+  dout(10) << __func__ << " debug pgscr " <<  (void*)(this) << " pg: " << (void*)(m_pg) << dendl;
+
   const seconds period_active = seconds(m_pg->get_cct()->_conf.get_val<int64_t>(
     "osd_stats_update_period_scrubbing"));
   if (!period_active.count()) {

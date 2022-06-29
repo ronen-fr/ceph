@@ -40,17 +40,24 @@ void on_event_discard(std::string_view nm)
   dout(20) << " event: --^^^^---- " << nm << dendl;
 }
 
-std::string ScrubMachine::current_states_desc() const
+// note: state_begin() should not be called for unstable FSM
+// std::string ScrubMachine::current_states_desc() const
+// {
+//   std::string sts{"<"};
+//   for (auto si = state_begin(); si != state_end(); ++si) {
+//     const auto& siw{*si};  // prevents a warning re side-effects
+//     // the '7' is the size of the 'scrub::'
+//     sts +=
+//       boost::core::demangle(typeid(siw).name()).substr(7, std::string::npos) +
+//       "/";
+//   }
+//   return sts + ">";
+// }
+std::string ScrubMachine::current_states_desc() const // debug version
 {
-  std::string sts{"<"};
-  for (auto si = state_begin(); si != state_end(); ++si) {
-    const auto& siw{*si};  // prevents a warning re side-effects
-    // the '7' is the size of the 'scrub::'
-    sts +=
-      boost::core::demangle(typeid(siw).name()).substr(7, std::string::npos) +
-      "/";
-  }
-  return sts + ">";
+  // creating an lvalue, following some boost::core::demangle warnings
+  auto full_name = typeid(*this).name();
+  return "<" + boost::core::demangle(full_name) + ">";
 }
 
 void ScrubMachine::assert_not_active() const

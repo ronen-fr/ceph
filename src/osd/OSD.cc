@@ -7733,6 +7733,7 @@ MPGStats* OSD::collect_pg_stats()
   m->osd_stat.num_per_pool_osds = per_pool_stats ? 1 : 0;
   m->osd_stat.num_per_pool_omap_osds = per_pool_omap_stats ? 1 : 0;
 
+  dout(16) << __func__ << dendl;
   return m;
 }
 

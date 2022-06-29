@@ -2680,9 +2680,11 @@ void PG::dump_missing(Formatter *f)
 void PG::with_pg_stats(ceph::coarse_real_clock::time_point now_is,
 		       std::function<void(const pg_stat_t&, epoch_t lec)>&& f)
 {
-  dout(30) << __func__ << dendl;
+  dout(10) << __func__ << " RRR " << (void*)(this) << dendl; // RRR debug
   // possibly update the scrub state & timers
-  m_scrubber->update_scrub_stats(now_is);
+  if (m_scrubber) {
+    m_scrubber->update_scrub_stats(now_is);
+  }
 
   // now - the actual publishing
   std::lock_guard l{pg_stats_publish_lock};
