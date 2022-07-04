@@ -2368,9 +2368,8 @@ ostream &operator<<(ostream &out, const PgScrubber &scrubber) {
 
 std::ostream& PgScrubber::gen_prefix(std::ostream& out) const
 {
-  if (m_pg && m_pg->is_locked()) {
-    const auto fsm_state = m_fsm ? m_fsm->current_states_desc() : "- :";
-    return m_pg->gen_prefix(out) << "scrubber " << fsm_state << ": ";
+  if (m_pg) {
+    return m_pg->gen_prefix(out) << "scrubber <" << m_fsm_state_name << ">: ";
   } else {
     return out << " scrubber [" << m_pg_id << "]: ";
   }
@@ -2426,19 +2425,12 @@ int PgScrubber::asok_debug(std::string_view cmd,
 }
 
 /*
- * Implementation notes:
- * - we are *not* under PG lock;
- * - but we know the PG is there, as we were called because our PG appeared in
- *   _get_pgs(), and
- * - no need to check is_primary(), as OSD::collect_pg_stats() has already done
- *   that
+ * Note: under PG lock
  */
 void PgScrubber::update_scrub_stats(ceph::coarse_real_clock::time_point now_is)
 {
   using clk = ceph::coarse_real_clock;
   using namespace std::chrono;
-
-  dout(10) << __func__ << " debug pgscr " <<  (void*)(this) << " pg: " << (void*)(m_pg) << dendl;
 
   const seconds period_active = seconds(m_pg->get_cct()->_conf.get_val<int64_t>(
     "osd_stats_update_period_scrubbing"));
@@ -2475,10 +2467,8 @@ void PgScrubber::update_scrub_stats(ceph::coarse_real_clock::time_point now_is)
   }
 
   if (now_is - m_last_stat_upd > period) {
-    m_pg->lock();
     m_pg->publish_stats_to_osd();
     m_last_stat_upd = now_is;
-    m_pg->unlock();
   }
 }
 

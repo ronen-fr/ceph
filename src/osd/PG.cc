@@ -2682,9 +2682,11 @@ void PG::with_pg_stats(ceph::coarse_real_clock::time_point now_is,
 {
   dout(10) << __func__ << " RRR " << (void*)(this) << dendl; // RRR debug
   // possibly update the scrub state & timers
+  lock();
   if (m_scrubber) {
     m_scrubber->update_scrub_stats(now_is);
   }
+  unlock();
 
   // now - the actual publishing
   std::lock_guard l{pg_stats_publish_lock};

@@ -458,6 +458,11 @@ class PgScrubber : public ScrubPgIF,
     return m_pg->recovery_state.is_primary();
   }
 
+  void set_state_name(const char* name) final
+  {
+    m_fsm_state_name = name;
+  }
+
   void select_range_n_notify() final;
 
   Scrub::BlockedRangeWarning acquire_blocked_alarm() final;
@@ -716,6 +721,7 @@ class PgScrubber : public ScrubPgIF,
 			    bool deep);
 
   std::unique_ptr<Scrub::ScrubMachine> m_fsm;
+  const char* m_fsm_state_name{nullptr}; /// the current state of the FSM
   const spg_t m_pg_id;	///< a local copy of m_pg->pg_id
   OSDService* const m_osds;
   const pg_shard_t m_pg_whoami;	 ///< a local copy of m_pg->pg_whoami;
