@@ -2368,9 +2368,10 @@ ostream &operator<<(ostream &out, const PgScrubber &scrubber) {
 
 std::ostream& PgScrubber::gen_prefix(std::ostream& out) const
 {
-  if (m_pg && m_pg->is_locked()) {
-    const auto fsm_state = m_fsm ? m_fsm->current_states_desc() : "- :";
-    return m_pg->gen_prefix(out) << "scrubber " << fsm_state << ": ";
+  if (m_pg && m_pg->_lock.is_locked_by_me()) {
+    // const auto fsm_state = m_fsm ? m_fsm->current_states_desc() : "- :";
+    return m_pg->gen_prefix(out)
+	   << "scrubber " << (m_fsm ? m_fsm_state_name : "- :") << ": ";
   } else {
     return out << " scrubber [" << m_pg_id << "]: ";
   }
