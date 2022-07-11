@@ -1535,9 +1535,26 @@ void OSD::scrub_tick()
   down_counter = 5; // RRR should be a config!
   // maybe: local_conf().get_val<int64_t>("osd_scrub_scheduling_period")");
   static thread_local seastar::semaphore limit(1);
-  //static int dbg_idx = 1000;
-  (void)seastar::with_semaphore(limit, 1,
-                                [this]() mutable { (void)sched_scrub(); });
+  // don't have to run the scrub scheduler if the previous activation has
+  // not completed yet
+//    seastar::try_get_units(limit, 1, [this](auto units) mutable { return sched_scrub().then([units] { return units; }); });
+
+  auto maybe_units = seastar::try_get_units(limit, 1);
+  if (maybe_units) {
+    std::ignore = sched_scrub().finally([units=std::move(*maybe_units)] {
+      return seastar::now();
+    });
+  } else {
+    //return seastar::now();
+  }
+
+//   std::ignore = seastar::try_get_units(limit, 1).then([this](auto maybe_units) mutable {
+//         return (maybe_units ? sched_scrub() : seastar::now()).finally([maybe_units=std::move(maybe_units)] {}
+// 
+// 
+// 
+//   std::ignore = seastar::with_semaphore(limit, 1,
+//                                 [this]() mutable { (void)sched_scrub(); });
 
   // for testing - queue a scrub hello message
 #if 0
@@ -1573,6 +1590,7 @@ continue;
 
 seastar::future<> OSD::sched_scrub()
 {
+  logger().warn("{}: started", __func__); // RRR
   if (!state.is_active()) {
     return seastar::now();
   }
