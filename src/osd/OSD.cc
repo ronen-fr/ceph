@@ -7534,7 +7534,6 @@ void OSD::sched_scrub()
 	   << dendl;
 }
 
-
 Scrub::attempt_t OSDService::initiate_a_scrub(spg_t pgid, bool allow_requested_repair_only)
 {
   dout(20) << __func__ << " trying " << pgid << dendl;
@@ -7544,9 +7543,10 @@ Scrub::attempt_t OSDService::initiate_a_scrub(spg_t pgid, bool allow_requested_r
 
   PGRef pg = osd->lookup_lock_pg(pgid);
   if (!pg) {
-    // shouldn't happen: the scrub job should have been marked as invalid
+    // the PG was dequeued in the short time span between creating the candidates list
+    // (collect_ripe_jobs()) and here
     dout(5) << __func__ << " pg  " << pgid << " not found" << dendl;
-    return Scrub::attempt_t::no_pg; // shouldn't happen
+    return Scrub::attempt_t::no_pg;
   }
 
   // This has already started, so go on to the next scrub job

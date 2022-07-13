@@ -19,6 +19,15 @@
 #include "pg_scrubber.h"
 
 
+using std::list;
+using std::pair;
+using std::set;
+using std::stringstream;
+using std::vector;
+using namespace Scrub;
+using namespace std::chrono;
+using namespace std::chrono_literals;
+using namespace std::literals;
 
 #define dout_context (m_scrubber.get_pg_cct())
 #define dout_subsys ceph_subsys_osd

@@ -52,7 +52,6 @@ extern "C" {
 #include <ostream>
 #include <iomanip>
 
-
 #include "include/unordered_map.h"
 
 #include "object.h"

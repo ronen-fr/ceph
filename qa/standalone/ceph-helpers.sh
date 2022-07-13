@@ -186,8 +186,8 @@ function teardown() {
 	    done
         fi
     fi
-    if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
-	if [ -n "$LOCALRUN" ]; then
+    if [ "$cores" = "yes" -o "$dumplogs" = "1" ] || true; then
+	if [[ -n "$LOCALRUN" && -z "$LOCALRUN" ]]; then
 	    display_logs $dir
         else
 	    # Move logs to where Teuthology will archive it

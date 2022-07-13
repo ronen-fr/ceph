@@ -1331,9 +1331,9 @@ Scrub::attempt_t PG::sched_scrub()
 	  << (is_clean() ? " <clean>" : " <not-clean>") << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
 
-  if (m_scrubber && m_scrubber->is_scrub_active()) {
-    return false;
-  }
+  //if (m_scrubber && m_scrubber->is_scrub_active()) {
+  //  return false;
+  //}
   
   if (!is_primary() || !is_active() || !is_clean()) {
     return Scrub::attempt_t::pg_state;
@@ -1536,8 +1536,6 @@ std::optional<requested_scrub_t> PG::verify_scrub_mode() const
  * Note: on_info_history_change() is used in those two cases where we're not sure
  * whether the role of the PG was changed, and if so - was this change relayed to the
  * scrub-queue.
- *
- * \todo - fully understand and remove these two cases
  */
 void PG::on_info_history_change()
 {

@@ -273,7 +273,7 @@ Scrub::attempt_t ScrubQueue::select_pg_and_scrub(Scrub::ScrubPreconds& preconds)
   //  - same for the penalized (although that usually be a waste)
   //  unlock, then try the lists
 
-  std::unique_lock l(jobs_lock, 2'0000ms);
+  std::unique_lock l(jobs_lock, 2'000ms);
   ceph_assert(l.owns_lock());
 
   // pardon all penalized jobs that have deadlined (or were updated)
