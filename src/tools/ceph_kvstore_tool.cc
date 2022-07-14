@@ -36,6 +36,7 @@ void usage(const char *pname)
     << "  list [prefix]\n"
     << "  list-crc [prefix]\n"
     << "  dump [prefix]\n"
+    << "  mapper [out <file>]\n"
     << "  exists <prefix> [key]\n"
     << "  get <prefix> <key> [out <file>]\n"
     << "  crc <prefix> <key>\n"
@@ -142,6 +143,52 @@ int main(int argc, const char *argv[])
       << (ret ? "exists" : "does not exist")
       << std::endl;
     return (ret ? 0 : 1);
+
+  } else if (cmd == "obj1") {
+    st.corrupt_snaps(argv[4]);
+    std::cout << std::endl;
+    return 0;
+  } else if (cmd == "mapper") {
+    //if (argc < 6) {
+    //  usage(argv[0]);
+    //  return 1;
+    //}
+    //string prefix(url_unescape(argv[4]));
+    //string key(url_unescape(argv[5]));
+
+    std::cout << std::endl;
+    bufferlist bl = st.mapmapper("p", true);
+    std::cout << std::endl;
+
+    if (argc >= 7) {
+      string subcmd(argv[6]);
+      if (subcmd != "out") {
+        std::cerr << "unrecognized subcmd '" << subcmd << "'"
+                  << std::endl;
+        return 1;
+      }
+      if (argc < 8) {
+        std::cerr << "output path not specified" << std::endl;
+        return 1;
+      }
+      string out(argv[7]);
+
+      if (out.empty()) {
+        std::cerr << "unspecified out file" << std::endl;
+        return 1;
+      }
+
+      int err = bl.write_file(argv[7], 0644);
+      if (err < 0) {
+        std::cerr << "error writing value to '" << out << "': "
+                  << cpp_strerror(err) << std::endl;
+        return 1;
+      }
+    } else {
+      ostringstream os;
+      bl.hexdump(os);
+      std::cout << os.str() << std::endl;
+    }
 
   } else if (cmd == "get") {
     if (argc < 6) {

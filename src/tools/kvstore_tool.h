@@ -78,4 +78,10 @@ public:
 
   int print_stats() const;
   int build_size_histogram(const std::string& prefix) const;
+  ceph::bufferlist mapmapper(const std::string& prefix,
+                             bool do_value_dump/*,
+                             std::ostream* out*/);
+
+  void corrupt_snaps(std::string keypart);
+
 };

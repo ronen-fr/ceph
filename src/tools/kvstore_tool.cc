@@ -3,14 +3,30 @@
 
 #include "kvstore_tool.h"
 
+#include <cstring>
 #include <iostream>
+#include <set>
+#include <utility>
+#include <charconv>
+
+#include "common/hobject.h"
+#include "common/Formatter.h"
+
 
 #include "common/errno.h"
-#include "common/url_escape.h"
+#include "common/hobject.h"
 #include "common/pretty_binary.h"
+#include "common/sharedptr_registry.hpp"
+#include "common/url_escape.h"
+#include "include/Context.h"
 #include "include/buffer.h"
+#include "include/encoding.h"
+#include "include/object.h"
 #include "kv/KeyValueDB.h"
 #include "kv/KeyValueHistogram.h"
+#include "os/bluestore/bluestore_types.h"
+#include "osd/OSDMap.h"
+
 
 using namespace std;
 
@@ -18,7 +34,7 @@ StoreTool::StoreTool(const string& type,
 		     const string& path,
 		     bool to_repair,
 		     bool need_stats)
-  : store_path(path)
+    : store_path(path)
 {
 
   if (need_stats) {
@@ -38,9 +54,9 @@ StoreTool::StoreTool(const string& type,
     auto db_ptr = KeyValueDB::create(g_ceph_context, type, path);
     if (!to_repair) {
       if (int r = db_ptr->open(std::cerr); r < 0) {
-        cerr << "failed to open type " << type << " path " << path << ": "
-             << cpp_strerror(r) << std::endl;
-        exit(1);
+	cerr << "failed to open type " << type << " path " << path << ": "
+	     << cpp_strerror(r) << std::endl;
+	exit(1);
       }
     }
     db.reset(db_ptr);
@@ -49,20 +65,20 @@ StoreTool::StoreTool(const string& type,
 
 int StoreTool::load_bluestore(const string& path, bool to_repair)
 {
-    auto bluestore = new BlueStore(g_ceph_context, path);
-    KeyValueDB *db_ptr;
-    int r = bluestore->open_db_environment(&db_ptr, to_repair);
-    if (r < 0) {
-     return -EINVAL;
-    }
-    db = decltype(db){db_ptr, Deleter(bluestore)};
-    return 0;
+  auto bluestore = new BlueStore(g_ceph_context, path);
+  KeyValueDB* db_ptr;
+  int r = bluestore->open_db_environment(&db_ptr, to_repair);
+  if (r < 0) {
+    return -EINVAL;
+  }
+  db = decltype(db){db_ptr, Deleter(bluestore)};
+  return 0;
 }
 
 uint32_t StoreTool::traverse(const string& prefix,
-                             const bool do_crc,
-                             const bool do_value_dump,
-                             ostream *out)
+			     const bool do_crc,
+			     const bool do_value_dump,
+			     ostream* out)
 {
   KeyValueDB::WholeSpaceIterator iter = db->get_wholespace_iterator();
 
@@ -74,12 +90,14 @@ uint32_t StoreTool::traverse(const string& prefix,
   uint32_t crc = -1;
 
   while (iter->valid()) {
-    pair<string,string> rk = iter->raw_key();
+    pair<string, string> rk = iter->raw_key();
     if (!prefix.empty() && (rk.first != prefix))
       break;
 
     if (out)
       *out << url_escape(rk.first) << "\t" << url_escape(rk.second);
+    if (out)
+      *out << "[" << rk.first << "]\t[" << rk.second << "]\n";
     if (do_crc) {
       bufferlist bl;
       bl.append(rk.first);
@@ -88,7 +106,7 @@ uint32_t StoreTool::traverse(const string& prefix,
 
       crc = bl.crc32c(crc);
       if (out) {
-        *out << "\t" << bl.crc32c(0);
+	*out << "\t" << bl.crc32c(0);
       }
     }
     if (out)
@@ -100,6 +118,7 @@ uint32_t StoreTool::traverse(const string& prefix,
       ostringstream os;
       value.hexdump(os);
       std::cout << os.str() << std::endl;
+      *out << os.str() << std::endl;
     }
     iter->next();
   }
@@ -107,10 +126,304 @@ uint32_t StoreTool::traverse(const string& prefix,
   return crc;
 }
 
-void StoreTool::list(const string& prefix, const bool do_crc,
-                     const bool do_value_dump)
+static bool snapmapper_entry(std::string k)
 {
-  traverse(prefix, do_crc, do_value_dump,& std::cout);
+  return k.find("SNA_") != string::npos || k.find("OBJ_") != string::npos ||
+	 k.find("MAP_") != string::npos;
+}
+using ceph::decode;
+
+void hobject_t::decode(bufferlist::const_iterator& bl)
+{
+  DECODE_START_LEGACY_COMPAT_LEN(4, 3, 3, bl);
+  if (struct_v >= 1)
+    decode(key, bl);
+  decode(oid, bl);
+  decode(snap, bl);
+  decode(hash, bl);
+  if (struct_v >= 2)
+    decode(max, bl);
+  else
+    max = false;
+  if (struct_v >= 4) {
+    decode(nspace, bl);
+    decode(pool, bl);
+    // for compat with hammer, which did not handle the transition
+    // from pool -1 -> pool INT64_MIN for MIN properly.  this object
+    // name looks a bit like a pgmeta object for the meta collection,
+    // but those do not ever exist (and is_pgmeta() pool >= 0).
+    if (pool == -1 && snap == 0 && hash == 0 && !max && oid.name.empty()) {
+      pool = INT64_MIN;
+      ceph_assert(is_min());
+    }
+
+    // for compatibility with some earlier verisons which might encoded
+    // a non-canonical max object
+    if (max) {
+      *this = hobject_t::get_max();
+    }
+  }
+  DECODE_FINISH(bl);
+  build_hash_cache();
+}
+
+struct object_snaps {
+  hobject_t oid;
+  std::set<snapid_t> snaps;
+  object_snaps(hobject_t oid, const std::set<snapid_t>& snaps)
+      : oid(oid)
+      , snaps(snaps)
+  {}
+  object_snaps() {}
+  void encode(ceph::buffer::list& bl) const;
+  void decode(ceph::buffer::list::const_iterator& p)
+  {
+    DECODE_START(1, p);
+        decode(oid, p);
+    __u32 n;
+    decode(n, p);
+    snaps.clear();
+    while (n--) {
+      uint64_t v;
+      decode(v, p);
+      snaps.insert(v);
+    }
+    DECODE_FINISH(p);
+  }
+};
+
+
+struct Mapping {
+  snapid_t snap;
+  hobject_t hoid;
+  explicit Mapping(const std::pair<snapid_t, hobject_t>& in)
+      : snap(in.first)
+      , hoid(in.second)
+  {}
+  Mapping() : snap(0) {}
+  void encode(ceph::buffer::list& bl) const
+  {
+    ENCODE_START(1, 1, bl);
+    encode(snap, bl);
+    encode(hoid, bl);
+    ENCODE_FINISH(bl);
+  }
+  void decode(ceph::buffer::list::const_iterator& bl)
+  {
+    DECODE_START(1, bl);
+    decode(snap, bl);
+    decode(hoid, bl);
+    DECODE_FINISH(bl);
+  }
+};
+
+// template<>
+// struct denc_traits<Mapping> {
+//   static constexpr bool supported = true;
+//   static constexpr bool featured = false;
+//   static constexpr bool bounded = true;
+//   static constexpr bool need_contiguous = true;
+//   static void bound_encode(const Mapping& o, size_t& p) {
+//     denc(o.snap, p);
+//     denc(o.hoid, p);
+//   }
+//   static void encode(const Mapping &o,
+//   ceph::buffer::list::contiguous_appender& p) {
+//     denc(o.snap, p);
+//     //denc(o.hoid, p);
+//   }
+//   static void decode(Mapping& o, ceph::buffer::ptr::const_iterator &p) {
+//     denc(o.snap, p);
+//     //denc(o.hoid, p);
+//   }
+// };
+//
+
+
+std::pair<snapid_t, hobject_t> from_raw(
+  const pair<std::string, bufferlist>& image)
+{
+  using ceph::decode;
+  bufferlist bl(image.second);
+  auto bp = bl.cbegin();
+
+  Mapping m;
+  m.decode(bp);
+
+  return std::make_pair(m.snap, m.hoid);
+}
+
+
+// std::pair<snapid_t, hobject_t> from_raw(
+//   const pair<std::string, bufferlist>& image)
+// {
+//   using ceph::decode;
+//   bufferlist bl(image.second);
+//   auto bp = bl.cbegin();
+// 
+//   snapid_t sid;
+//   decode(sid, bp);
+// 
+//   hobject_t hoid;
+//   decode(hoid, bp);
+//   return std::make_pair(sid, hoid);
+// }
+
+static void parse_mp_kv(string k,
+			ceph::bufferlist v,
+			std::ostream* o,
+			std::ofstream* bo)
+{
+  if (k.find("SNA_") != string::npos) {
+    // k: "SNA_"
+    //   + ("%lld" % poolid)
+    //   + "_"
+    //   + ("%016x" % snapid)
+    //   + "_"
+    //   + (".%x" % shard_id)
+    //   + "_"
+    //   + hobject_t::to_str() ("%llx.%8x.%lx.name...." % pool, hash, snap)
+    // -> SnapMapping::Mapping { snap, hoid }
+
+    auto [snap, hoid] = from_raw(make_pair("", v));
+    /* for the IDE */ hobject_t ho = hoid;
+
+    *o << "\n///sna// key: " << k << " -//- snap: " << snap.val << " hobject:" << ho
+       << " p:" << ho.pool << std::endl;
+
+  } else if (k.find("OBJ_") != string::npos) {
+    //  "OBJ_" +
+    //   + (".%x" % shard_id)
+    //   + hobject_t::to_str()
+    //    -> SnapMapper::object_snaps { oid, set<snapid_t> }
+  auto bp = v.cbegin();
+        object_snaps os;
+try {
+        os.decode(bp);
+} catch (...) { *o << "decode failed" << std::endl; }
+
+        *o << "\n///obj// " << k << " -//- " << os.oid << std::endl;
+        *o << "\t-> " << os.snaps << std::endl;
+
+  } else if (k.find("MAP_") != string::npos) {
+    //   "MAP_"
+    //   + ("%016x" % snapid)
+    //   + "_"
+    //   + (".%x" % shard_id)
+    //   + "_"
+    //   + hobject_t::to_str() ("%llx.%8x.%lx.name...." % pool, hash, snap)
+    //   -> SnapMapping::Mapping { snap, hoid }
+
+  } else {
+  }
+}
+
+
+bufferlist StoreTool::mapmapper(const string& prefix, bool do_value_dump)
+{
+  KeyValueDB::WholeSpaceIterator iter = db->get_wholespace_iterator();
+
+  if (prefix.empty())
+    iter->seek_to_first();
+  else
+    iter->seek_to_first(prefix);
+
+  bufferlist ret;
+
+  while (iter->valid()) {
+    pair<string, string> rk = iter->raw_key();
+    if (!prefix.empty() && (rk.first != prefix))
+      break;
+
+    // related to the snap mapper?
+    if (!snapmapper_entry(rk.second)) {
+      std::cout << "NOT RLVNT  [" << rk.first << "]\t[" << rk.second << "]\n";
+      iter->next();
+      continue;
+    }
+
+    std::cout << url_escape(rk.first) << "\t" << url_escape(rk.second);
+    // if (out)
+    std::cout << "[" << rk.first << "]\t[" << rk.second << "]\n";
+    //     if (do_crc) {
+    //       bufferlist bl;
+    //       bl.append(rk.first);
+    //       bl.append(rk.second);
+    //       bl.append(iter->value());
+    //
+    //       crc = bl.crc32c(crc);
+    //       if (out) {
+    //         *out << "\t" << bl.crc32c(0);
+    //       }
+    //     }
+    //     if (out)
+    //       *out << std::endl;
+    if (do_value_dump) {
+      bufferptr bp = iter->value_as_ptr();
+      bufferlist this_value;
+      this_value.append(bp);
+
+      ostringstream os1;
+      parse_mp_kv(rk.second, this_value, &os1, nullptr);
+      std::cout << os1.str() << std::endl;
+
+      ostringstream os;
+      this_value.hexdump(os);
+      std::cout << os.str() << std::endl;
+      ret.append(bp);
+    }
+    iter->next();
+  }
+
+  return ret;
+}
+
+
+void StoreTool::corrupt_snaps(string keypart)
+{
+  KeyValueDB::WholeSpaceIterator iter = db->get_wholespace_iterator();
+  iter->seek_to_first("p");
+
+  bufferlist ret;
+
+  while (iter->valid()) {
+    pair<string, string> rk = iter->raw_key();
+
+    // is this the one we wish to corrupt?
+    if ((rk.second.find("SNA_") != string::npos) && (rk.second.find(keypart) != string::npos)) {
+      /*
+
+	      the key should look like this:
+	      [something]SNA_[poolid]_[?]_[?].[hobject]
+
+	      truncate at the 3rd underscore.
+
+      */
+
+
+      // get the value
+      bufferptr bp = iter->value_as_ptr();
+      bufferlist bl;
+      bl.append(bp);
+
+      // better do RE here, but for now:
+      auto mod_s = rk.second;
+      mod_s.resize(mod_s.find("_", mod_s.find("_", mod_s.find("SNA_") + 4) + 1) +
+		   1);
+      set(rk.first, mod_s, bl);
+      rm(rk.first, rk.second);
+      break;
+    }
+    iter->next();
+  }
+}
+
+
+void StoreTool::list(const string& prefix,
+		     const bool do_crc,
+		     const bool do_value_dump)
+{
+  traverse(prefix, do_crc, do_value_dump, &std::cout);
 }
 
 bool StoreTool::exists(const string& prefix)
@@ -133,13 +446,11 @@ bool StoreTool::exists(const string& prefix, const string& key)
   return exists;
 }
 
-bufferlist StoreTool::get(const string& prefix,
-			  const string& key,
-			  bool& exists)
+bufferlist StoreTool::get(const string& prefix, const string& key, bool& exists)
 {
   ceph_assert(!prefix.empty() && !key.empty());
 
-  map<string,bufferlist> result;
+  map<string, bufferlist> result;
   std::set<std::string> keys;
   keys.insert(key);
   db->get(prefix, keys, &result);
@@ -155,7 +466,7 @@ bufferlist StoreTool::get(const string& prefix,
 
 uint64_t StoreTool::get_size()
 {
-  map<string,uint64_t> extras;
+  map<string, uint64_t> extras;
   uint64_t s = db->get_estimated_size(extras);
   for (auto& [name, size] : extras) {
     std::cout << name << " - " << size << std::endl;
@@ -164,7 +475,7 @@ uint64_t StoreTool::get_size()
   return s;
 }
 
-bool StoreTool::set(const string &prefix, const string &key, bufferlist &val)
+bool StoreTool::set(const string& prefix, const string& key, bufferlist& val)
 {
   ceph_assert(!prefix.empty());
   ceph_assert(!key.empty());
@@ -200,16 +511,19 @@ bool StoreTool::rm_prefix(const string& prefix)
   return (ret == 0);
 }
 
-void StoreTool::print_summary(const uint64_t total_keys, const uint64_t total_size,
-                              const uint64_t total_txs, const string& store_path,
-                              const string& other_path, const int duration) const
+void StoreTool::print_summary(const uint64_t total_keys,
+			      const uint64_t total_size,
+			      const uint64_t total_txs,
+			      const string& store_path,
+			      const string& other_path,
+			      const int duration) const
 {
   std::cout << "summary:" << std::endl;
   std::cout << "  copied " << total_keys << " keys" << std::endl;
   std::cout << "  used " << total_txs << " transactions" << std::endl;
   std::cout << "  total size " << byte_u_t(total_size) << std::endl;
   std::cout << "  from '" << store_path << "' to '" << other_path << "'"
-            << std::endl;
+	    << std::endl;
   std::cout << "  duration " << duration << " seconds" << std::endl;
 }
 
@@ -227,12 +541,12 @@ int StoreTool::print_stats() const
     ostr << "db_statistics not enabled";
     f->flush(ostr);
   }
-  std::cout <<  ostr.str() << std::endl;
+  std::cout << ostr.str() << std::endl;
   delete f;
   return ret;
 }
 
-//Itrerates through the db and collects the stats
+// Itrerates through the db and collects the stats
 int StoreTool::build_size_histogram(const string& prefix0) const
 {
   ostringstream ostr;
@@ -288,13 +602,15 @@ int StoreTool::build_size_histogram(const string& prefix0) const
   delete f;
 
   std::cout << ostr.str() << std::endl;
-  std::cout << __func__ << " finished in " << duration << " seconds" << std::endl;
+  std::cout << __func__ << " finished in " << duration << " seconds"
+	    << std::endl;
   return 0;
 }
 
-int StoreTool::copy_store_to(const string& type, const string& other_path,
-                             const int num_keys_per_tx,
-                             const string& other_type)
+int StoreTool::copy_store_to(const string& type,
+			     const string& other_path,
+			     const int num_keys_per_tx,
+			     const string& other_type)
 {
   if (num_keys_per_tx <= 0) {
     std::cerr << "must specify a number of keys/tx > 0" << std::endl;
@@ -303,9 +619,8 @@ int StoreTool::copy_store_to(const string& type, const string& other_path,
 
   // open or create a leveldb store at @p other_path
   boost::scoped_ptr<KeyValueDB> other;
-  KeyValueDB *other_ptr = KeyValueDB::create(g_ceph_context,
-					     other_type,
-					     other_path);
+  KeyValueDB* other_ptr =
+    KeyValueDB::create(g_ceph_context, other_type, other_path);
   if (int err = other_ptr->create_and_open(std::cerr); err < 0) {
     return err;
   }
@@ -317,7 +632,7 @@ int StoreTool::copy_store_to(const string& type, const string& other_path,
   uint64_t total_size = 0;
   uint64_t total_txs = 0;
 
-  auto duration = [start=coarse_mono_clock::now()] {
+  auto duration = [start = coarse_mono_clock::now()] {
     const auto now = coarse_mono_clock::now();
     auto seconds = std::chrono::duration<double>(now - start);
     return seconds.count();
@@ -346,13 +661,16 @@ int StoreTool::copy_store_to(const string& type, const string& other_path,
       other->submit_transaction_sync(tx);
 
     std::cout << "ts = " << duration() << "s, copied " << total_keys
-              << " keys so far (" << byte_u_t(total_size) << ")"
-              << std::endl;
+	      << " keys so far (" << byte_u_t(total_size) << ")" << std::endl;
 
   } while (it->valid());
 
-  print_summary(total_keys, total_size, total_txs, store_path, other_path,
-                duration());
+  print_summary(total_keys,
+		total_size,
+		total_txs,
+		store_path,
+		other_path,
+		duration());
 
   return 0;
 }
@@ -368,8 +686,8 @@ void StoreTool::compact_prefix(const string& prefix)
 }
 
 void StoreTool::compact_range(const string& prefix,
-                              const string& start,
-                              const string& end)
+			      const string& start,
+			      const string& end)
 {
   db->compact_range(prefix, start, end);
 }
