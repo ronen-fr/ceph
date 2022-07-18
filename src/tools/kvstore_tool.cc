@@ -3,16 +3,13 @@
 
 #include "kvstore_tool.h"
 
+#include <charconv>
 #include <cstring>
 #include <iostream>
 #include <set>
 #include <utility>
-#include <charconv>
 
-#include "common/hobject.h"
 #include "common/Formatter.h"
-
-
 #include "common/errno.h"
 #include "common/hobject.h"
 #include "common/pretty_binary.h"
@@ -26,6 +23,8 @@
 #include "kv/KeyValueHistogram.h"
 #include "os/bluestore/bluestore_types.h"
 #include "osd/OSDMap.h"
+#include "osd/osd_types_fmt.h"
+
 
 
 using namespace std;
@@ -179,7 +178,7 @@ struct object_snaps {
   void decode(ceph::buffer::list::const_iterator& p)
   {
     DECODE_START(1, p);
-        decode(oid, p);
+    decode(oid, p);
     __u32 n;
     decode(n, p);
     snaps.clear();
@@ -217,27 +216,47 @@ struct Mapping {
   }
 };
 
-// template<>
-// struct denc_traits<Mapping> {
-//   static constexpr bool supported = true;
-//   static constexpr bool featured = false;
-//   static constexpr bool bounded = true;
-//   static constexpr bool need_contiguous = true;
-//   static void bound_encode(const Mapping& o, size_t& p) {
-//     denc(o.snap, p);
-//     denc(o.hoid, p);
-//   }
-//   static void encode(const Mapping &o,
-//   ceph::buffer::list::contiguous_appender& p) {
-//     denc(o.snap, p);
-//     //denc(o.hoid, p);
-//   }
-//   static void decode(Mapping& o, ceph::buffer::ptr::const_iterator &p) {
-//     denc(o.snap, p);
-//     //denc(o.hoid, p);
-//   }
-// };
-//
+static void decode_sna_key(string key, std::ostream* o)
+{
+  // two possible formats (w./o the shard id):
+  //   const string f =
+  //   "SNA_2_0000000000000001_0000000000000002.347FB131.7.xxxx"; const string d
+  //   = "SNA_2_0000000000000001.a_0000000000000002.347FB131.7.xxxx";
+  unsigned long  plid{0};
+  unsigned long long snpid;
+  long sh;
+  long int shardid{-2};
+  int64_t snap;
+  char oname[1024];
+  long unsigned int hash, pool;
+
+  *o << "\nSNA_ =========== " << key << std::endl;
+
+  auto n = sscanf(key.c_str(),
+		  "SNA_%d_%016lX_%lx.%8X.%lx.%s",
+		  &plid,
+		  &snpid,
+		  &pool,
+		  &hash,
+		  &snap,
+		  oname);
+  if (n != 6) {
+    // we do have shard-id to parse
+  n = sscanf(key.c_str(), "SNA_%d_%016lX.%x_%lx.%8X.%lx.%s", 
+    &plid, &snpid, &shardid, 
+    &pool, &hash, &snap, oname);
+
+        if (n != 7) {
+                *o << "invalid SNA key" << std::endl;
+                return;
+                }
+  }
+   *o << fmt::format("sna rec: pid:{} snpid:{} shardid:{:x} [pool:{} has:{:x} snap:{} nm:{}]\n", 
+    plid, snpid, shardid, 
+    pool, hash, snap, oname);
+  
+
+}
 
 
 std::pair<snapid_t, hobject_t> from_raw(
@@ -253,21 +272,6 @@ std::pair<snapid_t, hobject_t> from_raw(
   return std::make_pair(m.snap, m.hoid);
 }
 
-
-// std::pair<snapid_t, hobject_t> from_raw(
-//   const pair<std::string, bufferlist>& image)
-// {
-//   using ceph::decode;
-//   bufferlist bl(image.second);
-//   auto bp = bl.cbegin();
-// 
-//   snapid_t sid;
-//   decode(sid, bp);
-// 
-//   hobject_t hoid;
-//   decode(hoid, bp);
-//   return std::make_pair(sid, hoid);
-// }
 
 static void parse_mp_kv(string k,
 			ceph::bufferlist v,
@@ -285,25 +289,31 @@ static void parse_mp_kv(string k,
     //   + hobject_t::to_str() ("%llx.%8x.%lx.name...." % pool, hash, snap)
     // -> SnapMapping::Mapping { snap, hoid }
 
+
+
+    decode_sna_key(k.substr(k.find("SNA")), o);
+
     auto [snap, hoid] = from_raw(make_pair("", v));
     /* for the IDE */ hobject_t ho = hoid;
 
-    *o << "\n///sna// key: " << k << " -//- snap: " << snap.val << " hobject:" << ho
-       << " p:" << ho.pool << std::endl;
+    *o << "\n///sna// key: " << k << " -//- snap: " << snap.val
+       << " hobject:" << ho << " p:" << ho.pool << std::endl;
 
   } else if (k.find("OBJ_") != string::npos) {
     //  "OBJ_" +
     //   + (".%x" % shard_id)
     //   + hobject_t::to_str()
     //    -> SnapMapper::object_snaps { oid, set<snapid_t> }
-  auto bp = v.cbegin();
-        object_snaps os;
-try {
-        os.decode(bp);
-} catch (...) { *o << "decode failed" << std::endl; }
+    auto bp = v.cbegin();
+    object_snaps os;
+    try {
+      os.decode(bp);
+    } catch (...) {
+      *o << "decode failed" << std::endl;
+    }
 
-        *o << "\n///obj// " << k << " -//- " << os.oid << std::endl;
-        *o << "\t-> " << os.snaps << std::endl;
+    *o << "\n///obj// key: " << k << " -//- oid: " << os.oid << std::endl;
+    *o << "\tsnaps -> " << os.snaps << std::endl;
 
   } else if (k.find("MAP_") != string::npos) {
     //   "MAP_"
@@ -319,52 +329,39 @@ try {
 }
 
 
-bufferlist StoreTool::mapmapper(const string& prefix, bool do_value_dump)
+bufferlist StoreTool::mapmapper(const string& known_prfx, bool do_value_dump)
 {
   KeyValueDB::WholeSpaceIterator iter = db->get_wholespace_iterator();
 
-  if (prefix.empty())
+  if (known_prfx.empty())
     iter->seek_to_first();
   else
-    iter->seek_to_first(prefix);
+    iter->seek_to_first(known_prfx);
 
   bufferlist ret;
 
   while (iter->valid()) {
-    pair<string, string> rk = iter->raw_key();
-    if (!prefix.empty() && (rk.first != prefix))
+    // pair<string, string> rk = iter->raw_key();
+    auto [prefix, key] = iter->raw_key();
+    if (!known_prfx.empty() && (prefix != known_prfx))
       break;
 
     // related to the snap mapper?
-    if (!snapmapper_entry(rk.second)) {
-      std::cout << "NOT RLVNT  [" << rk.first << "]\t[" << rk.second << "]\n";
+    if (!snapmapper_entry(key)) {
+      std::cout << "NOT RLVNT [" << key << "]\n";
       iter->next();
       continue;
     }
 
-    std::cout << url_escape(rk.first) << "\t" << url_escape(rk.second);
     // if (out)
-    std::cout << "[" << rk.first << "]\t[" << rk.second << "]\n";
-    //     if (do_crc) {
-    //       bufferlist bl;
-    //       bl.append(rk.first);
-    //       bl.append(rk.second);
-    //       bl.append(iter->value());
-    //
-    //       crc = bl.crc32c(crc);
-    //       if (out) {
-    //         *out << "\t" << bl.crc32c(0);
-    //       }
-    //     }
-    //     if (out)
-    //       *out << std::endl;
+    std::cout << "[" << key << "]\n";
     if (do_value_dump) {
       bufferptr bp = iter->value_as_ptr();
       bufferlist this_value;
       this_value.append(bp);
 
       ostringstream os1;
-      parse_mp_kv(rk.second, this_value, &os1, nullptr);
+      parse_mp_kv(key, this_value, &os1, nullptr);
       std::cout << os1.str() << std::endl;
 
       ostringstream os;
@@ -390,7 +387,8 @@ void StoreTool::corrupt_snaps(string keypart)
     pair<string, string> rk = iter->raw_key();
 
     // is this the one we wish to corrupt?
-    if ((rk.second.find("SNA_") != string::npos) && (rk.second.find(keypart) != string::npos)) {
+    if ((rk.second.find("SNA_") != string::npos) &&
+	(rk.second.find(keypart) != string::npos)) {
       /*
 
 	      the key should look like this:
@@ -408,8 +406,38 @@ void StoreTool::corrupt_snaps(string keypart)
 
       // better do RE here, but for now:
       auto mod_s = rk.second;
-      mod_s.resize(mod_s.find("_", mod_s.find("_", mod_s.find("SNA_") + 4) + 1) +
-		   1);
+      mod_s.resize(
+	mod_s.find("_", mod_s.find("_", mod_s.find("SNA_") + 4) + 1) + 1);
+      set(rk.first, mod_s, bl);
+      rm(rk.first, rk.second);
+      break;
+    }
+    iter->next();
+  }
+}
+
+void StoreTool::corrupt_obj_entries(string keypart)
+{
+  KeyValueDB::WholeSpaceIterator iter = db->get_wholespace_iterator();
+  iter->seek_to_first("p");
+
+  bufferlist ret;
+
+  while (iter->valid()) {
+    pair<string, string> rk = iter->raw_key();
+
+    // is this the one we wish to corrupt?
+    if ((rk.second.find("OBJ_") != string::npos) &&
+	(rk.second.find(keypart) != string::npos)) {
+
+      std::cout << "corrupting OBJ_ entry " << rk.second << std::endl;
+      // get the value
+      bufferptr bp = iter->value_as_ptr();
+      bufferlist bl;
+      bl.append(bp);
+
+      auto mod_s = rk.second;
+      mod_s.resize(mod_s.find("OBJ_") + 3);
       set(rk.first, mod_s, bl);
       rm(rk.first, rk.second);
       break;
