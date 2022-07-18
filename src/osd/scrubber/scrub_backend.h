@@ -46,6 +46,7 @@
 #include <string_view>
 
 #include "common/LogClient.h"
+#include "include/expected.hpp"
 #include "osd/OSDMap.h"
 #include "common/scrub_types.h"
 #include "osd/osd_types_fmt.h"
@@ -113,9 +114,16 @@ struct ScrubBeListener {
 
 struct SnapMapperAccessor {
   virtual int get_snaps(const hobject_t& hoid,
-                        std::set<snapid_t>* snaps_set) const = 0;
+			std::set<snapid_t>* snaps_set) const = 0;
+  virtual tl::expected<std::set<snapid_t>, int> get_snaps(
+    const hobject_t& hoid) const = 0;
   virtual ~SnapMapperAccessor() = default;
 };
+
+/*
+return tl::unexpected(info->last_error);
+
+*/
 
 enum class snap_mapper_op_t {
   add,
@@ -543,6 +551,13 @@ class ScrubBackend {
     const hobject_t& hoid,
     const SnapSet& snapset,
     SnapMapperAccessor& snaps_getter);
+
+  /**
+   * check a set of snap-ids agains the existing snaps. Returns
+   * the first "should not exist" snap-id, or none if all are fine.
+   */
+  std::optional<snapid_t> check_for_rmed_snaps(
+    const std::set<snapid_t>& snaps);
 
   // accessing the PG backend for this translation service
   uint64_t logical_to_ondisk_size(uint64_t logical_size) const;

@@ -83,5 +83,6 @@ public:
                              std::ostream* out*/);
 
   void corrupt_snaps(std::string keypart);
-
+  void corrupt_obj_entries(std::string keypart);
+  void corrupt_snap_v2(std::string keypart, int snp);
 };

@@ -50,6 +50,9 @@ struct fmt::formatter<std::vector<A>> {
   template <typename FormatContext>
   auto format(const std::vector<A>& l, FormatContext& ctx)
   {
+    if (l.empty()) {
+      return fmt::format_to(ctx.out(), "[]");;
+    }
     std::string_view sep = "[";
     for (const auto& e : l) {
       fmt::format_to(ctx.out(), "{}{}", sep, e);
