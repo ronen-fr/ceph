@@ -208,9 +208,8 @@ tl::expected<std::set<snapid_t>, int> TestScrubber::get_snaps(
   auto r = get_snaps(oid, &snapset);
   if (r >= 0) {
     return snapset;
-  } else {
-    return tl::make_unexpected(r);
   }
+  return tl::make_unexpected(r);
 }
 
 
