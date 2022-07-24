@@ -46,8 +46,8 @@
 #include <string_view>
 
 #include "common/LogClient.h"
+#include "osd/mapper_access.h"
 #include "osd/OSDMap.h"
-#include "common/scrub_types.h"
 #include "osd/osd_types_fmt.h"
 
 #include "osd/scrubber_common.h"
@@ -99,37 +99,7 @@ struct ScrubBeListener {
   virtual ~ScrubBeListener() = default;
 };
 
-
-/*
- * snaps-related aux structures:
- * the scrub-backend scans the snaps associated with each scrubbed object, and
- * fixes corrupted snap-sets.
- * The actual access to the PG's snap_mapper, and the actual I/O transactions,
- * are performed by the main PgScrubber object.
- * the following aux structures are used to facilitate the required exchanges:
- * - pre-fix snap-sets are accessed by the scrub-backend, and:
- * - a list of fix-orders (either insert or replace operations) are returned
- */
-
-struct SnapMapperAccessor {
-  virtual int get_snaps(const hobject_t& hoid,
-                        std::set<snapid_t>* snaps_set) const = 0;
-  virtual ~SnapMapperAccessor() = default;
-};
-
-enum class snap_mapper_op_t {
-  add,
-  update,
-};
-
-struct snap_mapper_fix_t {
-  snap_mapper_op_t op;
-  hobject_t hoid;
-  std::set<snapid_t> snaps;
-  std::set<snapid_t> wrong_snaps;  // only collected & returned for logging sake
-};
-
-// and - as the main scrub-backend entry point - scrub_compare_maps() - must
+// As the main scrub-backend entry point - scrub_compare_maps() - must
 // be able to return both a list of snap fixes and a list of inconsistent
 // objects:
 struct objs_fix_list_t {
