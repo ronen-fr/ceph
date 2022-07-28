@@ -225,6 +225,8 @@ private:
   std::string to_raw_key(
     const std::pair<snapid_t, hobject_t> &to_map);
 
+  std::string to_raw_key(snapid_t snap, const hobject_t& clone);
+
   std::pair<std::string, ceph::buffer::list> to_raw(
     const std::pair<snapid_t, hobject_t> &to_map);
 
@@ -233,9 +235,17 @@ private:
   static std::pair<snapid_t, hobject_t> from_raw(
     const std::pair<std::string, ceph::buffer::list> &image);
 
+  static std::pair<snapid_t, hobject_t> from_raw(ceph::buffer::list& image);
+
   std::string to_object_key(const hobject_t &hoid);
 
   int get_snaps(const hobject_t &oid, object_snaps *out);
+  std::set<std::string> expected_mapping_keys(const hobject_t& clone,
+					      std::set<snapid_t> snaps);
+
+  tl::expected<std::set<snapid_t>, int> get_mapping_entries(
+    const hobject_t& clone,
+    std::set<snapid_t> snaps);
 
   void set_snaps(
     const hobject_t &oid,
@@ -334,6 +344,10 @@ public:
 
   // alternative interface to the same data:
   tl::expected<std::set<snapid_t>, int> get_snaps(const hobject_t& hoid);
+
+  /// a get_snaps() that checks for the existence
+  /// of the corresponding mapping ('SNA_') entries
+  tl::expected<std::set<snapid_t>, int> get_verified_snaps(const hobject_t& hoid);
 };
 WRITE_CLASS_ENCODER(SnapMapper::object_snaps)
 WRITE_CLASS_ENCODER(SnapMapper::Mapping)

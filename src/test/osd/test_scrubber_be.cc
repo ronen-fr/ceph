@@ -147,6 +147,11 @@ class TestScrubber : public ScrubBeListener, public SnapMapperAccessor {
 		std::set<snapid_t>* snaps_set) const final;
   tl::expected<std::set<snapid_t>, int> get_snaps(
     const hobject_t& oid) const final;
+  tl::expected<std::set<snapid_t>, int> get_verified_snaps(
+    const hobject_t& oid) const final {
+// RRR for now
+        return get_snaps(oid);
+    }
 
   void set_snaps(const hobject_t& hoid, const std::vector<snapid_t>& snaps)
   {

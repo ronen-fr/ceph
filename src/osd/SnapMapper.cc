@@ -13,6 +13,9 @@
  */
 
 #include "SnapMapper.h"
+#include <fmt/ranges.h>
+#include "osd/osd_types_fmt.h"
+
 
 #define dout_context cct
 #define dout_subsys ceph_subsys_osd
@@ -97,6 +100,7 @@ int OSDriver::get_next(
   }
 }
 
+/// \todo replace with a fast 'to char' implementation
 string SnapMapper::get_prefix(int64_t pool, snapid_t snap)
 {
   char buf[100];
@@ -112,6 +116,11 @@ string SnapMapper::to_raw_key(
   const pair<snapid_t, hobject_t> &in)
 {
   return get_prefix(in.second.pool, in.first) + shard_prefix + in.second.to_str();
+}
+
+std::string SnapMapper::to_raw_key(snapid_t snap, const hobject_t& clone)
+{
+  return get_prefix(clone.pool, snap) + shard_prefix + clone.to_str();
 }
 
 pair<string, bufferlist> SnapMapper::to_raw(
@@ -131,6 +140,15 @@ pair<snapid_t, hobject_t> SnapMapper::from_raw(
   Mapping map;
   bufferlist bl(image.second);
   auto bp = bl.cbegin();
+  decode(map, bp);
+  return make_pair(map.snap, map.hoid);
+}
+
+std::pair<snapid_t, hobject_t> SnapMapper::from_raw(ceph::buffer::list& image)
+{
+  using ceph::decode;
+  Mapping map;
+  auto bp = image.cbegin();
   decode(map, bp);
   return make_pair(map.snap, map.hoid);
 }
@@ -209,6 +227,7 @@ tl::expected<std::set<snapid_t>, int> SnapMapper::get_snaps(
   ceph_assert(check(oid));
   set<string> keys;
   keys.insert(to_object_key(oid));
+  dout(20) << fmt::format("{}: key string: {} oid:{}", __func__, keys, oid) << dendl;
 
   map<string, bufferlist> got;
   int r = backend.get_keys(keys, &got);
@@ -230,6 +249,90 @@ tl::expected<std::set<snapid_t>, int> SnapMapper::get_snaps(
     ceph_assert(!cct->_conf->osd_debug_verify_snaps);
   }
   return out.snaps;
+}
+
+std::set<std::string> SnapMapper::expected_mapping_keys(const hobject_t& clone, std::set<snapid_t> snaps)
+{
+  std::set<std::string> keys;
+  for (auto snap : snaps) {
+    keys.insert(to_raw_key(snap, clone));
+  }
+  dout(20) << fmt::format("{}: clone:{} snaps:{} -> keys: {}",
+			  __func__,
+			  clone,
+			  snaps,
+			  keys)
+	   << dendl;
+  return keys;
+}
+
+
+tl::expected<std::set<snapid_t>, int> SnapMapper::get_mapping_entries(
+  const hobject_t& clone,
+  std::set<snapid_t> snaps)
+{
+  // we have the clone oid and the set of snaps relevant to this clone.
+  // Let's construct all expected SNA_ entries, and fetch them.
+  // For now - only for our shard.
+  auto mapping_keys = expected_mapping_keys(clone, snaps);
+  map<string, bufferlist> kvmap;
+  auto r = backend.get_keys(mapping_keys, &kvmap);
+  if (r < 0) {
+    dout(10) << fmt::format("{}: backend error ({}) for clone {}",
+			    __func__,
+			    r,
+			    clone)
+	     << dendl;
+    return tl::unexpected(r);
+  }
+
+  std::set<snapid_t> snaps_from_mapping;
+  for (auto& [k, v] : kvmap) {
+    dout(20) << __func__ << " " << clone << " " << k << dendl;
+    // extract the clone ID from the value fetched for an SNA mapping key
+    auto [sn, obj] = SnapMapper::from_raw(v);
+    if (obj != clone) {
+      dout(20) << __func__ << " " << clone << " " << k << " "
+	       << "doesn't match " << obj << dendl;
+      // continue;
+    }
+    snaps_from_mapping.insert(sn);
+  }
+  dout(20) << fmt::format("{}: clone:{} -> snaps: {} snaps in mappings:{} ",
+			  __func__,
+			  clone,
+			  snaps,
+			  snaps_from_mapping)
+	   << dendl;
+  return snaps_from_mapping;
+}
+
+tl::expected<std::set<snapid_t>, int> SnapMapper::get_verified_snaps(
+  const hobject_t& hoid)
+{
+  auto obj_snaps = get_snaps(hoid);
+  if (!obj_snaps) {
+    return obj_snaps;
+  }
+
+  auto mapping_snaps = get_mapping_entries(hoid, *obj_snaps);
+  if (!mapping_snaps) {
+    tl::unexpected(17);	 // replace with proper error code
+  }
+
+  if (*mapping_snaps != *obj_snaps) {
+    dout(10) << fmt::format(
+		  "{}: hoid:{} -> mapper internal inconsistency ({} vs {})",
+		  __func__,
+		  hoid,
+		  *obj_snaps,
+		  *mapping_snaps)
+	     << dendl;
+    // return tl::unexpected(-EIO);
+  }
+  dout(10) << fmt::format("{}: snaps for {}: {}", __func__, hoid, *obj_snaps)
+           << dendl;
+  return *obj_snaps;
 }
 
 
@@ -357,6 +460,8 @@ int SnapMapper::get_next_objects_to_trim(
   // trim the snaptrim queue
   ceph_assert(max > 0);
   int r = 0;
+
+  /// \todo can we cache the prefixes set for a specific PG?
   for (set<string>::iterator i = prefixes.begin();
        i != prefixes.end() && out->size() < max && r == 0;
        ++i) {

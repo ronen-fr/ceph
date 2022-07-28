@@ -102,10 +102,8 @@ struct BuildMap;
  * std::vector: no need to pre-reserve.
  */
 class ReplicaReservations {
-  using OrigSet = decltype(std::declval<PG>().get_actingset());
-
   PG* m_pg;
-  OrigSet m_acting_set;
+  std::set<pg_shard_t> m_acting_set;
   OSDService* m_osds;
   std::vector<pg_shard_t> m_waited_for_peers;
   std::vector<pg_shard_t> m_reserved_peers;
@@ -559,6 +557,12 @@ class PgScrubber : public ScrubPgIF,
     const hobject_t& hoid) const final
   {
     return m_pg->snap_mapper.get_snaps(hoid);
+  }
+
+  tl::expected<std::set<snapid_t>, int> get_verified_snaps(
+    const hobject_t& hoid) const final
+  {
+    return m_pg->snap_mapper.get_verified_snaps(hoid);
   }
 
   void log_cluster_warning(const std::string& warning) const final;
