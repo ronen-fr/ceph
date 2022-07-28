@@ -1795,6 +1795,8 @@ std::vector<snap_mapper_fix_t> ScrubBackend::scan_snaps(
 	continue;
       }
 
+      // the 'hoid' is a clone hoid at this point. The 'snapset' below was taken
+      // from the corresponding head hoid.
       auto maybe_fix_order = scan_object_snaps(hoid, snapset, snaps_getter);
       if (maybe_fix_order) {
         out_orders.push_back(std::move(*maybe_fix_order));
@@ -1851,7 +1853,7 @@ std::optional<snap_mapper_fix_t> ScrubBackend::scan_object_snaps(
   }
 
   // check/fix snapset. Should match what we have in the object.
-  auto cur_snaps = snaps_getter.get_snaps(hoid);
+  auto cur_snaps = snaps_getter.get_verified_snaps(hoid);
 
   // three possible outcomes:
   // 1) cur_snaps == obj_snaps: nothing to do
@@ -1870,17 +1872,17 @@ std::optional<snap_mapper_fix_t> ScrubBackend::scan_object_snaps(
   }
 
   // make sure no removed snap is mentioned in the object's snapset
-  if (cur_snaps) {
-    if (auto rmed_snap = check_for_rmed_snaps(*cur_snaps); rmed_snap) {
-      auto errmsg =
-	fmt::format("{}: removed snap {} for {} appears in the SnapMapper",
-		    __func__,
-		    *rmed_snap,
-		    hoid);
-      derr << errmsg << dendl;
-      dout(1) << errmsg << dendl;
-    }
-  }
+//   if (cur_snaps) {
+//     if (auto rmed_snap = check_for_rmed_snaps(*cur_snaps); rmed_snap) {
+//       auto errmsg =
+// 	fmt::format("{}: removed snap {} for {} appears in the SnapMapper",
+// 		    __func__,
+// 		    *rmed_snap,
+// 		    hoid);
+//       derr << errmsg << dendl;
+//       dout(1) << errmsg << dendl;
+//     }
+//   }
 
   if (*cur_snaps == obj_snaps) {
     dout(20) << fmt::format("{}: {}: snapset match SnapMapper's ({})",

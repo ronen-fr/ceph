@@ -117,6 +117,8 @@ struct SnapMapperAccessor {
 			std::set<snapid_t>* snaps_set) const = 0;
   virtual tl::expected<std::set<snapid_t>, int> get_snaps(
     const hobject_t& hoid) const = 0;
+  virtual tl::expected<std::set<snapid_t>, int> get_verified_snaps(
+    const hobject_t& hoid) const = 0;
   virtual ~SnapMapperAccessor() = default;
 };
 
