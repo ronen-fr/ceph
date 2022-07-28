@@ -13,6 +13,9 @@
  */
 
 #include "SnapMapper.h"
+#include <fmt/ranges.h>
+#include "osd/osd_types_fmt.h"
+
 
 #define dout_context cct
 #define dout_subsys ceph_subsys_osd
@@ -97,6 +100,7 @@ int OSDriver::get_next(
   }
 }
 
+/// \todo replace with a fast 'to char' implementation
 string SnapMapper::get_prefix(int64_t pool, snapid_t snap)
 {
   char buf[100];
@@ -109,19 +113,22 @@ string SnapMapper::get_prefix(int64_t pool, snapid_t snap)
 }
 
 string SnapMapper::to_raw_key(
-  const pair<snapid_t, hobject_t> &in)
+  const pair<snapid_t, hobject_t> &in) const
 {
   return get_prefix(in.second.pool, in.first) + shard_prefix + in.second.to_str();
 }
 
+std::string SnapMapper::to_raw_key(snapid_t snap, const hobject_t& clone) const
+{
+  return get_prefix(clone.pool, snap) + shard_prefix + clone.to_str();
+}
+
 pair<string, bufferlist> SnapMapper::to_raw(
-  const pair<snapid_t, hobject_t> &in)
+  const pair<snapid_t, hobject_t>& in) const
 {
   bufferlist bl;
   encode(Mapping(in), bl);
-  return make_pair(
-    to_raw_key(in),
-    bl);
+  return make_pair(to_raw_key(in), bl);
 }
 
 pair<snapid_t, hobject_t> SnapMapper::from_raw(
@@ -135,12 +142,21 @@ pair<snapid_t, hobject_t> SnapMapper::from_raw(
   return make_pair(map.snap, map.hoid);
 }
 
+std::pair<snapid_t, hobject_t> SnapMapper::from_raw(ceph::buffer::list& image)
+{
+  using ceph::decode;
+  Mapping map;
+  auto bp = image.cbegin();
+  decode(map, bp);
+  return make_pair(map.snap, map.hoid);
+}
+
 bool SnapMapper::is_mapping(const string &to_test)
 {
   return to_test.substr(0, MAPPING_PREFIX.size()) == MAPPING_PREFIX;
 }
 
-string SnapMapper::to_object_key(const hobject_t &hoid)
+string SnapMapper::to_object_key(const hobject_t &hoid) const
 {
   return OBJECT_PREFIX + shard_prefix + hoid.to_str();
 }
@@ -174,7 +190,7 @@ bool SnapMapper::check(const hobject_t &hoid) const
 
 int SnapMapper::get_snaps(
   const hobject_t &oid,
-  object_snaps *out)
+  object_snaps *out) const
 {
   ceph_assert(check(oid));
   set<string> keys;
@@ -203,22 +219,26 @@ int SnapMapper::get_snaps(
   return 0;
 }
 
-tl::expected<std::set<snapid_t>, int> SnapMapper::get_snaps(
-  const hobject_t& oid)
+tl::expected<std::set<snapid_t>, get_snaps_result_t> SnapMapper::get_snaps(
+  const hobject_t& oid) const
 {
   ceph_assert(check(oid));
   set<string> keys;
   keys.insert(to_object_key(oid));
+  dout(20) << fmt::format("{}: key string: {} oid:{}", __func__, keys, oid)
+	   << dendl;
 
   map<string, bufferlist> got;
   int r = backend.get_keys(keys, &got);
   if (r < 0) {
     dout(20) << __func__ << " " << oid << " got err " << r << dendl;
-    return tl::unexpected(r);
+    return tl::unexpected(
+      get_snaps_result_t{get_snaps_code_t::BACKEND_ERROR, r});
   }
   if (got.empty()) {
     dout(20) << __func__ << " " << oid << " got.empty()" << dendl;
-    return tl::unexpected(-ENOENT);
+    return tl::unexpected(
+      get_snaps_result_t{get_snaps_code_t::NOT_FOUND, -ENOENT});
   }
 
   object_snaps out;
@@ -230,6 +250,97 @@ tl::expected<std::set<snapid_t>, int> SnapMapper::get_snaps(
     ceph_assert(!cct->_conf->osd_debug_verify_snaps);
   }
   return out.snaps;
+}
+
+std::set<std::string> SnapMapper::expected_mapping_keys(
+  const hobject_t& clone,
+  const std::set<snapid_t>& snaps) const
+{
+  std::set<std::string> keys;
+  std::transform(cbegin(snaps),
+		 cend(snaps),
+		 std::inserter(keys, begin(keys)),
+		 [&](auto sp) { return to_raw_key(sp, clone); });
+
+  //   for (auto snap : snaps) {
+  //     keys.insert(to_raw_key(snap, clone));
+  //   }
+  dout(20) << fmt::format("{}: clone:{} snaps:{} -> keys: {}",
+			  __func__,
+			  clone,
+			  snaps,
+			  keys)
+	   << dendl;
+  return keys;
+}
+
+tl::expected<std::set<snapid_t>, get_snaps_result_t>
+SnapMapper::get_mapping_entries(const hobject_t& clone,
+				std::set<snapid_t> snaps) const
+{
+  // we have the clone oid and the set of snaps relevant to this clone.
+  // Let's construct all expected SNA_ entries, and fetch them.
+  // For now - only for our shard.
+  auto mapping_keys = expected_mapping_keys(clone, snaps);
+  map<string, bufferlist> kvmap;
+  auto r = backend.get_keys(mapping_keys, &kvmap);
+  if (r < 0) {
+    dout(10) << fmt::format("{}: backend error ({}) for clone {}",
+			    __func__,
+			    r,
+			    clone)
+	     << dendl;
+    return tl::unexpected(
+      get_snaps_result_t{get_snaps_code_t::BACKEND_ERROR, r});
+  }
+
+  std::set<snapid_t> snaps_from_mapping;
+  for (auto& [k, v] : kvmap) {
+    dout(20) << __func__ << " " << clone << " " << k << dendl;
+    // extract the clone ID from the value fetched for an SNA mapping key
+    auto [sn, obj] = SnapMapper::from_raw(v);
+    if (obj != clone) {
+      dout(20) << __func__ << " " << clone << " " << k << " "
+	       << "doesn't match " << obj << dendl;
+      // continue;
+    }
+    snaps_from_mapping.insert(sn);
+  }
+  dout(20) << fmt::format("{}: clone:{} -> snaps: {} snaps in mappings:{} ",
+			  __func__,
+			  clone,
+			  snaps,
+			  snaps_from_mapping)
+	   << dendl;
+  return snaps_from_mapping;
+}
+
+tl::expected<std::set<snapid_t>, get_snaps_result_t>
+SnapMapper::get_verified_snaps(const hobject_t& hoid) const
+{
+  auto obj_snaps = get_snaps(hoid);
+  if (!obj_snaps) {
+    return obj_snaps;
+  }
+
+  auto mapping_snaps = get_mapping_entries(hoid, *obj_snaps);
+  if (!mapping_snaps) {
+    return tl::unexpected(get_snaps_result_t{get_snaps_code_t::NOT_FOUND});
+  }
+
+  if (*mapping_snaps != *obj_snaps) {
+    dout(10) << fmt::format(
+		  "{}: hoid:{} -> mapper internal inconsistency ({} vs {})",
+		  __func__,
+		  hoid,
+		  *obj_snaps,
+		  *mapping_snaps)
+	     << dendl;
+    return tl::unexpected(get_snaps_result_t{get_snaps_code_t::INCONSISTENT});
+  }
+  dout(10) << fmt::format("{}: snaps for {}: {}", __func__, hoid, *obj_snaps)
+	   << dendl;
+  return *obj_snaps;
 }
 
 
@@ -357,6 +468,8 @@ int SnapMapper::get_next_objects_to_trim(
   // trim the snaptrim queue
   ceph_assert(max > 0);
   int r = 0;
+
+  /// \todo can we cache the prefixes set for a specific PG?
   for (set<string>::iterator i = prefixes.begin();
        i != prefixes.end() && out->size() < max && r == 0;
        ++i) {
@@ -433,7 +546,7 @@ int SnapMapper::_remove_oid(
 
 int SnapMapper::get_snaps(
   const hobject_t &oid,
-  std::set<snapid_t> *snaps)
+  std::set<snapid_t> *snaps) const
 {
   ceph_assert(check(oid));
   object_snaps out;
