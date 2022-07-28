@@ -1797,6 +1797,8 @@ std::vector<snap_mapper_fix_t> ScrubBackend::scan_snaps(
 	continue;
       }
 
+      // the 'hoid' is a clone hoid at this point. The 'snapset' below was taken
+      // from the corresponding head hoid.
       auto maybe_fix_order = scan_object_snaps(hoid, snapset, snaps_getter);
       if (maybe_fix_order) {
         out_orders.push_back(std::move(*maybe_fix_order));
@@ -1808,19 +1810,19 @@ std::vector<snap_mapper_fix_t> ScrubBackend::scan_snaps(
   return out_orders;
 }
 
-std::optional<snapid_t> ScrubBackend::check_for_rmed_snaps(
-  const std::set<snapid_t>& snaps)
-{
-  auto offending_snap =
-    std::find_if(begin(snaps), end(snaps), [&](const snapid_t& snap) {
-      return m_pool.info.is_removed_snap(snap);
-    });
-
-  if (offending_snap == end(snaps)) {
-    return std::nullopt;
-  }
-  return *offending_snap;
-}
+// std::optional<snapid_t> ScrubBackend::check_for_rmed_snaps(
+//   const std::set<snapid_t>& snaps)
+// {
+//   auto offending_snap =
+//     std::find_if(begin(snaps), end(snaps), [&](const snapid_t& snap) {
+//       return m_pool.info.is_removed_snap(snap);
+//     });
+// 
+//   if (offending_snap == end(snaps)) {
+//     return std::nullopt;
+//   }
+//   return *offending_snap;
+// }
 
 std::optional<snap_mapper_fix_t> ScrubBackend::scan_object_snaps(
   const hobject_t& hoid,
@@ -1841,48 +1843,68 @@ std::optional<snap_mapper_fix_t> ScrubBackend::scan_object_snaps(
   }
   set<snapid_t> obj_snaps{p->second.begin(), p->second.end()};
 
-  // make sure no removed snap is mentioned in the object's snapset
-  if (auto rmed_snap = check_for_rmed_snaps(obj_snaps); rmed_snap) {
-    auto errmsg =
-      fmt::format("{}: removed snap {} is mentioned in {}'s snap-set",
-		  __func__,
-		  *rmed_snap,
-		  hoid);
-    derr << errmsg << dendl;
-    dout(1) << errmsg << dendl;
-  }
+//   // make sure no removed snap is mentioned in the object's snapset
+//   if (auto rmed_snap = check_for_rmed_snaps(obj_snaps); rmed_snap) {
+//     auto errmsg =
+//       fmt::format("{}: removed snap {} is mentioned in {}'s snap-set",
+// 		  __func__,
+// 		  *rmed_snap,
+// 		  hoid);
+//     derr << errmsg << dendl;
+//     dout(1) << errmsg << dendl;
+//   }
 
   // check/fix snapset. Should match what we have in the object.
-  auto cur_snaps = snaps_getter.get_snaps(hoid);
+  auto cur_snaps = m_pool.info.is_tier()
+		     ? snaps_getter.get_snaps(hoid)
+		     : snaps_getter.get_verified_snaps(hoid);
 
-  // three possible outcomes:
+  // four possible outcomes:
   // 1) cur_snaps == obj_snaps: nothing to do
   // 2) snapmapper's idea of the object's snaps does not match the object's
   // 3) no mapping found for the object's snaps
+  // 4) the snapmapper set for this object is internally inconsistent (e.g.
+  //    the OBJ_ entries do not match the SNA_ entries)
+  // Note that the internal inconsistency is not verified for tiered pools.
 
-  if (!cur_snaps && cur_snaps.error() != -ENOENT) {
-    derr << __func__ << ": get_snaps returned "
-	 << cpp_strerror(cur_snaps.error()) << dendl;
-    ceph_abort();
-  }
 
   if (!cur_snaps) {
-    dout(10) << __func__ << " no snaps for " << hoid << ". Adding." << dendl;
-    return snap_mapper_fix_t{snap_mapper_op_t::add, hoid, obj_snaps, {}};
+    auto e = cur_snaps.error();
+    switch (e.code) {
+      case get_snaps_code_t::BACKEND_ERROR:
+	derr << __func__ << ": get_snaps returned "
+	     << cpp_strerror(e.backend_error) << " for " << hoid << dendl;
+	ceph_abort();
+
+      case get_snaps_code_t::NOT_FOUND:
+	dout(10) << __func__ << " no snaps for " << hoid << ". Adding."
+		 << dendl;
+	return snap_mapper_fix_t{snap_mapper_op_t::add, hoid, obj_snaps, {}};
+
+      case get_snaps_code_t::INCONSISTENT:
+      default:
+	dout(10) << __func__ << " inconsistent snapmapper data for " << hoid
+		 << ". Recreating." << dendl;
+	return snap_mapper_fix_t{snap_mapper_op_t::overwrite,
+				 hoid,
+				 obj_snaps,
+				 {}};
+    }
+    __builtin_unreachable();
   }
 
   // make sure no removed snap is mentioned in the object's snapset
-  if (cur_snaps) {
-    if (auto rmed_snap = check_for_rmed_snaps(*cur_snaps); rmed_snap) {
-      auto errmsg =
-	fmt::format("{}: removed snap {} for {} appears in the SnapMapper",
-		    __func__,
-		    *rmed_snap,
-		    hoid);
-      derr << errmsg << dendl;
-      dout(1) << errmsg << dendl;
-    }
-  }
+  //   if (cur_snaps) {
+  //     if (auto rmed_snap = check_for_rmed_snaps(*cur_snaps); rmed_snap) {
+  //       auto errmsg =
+  // 	fmt::format("{}: removed snap {} for {} appears in the SnapMapper",
+  // 		    __func__,
+  // 		    *rmed_snap,
+  // 		    hoid);
+  //       derr << errmsg << dendl;
+  //       dout(1) << errmsg << dendl;
+  //     }
+  //   }
 
   if (*cur_snaps == obj_snaps) {
     dout(20) << fmt::format("{}: {}: snapset match SnapMapper's ({})",
