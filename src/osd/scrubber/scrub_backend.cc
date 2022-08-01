@@ -1525,9 +1525,9 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
     if (!expected) {
       // If we couldn't read the head's snapset, just ignore clones
       if (head && !snapset) {
-        clog.error() << m_mode_desc << " " << m_pg_id << " TTTTT:" << m_pg_id
-                      << " " << soid
-                      << " : clone ignored due to missing snapset";
+	clog.error() << m_mode_desc << " " << m_pg_id
+		     << " " << soid
+		     << " : clone ignored due to missing snapset";
       } else {
         clog.error() << m_mode_desc << " " << m_pg_id << " " << soid
                       << " : is an unexpected clone";
@@ -1768,14 +1768,19 @@ std::vector<snap_mapper_fix_t> ScrubBackend::scan_snaps(
       // parse the SnapSet
       bufferlist bl;
       if (o.attrs.find(SS_ATTR) == o.attrs.end()) {
-        continue;
+	// no snaps for this head
+	continue;
       }
       bl.push_back(o.attrs[SS_ATTR]);
       auto p = bl.cbegin();
       try {
-        decode(snapset, p);
+	decode(snapset, p);
       } catch (...) {
-        continue;
+	dout(20) << fmt::format("{}: failed to decode the snapset ({})",
+				__func__,
+				hoid)
+		 << dendl;
+	continue;
       }
       head = hoid.get_head();
       continue;
@@ -1791,6 +1796,8 @@ std::vector<snap_mapper_fix_t> ScrubBackend::scan_snaps(
         continue;
       }
 
+      // the 'hoid' is a clone hoid at this point. The 'snapset' below was taken
+      // from the corresponding head hoid.
       auto maybe_fix_order = scan_object_snaps(hoid, snapset, snaps_getter);
       if (maybe_fix_order) {
         out_orders.push_back(std::move(*maybe_fix_order));
@@ -1807,7 +1814,10 @@ std::optional<snap_mapper_fix_t> ScrubBackend::scan_object_snaps(
   const SnapSet& snapset,
   SnapMapperAccessor& snaps_getter)
 {
+  using mapper_req_t = Scrub::mapper_req_t;
   // check and if necessary fix snap_mapper
+  dout(15) << fmt::format("{}: obj:{} snapset:{}", __func__, hoid, snapset)
+	   << dendl;
 
   auto p = snapset.clone_snaps.find(hoid.snap);
   if (p == snapset.clone_snaps.end()) {
@@ -1817,21 +1827,66 @@ std::optional<snap_mapper_fix_t> ScrubBackend::scan_object_snaps(
   }
   set<snapid_t> obj_snaps{p->second.begin(), p->second.end()};
 
-  set<snapid_t> cur_snaps;
-  int r = snaps_getter.get_snaps(hoid, &cur_snaps);
-  if (r != 0 && r != -ENOENT) {
-    derr << __func__ << ": get_snaps returned " << cpp_strerror(r) << dendl;
-    ceph_abort();
-  }
-  if (r == -ENOENT || cur_snaps != obj_snaps) {
+  // check/fix snapset. Should match what we have in the object.
+  auto cur_snaps = m_pool.info.is_tier()
+		     ? snaps_getter.get_snaps(hoid)
+		     : snaps_getter.get_verified_snaps(hoid);
 
-    // add this object to the list of snapsets that needs fixing. Note
-    // that we also collect the existing (bogus) list, for logging purposes
-    snap_mapper_op_t fixing_op =
-      (r == -ENOENT ? snap_mapper_op_t::add : snap_mapper_op_t::update);
-    return snap_mapper_fix_t{fixing_op, hoid, obj_snaps, cur_snaps};
+  // four possible outcomes:
+  // 1) cur_snaps == obj_snaps: nothing to do
+  // 2) snapmapper's idea of the object's snaps does not match the object's
+  // 3) no mapping found for the object's snaps
+  // 4) the snapmapper set for this object is internally inconsistent (e.g.
+  //    the OBJ_ entries do not match the SNA_ entries)
+  // Note that the internal inconsistency is not verified for tiered pools.
+
+
+  if (!cur_snaps) {
+    auto e = cur_snaps.error();
+    switch (e.code) {
+      case mapper_req_t::code_t::backend_error:
+	derr << __func__ << ": get_snaps returned "
+	     << cpp_strerror(e.backend_error) << " for " << hoid << dendl;
+	ceph_abort();
+
+      case mapper_req_t::code_t::not_found:
+	dout(10) << __func__ << " no snaps for " << hoid << ". Adding."
+		 << dendl;
+	return snap_mapper_fix_t{snap_mapper_op_t::add, hoid, obj_snaps, {}};
+
+      case mapper_req_t::code_t::inconsistent:
+      default:
+	dout(10) << __func__ << " inconsistent snapmapper data for " << hoid
+		 << ". Recreating." << dendl;
+	return snap_mapper_fix_t{snap_mapper_op_t::overwrite,
+				 hoid,
+				 obj_snaps,
+				 {}};
+    }
+    __builtin_unreachable();
   }
-  return std::nullopt;
+
+  if (*cur_snaps == obj_snaps) {
+    dout(20) << fmt::format("{}: {}: snapset match SnapMapper's ({})",
+			    __func__,
+			    hoid,
+			    obj_snaps)
+	     << dendl;
+    return std::nullopt;
+  }
+
+  // add this object to the list of snapsets that needs fixing. Note
+  // that we also collect the existing (bogus) list, for logging purposes
+  dout(20) << fmt::format("{}: obj {}: was: {} updating to: {}",
+			  __func__,
+			  hoid,
+			  *cur_snaps,
+			  obj_snaps)
+	   << dendl;
+  return snap_mapper_fix_t{snap_mapper_op_t::update,
+			   hoid,
+			   obj_snaps,
+			   *cur_snaps};
 }
 
 /*
