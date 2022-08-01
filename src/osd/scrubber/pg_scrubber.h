@@ -37,10 +37,8 @@ struct BuildMap;
  *  sorting) is better than boost::small_vec. And for std::vector: no need to pre-reserve.
  */
 class ReplicaReservations {
-  using OrigSet = decltype(std::declval<PG>().get_actingset());
-
   PG* m_pg;
-  OrigSet m_acting_set;
+  std::set<pg_shard_t> m_acting_set;
   OSDService* m_osds;
   std::vector<pg_shard_t> m_waited_for_peers;
   std::vector<pg_shard_t> m_reserved_peers;
@@ -192,8 +190,9 @@ ostream& operator<<(ostream& out, const scrub_flags_t& sf);
  * am forced to strongly decouple the state-machine implementation details from
  * the actual scrubbing code.
  */
-class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
-
+class PgScrubber : public ScrubPgIF,
+                   public ScrubMachineListener,
+                   public ScrubBeListener {
  public:
   explicit PgScrubber(PG* pg);
 
@@ -444,6 +443,12 @@ class PgScrubber : public ScrubPgIF, public ScrubMachineListener {
 
   utime_t scrub_begin_stamp;
   std::ostream& gen_prefix(std::ostream& out) const final;
+
+  /// facilitate scrub-backend access to SnapMapper mappings
+  Scrub::SnapMapReaderI& get_snap_mapper_accessor()
+  {
+    return m_pg->snap_mapper;
+  }
 
   void log_cluster_warning(const std::string& warning) const final;
 
