@@ -760,7 +760,9 @@ private:
 
   Scrub::MapsCollectionStatus m_maps_status;
 
-  omap_stat_t m_omap_stats = (const struct omap_stat_t){0};
+  void persist_scrub_results(inconsistent_objs_t&& all_errors);
+  void apply_snap_mapper_fixes(
+    const std::vector<Scrub::snap_mapper_fix_t>& fix_list);
 
   /// Maps from objects with errors to inconsistent peers
   HobjToShardSetMapping m_inconsistent;
