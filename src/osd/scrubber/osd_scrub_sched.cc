@@ -172,7 +172,7 @@ void ScrubQueue::register_with_osd(ScrubJobRef scrub_job,
 
 	if (state_at_entry != scrub_job->state) {
 	  lck.unlock();
-	  dout(5) << " scrub job state changed" << dendl;
+	  dout(5) << " scrub job state changed. Retrying." << dendl;
 	  // retry
 	  register_with_osd(scrub_job, suggested);
 	  break;
@@ -204,7 +204,14 @@ void ScrubQueue::register_with_osd(ScrubJobRef scrub_job,
       break;
   }
 
-  dout(10) << "pg(" << scrub_job->pgid << ") sched-state changed from "
+  dout(10) << fmt::format("pf[{}] sched-state changed from {} to {}",
+                          scrub_job->pgid,
+                          state_at_entry,
+                          scrub_job->state.load())
+           << dendl;
+
+  // RRR to rm:
+  dout(11) << "pg(" << scrub_job->pgid << ") sched-state changed from "
 	   << qu_state_text(state_at_entry) << " to "
 	   << qu_state_text(scrub_job->state)
 	   << " at: " << scrub_job->schedule.scheduled_at << dendl;
@@ -222,10 +229,9 @@ void ScrubQueue::update_job(ScrubJobRef scrub_job,
 ScrubQueue::sched_params_t ScrubQueue::determine_scrub_time(
   const requested_scrub_t& request_flags,
   const pg_info_t& pg_info,
-  const pool_opts_t pool_conf) const
+  const pool_opts_t& pool_conf) const
 {
   ScrubQueue::sched_params_t res;
-  dout(15) << ": requested_scrub_t: {}" <<  request_flags << dendl; 
 
   if (request_flags.must_scrub || request_flags.need_auto) {
 
@@ -234,8 +240,7 @@ ScrubQueue::sched_params_t ScrubQueue::determine_scrub_time(
     res.is_must = ScrubQueue::must_scrub_t::mandatory;
     // we do not need the interval data in this case
 
-  } else if (pg_info.stats.stats_invalid &&
-	     conf()->osd_scrub_invalid_stats) {
+  } else if (pg_info.stats.stats_invalid && conf()->osd_scrub_invalid_stats) {
     res.proposed_time = time_now();
     res.is_must = ScrubQueue::must_scrub_t::mandatory;
 
@@ -246,13 +251,12 @@ ScrubQueue::sched_params_t ScrubQueue::determine_scrub_time(
   }
 
   dout(15) << fmt::format(
-		": suggested: {} hist: {} v: {}/{} must: {} pool-min: {}",
-		res.proposed_time,
-		pg_info.history.last_scrub_stamp,
+		" suggested: {} hist: {} v:{}/{} must:{} pool-min:{} {}",
+		res.proposed_time, pg_info.history.last_scrub_stamp,
 		(bool)pg_info.stats.stats_invalid,
 		conf()->osd_scrub_invalid_stats,
 		(res.is_must == must_scrub_t::mandatory ? "y" : "n"),
-		res.min_interval)
+		res.min_interval, request_flags)
 	   << dendl;
   return res;
 }

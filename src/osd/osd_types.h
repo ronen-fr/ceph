@@ -6107,8 +6107,8 @@ struct ScrubMap {
   std::map<hobject_t,object> objects;
   eversion_t valid_through;
   eversion_t incr_since;
-  bool has_large_omap_object_errors:1;
-  bool has_omap_keys:1;
+  bool has_large_omap_object_errors;
+  bool has_omap_keys;
 
   void merge_incr(const ScrubMap &l);
   void clear_from(const hobject_t& start) {
@@ -6122,6 +6122,7 @@ struct ScrubMap {
     swap(objects, r.objects);
     swap(valid_through, r.valid_through);
     swap(incr_since, r.incr_since);
+    // RRR don't we care about 'has_large_omap_object_errors' and 'has_omap_keys'?
   }
 
   void encode(ceph::buffer::list& bl) const;

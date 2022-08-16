@@ -359,10 +359,7 @@ class PgScrubber : public ScrubPgIF,
 
   void rm_from_osd_scrubbing() final;
 
-  void on_primary_change(const requested_scrub_t& request_flags) final;
-
-  void on_maybe_registration_change(
-    const requested_scrub_t& request_flags) final;
+  void on_primary_change(std::string_view caller, const requested_scrub_t& request_flags) final;
 
   void scrub_requested(scrub_level_t scrub_level,
 		       scrub_type_t scrub_type,
