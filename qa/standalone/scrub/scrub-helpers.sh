@@ -259,6 +259,30 @@ function standard_scrub_cluster() {
 }
 
 
+function restart_scrub_osds() {
+    local dir=$1
+    local -n args=$2
+
+    local OSDS=${args['osds_num']:-"3"}
+    local extra_pars=${args['extras']}
+    local ceph_osd_args="--osd_deep_scrub_randomize_ratio=0 \
+            --osd_scrub_interval_randomize_ratio=0 \
+            --osd_scrub_backoff_ratio=0.0 \
+            --osd_pool_default_pg_autoscale_mode=off \
+            $extra_pars"
+
+    for osd in $(seq 0 $(expr $OSDS - 1))
+    do
+      run_osd $dir $osd $ceph_osd_args || return 1
+    done
+    wait_for_clean || return 1
+
+
+
+
+}
+
+
 # Start the cluster "nodes" and create a pool for testing - wpq version.
 #
 # A variant of standard_scrub_cluster() that selects the wpq scheduler and sets a value to

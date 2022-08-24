@@ -84,17 +84,21 @@ function TEST_truncated_sna_record() {
     #ceph osd unset nodeep-scrub || return 1
     #ceph osd unset noscrub || return 1
     #sleep 4
-    #ceph pg $pgid deep_scrub || return 1
-    pg_deep_scrub $pgid || return 1
+    ceph pg $pgid deep_scrub || return 1
+    #pg_deep_scrub $pgid || return 1
 
     # wait for the scrub to finish
     # fix
-    #sleep 4
+    sleep 2
+    ceph pg dump pgs
+    until grep -a -q -- "event: --^^^^---- ScrubFinished" $dir/osd.$osd.log ; do
+        sleep 0.2
+    done
     ceph pg dump pgs
     ceph osd set noscrub || return 1
     ceph osd set nodeep-scrub || return 1
 
-    sleep 5 # wait for the log to be flushed (and for the no-scrub to reach OSDs)
+    #sleep 5 # wait for the log to be flushed (and for the no-scrub to reach OSDs)
     grep -a -q -v "ERR" $dir/osd.$osd.log || return 1
 
     # kill the OSDs
