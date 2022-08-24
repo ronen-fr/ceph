@@ -49,7 +49,7 @@ function TEST_truncated_sna_record() {
         ['pool_name']="test"
     )
 
-    local extr_dbg=1
+    local extr_dbg=4
     (( extr_dbg > 1 )) && echo "Dir: $dir"
     standard_scrub_cluster $dir cluster_conf
     ceph tell osd.* config set osd_stats_update_period_not_scrubbing "1"
@@ -81,7 +81,7 @@ function TEST_truncated_sna_record() {
 
     # we aren't just waiting for the scrub to terminate, but also for the
     # logs to be published
-    sleep 2
+    sleep 10
     ceph pg dump pgs
     until grep -a -q -- "event: --^^^^---- ScrubFinished" $dir/osd.$osd.log ; do
         sleep 0.2
@@ -90,35 +90,36 @@ function TEST_truncated_sna_record() {
     ceph pg dump pgs
     ceph osd set noscrub || return 1
     ceph osd set nodeep-scrub || return 1
-    sleep 1
+    sleep 5
     grep -a -q -v "ERR" $dir/osd.$osd.log || return 1
 
     # kill the OSDs
     kill_daemons $dir TERM osd || return 1
 
-    (( extr_dbg >= 2 )) && bin/ceph-kvstore-tool bluestore-kv $dir/2 dump p 2> /dev/null > /tmp/oo2.dump
+    (( extr_dbg >= 2 )) && ceph-kvstore-tool bluestore-kv $dir/0 dump "p"
+    (( extr_dbg >= 2 )) && ceph-kvstore-tool bluestore-kv $dir/2 dump "p" | grep -a SNA_
     (( extr_dbg >= 2 )) && grep -a SNA_ /tmp/oo2.dump
-    (( extr_dbg >= 2 )) && bin/ceph-kvstore-tool bluestore-kv $dir/1 dump p 2> /dev/null > /tmp/oo1.dump
+    (( extr_dbg >= 2 )) && ceph-kvstore-tool bluestore-kv $dir/2 dump p 2> /dev/null
 
     for sdn in $(seq 0 $(expr $osdn - 1))
     do
         kvdir=$dir/$sdn
         echo "corrupting the SnapMapper DB of osd.$sdn (db: $kvdir)"
-        (( extr_dbg >= 3 )) && bin/ceph-kvstore-tool bluestore-kv $kvdir dump p 2> /dev/null >> /tmp/oooo$sdn.dump
+        (( extr_dbg >= 3 )) && ceph-kvstore-tool bluestore-kv $kvdir dump "p"
 
         # truncate the 'mapping' (SNA_) entry corresponding to the snap13 clone
-        KY=`bin/ceph-kvstore-tool bluestore-kv $kvdir dump p 2> /dev/null | grep -a -e 'SNA_[0-9]_0000000000000003_000000000000000' \
+        KY=`ceph-kvstore-tool bluestore-kv $kvdir dump p 2> /dev/null | grep -a -e 'SNA_[0-9]_0000000000000003_000000000000000' \
             | awk -e '{print $2;}'`
         (( extr_dbg >= 1 )) && echo "SNA key: $KY" | cat -v
 
         tmp_fn1=`mktemp -p /tmp --suffix="_the_val"`
         (( extr_dbg >= 1 )) && echo "Value dumped in: $tmp_fn1"
-        bin/ceph-kvstore-tool bluestore-kv $kvdir get p "$KY" out $tmp_fn1 2> /dev/null
+        ceph-kvstore-tool bluestore-kv $kvdir get p "$KY" out $tmp_fn1 2> /dev/null
         (( extr_dbg >= 2 )) && od -xc $tmp_fn1
 
         NKY=${KY:0:-30}
-        bin/ceph-kvstore-tool bluestore-kv $kvdir rm p "$KY" 2> /dev/null
-        bin/ceph-kvstore-tool bluestore-kv $kvdir set p "$NKY" in $tmp_fn1 2> /dev/null
+        ceph-kvstore-tool bluestore-kv $kvdir rm "p" "$KY" 2> /dev/null
+        ceph-kvstore-tool bluestore-kv $kvdir set "p" "$NKY" in $tmp_fn1 2> /dev/null
 
         (( extr_dbg >= 1 )) || rm $tmp_fn1
     done
