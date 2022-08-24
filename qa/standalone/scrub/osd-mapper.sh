@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # -*- mode:text; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 # vim: ts=8 sw=2 smarttab
-
-# /home/ronen-fr/.vscode-server/data/User/globalStorage/buenon.scratchpads/scratchpads/7475955ad6cf860243c5f86cedf1cae6/scratch2.txt
-
+#
 # test the handling of a corrupted SnapMapper DB by Scrub
 
 source $CEPH_ROOT/qa/standalone/ceph-helpers.sh
@@ -32,14 +30,13 @@ function make_a_clone()
 {
   #turn off '-x' (but remember previous state)
   local saved_echo_flag=${-//[^x]/}
-  set -x
+  set +x
   local pool=$1
   local obj=$2
-  echo $RANDOM | rados -p $poolname put $obj - || return 1
-
+  echo $RANDOM | rados -p $pool put $obj - || return 1
   shift 2
   for snap in $@ ; do
-    rados -p $poolname mksnap $snap || return 1
+    rados -p $pool mksnap $snap || return 1
   done
   if [[ -n "$saved_echo_flag" ]]; then set -x; fi
 }
@@ -52,24 +49,26 @@ function TEST_truncated_sna_record() {
         ['pool_name']="test"
     )
 
-    echo "RRR Dir: $dir"
+    local extr_dbg=1
+    (( extr_dbg > 1 )) && echo "Dir: $dir"
     standard_scrub_cluster $dir cluster_conf
-    ceph osd set noscrub || return 1
-    ceph osd set nodeep-scrub || return 1
-    sleep 3 # the 'noscrub' command takes a long time to reach the OSDs
+    ceph tell osd.* config set osd_stats_update_period_not_scrubbing "1"
+    ceph tell osd.* config set osd_stats_update_period_scrubbing "1"
+    #ceph osd set noscrub || return 1
+    #ceph osd set nodeep-scrub || return 1
+    #sleep 3 # the 'noscrub' command takes a long time to reach the OSDs
 
     local osdn=${cluster_conf['osds_num']}
     local poolid=${cluster_conf['pool_id']}
+    echo "Pool id: $poolid"
     local poolname=${cluster_conf['pool_name']}
+    echo "Pool name: $poolname"
     local objname="objxxx"
     # create an object and clone it
     make_a_clone $poolname $objname snap01 snap02 || return 1
     make_a_clone $poolname $objname snap13 || return 1
     make_a_clone $poolname $objname snap24 snap25 || return 1
     echo $RANDOM | rados -p $poolname put $objname - || return 1
-
-    echo "CEPH_OSD_ARGS: $CEPH_OSD_ARGS"
-    echo "CEPH_ARGS: $CEPH_ARGS"
 
     #identify the PG and the primary OSD
     local pgid=`ceph --format=json-pretty osd map $poolname $objname | jq -r '.pgid'`
@@ -79,161 +78,85 @@ function TEST_truncated_sna_record() {
     set_query_debug $pgid
 
     # verify the existence of these clones
-    rados --format json-pretty -p $poolname listsnaps $objname
+    (( extr_dbg >= 1 )) && rados --format json-pretty -p $poolname listsnaps $objname
 
     # scrub the PG (todo - use lines 481-.. from qa/standalone/scrub/osd-scrub-test.sh)
-    ceph osd unset noscrub || return 1
-    ceph osd unset nodeep-scrub || return 1
-    sleep 4
-    ceph pg $pgid deep_scrub || return 1
+    #ceph osd unset nodeep-scrub || return 1
+    #ceph osd unset noscrub || return 1
+    #sleep 4
+    #ceph pg $pgid deep_scrub || return 1
+    pg_deep_scrub $pgid || return 1
 
     # wait for the scrub to finish
     # fix
-    sleep 4
+    #sleep 4
     ceph pg dump pgs
     ceph osd set noscrub || return 1
     ceph osd set nodeep-scrub || return 1
-    sleep 3 # the 'noscrub' command takes a long time to reach the OSDs
 
-    sleep 10
+    sleep 5 # wait for the log to be flushed (and for the no-scrub to reach OSDs)
     grep -a -q -v "ERR" $dir/osd.$osd.log || return 1
 
     # kill the OSDs
     kill_daemons $dir TERM osd || return 1
 
-    bin/ceph-kvstore-tool bluestore-kv $dir/2 dump p 2> /dev/null > /tmp/oo2.dump
-    echo "RRR Dump: /tmp/oo2.dump"
-    grep -a SNA_ /tmp/oo2.dump
-    bin/ceph-kvstore-tool bluestore-kv $dir/1 dump p 2> /dev/null > /tmp/oo1.dump
+    (( extr_dbg >= 2 )) && bin/ceph-kvstore-tool bluestore-kv $dir/2 dump p 2> /dev/null > /tmp/oo2.dump
+    (( extr_dbg >= 2 )) && grep -a SNA_ /tmp/oo2.dump
+    (( extr_dbg >= 2 )) && bin/ceph-kvstore-tool bluestore-kv $dir/1 dump p 2> /dev/null > /tmp/oo1.dump
 
     for sdn in $(seq 0 $(expr $osdn - 1))
     do
         kvdir=$dir/$sdn
-        #kvdir=dev/osd.$sdn
-        echo "corrupting the SnapMapper DB of osd.$sdn ($kvdir)"
-        bin/ceph-kvstore-tool bluestore-kv $kvdir dump p 2> /dev/null >> /tmp/oooo$sdn.dump
+        echo "corrupting the SnapMapper DB of osd.$sdn (db: $kvdir)"
+        (( extr_dbg >= 3 )) && bin/ceph-kvstore-tool bluestore-kv $kvdir dump p 2> /dev/null >> /tmp/oooo$sdn.dump
 
         # truncate the 'mapping' (SNA_) entry corresponding to the snap13 clone
-        tmp_fn1=`mktemp -p /tmp --suffix="sna1"`
-        echo "Temp file: $tmp_fn1"
-        #bin/ceph-kvstore-tool bluestore-kv $kvdir dump p 2> /dev/null | cat -v
-        echo " RRRRRRRRRRRRRRRRRRRRRRRRRR "
-        #bin/ceph-kvstore-tool bluestore-kv $kvdir dump p  | grep -a 'SNA_2_0000000000000003_000000000000000' | cat -v
-        SN=`bin/ceph-kvstore-tool bluestore-kv $kvdir dump p 2> /dev/null | grep -a -e 'SNA_[0-9]_0000000000000003_000000000000000' | awk -e '{print $2;}'`
-        echo "SNA key: $SN"
+        SN=`bin/ceph-kvstore-tool bluestore-kv $kvdir dump p 2> /dev/null | grep -a -e 'SNA_[0-9]_0000000000000003_000000000000000' \
+            | awk -e '{print $2;}'`
         KY="${SN:0:-3}"
+        (( extr_dbg >= 1 )) && echo "SNA key: $KY"
 
-        tmp_fn2=`mktemp -p /tmp --suffix="_the_val"`
-        echo "Temp file: $tmp_fn2"
-        bin/ceph-kvstore-tool bluestore-kv $kvdir get p $KY out $tmp_fn2 2> /dev/null
-        od -xc $tmp_fn2
+        tmp_fn1=`mktemp -p /tmp --suffix="_the_val"`
+        (( extr_dbg >= 1 )) && echo "Value dumped in: $tmp_fn1"
+        bin/ceph-kvstore-tool bluestore-kv $kvdir get p $KY out $tmp_fn1 2> /dev/null
+        (( extr_dbg >= 2 )) && od -xc $tmp_fn1
 
         NKY=${KY:0:-30}
         bin/ceph-kvstore-tool bluestore-kv $kvdir rm p "$KY" 2> /dev/null
-        bin/ceph-kvstore-tool bluestore-kv $kvdir set p "$NKY" in $tmp_fn2 2> /dev/null
+        bin/ceph-kvstore-tool bluestore-kv $kvdir set p "$NKY" in $tmp_fn1 2> /dev/null
+
+        (( extr_dbg >= 1 )) || rm $tmp_fn1
     done
 
-    #restart_scrub_osds $dir cluster_conf
     orig_osd_args=" ${cluster_conf['osd_args']}"
     orig_osd_args=" $(echo $orig_osd_args)"
-
-    echo "CEPH_OSD_ARGS: $CEPH_OSD_ARGS"
-    echo "CEPH_ARGS: $CEPH_ARGS"
-
-    echo "Copied OSD args: /$orig_osd_args/ /${orig_osd_args:1}/"
-    echo "RRR Dir: $dir"
+    (( extr_dbg >= 2 )) && echo "Copied OSD args: /$orig_osd_args/ /${orig_osd_args:1}/"
     for sdn in $(seq 0 $(expr $osdn - 1))
     do
       CEPH_ARGS="$CEPH_ARGS $orig_osd_args" activate_osd $dir $sdn
     done
-    sleep 3
+    sleep 1
+
     for sdn in $(seq 0 $(expr $osdn - 1))
     do
       timeout 60 ceph tell osd.$sdn version
     done
 
     # when scrubbing now - we expect the scrub to emit a cluster log ERR message regarding SnapMapper internal inconsistency
-    ceph osd unset noscrub || return 1
     ceph osd unset nodeep-scrub || return 1
+    ceph osd unset noscrub || return 1
+
+    # what is the primary now?
+    local cur_prim=`ceph --format=json-pretty osd map $poolname $objname | jq -r '.up[0]'`
     ceph pg dump pgs
     sleep 2
     ceph pg $pgid deep_scrub || return 1
     sleep 5
     ceph pg dump pgs
-    grep -a "ERR" $dir/osd.$osd.log
-    grep -a -q "ERR" $dir/osd.$osd.log || return 1
-
-
-# 
-# 
-# 
-#     objectstore_tool $dir $osd --op list $objname > /tmp/outO1
-#     echo "Json 89: " $JSON
-#     JSON=`objectstore_tool $dir $osd --op list $objname | grep snapid.:3`
-#     echo "Json 91: " $JSON
-#     objectstore_tool $dir $osd "$JSON" get-attr _ > $dir/atr1 || return 1
-#     objectstore_tool $dir $osd "$JSON" get-bytes $dir/data1 || return 1
-# 
-# 
-# 
-#     # kill the OSDs
-#     #kill_daemons $dir TERM osd || return 1
-# 
-#     #truncate the 'mapping' (SNA_) entry corresponding to the snap13 clone
-#     ceph-kvstore-tool bluestore-kv $dir/${osd} list 2> /dev/null > $dir/drk.log
-# 
-#     grep -a SNA_ /tmp/drk.log | cat -v
-#     grep -a SNA_ /tmp/drk.log > /tmp/drk2.log
-# 
-
+    (( extr_dbg >= 1 )) && grep -a "ERR" $dir/osd.$cur_prim.log
+    grep -a -q "ERR" $dir/osd.$cur_prim.log || return 1
 }
 
-
-
-function notest_recover_unexpected() {
-    local dir=$1
-
-    run_mon $dir a || return 1
-    run_mgr $dir x || return 1
-    run_osd $dir 0 || return 1
-    run_osd $dir 1 || return 1
-    run_osd $dir 2 || return 1
-
-    ceph osd pool create foo 1
-    rados -p foo put foo /etc/passwd
-    rados -p foo mksnap snap
-    rados -p foo put foo /etc/group
-
-    wait_for_clean || return 1
-
-    local osd=$(get_primary foo foo)
-
-    JSON=`objectstore_tool $dir $osd --op list foo | grep snapid.:1`
-    echo "JSON is $JSON"
-    rm -f $dir/_ $dir/data
-    objectstore_tool $dir $osd "$JSON" get-attr _ > $dir/_ || return 1
-    objectstore_tool $dir $osd "$JSON" get-bytes $dir/data || return 1
-
-    rados -p foo rmsnap snap
-
-    sleep 5
-
-    objectstore_tool $dir $osd "$JSON" set-bytes $dir/data || return 1
-    objectstore_tool $dir $osd "$JSON" set-attr _ $dir/_ || return 1
-
-    sleep 5
-
-    ceph pg repair 1.0 || return 1
-
-    sleep 10
-
-    ceph log last
-
-    # make sure osds are still up
-    timeout 60 ceph tell osd.0 version || return 1
-    timeout 60 ceph tell osd.1 version || return 1
-    timeout 60 ceph tell osd.2 version || return 1
-}
 
 
 main osd-mapper "$@"
