@@ -112,7 +112,7 @@ class ReplicaReservations {
   bool m_had_rejections{false};
   int m_pending{-1};
   const pg_info_t& m_pg_info;
-  ScrubQueue::ScrubJobRef m_scrub_job;	///< a ref to this PG's scrub job
+  Scrub::ScrubJobRef m_scrub_job;	///< a ref to this PG's scrub job
 
   void release_replica(pg_shard_t peer, epoch_t epoch);
 
@@ -135,7 +135,7 @@ class ReplicaReservations {
 
   ReplicaReservations(PG* pg,
 		      pg_shard_t whoami,
-		      ScrubQueue::ScrubJobRef scrubjob);
+		      Scrub::ScrubJobRef scrubjob);
 
   ~ReplicaReservations();
 
@@ -359,7 +359,8 @@ class PgScrubber : public ScrubPgIF,
 
   void rm_from_osd_scrubbing() final;
 
-  void on_primary_change(const requested_scrub_t& request_flags) final;
+  void on_primary_change(std::string_view caller, 
+    const requested_scrub_t& request_flags) final;
 
   void on_maybe_registration_change(
     const requested_scrub_t& request_flags) final;
@@ -379,6 +380,11 @@ class PgScrubber : public ScrubPgIF,
   void handle_query_state(ceph::Formatter* f) final;
 
   pg_scrubbing_status_t get_schedule() const final;
+
+  void on_operator_cmd(
+    scrub_level_t scrub_level,
+    int offset,
+    bool must) final;
 
   void dump_scrubber(ceph::Formatter* f,
 		     const requested_scrub_t& request_flags) const final;
@@ -448,6 +454,25 @@ class PgScrubber : public ScrubPgIF,
 		 Formatter* f,
 		 std::stringstream& ss) override;
   int m_debug_blockrange{0};
+
+//   Scrub::schedule_result_t start_scrubbing(
+//     ceph::ref_t<Scrub::SchedTarget> trgt,
+//     requested_scrub_t& request,
+//     const Scrub::ScrubPgPreconds& pg_cond) final;
+
+  Scrub::schedule_result_t start_scrubbing(
+    Scrub::SchedEntry trgt,
+    requested_scrub_t& request,
+    const Scrub::ScrubPgPreconds& pg_cond) final;
+
+  Scrub::SchedEntry mark_for_after_repair() final;
+
+  Scrub::PossibleScrubMode select_scrub_mode(
+    Scrub::TargetRef& trgt,
+    const requested_scrub_t& request,
+    const Scrub::ScrubPgPreconds& pg_cond) const;
+
+  bool start_scrub_after_repair(requested_scrub_t& request_flags);
 
   // --------------------------------------------------------------------------
   // the I/F used by the state-machine (i.e. the implementation of
@@ -573,7 +598,7 @@ class PgScrubber : public ScrubPgIF,
   virtual void _scrub_clear_state() {}
 
   utime_t m_scrub_reg_stamp;		///< stamp we registered for
-  ScrubQueue::ScrubJobRef m_scrub_job;	///< the scrub-job used by the OSD to
+  Scrub::ScrubJobRef m_scrub_job;	///< the scrub-job used by the OSD to
 					///< schedule us
 
   ostream& show(ostream& out) const override;
@@ -842,7 +867,7 @@ class PgScrubber : public ScrubPgIF,
   /**
    * initiate a deep-scrub after the current scrub ended with errors.
    */
-  void request_rescrubbing(requested_scrub_t& req_flags);
+  //void request_rescrubbing(requested_scrub_t& req_flags);
 
   void unregister_from_osd();
 
