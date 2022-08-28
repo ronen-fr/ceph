@@ -223,7 +223,7 @@ public:
   }
 
   // cast to double
-  operator double() const {
+  constexpr operator double() const {
     return (double)sec() + ((double)nsec() / 1000000000.0f);
   }
   operator ceph_timespec() const {
@@ -528,6 +528,12 @@ inline utime_t& operator+=(utime_t& l, double f) {
   l.nsec_ref() += (long)ns;
   l.normalize();
   return l;
+}
+inline utime_t operator+(utime_t& l, double r) {
+  double rs = trunc(r);
+  __u64 ns = (r - rs) * 1'000'000'000.0;
+  __u64 sec = (__u64)l.sec() + rs;
+  return utime_t(cap_to_u32_max(sec), l.nsec() + ns);
 }
 
 inline utime_t operator-(const utime_t& l, const utime_t& r) {

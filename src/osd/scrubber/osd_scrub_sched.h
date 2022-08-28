@@ -109,6 +109,7 @@ SqrubQueue interfaces (main functions):
 
 #include <atomic>
 #include <chrono>
+#include <compare>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -193,6 +194,54 @@ class ScrubQueue {
     utime_t deadline{0, 0};
   };
 
+
+  enum class urgency_t {
+    must,
+    operator_requested,
+    overdue,
+    periodic_regular,
+    penalized,	//< replica reservation failure
+    off,
+  };
+
+  enum class delay_cause_t {
+    none,
+    replicas,
+    
+  };
+
+  struct SchedTarget {
+    urgency_t priority{urgency_t::off};
+    utime_t target;  // the time at which we intended the scrub to be scheduled
+    utime_t not_before; // the time at which we are allowed to start the scrub. Never decreasing.
+    utime_t deadline; // RRR default to max-int // affecting the priority and the allowed times for this scrub
+    uint64_t penalized_at;
+    delay_cause_t reason{delay_cause_t::none}; // the reason for the delay
+
+    auto operator<=>(const SchedTarget&) const = default;
+    bool is_ripe(utime_t now_is) const {
+      return priority > urgency_t::off && now_is >= not_before;
+    }
+    void push_nb_out(std::chrono::seconds seconds);
+    void replica_refusal();
+    void job_state_failure();
+  };
+
+  struct SchedTargets {
+    SchedTarget effective;  // re-computed each time the PG is considered for
+			    // scheduling
+    SchedTarget shallow;
+    SchedTarget deep;
+    auto operator<=>(const SchedTargets& r) const
+    {
+      return effective <=> r.effective;
+    }
+    SchedTarget calculate_effective(utime_t time_now);
+
+// probably not here:
+   void replica_refusal(bool is_deep);
+  };
+
   struct sched_params_t {
     utime_t proposed_time{};
     double min_interval{0.0};
@@ -207,7 +256,8 @@ class ScrubQueue {
      * if system load is too high (but not if after the deadline),or if trying
      * to scrub out of scrub hours.
      */
-    scrub_schedule_t schedule;
+    //scrub_schedule_t schedule;
+    SchedTargets nschedule;
 
     /// pg to be scrubbed
     const spg_t pgid;
@@ -250,6 +300,7 @@ class ScrubQueue {
 
     utime_t get_sched_time() const { return schedule.scheduled_at; }
 
+  
     /**
      * relatively low-cost(*) access to the scrub job's state, to be used in
      * logging.
@@ -405,6 +456,32 @@ class ScrubQueue {
    *  @returns a load value for the logger
    */
   [[nodiscard]] std::optional<double> update_load_average();
+
+
+  SchedTarget initial_shallow_target(
+    const requested_scrub_t& request_flags,
+    const pg_info_t& pg_info,
+    double min_period,
+    std::optional<double> max_delay,
+    utime_t time_now) const;
+
+  SchedTarget initial_deep_target(
+    const requested_scrub_t& request_flags,
+    const pg_info_t& pg_info,
+    double min_period,
+    std::optional<double> max_delay,
+    utime_t time_now) const;
+
+  void set_initial_targets(
+ScrubJobRef sjob,
+    const requested_scrub_t& request_flags,
+    const pg_info_t& pg_info,
+    double shallow_interval,
+    std::optional<double> max_shallow_delay,
+    double deep_interval,
+    std::optional<double> max_deep_delay);
+
+
 
  private:
   CephContext* cct;

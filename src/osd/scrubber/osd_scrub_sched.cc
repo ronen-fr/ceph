@@ -117,6 +117,225 @@ std::optional<double> ScrubQueue::update_load_average()
 }
 
 /*
+  API to modify the scrub job should handle the following cases:
+ 
+  - a shallow/deep scrub just terminated;
+  - scrub attempt failed due to replicas;
+  - scrub attempt failed due to environment;
+  - operator requested a shallow/deep scrub;
+  - the penalized are forgiven;
+*/
+
+using SchedTargets = ScrubQueue::SchedTargets;
+using SchedTarget = ScrubQueue::SchedTarget;
+
+void SchedTarget::replica_refusal()
+{
+  /*
+	If it's a low priority job, i.e. 'must' or operator-initiated:
+	- we will mark as penalized, and
+	- (mark the time when we will forgive the job. - that's in the
+          'SchedTargets')
+
+       If high priority:
+	- keep the existing priority, and
+	- modify NB by a small amount, to make sure the job is retried soon.
+  */
+  switch (priority) {
+    case urgency_t::must:		 // fall-through
+    case urgency_t::operator_requested:	 // fall-through
+    case urgency_t::overdue:
+      // high priority job. We should not delay it by much.
+      push_nb_out(/* RRR conf */ 6s);
+      break;
+
+    case urgency_t::periodic_regular:
+      priority = urgency_t::penalized;
+      break;
+
+    default:
+      ceph_abort();
+  }
+}
+
+void SchedTarget::job_state_failure()
+{
+  // if not in a state to be scrubbed (active & clean) - we won't retry it
+  // for some time
+  push_nb_out(/* RRR conf */ 10s);
+}
+
+// a replica did not grant us its resources.
+void SchedTargets::replica_refusal(bool is_deep)
+{
+  SchedTarget& target = is_deep ? deep : shallow;
+  target.replica_refusal();
+}
+
+// needs to know: are shallow/deep allowed?
+ScrubQueue::SchedTarget SchedTargets::calculate_effective(
+  utime_t time_now)
+{
+  // only compare the ripe targets. Right?
+  bool shallow_is_ripe = shallow.is_ripe(time_now);
+  bool deep_is_ripe = deep.is_ripe(time_now);
+  if (!shallow_is_ripe) {
+    if (!deep_is_ripe) {
+      // both are not ripe
+      return SchedTarget{};  // which has urgency_t::off
+    } else {
+      // shallow is not ripe, deep is ripe
+      return deep;
+    }
+  } else {
+    if (!deep_is_ripe) {
+      // shallow is ripe, deep is not ripe
+      return shallow;
+    } else {
+      // both are ripe
+      return std::min(shallow, deep);
+    }
+  }
+}
+
+/*
+   - create a "template" target, to be compared against "shallow".
+   - if later we see that a deep is required - compared against "deep", too.
+   - returns either the original target, or the new one (if higher order)
+
+*/
+
+
+SchedTarget ScrubQueue::initial_shallow_target(
+  const requested_scrub_t& request_flags,
+  const pg_info_t& pg_info,
+  double min_period,
+  std::optional<double> max_delay,
+  utime_t time_now) const
+{
+  SchedTarget t{};
+
+  if (request_flags.must_scrub || request_flags.need_auto) {
+    t.priority = urgency_t::must;
+    auto base =
+      pg_info.stats.stats_invalid ? time_now : pg_info.history.last_scrub_stamp;
+    t.target = base;
+    t.not_before = time_now;
+    t.deadline = max_delay ? base + *max_delay  : utime_t{9999999999, 0};
+
+  } else if (pg_info.stats.stats_invalid && conf()->osd_scrub_invalid_stats) {
+    t.priority = urgency_t::must;
+    t.target = time_now;
+    t.not_before = time_now;
+    t.deadline = max_delay ? time_now + *max_delay : utime_t{9999999999, 0};
+  } else {
+    t.priority = urgency_t::periodic_regular;
+    auto base = pg_info.history.last_scrub_stamp;
+    t.target = base + min_period;
+    t.not_before = t.target;
+    // if in the past - do not delay. Otherwise - add a random delay
+    if (time_now < t.target) {
+      t.not_before += rand() % 17;	// RRR fix
+    }
+  }
+  return t;
+}
+
+SchedTarget ScrubQueue::initial_deep_target(
+  const requested_scrub_t& request_flags,
+  const pg_info_t& pg_info,
+  double min_period, // for deep
+  std::optional<double> max_delay, // for 'deep'
+  utime_t time_now) const
+{
+  SchedTarget t{};
+
+  auto base =
+      pg_info.stats.stats_invalid ? time_now : pg_info.history.last_deep_scrub_stamp;
+  if (request_flags.must_deep_scrub || request_flags.need_auto) {
+    t.priority = urgency_t::must;
+    t.target = base;
+    t.not_before = base;
+    t.deadline = max_delay ? base + *max_delay  : utime_t{9999999999, 0};
+  } else {
+    t.priority = urgency_t::periodic_regular;
+    t.target = base + min_period;
+    t.not_before = t.target;
+    // if in the past - do not delay. Otherwise - add a random delay
+    if (time_now < t.target) {
+      t.not_before += rand() % 17;	// RRR fix
+    }
+  }
+  return t;
+}
+
+void ScrubQueue::set_initial_targets(
+  ScrubJobRef sjob,
+  const requested_scrub_t& request_flags,
+  const pg_info_t& pg_info,
+  double shallow_interval,
+  std::optional<double> max_shallow_delay,
+  double deep_interval,
+  std::optional<double> max_deep_delay)
+{
+  auto time_now = ceph_clock_now();
+  auto& nschedule = sjob->nschedule;
+
+  auto shallow = initial_shallow_target(
+    request_flags, pg_info, shallow_interval, max_shallow_delay, time_now);
+  if (shallow < nschedule.shallow) {
+    nschedule.shallow = shallow;
+  }
+
+  auto deep = initial_deep_target(
+    request_flags, pg_info, deep_interval, max_deep_delay, time_now);
+  if (deep < nschedule.deep) {
+    nschedule.deep = deep;
+  }
+}
+
+ScrubQueue::sched_params_t ScrubQueue::on_request_flags_change(
+  const requested_scrub_t& request_flags,
+  const pg_info_t& pg_info,
+  const pool_opts_t pool_conf) const
+{
+  ScrubQueue::sched_params_t res;
+  dout(15) << ": requested_scrub_t: {}" <<  request_flags << dendl; 
+
+  if (request_flags.must_scrub || request_flags.need_auto) {
+
+    // Set the smallest time that isn't utime_t()
+    res.proposed_time = PgScrubber::scrub_must_stamp();
+    res.is_must = ScrubQueue::must_scrub_t::mandatory;
+    // we do not need the interval data in this case
+
+  } else if (pg_info.stats.stats_invalid &&
+	     conf()->osd_scrub_invalid_stats) {
+    res.proposed_time = time_now();
+    res.is_must = ScrubQueue::must_scrub_t::mandatory;
+
+  } else {
+    res.proposed_time = pg_info.history.last_scrub_stamp;
+    res.min_interval = pool_conf.value_or(pool_opts_t::SCRUB_MIN_INTERVAL, 0.0);
+    res.max_interval = pool_conf.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
+  }
+
+  dout(15) << fmt::format(
+		": suggested: {} hist: {} v: {}/{} must: {} pool-min: {}",
+		res.proposed_time,
+		pg_info.history.last_scrub_stamp,
+		(bool)pg_info.stats.stats_invalid,
+		conf()->osd_scrub_invalid_stats,
+		(res.is_must == must_scrub_t::mandatory ? "y" : "n"),
+		res.min_interval)
+	   << dendl;
+  return res;
+}
+
+
+
+
+/*
  * Modify the scrub job state:
  * - if 'registered' (as expected): mark as 'unregistering'. The job will be
  *   dequeued the next time sched_scrub() is called.
