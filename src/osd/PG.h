@@ -64,12 +64,16 @@ class DynamicPerfStats;
 class PgScrubber;
 class ScrubBackend;
 
+class ScrubQueue;
+
 namespace Scrub {
   class Store;
   class ReplicaReservations;
   class LocalReservation;
   class ReservedByRemotePrimary;
   enum class schedule_result_t;
+
+  struct SchedTarget;
 }
 
 #ifdef PG_DEBUG_REFS
@@ -80,6 +84,8 @@ namespace Scrub {
 #else
   typedef boost::intrusive_ptr<PG> PGRef;
 #endif
+
+
 
 class PGRecoveryStats {
   struct per_state_info {
@@ -170,6 +176,7 @@ class PG : public DoutPrefixProvider,
   friend class PeeringState;
   friend class PgScrubber;
   friend class ScrubBackend;
+  friend class ScrubQueue;
 
 public:
   const pg_shard_t pg_whoami;
@@ -707,17 +714,30 @@ public:
   virtual void on_shutdown() = 0;
 
   bool get_must_scrub() const;
-  Scrub::schedule_result_t sched_scrub();
 
-  unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const;
+  Scrub::schedule_result_t start_scrubbing(Scrub::SchedEntry trgt);
+
+//   /*obsolete*/ Scrub::schedule_result_t start_scrubbing(
+//     Scrub::SchedTarget* trgt);
+
+  unsigned int scrub_requeue_priority(
+    Scrub::scrub_prio_t with_priority,
+    unsigned int suggested_priority) const;
   /// the version that refers to flags_.priority
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority) const;
-private:
+ private:
   // auxiliaries used by sched_scrub():
   double next_deepscrub_interval() const;
 
+#if 0
   /// should we perform deep scrub?
   bool is_time_for_deep(bool allow_deep_scrub,
+                        bool allow_shallow_scrub,
+                        bool has_deep_errors,
+                        const requested_scrub_t& planned) const;
+
+  bool is_time_for_deep(Scrub::SchedTarget* trgt,
+                        bool allow_deep_scrub,
                         bool allow_shallow_scrub,
                         bool has_deep_errors,
                         const requested_scrub_t& planned) const;
@@ -728,8 +748,8 @@ private:
    *
    * @returns an updated copy of the m_planned_flags (or nothing if no scrubbing)
    */
-  std::optional<requested_scrub_t> validate_scrub_mode() const;
-
+  //std::optional<requested_scrub_t> validate_scrub_mode() const;
+  
   std::optional<requested_scrub_t> validate_periodic_mode(
     bool allow_deep_scrub,
     bool try_to_auto_repair,
@@ -744,6 +764,7 @@ private:
     bool time_for_deep,
     bool has_deep_errors,
     const requested_scrub_t& planned) const;
+#endif
 
   using ScrubAPI = void (ScrubPgIF::*)(epoch_t epoch_queued);
   void forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc);
@@ -1369,7 +1390,7 @@ protected:
   virtual void snap_trimmer_scrub_complete() = 0;
 
   void queue_recovery();
-  void queue_scrub_after_repair();
+  void start_after_repair_scrub();
   unsigned int get_scrub_priority();
 
   bool try_flush_or_schedule_async() override;
@@ -1437,6 +1458,18 @@ public:
  {
    return get_pgbackend()->be_get_ondisk_size(logical_size);
  }
+};
+
+
+// RRR reimplement as a unique-ptr to a PGRef with custom deleter?
+class PgLockWrapper {
+public:
+  //PgLockWrapper(const spg_t& pg); // created from the outside (no access to the lookup_lock.. from the inside)
+  ~PgLockWrapper();
+  // RRR prevent copy and assignment
+
+
+  PGRef m_pg{nullptr};
 };
 
 #endif
