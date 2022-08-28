@@ -292,7 +292,10 @@ public:
    */
   Scrub::schedule_result_t initiate_a_scrub(
     spg_t pgid,
+    Scrub::SchedEntry trgt,
     bool allow_requested_repair_only) final;
+
+  PgLockWrapper get_locked_pg(spg_t pgid) final;
 
 
  private:
@@ -1897,9 +1900,8 @@ protected:
 
 
   // -- scrubbing --
-  void sched_scrub();
+  //void sched_scrub();
   void resched_all_scrubs();
-  bool scrub_random_backoff();
 
   // -- status reporting --
   MPGStats *collect_pg_stats();
