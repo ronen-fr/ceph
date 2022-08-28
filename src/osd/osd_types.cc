@@ -2952,7 +2952,7 @@ std::string pg_stat_t::dump_scrub_schedule() const
       return "no scrub is scheduled"s;
     case pg_scrub_sched_status_t::scheduled:
       return fmt::format(
-        "{} {}scrub scheduled @ {}",
+        "{} {}scrub scheduled @ {:s}",
         (scrub_sched_status.m_is_periodic ? "periodic" : "user requested"),
         ((scrub_sched_status.m_is_deep == scrub_level_t::deep) ? "deep " : ""),
         scrub_sched_status.m_scheduled_at);

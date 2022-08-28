@@ -279,21 +279,7 @@ public:
  public:
   ScrubQueue& get_scrub_services() { return m_scrub_queue; }
 
-  /**
-   * A callback used by the ScrubQueue object to initiate a scrub on a specific PG.
-   *
-   * The request might fail for multiple reasons, as ScrubQueue cannot by its own
-   * check some of the PG-specific preconditions and those are checked here. See
-   * attempt_t definition.
-   *
-   * @param pgid to scrub
-   * @param allow_requested_repair_only
-   * @return a Scrub::attempt_t detailing either a success, or the failure reason.
-   */
-  Scrub::schedule_result_t initiate_a_scrub(
-    spg_t pgid,
-    bool allow_requested_repair_only) final;
-
+  PgLockWrapper get_locked_pg(spg_t pgid) final;
 
  private:
   // -- agent shared state --
@@ -1895,11 +1881,6 @@ protected:
   void do_recovery(PG *pg, epoch_t epoch_queued, uint64_t pushes_reserved,
 		   ThreadPool::TPHandle &handle);
 
-
-  // -- scrubbing --
-  void sched_scrub();
-  void resched_all_scrubs();
-  bool scrub_random_backoff();
 
   // -- status reporting --
   MPGStats *collect_pg_stats();
