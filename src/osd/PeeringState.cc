@@ -736,9 +736,9 @@ void PeeringState::start_peering_interval(
     }
   }
 
-  if (is_primary() && was_old_primary) {
-    pl->reschedule_scrub();
-  }
+//   if (is_primary() && was_old_primary) {
+//     // RRR why do we need this? pl->reschedule_scrub();
+//   }
 
   if (acting.empty() && !up.empty() && up_primary == pg_whoami) {
     psdout(10) << " acting empty, but i am up[0], clearing pg_temp" << dendl;
@@ -3984,7 +3984,7 @@ void PeeringState::update_stats(
   if (f(info.history, info.stats)) {
     pl->publish_stats_to_osd();
   }
-  pl->reschedule_scrub();
+  // RRR pl->reschedule_scrub(); // RRR must replace with direct calls in specific cases
 
   if (t) {
     dirty_info = true;

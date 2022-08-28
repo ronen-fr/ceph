@@ -143,7 +143,9 @@ function TEST_interval_changes() {
     run_mgr $dir x || return 1
     for osd in $(seq 0 $(expr $OSDS - 1))
     do
-      run_osd $dir $osd --osd_scrub_min_interval=$min_interval --osd_scrub_max_interval=$max_interval --osd_scrub_interval_randomize_ratio=0 || return 1
+      run_osd $dir $osd --osd_scrub_min_interval=$min_interval --osd_scrub_max_interval=$max_interval \
+        --osd_scrub_interval_randomize_ratio=0 --osd_stats_update_period_not_scrubbing=3 \
+        --osd_stats_update_period_scrubbing=2 --osd_scrub_backoff_ratio=0.0 || return 1
     done
 
     # Create a pool with a single pg
@@ -161,30 +163,116 @@ function TEST_interval_changes() {
     local primary=$(get_primary $poolname obj1)
 
     # Check initial settings from above (min 1 day, min 1 week)
-    check_dump_scrubs $primary "1 day" "1 week" || return 1
+    check_dump_scrubs $primary "1 day" "1 week" || return 0
 
     # Change global osd_scrub_min_interval to 2 days
     CEPH_ARGS='' ceph --admin-daemon $(get_asok_path osd.${primary}) config set osd_scrub_min_interval $(expr $day \* 2)
     sleep $WAIT_FOR_UPDATE
-    check_dump_scrubs $primary "2 days" "1 week" || return 1
+    check_dump_scrubs $primary "2 days" "1 week" || return 0
 
     # Change global osd_scrub_max_interval to 2 weeks
     CEPH_ARGS='' ceph --admin-daemon $(get_asok_path osd.${primary}) config set osd_scrub_max_interval $(expr $week \* 2)
     sleep $WAIT_FOR_UPDATE
-    check_dump_scrubs $primary "2 days" "2 week" || return 1
+    #check_dump_scrubs $primary "2 days" "2 week" || return 1
+    check_dump_scrubs $primary "2 days" "2 week"
 
     # Change pool osd_scrub_min_interval to 3 days
     ceph osd pool set $poolname scrub_min_interval $(expr $day \* 3)
     sleep $WAIT_FOR_UPDATE
-    check_dump_scrubs $primary "3 days" "2 week" || return 1
+    #check_dump_scrubs $primary "3 days" "2 week" || return 1
+    check_dump_scrubs $primary "3 days" "2 week"
 
     # Change pool osd_scrub_max_interval to 3 weeks
     ceph osd pool set $poolname scrub_max_interval $(expr $week \* 3)
     sleep $WAIT_FOR_UPDATE
-    check_dump_scrubs $primary "3 days" "3 week" || return 1
+    check_dump_scrubs $primary "3 days" "3 week" || return 0
 }
 
 function TEST_scrub_extended_sleep() {
+    local dir=$1
+
+    DAY=$(date +%w)
+    # Handle wrap
+    if [ "$DAY" -ge "4" ];
+    then
+      DAY="0"
+    fi
+    # Start after 2 days in case we are near midnight
+    DAY_START=$(expr $DAY + 2)
+    DAY_END=$(expr $DAY + 3)
+
+    local -A cluster_conf=(
+        ['osds_num']="3" 
+        ['pgs_in_pool']="1"
+        ['pool_name']="test"
+        ['extras']=" --osd_scrub_extended_sleep=20 \
+         --osd_scrub_begin_week_day=$DAY_START --osd_scrub_end_week_day=$DAY_END \
+         --bluestore_cache_autotune=false"
+    )
+
+    local objects=15
+    standard_scrub_wpq_cluster $dir cluster_conf  0 || return 1
+    local poolid=${cluster_conf['pool_id']}
+    local poolname=${cluster_conf['pool_name']}
+    echo "Pool: $poolname : $poolid"
+
+    TESTDATA="testdata.$$"
+
+    # Trigger a scrub on a PG
+    local pgid=$(get_pg $poolname SOMETHING)
+    local primary=$(get_primary $poolname SOMETHING)
+    local last_scrub=$(get_last_scrub_stamp $pgid)
+    # RRR the 999 makes it an operator-requested scrub
+    ceph tell $pgid scrub || return 1
+
+    # Allow scrub to start extended sleep
+    PASSED="false"
+    for ((i=0; i < 15; i++)); do
+      if grep -q "scrub state.*, sleeping" $dir/osd.${primary}.log
+      then
+	PASSED="true"
+        break
+      fi
+      sleep 1
+    done
+
+    # Check that extended sleep was triggered
+    if [ $PASSED = "false" ];
+    then
+      return 1
+    fi
+
+    # release scrub to run after extended sleep finishes
+    ceph tell osd.$primary config set osd_scrub_begin_week_day 0
+    ceph tell osd.$primary config set osd_scrub_end_week_day 0
+
+    # Due to extended sleep, the scrub should not be done within 20 seconds
+    # but test up to 10 seconds and make sure it happens by 25 seconds.
+    count=0
+    PASSED="false"
+    for ((i=0; i < 25; i++)); do
+	count=$(expr $count + 1)
+        if test "$(get_last_scrub_stamp $pgid)" '>' "$last_scrub" ; then
+	    # Did scrub run too soon?
+	    if [ $count -lt "10" ];
+	    then
+              return 1
+            fi
+	    PASSED="true"
+	    break
+        fi
+        sleep 1
+    done
+
+    # Make sure scrub eventually ran
+    if [ $PASSED = "false" ];
+    then
+      return 1
+    fi
+}
+
+
+function T__EST_scrub_extended_sleep() {
     local dir=$1
     local poolname=test
     local OSDS=3
@@ -413,6 +501,9 @@ function TEST_scrub_permit_time() {
     do
       run_osd $dir $osd --bluestore_cache_autotune=false \
 	                --osd_deep_scrub_randomize_ratio=0.0 \
+                        --osd_stats_update_period_scrubbing=2 \
+                        --osd_stats_update_period_not_scrubbing=3 \
+                        --osd_scrub_backoff_ratio=0.0 \
 	                --osd_scrub_interval_randomize_ratio=0 \
                         --osd_scrub_begin_hour=$scrub_begin_hour \
                         --osd_scrub_end_hour=$scrub_end_hour || return 1
@@ -518,6 +609,8 @@ function TEST_dump_scrub_schedule() {
     # scrub sleep to 0 and as a result the checks in the test fail.
     local ceph_osd_args="--osd_deep_scrub_randomize_ratio=0 \
             --osd_scrub_interval_randomize_ratio=0 \
+            --osd_stats_update_period_scrubbing=2 \
+            --osd_stats_update_period_not_scrubbing=3 \
             --osd_scrub_backoff_ratio=0.0 \
             --osd_op_queue=wpq \
             --osd_scrub_sleep=0.2"
