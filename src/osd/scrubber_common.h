@@ -17,7 +17,22 @@ class Formatter;
 struct PGPool;
 
 namespace Scrub {
-  class ReplicaReservations;
+class ReplicaReservations;
+
+// possible outcome when trying to select a PG and scrub it
+enum class schedule_result_t {
+  scrub_initiated,     // successfully started a scrub
+  none_ready,	       // no pg to scrub
+  no_local_resources,  // failure to secure local OSD scrub resource
+  already_started,     // failed, as already started scrubbing this pg
+  no_such_pg,	       // can't find this pg
+  bad_pg_state,	       // pg state (clean, active, etc.)
+  preconditions	       // time, configuration, etc.
+};
+
+struct SchedTarget;
+struct SchedEntry;
+
 }
 
 /// Facilitating scrub-realated object access to private PG data
@@ -27,6 +42,7 @@ private:
   friend class PrimaryLogScrub;
   friend class PgScrubber;
   friend class ScrubBackend;
+  friend class ScrubQueue;
   ScrubberPasskey() {}
   ScrubberPasskey(const ScrubberPasskey&) = default;
   ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
@@ -48,6 +64,53 @@ struct ScrubPreconds {
   bool time_permit{true};
   bool only_deadlined{false};
 };
+
+// concise passing of PG state re scrubbing to the
+// scrubber at initiation of a scrub
+struct ScrubPgPreconds {
+  bool allow_shallow{true};
+  bool allow_deep{true};
+  bool has_deep_errors{false};
+  bool can_autorepair{false};
+};
+}
+
+template <>
+struct fmt::formatter<Scrub::ScrubPreconds> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::ScrubPreconds& conds, FormatContext& ctx)
+  {
+    return fmt::format_to(
+      ctx.out(),
+      "overdue-only:{} load:{} time:{} repair-only:{}",
+        conds.only_deadlined,
+        conds.load_is_low ? "ok" : "high",
+        conds.time_permit ? "ok" : "no",
+        conds.allow_requested_repair_only);
+  }
+};
+
+template <>
+struct fmt::formatter<Scrub::ScrubPgPreconds> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::ScrubPgPreconds& conds, FormatContext& ctx)
+  {
+    return fmt::format_to(
+      ctx.out(),
+      "allowed:{}/{} err:{} autorp:{}",
+        conds.allow_shallow ? "+" : "-",
+        conds.allow_deep ? "+" : "-",
+        conds.has_deep_errors ? "+" : "-",
+        conds.can_autorepair ? "+" : "-");
+  }
+};
+
+
+namespace Scrub {
 
 /// PG services used by the scrubber backend
 struct PgScrubBeListener {
@@ -100,14 +163,14 @@ struct requested_scrub_t {
 
   /**
    * Set from:
-   *  - scrub_requested() with need_auto param set, which only happens in
+   *  - request_rescrubbing(), which only happens in
    *  - scrub_finish() - if deep_scrub_on_error is set, and we have errors
    *
    * If set, will prevent the OSD from casually postponing our scrub. When
    * scrubbing starts, will cause must_scrub, must_deep_scrub and auto_repair to
    * be set.
    */
-  bool need_auto{false};
+  bool need_auto{false}; // obsolete
 
   /**
    * Set for scrub-after-recovery just before we initiate the recovery deep
@@ -125,7 +188,7 @@ struct requested_scrub_t {
    * temporary that is set and reset by the same operation, will never
    * appear externally to be set
    */
-  bool time_for_deep{false};
+  //bool time_for_deep{false};
 
   bool deep_scrub_on_error{false};
 
@@ -169,14 +232,14 @@ struct fmt::formatter<requested_scrub_t> {
   auto format(const requested_scrub_t& rs, FormatContext& ctx)
   {
     return fmt::format_to(ctx.out(),
-                          "(plnd:{}{}{}{}{}{}{}{}{}{})",
+                          "(plnd:{}{}{}{}{}{}{}{}{})",
                           rs.must_repair ? " must_repair" : "",
                           rs.auto_repair ? " auto_repair" : "",
                           rs.check_repair ? " check_repair" : "",
                           rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
                           rs.must_deep_scrub ? " must_deep_scrub" : "",
                           rs.must_scrub ? " must_scrub" : "",
-                          rs.time_for_deep ? " time_for_deep" : "",
+                          //rs.time_for_deep ? " time_for_deep" : "",
                           rs.need_auto ? " need_auto" : "",
                           rs.req_scrub ? " req_scrub" : "",
                           rs.calculated_to_deep ? " deep" : "");
@@ -241,6 +304,21 @@ struct ScrubPgIF {
 
   // --------------------------------------------------
 
+  // obsolete
+//   virtual Scrub::schedule_result_t start_scrubbing(
+//     ceph::ref_t<Scrub::SchedTarget> trgt,
+//     requested_scrub_t& request,
+//     const Scrub::ScrubPgPreconds& pg_cond) = 0;
+
+  virtual Scrub::schedule_result_t start_scrubbing(
+    Scrub::SchedEntry trgt,
+    requested_scrub_t& request,
+    const Scrub::ScrubPgPreconds& pg_cond) = 0;
+
+  virtual Scrub::SchedEntry mark_for_after_repair() = 0;
+//   virtual ceph::ref_t<Scrub::SchedTarget> mark_for_after_repair(
+//     requested_scrub_t& request) = 0;
+
   [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	 // currently
 								 // only used
 								 // for an
@@ -280,13 +358,22 @@ struct ScrubPgIF {
 
   virtual void replica_scrub_op(OpRequestRef op) = 0;
 
-  virtual void set_op_parameters(const requested_scrub_t&) = 0;
+  virtual void set_op_parameters(
+    const Scrub::SchedEntry& target,
+    const requested_scrub_t&,
+    const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual void scrub_clear_state() = 0;
 
   virtual void handle_query_state(ceph::Formatter* f) = 0;
 
   virtual pg_scrubbing_status_t get_schedule() const = 0;
+
+  // RRR describe
+  virtual void on_operator_cmd(
+    scrub_level_t scrub_level,
+    int offset,
+    bool must) = 0;
 
   virtual void dump_scrubber(ceph::Formatter* f,
 			     const requested_scrub_t& request_flags) const = 0;
@@ -386,7 +473,8 @@ struct ScrubPgIF {
    *
    * Following our status as Primary or replica.
    */
-  virtual void on_primary_change(const requested_scrub_t& request_flags) = 0;
+  virtual void on_primary_change(std::string_view caller,
+    const requested_scrub_t& request_flags) = 0;
 
   /**
    * Recalculate the required scrub time.
