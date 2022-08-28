@@ -54,11 +54,12 @@ class ScrubSchedTestWrapper : public ScrubQueue {
 
   void rm_unregistered_jobs()
   {
-    ScrubQueue::rm_unregistered_jobs(to_scrub);
-    ScrubQueue::rm_unregistered_jobs(penalized);
+//     ScrubQueue::rm_unregistered_jobs(to_scrub);
+//     ScrubQueue::rm_unregistered_jobs(penalized);
+    ScrubQueue::rm_unregistered_jobs();
   }
 
-  ScrubQContainer collect_ripe_jobs()
+  SchedulingQueue collect_ripe_jobs()
   {
     return ScrubQueue::collect_ripe_jobs(to_scrub, time_now());
   }
@@ -128,7 +129,7 @@ struct sjob_config_t {
   std::optional<double> pool_conf_max;
   bool is_must;
   bool is_need_auto;
-  ScrubQueue::scrub_schedule_t initial_schedule;
+  Scrub::scrub_schedule_t initial_schedule;
 };
 
 
@@ -252,20 +253,37 @@ class TestScrubSched : public ::testing::Test {
   }
 
   void debug_print_jobs(std::string hdr,
-			const ScrubQueue::ScrubQContainer& jobs)
+			const ScrubQueue::SchedulingQueue& jobs)
   {
     std::cout << fmt::format("{}: time now {}", hdr, m_sched->time_now())
 	      << std::endl;
-    for (const auto& job : jobs) {
+    for (const auto& trgt : jobs) {
       std::cout << fmt::format(
 		     "\t{}: job {} ({}): scheduled {}",
 		     hdr,
-		     job->pgid,
-		     job->scheduling_state(m_sched->time_now(), false),
-		     job->get_sched_time())
+		     trgt->job->pgid,
+                        *trgt,
+		     //job->scheduling_state(m_sched->time_now(), false),
+		     trgt->job->get_sched_time())
 		<< std::endl;
     }
   }
+
+//   void debug_print_jobs(std::string hdr,
+// 			const ScrubQueue::ScrubQContainer& jobs)
+//   {
+//     std::cout << fmt::format("{}: time now {}", hdr, m_sched->time_now())
+// 	      << std::endl;
+//     for (const auto& job : jobs) {
+//       std::cout << fmt::format(
+// 		     "\t{}: job {} ({}): scheduled {}",
+// 		     hdr,
+// 		     job->pgid,
+// 		     job->scheduling_state(m_sched->time_now(), false),
+// 		     job->get_sched_time())
+// 		<< std::endl;
+//     }
+//   }
 };
 
 // ///////////////////////////////////////////////////////////////////////////
@@ -287,7 +305,7 @@ std::vector<sjob_config_t> sjob_configs = {
     std::nullopt,		    // max scrub delay in pool config
     false,			    // must-scrub
     false,			    // need-auto
-    ScrubQueue::scrub_schedule_t{}  // initial schedule
+    Scrub::scrub_schedule_t{}  // initial schedule
   },
 
   {spg_t{pg_t{4, 1}},
@@ -297,7 +315,7 @@ std::vector<sjob_config_t> sjob_configs = {
    std::nullopt,
    true,
    false,
-   ScrubQueue::scrub_schedule_t{}},
+   Scrub::scrub_schedule_t{}},
 
   {spg_t{pg_t{7, 1}},
    true,
@@ -306,7 +324,7 @@ std::vector<sjob_config_t> sjob_configs = {
    std::nullopt,
    false,
    false,
-   ScrubQueue::scrub_schedule_t{}},
+   Scrub::scrub_schedule_t{}},
 
   {spg_t{pg_t{5, 1}},
    true,
@@ -315,7 +333,7 @@ std::vector<sjob_config_t> sjob_configs = {
    std::nullopt,
    false,
    false,
-   ScrubQueue::scrub_schedule_t{}}};
+   Scrub::scrub_schedule_t{}}};
 
 }  // anonymous namespace
 
