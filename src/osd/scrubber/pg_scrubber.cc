@@ -504,12 +504,25 @@ void PgScrubber::on_primary_change(const requested_scrub_t& request_flags)
   dout(15) << __func__ << " scrub-job state: " << m_scrub_job->state_desc()
 	   << dendl;
 
+  auto& qu = m_osds->get_scrub_services();
   if (is_primary()) {
-    auto suggested = m_osds->get_scrub_services().determine_scrub_time(
-      request_flags,
-      m_pg->info,
+    auto applicable_conf = qu.populate_config_params(
       m_pg->get_pgpool().info.opts);
-    m_osds->get_scrub_services().register_with_osd(m_scrub_job, suggested);
+
+    if (m_scrub_job->nschedule.shallow.urgency == ScrubQueue::urgency_t::off) {
+      qu.set_initial_targets(m_scrub_job, request_flags, m_pg->info, applicable_conf);
+      qu.register_with_osd(m_scrub_job);
+    } else {
+      // not the first time we handle this scrub job
+      RRR;
+    }
+
+    //     auto suggested = m_osds->get_scrub_services().determine_scrub_time(
+    //       request_flags,
+    //       m_pg->info,
+    //       m_pg->get_pgpool().info.opts);
+    //     m_osds->get_scrub_services().register_with_osd(m_scrub_job,
+    //     suggested);
   } else {
     m_osds->get_scrub_services().remove_from_osd_queue(m_scrub_job);
   }

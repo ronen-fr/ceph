@@ -211,7 +211,7 @@ class ScrubQueue {
   };
 
   struct SchedTarget {
-    urgency_t priority{urgency_t::off};
+    urgency_t urgency{urgency_t::off};
     utime_t target;  // the time at which we intended the scrub to be scheduled
     utime_t not_before; // the time at which we are allowed to start the scrub. Never decreasing.
     utime_t deadline; // RRR default to max-int // affecting the priority and the allowed times for this scrub
@@ -247,6 +247,14 @@ class ScrubQueue {
     double min_interval{0.0};
     double max_interval{0.0};
     must_scrub_t is_must{ScrubQueue::must_scrub_t::not_mandatory};
+  };
+
+  struct sched_conf_t {
+    double shallow_interval{0.0};
+    double deep_interval{0.0};
+    std::optional<double> max_shallow{};
+    double max_deep{};
+    double interval_randomize_ratio{0.0};
   };
 
   struct ScrubJob final : public RefCountedObject {
@@ -389,6 +397,7 @@ class ScrubQueue {
    * locking: might lock jobs_lock
    */
   void register_with_osd(ScrubJobRef sjob, const sched_params_t& suggested);
+  void register_with_osd(ScrubJobRef sjob) {}
 
   /**
    * modify a scrub-job's schduled time and deadline
@@ -461,27 +470,22 @@ class ScrubQueue {
   SchedTarget initial_shallow_target(
     const requested_scrub_t& request_flags,
     const pg_info_t& pg_info,
-    double min_period,
-    std::optional<double> max_delay,
+    const sched_conf_t& sched_configs,
     utime_t time_now) const;
 
   SchedTarget initial_deep_target(
     const requested_scrub_t& request_flags,
     const pg_info_t& pg_info,
-    double min_period,
-    std::optional<double> max_delay,
+    const sched_conf_t& sched_configs,
     utime_t time_now) const;
 
   void set_initial_targets(
-ScrubJobRef sjob,
+    ScrubJobRef sjob,
     const requested_scrub_t& request_flags,
     const pg_info_t& pg_info,
-    double shallow_interval,
-    std::optional<double> max_shallow_delay,
-    double deep_interval,
-    std::optional<double> max_deep_delay);
+    const sched_conf_t& sched_configs);
 
-
+  sched_conf_t populate_config_params(const pool_opts_t& pool_conf);
 
  private:
   CephContext* cct;

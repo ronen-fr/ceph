@@ -209,90 +209,172 @@ ScrubQueue::SchedTarget SchedTargets::calculate_effective(
 SchedTarget ScrubQueue::initial_shallow_target(
   const requested_scrub_t& request_flags,
   const pg_info_t& pg_info,
-  double min_period,
-  std::optional<double> max_delay,
+  const sched_conf_t& config,
   utime_t time_now) const
 {
   SchedTarget t{};
 
   if (request_flags.must_scrub || request_flags.need_auto) {
-    t.priority = urgency_t::must;
+    t.urgency = urgency_t::must;
     auto base =
       pg_info.stats.stats_invalid ? time_now : pg_info.history.last_scrub_stamp;
     t.target = base;
     t.not_before = time_now;
-    t.deadline = max_delay ? base + *max_delay  : utime_t{9999999999, 0};
+    t.deadline =
+      config.max_shallow ? base + *config.max_shallow : utime_t{9999999999, 0};
 
   } else if (pg_info.stats.stats_invalid && conf()->osd_scrub_invalid_stats) {
-    t.priority = urgency_t::must;
+    t.urgency = urgency_t::must;
     t.target = time_now;
     t.not_before = time_now;
-    t.deadline = max_delay ? time_now + *max_delay : utime_t{9999999999, 0};
+    t.deadline = config.max_shallow ? time_now + *config.max_shallow
+				    : utime_t{9999999999, 0};
   } else {
-    t.priority = urgency_t::periodic_regular;
+    t.urgency = urgency_t::periodic_regular;
     auto base = pg_info.history.last_scrub_stamp;
-    t.target = base + min_period;
+    t.target = base + config.shallow_interval;
     t.not_before = t.target;
     // if in the past - do not delay. Otherwise - add a random delay
     if (time_now < t.target) {
-      t.not_before += rand() % 17;	// RRR fix
+      double r = rand() / (double)RAND_MAX;
+      t.not_before +=
+	config.shallow_interval * config.interval_randomize_ratio * r;
     }
   }
   return t;
 }
 
+/*
+ * A note re the randomization:
+ * for deep scrubs, we will only "randomize backwards", i.e we will not
+ * delay till after the deep-interval.
+ */
 SchedTarget ScrubQueue::initial_deep_target(
   const requested_scrub_t& request_flags,
   const pg_info_t& pg_info,
-  double min_period, // for deep
-  std::optional<double> max_delay, // for 'deep'
+  const sched_conf_t& config,
   utime_t time_now) const
 {
-  SchedTarget t{};
+  auto base = pg_info.stats.stats_invalid
+		? time_now
+		: pg_info.history.last_deep_scrub_stamp;
 
-  auto base =
-      pg_info.stats.stats_invalid ? time_now : pg_info.history.last_deep_scrub_stamp;
+  SchedTarget t{};
   if (request_flags.must_deep_scrub || request_flags.need_auto) {
-    t.priority = urgency_t::must;
+    t.urgency = urgency_t::must;
     t.target = base;
     t.not_before = base;
-    t.deadline = max_delay ? base + *max_delay  : utime_t{9999999999, 0};
   } else {
-    t.priority = urgency_t::periodic_regular;
-    t.target = base + min_period;
+    t.urgency = urgency_t::periodic_regular;
+    double r = rand() / (double)RAND_MAX;
+    t.target =
+      base + (1.0 - r * config.interval_randomize_ratio) * config.deep_interval;
     t.not_before = t.target;
-    // if in the past - do not delay. Otherwise - add a random delay
-    if (time_now < t.target) {
-      t.not_before += rand() % 17;	// RRR fix
-    }
   }
+  t.deadline = base + config.max_deep;
   return t;
+}
+
+ScrubQueue::sched_conf_t ScrubQueue::populate_config_params(
+  const pool_opts_t& pool_conf)
+{
+  ScrubQueue::sched_conf_t configs;
+
+  // deep-scrub optimal interval
+  configs.deep_interval =
+    pool_conf.value_or(pool_opts_t::DEEP_SCRUB_INTERVAL, 0.0);
+  if (configs.deep_interval <= 0.0) {
+    configs.deep_interval = conf()->osd_deep_scrub_interval;
+  }
+
+  // shallow-scrub interval
+  configs.shallow_interval =
+    pool_conf.value_or(pool_opts_t::SCRUB_MIN_INTERVAL, 0.0);
+  if (configs.shallow_interval <= 0.0) {
+    configs.shallow_interval = conf()->osd_scrub_min_interval;
+  }
+
+  // the max allowed delay between scrubs
+  // For deep scrubs - there is no equivalent of scrub_max_interval. Per the
+  // documentation, once deep_scrub_interval has passed, we are already
+  // "overdue", at least as far as the "ignore allowed load" window is
+  // concerned. RRR maybe: Thus - I'll use 'mon_warn_not_deep_scrubbed' as the
+  // max delay.
+
+  //   auto max_deep = pool_conf.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
+  //   if (max_deep <= 0.0) {
+  //     max_deep = conf()->osd_scrub_max_interval;
+  //   }
+  //   if (max_deep > 0.0) {
+  //     configs.max_deep = max_deep;
+  //     // otherwise - we're left with the default nullopt
+  //   }
+
+  configs.max_deep =
+    configs.deep_interval;  // conf()->mon_warn_not_deep_scrubbed;
+
+
+  auto max_shallow = pool_conf.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
+  if (max_shallow <= 0.0) {
+    max_shallow = conf()->osd_scrub_max_interval;
+  }
+  if (max_shallow > 0.0) {
+    configs.max_shallow = max_shallow;
+    // otherwise - we're left with the default nullopt
+  }
+
+  configs.interval_randomize_ratio = conf()->osd_scrub_interval_randomize_ratio;
+  return configs;
 }
 
 void ScrubQueue::set_initial_targets(
   ScrubJobRef sjob,
   const requested_scrub_t& request_flags,
   const pg_info_t& pg_info,
-  double shallow_interval,
-  std::optional<double> max_shallow_delay,
-  double deep_interval,
-  std::optional<double> max_deep_delay)
+  const sched_conf_t& sched_configs)
 {
+  std::unique_lock lck{jobs_lock};
+
   auto time_now = ceph_clock_now();
   auto& nschedule = sjob->nschedule;
 
-  auto shallow = initial_shallow_target(
-    request_flags, pg_info, shallow_interval, max_shallow_delay, time_now);
+  auto shallow =
+    initial_shallow_target(request_flags, pg_info, sched_configs, time_now);
   if (shallow < nschedule.shallow) {
     nschedule.shallow = shallow;
   }
 
-  auto deep = initial_deep_target(
-    request_flags, pg_info, deep_interval, max_deep_delay, time_now);
+  auto deep =
+    initial_deep_target(request_flags, pg_info, sched_configs, time_now);
   if (deep < nschedule.deep) {
     nschedule.deep = deep;
   }
 }
+
+// void ScrubQueue::set_initial_targets(
+//   ScrubJobRef sjob,
+//   const requested_scrub_t& request_flags,
+//   const pg_info_t& pg_info,
+//   double shallow_interval,
+//   std::optional<double> max_shallow_delay,
+//   double deep_interval,
+//   std::optional<double> max_deep_delay)
+// {
+//   auto time_now = ceph_clock_now();
+//   auto& nschedule = sjob->nschedule;
+//
+//   auto shallow = initial_shallow_target(
+//     request_flags, pg_info, shallow_interval, max_shallow_delay, time_now);
+//   if (shallow < nschedule.shallow) {
+//     nschedule.shallow = shallow;
+//   }
+//
+//   auto deep = initial_deep_target(
+//     request_flags, pg_info, deep_interval, max_deep_delay, time_now);
+//   if (deep < nschedule.deep) {
+//     nschedule.deep = deep;
+//   }
+// }
 
 ScrubQueue::sched_params_t ScrubQueue::on_request_flags_change(
   const requested_scrub_t& request_flags,
