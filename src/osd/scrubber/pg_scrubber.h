@@ -797,6 +797,8 @@ class PgScrubber : public ScrubPgIF,
   int m_deep_errors{0};
   int m_fixed_count{0};
 
+  Scrub::ScrubbingReplicaHandle m_replica_handler;
+
  protected:
   /**
    * 'm_is_deep' - is the running scrub a deep one?

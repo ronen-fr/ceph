@@ -1032,6 +1032,7 @@ void PgScrubber::on_replica_init()
     m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow);
   m_active = true;
   ++m_sessions_counter;
+  m_tracking_hndl = register_replica(m_pg_id);
 }
 
 

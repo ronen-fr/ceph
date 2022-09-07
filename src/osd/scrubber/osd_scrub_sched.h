@@ -112,6 +112,7 @@ SqrubQueue interfaces (main functions):
 #include <memory>
 #include <optional>
 #include <vector>
+#include <queue>
 
 #include "common/RefCountedObj.h"
 #include "common/ceph_atomic.h"
@@ -126,6 +127,45 @@ class PG;
 namespace Scrub {
 
 using namespace ::std::literals;
+
+/// tracking the last forward motion of the active scrub
+struct ScrubbingReplica {
+  using tpoint_t = std::chrono::time_point<std::chrono::system_clock>;
+
+  tpoint_t m_timeout_at;
+  bool m_active{false};
+  spg_t m_pgid;
+
+  auto operator<=>(const ScrubbingReplica& rh) const
+  {
+    return m_timeout_at <=> rh.m_timeout_at;
+  }
+};
+
+// opaque handle to a scrubbing replica tracking data
+struct ScrubbingReplicaHandle {
+  ScrubbingReplica* m_replica{nullptr};
+  ceph::mutex* m_lock_replicas{nullptr}; // the same for all replicas registered
+};
+
+class ScrubbingReplicas {
+ public:
+  ScrubbingReplicaHandle register_replica(const spg_t& pgid);
+
+  void unregister_replica(ScrubbingReplicaHandle& hdl);
+
+  void update_state(ScrubbingReplicaHandle& hdl, bool active);
+
+  void update_timeout(ScrubbingReplicaHandle& hdl);
+
+  // the interface used by the OSD:
+  std::optional<ScrubbingReplicaHandle> get_timedout(ScrubbingReplica::tpoint_t now_is); 
+
+ private:
+  ceph::mutex m_lock_replicas;
+  std::priority_queue<ScrubbingReplica> m_replicas;
+};
+
 
 // possible outcome when trying to select a PG and scrub it
 enum class schedule_result_t {
@@ -520,6 +560,10 @@ protected: // used by the unit-tests
    * unit-tests will override this function to return a mock time
    */
   virtual utime_t time_now() const { return ceph_clock_now(); }
+
+// 'public' just for now:
+public: // tracking active scrubbers
+  Scrub::ScrubbingReplicas m_tracked_replicas;
 };
 
 template <>
