@@ -1025,13 +1025,12 @@ void PgScrubber::on_init()
 void PgScrubber::on_replica_init()
 {
   m_be = std::make_unique<ScrubBackend>(
-    *this,
-    *m_pg,
-    m_pg_whoami,
-    m_is_repair,
+    *this, *m_pg, m_pg_whoami, m_is_repair,
     m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow);
   m_active = true;
   ++m_sessions_counter;
+  m_tracking_hndl =
+    m_osds->get_scrub_services().m_tracked_replicas.register_replica(m_pg_id);
 }
 
 

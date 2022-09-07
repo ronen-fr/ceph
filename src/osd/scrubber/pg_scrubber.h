@@ -797,6 +797,8 @@ class PgScrubber : public ScrubPgIF,
   int m_deep_errors{0};
   int m_fixed_count{0};
 
+  std::optional<Scrub::ScrubbingReplicaHandle> m_tracking_hndl;
+
  protected:
   /**
    * 'm_is_deep' - is the running scrub a deep one?

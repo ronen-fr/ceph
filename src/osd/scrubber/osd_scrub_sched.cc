@@ -1,8 +1,11 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 #include "./osd_scrub_sched.h"
+#include <chrono>
+#include <memory>
 
 #include "osd/OSD.h"
+#include "osd/scrubber/scrub_machine.h"
 
 #include "pg_scrubber.h"
 
@@ -814,4 +817,64 @@ void ScrubQueue::mark_pg_scrub_blocked(spg_t blocked_pg)
 int ScrubQueue::get_blocked_pgs_count() const
 {
   return blocked_scrubs_cnt;
+}
+
+// ////////////////////////////////////////////////////////////////////////// //
+
+using ScrubbingReplicaHandle = Scrub::ScrubbingReplicaHandle;
+using ScrubbingReplica = Scrub::ScrubbingReplica;
+using ScrubbingReplicas = Scrub::ScrubbingReplicas;
+// #define dout_context (cct)
+// #define dout_subsys ceph_subsys_osd
+// #undef dout_prefix
+// #define dout_prefix *_dout << "osd." << whoami << " "
+
+constexpr static std::chrono::seconds replica_timeout{30};
+
+Scrub::ScrubbingReplicaHandle Scrub::ScrubbingReplicas::register_replica(
+  const spg_t& pgid, Scrub::ScrubbingReplica::tpoint_t now_is)
+{
+  //dout(10) << std::format("{}: pgid:{}", __func__, pgid) << dendl;
+//   ScrubbingReplica tracker(pgid);
+//   tracker.m_timeout_at = now_is + replica_timeout;
+//   tracker.m_active = true;
+
+  auto rep_entry = std::make_shared<ScrubbingReplica>(pgid, now_is, now_is + replica_timeout);
+
+  std::lock_guard lck{m_lock_replicas};
+  auto [it, inserted] = m_replicas.insert(std::pair{pgid, rep_entry});
+  ceph_assert(inserted);
+
+  return Scrub::ScrubbingReplicaHandle{rep_entry, &m_lock_replicas};
+}
+
+void Scrub::ScrubbingReplicas::unregister_replica(ScrubbingReplicaHandle& hdl)
+{
+  auto pgid = hdl.m_replica->m_pgid;
+  hdl.m_replica.reset();  // that one was the calling PG's ownership
+  std::lock_guard lck{m_lock_replicas};
+  // consider verifying that the replica is still in the map. If not - it's a bug
+  m_replicas.erase(pgid);
+}
+
+void Scrub::ScrubbingReplicas::update_state(ScrubbingReplicaHandle& hdl, bool active)
+{
+  hdl.m_replica->m_active = active;
+}
+
+void Scrub::ScrubbingReplicas::update_timeout(ScrubbingReplicaHandle& hdl)
+{
+  hdl.m_replica->m_timeout_at = std::chrono::system_clock::now() + replica_timeout;
+}
+
+std::optional<ScrubbingReplicaHandle> Scrub::ScrubbingReplicas::get_timedout(
+  ScrubbingReplica::tpoint_t now_is)
+{
+  std::lock_guard lck{m_lock_replicas};
+  for (auto& [pgid, replica] : m_replicas) {
+    if (replica->m_timeout_at < now_is) {
+      return Scrub::ScrubbingReplicaHandle{replica, &m_lock_replicas};
+    }
+  }
+  return std::nullopt;
 }
