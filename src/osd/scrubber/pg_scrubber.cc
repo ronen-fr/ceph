@@ -1022,16 +1022,25 @@ void PgScrubber::on_init()
   m_pg->publish_stats_to_osd();
 }
 
+/*
+ * note: not idempotent anymore!
+ * And as it is likely to be called twice (entering both ReplicaWaitUpdates &
+ * ActiveReplica), we now check the 'active' flag.
+ */
 void PgScrubber::on_replica_init()
 {
-  m_be = std::make_unique<ScrubBackend>(
-    *this,
-    *m_pg,
-    m_pg_whoami,
-    m_is_repair,
-    m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow);
-  m_active = true;
-  ++m_sessions_counter;
+  dout(10) << __func__ << " called with 'active' "
+	   << (m_active ? "set" : "cleared") << dendl;
+  if (!m_active) {
+    m_be = std::make_unique<ScrubBackend>(
+      *this,
+      *m_pg,
+      m_pg_whoami,
+      m_is_repair,
+      m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow);
+    m_active = true;
+    ++m_sessions_counter;
+  }
 }
 
 
