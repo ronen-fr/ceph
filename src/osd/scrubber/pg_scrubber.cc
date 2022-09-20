@@ -1022,17 +1022,51 @@ void PgScrubber::on_init()
   m_pg->publish_stats_to_osd();
 }
 
+/*
+ * note: not idempotent anymore!
+ * And as it is likely to be called twice (entering both ReplicaWaitUpdates &
+ * ActiveReplica), we now check the 'active' flag.
+ */
 void PgScrubber::on_replica_init()
 {
-  m_be = std::make_unique<ScrubBackend>(
-    *this, *m_pg, m_pg_whoami, m_is_repair,
-    m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow);
-  m_active = true;
-  ++m_sessions_counter;
-  m_tracking_hndl =
-    m_osds->get_scrub_services().m_tracked_replicas.register_replica(m_pg_id);
+  dout(10) << __func__ << " called with 'active' "
+	   << (m_active ? "set" : "cleared") << dendl;
+  if (!m_active) {
+    ceph_assert(m_tracking_hndl == std::nullopt);
+    m_tracking_hndl =
+      m_osds->get_scrub_services().m_tracked_replicas.register_replica(m_pg_id);
+    if (!m_tracking_hndl) {
+      dout(1) << fmt::format(
+		   "on_replica_init: failed to create scrub-tracking for {}",
+		   m_pg_id)
+	      << dendl;
+      ceph_assert(m_tracking_hndl);
+    }
+
+    m_be = std::make_unique<ScrubBackend>(
+      *this, *m_pg, m_pg_whoami, m_is_repair,
+      m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow);
+    m_active = true;
+    ++m_sessions_counter;
+    m_tracking_hndl =
+      m_osds->get_scrub_services().m_tracked_replicas.register_replica(m_pg_id);
+  }
 }
 
+void PgScrubber::update_replica_tracker()
+{
+  ceph_assert(m_tracking_hndl);
+  m_osds->get_scrub_services().m_tracked_replicas.update_timeout(
+    *m_tracking_hndl);
+}
+
+void PgScrubber::terminate_replica_tracker()
+{
+  ceph_assert(m_tracking_hndl);
+  m_osds->get_scrub_services().m_tracked_replicas.unregister_replica(
+    *m_tracking_hndl);
+  m_tracking_hndl.reset();
+}
 
 int PgScrubber::build_primary_map_chunk()
 {

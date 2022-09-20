@@ -201,6 +201,10 @@ struct ScrubMachineListener {
   virtual void set_scrub_blocked(utime_t since) = 0;
   virtual void clear_scrub_blocked() = 0;
 
+  // tracking the fwd advance of replica/Primary scrub operations
+  virtual void update_replica_tracker() = 0;
+  virtual void terminate_replica_tracker() = 0;
+   
   /**
    * the FSM interface into the "are we waiting for maps, either our own or from
    * replicas" state.

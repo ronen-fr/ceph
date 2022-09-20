@@ -176,6 +176,9 @@ class ScrubbingReplicas {
 
   // register also set as active, and updates the timeout
   ScrubbingReplicaHandle register_replica(
+    const spg_t& pgid);
+
+  ScrubbingReplicaHandle register_replica(
     const spg_t& pgid,
     ScrubbingReplica::tpoint_t now_is);
 

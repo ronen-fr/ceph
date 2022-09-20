@@ -554,6 +554,10 @@ class PgScrubber : public ScrubPgIF,
 
   void log_cluster_warning(const std::string& warning) const final;
 
+  void update_replica_tracker() final;
+
+  void terminate_replica_tracker() final;
+
  protected:
   bool state_test(uint64_t m) const { return m_pg->state_test(m); }
   void state_set(uint64_t m) { m_pg->state_set(m); }

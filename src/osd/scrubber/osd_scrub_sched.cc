@@ -832,6 +832,14 @@ using ScrubbingReplicas = Scrub::ScrubbingReplicas;
 constexpr static std::chrono::seconds replica_timeout{30};
 
 Scrub::ScrubbingReplicaHandle Scrub::ScrubbingReplicas::register_replica(
+  const spg_t& pgid)
+{
+  auto now_is = std::chrono::system_clock::now();
+  return register_replica(pgid, now_is);
+}
+
+
+Scrub::ScrubbingReplicaHandle Scrub::ScrubbingReplicas::register_replica(
   const spg_t& pgid, Scrub::ScrubbingReplica::tpoint_t now_is)
 {
   //dout(10) << std::format("{}: pgid:{}", __func__, pgid) << dendl;

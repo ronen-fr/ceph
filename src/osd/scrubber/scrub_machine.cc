@@ -553,7 +553,9 @@ sc::result ReplicaWaitUpdates::react(const ReplicaPushesUpd&)
  */
 sc::result ReplicaWaitUpdates::react(const FullReset&)
 {
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ReplicaWaitUpdates::react(const FullReset&)" << dendl;
+  scrbr->terminate_replica_tracker();
   return transit<NotActive>();
 }
 
@@ -581,15 +583,20 @@ sc::result ActiveReplica::react(const SchedReplica&)
 
     scrbr->send_preempted_replica();
     scrbr->replica_handling_done();
+    scrbr->terminate_replica_tracker();
     return transit<NotActive>();
   }
 
   // start or check progress of build_replica_map_chunk()
   auto ret_init = scrbr->build_replica_map_chunk();
   if (ret_init != -EINPROGRESS) {
+    scrbr->terminate_replica_tracker();
     return transit<NotActive>();
   }
 
+  // we had some forward movement, so:
+  // (note: not sure if we should kick the timer here. TBD)
+  scrbr->update_replica_tracker();
   return discard_event();
 }
 
@@ -598,7 +605,9 @@ sc::result ActiveReplica::react(const SchedReplica&)
  */
 sc::result ActiveReplica::react(const FullReset&)
 {
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ActiveReplica::react(const FullReset&)" << dendl;
+  scrbr->terminate_replica_tracker();
   return transit<NotActive>();
 }
 
