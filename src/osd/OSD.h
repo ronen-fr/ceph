@@ -1900,6 +1900,7 @@ protected:
   void sched_scrub();
   void resched_all_scrubs();
   bool scrub_random_backoff();
+  void look_for_stuck_scrubs();
 
   // -- status reporting --
   MPGStats *collect_pg_stats();

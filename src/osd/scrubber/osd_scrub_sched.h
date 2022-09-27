@@ -129,27 +129,61 @@ namespace Scrub {
 using namespace ::std::literals;
 
 /// tracking the last forward motion of the active scrub
+
+// RRR we are mostly interested in the Primary's wellbeing. Must
+// make sure we are not "forgotten" - either as a result of us missing
+// an interval (a bug that should probably cause a crash), or as a result
+// of a Primary issue.
+
+// RRR there seem to be a few invariants maintained by this structure. Consider
+// 'classifying' it.
 struct ScrubbingReplica {
   using tpoint_t = std::chrono::time_point<std::chrono::system_clock>;
 
-  ScrubbingReplica(const spg_t& pgid, tpoint_t now_is, tpoint_t timeout_a)
+  enum class rep_tracket_state_t {
+    inactive,
+    wait_for_primary_request, ///< waiting for a chunk request
+    t_o_on_primary_request,
+    wait_for_rep_reply,        ///< waiting for our scrub data to be sent to the Primary
+    t_o_on_reply,
+    relinquished              ///< the scrubber got a resource-release request
+  };
+
+  ScrubbingReplica(const spg_t& pgid, const spg_t& prim_pgid)
       : m_pgid(pgid)
-      , m_timeout_at(timeout_a)
-      , m_created_at(now_is)
+      , m_primary(prim_pgid)
   {
-    m_active = true;
+    auto now_is = std::chrono::system_clock::now();
+    m_created_at = now_is;
+    m_last_p_update = now_is;
+    m_last_local_update = now_is;
+    m_state = rep_tracket_state_t::wait_for_primary_request;
+    recompute_timeout();
   }
 
+  tpoint_t m_timeout_at;  //< calculated from the following two values
+  rep_tracket_state_t m_state{rep_tracket_state_t::inactive};
   spg_t m_pgid;
-  tpoint_t m_timeout_at;
-  tpoint_t m_created_at;
-  bool m_active;
-// clang-format off
+  spg_t m_primary;
+  tpoint_t m_last_p_update;	 //< last time we have received a chunk request
+  tpoint_t m_last_local_update;	 //< we moved fwd with the scrub
+  tpoint_t m_created_at;	 //< for easy identification in the logs
+
+  epoch_t m_interval;
+
+  bool m_pg_owned{true};  //< cleared by the scrubber when it releases the
+			  //registration
+
+  bool m_reported{false};  //< set by the OSD after a t.o was handled.
+
   auto operator<=>(const ScrubbingReplica& rh) const
   {
     return m_timeout_at <=> rh.m_timeout_at;
   }
-// clang-format on
+
+  void recompute_timeout();
+
+  // RRR consider explicit prevention of copy/move. But note RTO cases.
 };
 
 using ReplicaTrackRep = std::shared_ptr<ScrubbingReplica>;
@@ -172,25 +206,23 @@ struct ScrubbingReplicaHandle {
 
 class ScrubbingReplicas {
  public:
-  //ScrubbingReplicas() 
-
-  // register also set as active, and updates the timeout
-  ScrubbingReplicaHandle register_replica(
-    const spg_t& pgid);
-
   ScrubbingReplicaHandle register_replica(
     const spg_t& pgid,
-    ScrubbingReplica::tpoint_t now_is);
+    const spg_t& primary_pgid);
 
   void unregister_replica(ScrubbingReplicaHandle& hdl);
 
-  void update_state(ScrubbingReplicaHandle& hdl, bool active);
+  //void update_state(ScrubbingReplicaHandle& hdl, bool active);
 
-  void update_timeout(ScrubbingReplicaHandle& hdl);
+  void pg_relinquished(ScrubbingReplicaHandle& hdl);
 
-  // the interface used by the OSD:
-  std::optional<ScrubbingReplicaHandle> get_timedout(
-    ScrubbingReplica::tpoint_t now_is);
+  void update_local_times(ScrubbingReplicaHandle& hdl);
+
+  void update_primary_times(ScrubbingReplicaHandle& hdl);
+
+  // the interface used by the OSD. Note: clears entries that
+  // were terminated correctly by the scrubbers
+  std::optional<ScrubbingReplicaHandle> get_timedout();
 
  private:
   ceph::mutex m_lock_replicas = ceph::make_mutex("Scrub::track_replicas");;

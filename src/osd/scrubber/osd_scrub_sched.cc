@@ -1,6 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 #include "./osd_scrub_sched.h"
+#include <algorithm>
 #include <chrono>
 #include <memory>
 
@@ -516,7 +517,7 @@ Scrub::schedule_result_t ScrubQueue::select_from_group(
     }
   }
 
-  dout(20) << " returning 'none ready' " << dendl;
+  dout(20) << " returning 'none ready'" << dendl;
   return Scrub::schedule_result_t::none_ready;
 }
 
@@ -820,38 +821,39 @@ int ScrubQueue::get_blocked_pgs_count() const
 }
 
 // ////////////////////////////////////////////////////////////////////////// //
+// tracking the forward movement of the scrubber
 
 using ScrubbingReplicaHandle = Scrub::ScrubbingReplicaHandle;
 using ScrubbingReplica = Scrub::ScrubbingReplica;
 using ScrubbingReplicas = Scrub::ScrubbingReplicas;
-// #define dout_context (cct)
-// #define dout_subsys ceph_subsys_osd
-// #undef dout_prefix
-// #define dout_prefix *_dout << "osd." << whoami << " "
+using rep_tracket_state_t = ScrubbingReplica::rep_tracket_state_t;
 
 constexpr static std::chrono::seconds replica_timeout{30};
 
-Scrub::ScrubbingReplicaHandle Scrub::ScrubbingReplicas::register_replica(
-  const spg_t& pgid)
+void Scrub::ScrubbingReplica::recompute_timeout()
 {
-  auto now_is = std::chrono::system_clock::now();
-  return register_replica(pgid, now_is);
+  auto last_update = std::max(m_last_p_update, m_last_local_update);
+  m_timeout_at = last_update + replica_timeout;
 }
 
-
 Scrub::ScrubbingReplicaHandle Scrub::ScrubbingReplicas::register_replica(
-  const spg_t& pgid, Scrub::ScrubbingReplica::tpoint_t now_is)
+  const spg_t& pgid,
+  const spg_t& primary_pgid)
 {
-  //dout(10) << std::format("{}: pgid:{}", __func__, pgid) << dendl;
-//   ScrubbingReplica tracker(pgid);
-//   tracker.m_timeout_at = now_is + replica_timeout;
-//   tracker.m_active = true;
-
-  auto rep_entry = std::make_shared<ScrubbingReplica>(pgid, now_is, now_is + replica_timeout);
+  auto rep_entry = std::make_shared<ScrubbingReplica>(pgid, primary_pgid);
 
   std::lock_guard lck{m_lock_replicas};
+
+  // if we already have an entry for this PG, it should be already marked
+  // as 'done' ('relinquished' by the PG).
+  auto existing = m_replicas.find(pgid);
+  if (existing != m_replicas.end()) {
+    ceph_assert(existing->second->m_state == rep_tracket_state_t::relinquished);
+    m_replicas.erase(existing);
+  }
   auto [it, inserted] = m_replicas.insert(std::pair{pgid, rep_entry});
-  ceph_assert(inserted);
+  ceph_assert(inserted);  // RRR might be risky, as the problem may be with
+			  // the primary. But for now, let's assert
 
   return Scrub::ScrubbingReplicaHandle{rep_entry, &m_lock_replicas};
 }
@@ -861,28 +863,79 @@ void Scrub::ScrubbingReplicas::unregister_replica(ScrubbingReplicaHandle& hdl)
   auto pgid = hdl.m_replica->m_pgid;
   hdl.m_replica.reset();  // that one was the calling PG's ownership
   std::lock_guard lck{m_lock_replicas};
-  // consider verifying that the replica is still in the map. If not - it's a bug
+  // consider verifying that the replica is still in the map. If not - it's a
+  // bug
   m_replicas.erase(pgid);
 }
 
-void Scrub::ScrubbingReplicas::update_state(ScrubbingReplicaHandle& hdl, bool active)
+void Scrub::ScrubbingReplicas::pg_relinquished(ScrubbingReplicaHandle& hdl)
 {
-  hdl.m_replica->m_active = active;
+  if (hdl.m_replica) {
+    ceph_assert(hdl.m_replica->m_pg_owned);
+    hdl.m_replica->m_pg_owned = false;
+    hdl.m_replica->m_state = rep_tracket_state_t::relinquished;
+    hdl.m_replica.reset();
+  }
 }
 
-void Scrub::ScrubbingReplicas::update_timeout(ScrubbingReplicaHandle& hdl)
+void Scrub::ScrubbingReplicas::update_local_times(ScrubbingReplicaHandle& hdl)
 {
-  hdl.m_replica->m_timeout_at = std::chrono::system_clock::now() + replica_timeout;
+  hdl.m_replica->m_last_local_update =
+    std::chrono::system_clock::now() + replica_timeout;
+  hdl.m_replica->recompute_timeout();
+  hdl.m_replica->m_state = rep_tracket_state_t::wait_for_primary_request;
 }
 
-std::optional<ScrubbingReplicaHandle> Scrub::ScrubbingReplicas::get_timedout(
-  ScrubbingReplica::tpoint_t now_is)
+void Scrub::ScrubbingReplicas::update_primary_times(ScrubbingReplicaHandle& hdl)
 {
+  auto& trckr = hdl.m_replica;	// just to shorten the following
+  switch (trckr->m_state) {
+    case rep_tracket_state_t::wait_for_primary_request:
+      // the expected state
+      [[fallthrough]];
+    case rep_tracket_state_t::t_o_on_primary_request:
+      trckr->m_last_p_update = std::chrono::system_clock::now();
+      trckr->m_last_local_update = trckr->m_last_p_update;
+      trckr->recompute_timeout();
+      trckr->m_state = rep_tracket_state_t::wait_for_rep_reply;
+      break;
+
+    case rep_tracket_state_t::wait_for_rep_reply:
+      // the primary is sending us a request, but we are already handling its
+      // previous one. This is a bug. TBD - what are the options?
+      ceph_assert(false);
+      break;
+
+    case rep_tracket_state_t::t_o_on_reply:
+    case rep_tracket_state_t::inactive:
+    case rep_tracket_state_t::relinquished:
+      ceph_assert(false);  // RRR not the correct response
+      break;
+  }
+}
+
+std::optional<ScrubbingReplicaHandle> Scrub::ScrubbingReplicas::get_timedout()
+{
+  ScrubbingReplica::tpoint_t now_is =
+    std::chrono::system_clock::now();  // RRR use the testable interface
   std::lock_guard lck{m_lock_replicas};
-  for (auto& [pgid, replica] : m_replicas) {
-    if (replica->m_timeout_at < now_is) {
-      return Scrub::ScrubbingReplicaHandle{replica, &m_lock_replicas};
+
+  // entries that were relinquished by the perspective PG are OK - we can
+  // erase them.
+  for (auto it = m_replicas.begin(); it != m_replicas.end();) {
+    if (it->second->m_state == rep_tracket_state_t::relinquished) {
+      it = m_replicas.erase(it);
+      continue;
     }
   }
-  return std::nullopt;
+
+  auto e = std::find_if(m_replicas.begin(), m_replicas.end(), [&](auto& e) {
+    return e.second->m_state != rep_tracket_state_t::inactive &&
+	   e.second->m_timeout_at < now_is && !e.second->m_reported;
+  });
+  if (e == m_replicas.end()) {
+    return std::nullopt;
+  }
+  e->second->m_reported = true;	 // RRR fold into the t.o. states
+  return Scrub::ScrubbingReplicaHandle{e->second, &m_lock_replicas};
 }

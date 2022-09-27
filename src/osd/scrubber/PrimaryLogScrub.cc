@@ -57,12 +57,15 @@ void PrimaryLogScrub::submit_digest_fixes(const digests_fixes_t& fixes)
   for (auto& [obj, dgs] : fixes) {
 
     ObjectContextRef obc = m_pl_pg->get_object_context(obj, false);
+
     if (!obc) {
       m_osds->clog->error() << m_pg_id << " " << m_mode_desc
 			    << " cannot get object context for object " << obj;
       num_digest_updates_pending--;
       continue;
     }
+
+    dout(9) << fmt::format("{}: {}, pg[{}] {}/{} (X)", __func__, num_digest_updates_pending, m_pg_id, obj, dgs) << dendl;
     if (obc->obs.oi.soid != obj) {
       m_osds->clog->error()
 	<< m_pg_id << " " << m_mode_desc << " " << obj

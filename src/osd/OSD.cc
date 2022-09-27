@@ -7408,10 +7408,10 @@ bool OSD::scrub_random_backoff()
   return false;
 }
 
-
-void OSD::sched_scrub()
+void OSD::look_for_stuck_scrubs()
 {
-  auto& scrub_scheduler = service.get_scrub_services();
+  auto &scrub_scheduler = service.get_scrub_services();	 // just a shorthand
+
 
   if (auto blocked_pgs = scrub_scheduler.get_blocked_pgs_count();
       blocked_pgs > 0) {
@@ -7420,10 +7420,30 @@ void OSD::sched_scrub()
     dout(10)
       << fmt::format(
 	   "{}: PGs are blocked while scrubbing due to locked objects ({} PGs)",
-	   __func__,
-	   blocked_pgs)
+	   __func__, blocked_pgs)
       << dendl;
   }
+
+  // scan the sets of active scrub operations, either as a primary or as a
+  // a replica. Look for timeouts and inconsistencies.
+  
+
+  if (auto stuck_pg = scrub_scheduler.m_tracked_replicas.get_timedout();
+      stuck_pg.has_value()) {
+    // why is this scrub operation not progressing?
+
+    auto tracker = stuck_pg.value().m_replica;
+    dout(1) << fmt::format(
+      "{}: replica-scrub timed out on pg {} (requested by {} @ {})",
+      __func__, tracker->m_pgid, tracker->m_primary, tracker->m_created_at) << dendl;
+  }
+}
+
+void OSD::sched_scrub()
+{
+  look_for_stuck_scrubs();
+
+  auto& scrub_scheduler = service.get_scrub_services();
 
   // fail fast if no resources are available
   if (!scrub_scheduler.can_inc_scrubs()) {

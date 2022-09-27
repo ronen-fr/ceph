@@ -164,15 +164,19 @@ class LocalReservation {
 class ReservedByRemotePrimary {
   const PgScrubber* m_scrubber;	 ///< we will be using its gen_prefix()
   PG* m_pg;
+  spg_t m_primary;
   OSDService* m_osds;
   bool m_reserved_by_remote_primary{false};
   const epoch_t m_reserved_at;
+  Scrub::ScrubbingReplicaHandle m_tracking_hndl;
 
- public:
+public:
   ReservedByRemotePrimary(const PgScrubber* scrubber,
 			  PG* pg,
+                          spg_t primary,
 			  OSDService* osds,
 			  epoch_t epoch);
+
   ~ReservedByRemotePrimary();
   [[nodiscard]] bool is_reserved() const
   {
@@ -181,6 +185,14 @@ class ReservedByRemotePrimary {
 
   /// compare the remembered reserved-at epoch to the current interval
   [[nodiscard]] bool is_stale() const;
+
+  // the Primary pinged us ("I'm alive!")
+  void track_primary_alive(); // RRR fix to update both timestamps
+
+  // we have answered a chunk request from the Primary
+  void track_chunk_response();
+
+  void relinquish_tracker();
 
   std::ostream& gen_prefix(std::ostream& out) const;
 };
@@ -554,9 +566,9 @@ class PgScrubber : public ScrubPgIF,
 
   void log_cluster_warning(const std::string& warning) const final;
 
-  void update_replica_tracker() final;
-
-  void terminate_replica_tracker() final;
+  void update_rep_tracker_local() final;
+  void update_rep_tracker_primary() final;
+  void relinquish_replica_tracker() final;
 
  protected:
   bool state_test(uint64_t m) const { return m_pg->state_test(m); }
@@ -801,7 +813,7 @@ class PgScrubber : public ScrubPgIF,
   int m_deep_errors{0};
   int m_fixed_count{0};
 
-  std::optional<Scrub::ScrubbingReplicaHandle> m_tracking_hndl;
+  //std::optional<Scrub::ScrubbingReplicaHandle> m_tracking_hndl;
 
  protected:
   /**

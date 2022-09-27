@@ -1032,40 +1032,38 @@ void PgScrubber::on_replica_init()
   dout(10) << __func__ << " called with 'active' "
 	   << (m_active ? "set" : "cleared") << dendl;
   if (!m_active) {
-    ceph_assert(m_tracking_hndl == std::nullopt);
-    m_tracking_hndl =
-      m_osds->get_scrub_services().m_tracked_replicas.register_replica(m_pg_id);
-    if (!m_tracking_hndl) {
-      dout(1) << fmt::format(
-		   "on_replica_init: failed to create scrub-tracking for {}",
-		   m_pg_id)
-	      << dendl;
-      ceph_assert(m_tracking_hndl);
-    }
-
     m_be = std::make_unique<ScrubBackend>(
       *this, *m_pg, m_pg_whoami, m_is_repair,
       m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow);
     m_active = true;
     ++m_sessions_counter;
-    m_tracking_hndl =
-      m_osds->get_scrub_services().m_tracked_replicas.register_replica(m_pg_id);
   }
 }
 
-void PgScrubber::update_replica_tracker()
+void PgScrubber::update_rep_tracker_local()
 {
-  ceph_assert(m_tracking_hndl);
-  m_osds->get_scrub_services().m_tracked_replicas.update_timeout(
-    *m_tracking_hndl);
+  ceph_assert(m_remote_osd_resource); // RRR reconsider this one. Can we get
+                                      // here racing with a release?
+  m_remote_osd_resource->track_chunk_response();
 }
 
-void PgScrubber::terminate_replica_tracker()
+void PgScrubber::update_rep_tracker_primary()
 {
-  ceph_assert(m_tracking_hndl);
-  m_osds->get_scrub_services().m_tracked_replicas.unregister_replica(
-    *m_tracking_hndl);
-  m_tracking_hndl.reset();
+  ceph_assert(m_remote_osd_resource); // RRR reconsider this one. Can we get
+                                      // here racing with a release?
+  m_remote_osd_resource->track_primary_alive();
+}
+
+void PgScrubber::relinquish_replica_tracker()
+{
+  if (!m_remote_osd_resource) {
+    dout(1) << fmt::format("relinquish_replica_tracker: no resource") << dendl;
+    return;
+  }
+  m_remote_osd_resource->relinquish_tracker();
+  //   m_osds->get_scrub_services().m_tracked_replicas.unregister_replica(
+  //     *m_tracking_hndl);
+  //   m_tracking_hndl.reset();
 }
 
 int PgScrubber::build_primary_map_chunk()
@@ -1130,6 +1128,7 @@ int PgScrubber::build_replica_map_chunk()
       // preparation of the reply message is separate, and we clear the scrub
       // state before actually sending it.
 
+      update_rep_tracker_local();
       auto reply = prep_replica_map_msg(PreemptionNoted::no_preemption);
       replica_handling_done();
       dout(15) << __func__ << " chunk map sent " << dendl;
@@ -1604,11 +1603,11 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
 {
   dout(10) << __func__ << " " << *op->get_req() << dendl;
   op->mark_started();
-  auto request_ep = op->get_req<MOSDScrubReserve>()->get_map_epoch();
-  dout(20) << fmt::format("{}: request_ep:{} recovery:{}",
-			  __func__,
-			  request_ep,
-			  m_osds->is_recovery_active())
+  const auto request_ep = op->get_req<MOSDScrubReserve>()->get_map_epoch();
+
+  dout(20) << fmt::format(
+		"{}: request_ep:{} recovery:{}", __func__, request_ep,
+		m_osds->is_recovery_active())
 	   << dendl;
 
   /*
@@ -1637,16 +1636,29 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
 
   if (request_ep < m_pg->get_same_interval_since()) {
     // will not ack stale requests
-    dout(10) << fmt::format("{}: stale reservation (request ep{} < {}) denied",
-			    __func__,
-			    request_ep,
-			    m_pg->get_same_interval_since())
+    dout(10) << fmt::format(
+		  "{}: stale reservation (request ep{} < {}) denied", __func__,
+		  request_ep, m_pg->get_same_interval_since())
 	     << dendl;
     return;
   }
 
   bool granted{false};
-  if (m_remote_osd_resource.has_value()) {
+
+  const auto primary = spg_t{m_pg->info.pgid.pgid, m_pg->get_primary().shard};
+  const auto reply_to = spg_t{m_pg->info.pgid.pgid, op->get_req<MOSDScrubReserve>()->from.shard};
+  if (m_pg->get_primary() != op->get_req<MOSDScrubReserve>()->from) {
+    // The request did not come from our primary.
+    dout(1) << fmt::format(
+		 "{}: {} is not our primary (!= {})", __func__,
+		 op->get_req<MOSDScrubReserve>()->from, primary)
+	    << dendl;
+
+   // note that in this sole case 'reply_to' is different from 'primary'. The
+   // failure message is sent to the original requestor (the imposter), not to the primary.
+
+    // RRR what else needs resetting?
+  } else if (m_remote_osd_resource.has_value()) {
 
     dout(10) << __func__ << " already reserved. Reassigned." << dendl;
 
@@ -1659,11 +1671,13 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
      * in active state, crashing the OSD).
      */
     advance_token();
+    m_remote_osd_resource->track_primary_alive();
     granted = true;
 
-  } else if (m_pg->cct->_conf->osd_scrub_during_recovery ||
-	     !m_osds->is_recovery_active()) {
-    m_remote_osd_resource.emplace(this, m_pg, m_osds, request_ep);
+  } else if (
+    m_pg->cct->_conf->osd_scrub_during_recovery ||
+    !m_osds->is_recovery_active()) {
+    m_remote_osd_resource.emplace(this, m_pg, primary, m_osds, request_ep);
     // OSD resources allocated?
     granted = m_remote_osd_resource->is_reserved();
     if (!granted) {
@@ -1678,10 +1692,8 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
   dout(10) << __func__ << " reserved? " << (granted ? "yes" : "no") << dendl;
 
   Message* reply = new MOSDScrubReserve(
-    spg_t(m_pg->info.pgid.pgid, m_pg->get_primary().shard),
-    request_ep,
-    granted ? MOSDScrubReserve::GRANT : MOSDScrubReserve::REJECT,
-    m_pg_whoami);
+    reply_to, request_ep,
+    granted ? MOSDScrubReserve::GRANT : MOSDScrubReserve::REJECT, m_pg_whoami);
 
   m_osds->send_message_osd_cluster(reply, op->get_req()->get_connection());
 }
@@ -2345,6 +2357,11 @@ void PgScrubber::replica_handling_done()
 {
   dout(10) << __func__ << dendl;
 
+  // can't call here, as called in advance_token, which is
+  // called for a second registration from the same Primary. But maybe
+  // we should change the code to accommodate that?
+  //relinquish_replica_tracker();
+
   state_clear(PG_STATE_SCRUBBING);
   state_clear(PG_STATE_DEEP_SCRUB);
 
@@ -2750,10 +2767,12 @@ LocalReservation::~LocalReservation()
 
 // ///////////////////// ReservedByRemotePrimary ///////////////////////////////
 
-ReservedByRemotePrimary::ReservedByRemotePrimary(const PgScrubber* scrubber,
-						 PG* pg,
-						 OSDService* osds,
-						 epoch_t epoch)
+ReservedByRemotePrimary::ReservedByRemotePrimary(
+  const PgScrubber* scrubber,
+  PG* pg,
+  spg_t primary,
+  OSDService* osds,
+  epoch_t epoch)
     : m_scrubber{scrubber}
     , m_pg{pg}
     , m_osds{osds}
@@ -2765,6 +2784,9 @@ ReservedByRemotePrimary::ReservedByRemotePrimary(const PgScrubber* scrubber,
     return;
   }
 
+  m_tracking_hndl =
+    m_osds->get_scrub_services().m_tracked_replicas.register_replica(
+      m_pg->get_pgid(), primary);
   dout(20) << __func__ << ": scrub resources reserved at Primary request"
 	   << dendl;
   m_reserved_by_remote_primary = true;
@@ -2780,7 +2802,27 @@ ReservedByRemotePrimary::~ReservedByRemotePrimary()
   if (m_reserved_by_remote_primary) {
     m_reserved_by_remote_primary = false;
     m_osds->get_scrub_services().dec_scrubs_remote();
+    m_osds->get_scrub_services().m_tracked_replicas.pg_relinquished(
+      m_tracking_hndl);
   }
+}
+
+void ReservedByRemotePrimary::track_primary_alive()
+{
+  m_osds->get_scrub_services().m_tracked_replicas.update_primary_times(
+    m_tracking_hndl);
+}
+
+void ReservedByRemotePrimary::track_chunk_response()
+{
+  m_osds->get_scrub_services().m_tracked_replicas.update_local_times(
+    m_tracking_hndl);
+}
+
+void ReservedByRemotePrimary::relinquish_tracker()
+{
+  m_osds->get_scrub_services().m_tracked_replicas.pg_relinquished(
+    m_tracking_hndl);
 }
 
 std::ostream& ReservedByRemotePrimary::gen_prefix(std::ostream& out) const
