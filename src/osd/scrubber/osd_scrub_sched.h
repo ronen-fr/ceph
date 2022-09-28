@@ -135,8 +135,15 @@ using namespace ::std::literals;
 // an interval (a bug that should probably cause a crash), or as a result
 // of a Primary issue.
 
-// RRR there seem to be a few invariants maintained by this structure. Consider
-// 'classifying' it.
+/*
+  RRR there seem to be a few invariants maintained by this structure. Consider
+ 'classifying' it.
+
+  Invariants:
+   - the timeout, as a max(local,primary)+delta;
+
+
+*/
 struct ScrubbingReplica {
   using tpoint_t = std::chrono::time_point<std::chrono::system_clock>;
 

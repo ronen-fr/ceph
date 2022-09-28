@@ -103,7 +103,8 @@ struct BuildMap;
  */
 class ReplicaReservations {
   PG* m_pg;
-  std::set<pg_shard_t> m_acting_set;
+  //std::set<pg_shard_t> m_acting_set;
+  std::vector<pg_shard_t> m_acting_set;
   OSDService* m_osds;
   std::vector<pg_shard_t> m_waited_for_peers;
   std::vector<pg_shard_t> m_reserved_peers;

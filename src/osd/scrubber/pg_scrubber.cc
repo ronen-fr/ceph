@@ -891,7 +891,7 @@ void PgScrubber::get_replicas_maps(bool replica_can_preempt)
   m_primary_scrubmap_pos.reset();
 
   // ask replicas to scan and send maps
-  for (const auto& i : m_pg->get_acting_recovery_backfill()) {
+  for (const auto& i : m_pg->get_actingset()) {
 
     if (i == m_pg_whoami)
       continue;
@@ -1005,7 +1005,7 @@ void PgScrubber::on_init()
     m_pg_whoami,
     m_is_repair,
     m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow,
-    m_pg->get_acting_recovery_backfill());
+    m_pg->get_actingset());
 
   //  create a new store
   {
@@ -1042,6 +1042,8 @@ void PgScrubber::on_replica_init()
 
 void PgScrubber::update_rep_tracker_local()
 {
+  // must not assert on m_remote_osd_resources, as proven by tests...
+
   ceph_assert(m_remote_osd_resource); // RRR reconsider this one. Can we get
                                       // here racing with a release?
   m_remote_osd_resource->track_chunk_response();
@@ -2581,7 +2583,7 @@ ReplicaReservations::ReplicaReservations(PG* pg,
 					 pg_shard_t whoami,
 					 ScrubQueue::ScrubJobRef scrubjob)
     : m_pg{pg}
-    , m_acting_set{pg->get_actingset()}
+    , m_acting_set{pg->get_actingset().begin(), pg->get_actingset().end()}
     , m_osds{m_pg->get_pg_osd(ScrubberPasskey())}
     , m_pending{static_cast<int>(m_acting_set.size()) - 1}
     , m_pg_info{m_pg->get_pg_info(ScrubberPasskey())}

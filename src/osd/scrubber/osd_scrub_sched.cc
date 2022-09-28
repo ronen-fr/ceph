@@ -828,7 +828,7 @@ using ScrubbingReplica = Scrub::ScrubbingReplica;
 using ScrubbingReplicas = Scrub::ScrubbingReplicas;
 using rep_tracket_state_t = ScrubbingReplica::rep_tracket_state_t;
 
-constexpr static std::chrono::seconds replica_timeout{30};
+constexpr static std::chrono::seconds replica_timeout{5};
 
 void Scrub::ScrubbingReplica::recompute_timeout()
 {
@@ -880,8 +880,7 @@ void Scrub::ScrubbingReplicas::pg_relinquished(ScrubbingReplicaHandle& hdl)
 
 void Scrub::ScrubbingReplicas::update_local_times(ScrubbingReplicaHandle& hdl)
 {
-  hdl.m_replica->m_last_local_update =
-    std::chrono::system_clock::now() + replica_timeout;
+  hdl.m_replica->m_last_local_update = std::chrono::system_clock::now();
   hdl.m_replica->recompute_timeout();
   hdl.m_replica->m_state = rep_tracket_state_t::wait_for_primary_request;
 }
