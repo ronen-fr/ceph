@@ -208,7 +208,9 @@ using ReplicaTrackRep = std::shared_ptr<ScrubbingReplica>;
 // opaque handle to a scrubbing replica tracking data
 struct ScrubbingReplicaHandle {
   ReplicaTrackRep m_replica;
-  ceph::mutex* m_lock_replicas{nullptr}; // the same for all replicas registered
+
+  // RRR todo remove this pointer. Not needed.
+  ceph::mutex* m_lock{nullptr}; // the same for all replicas registered
 };
 
 class ScrubbingReplicas {

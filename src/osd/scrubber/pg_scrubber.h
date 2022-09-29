@@ -193,7 +193,7 @@ public:
   // we have answered a chunk request from the Primary
   void track_chunk_response();
 
-  void relinquish_tracker();
+  //void relinquish_tracker();
 
   std::ostream& gen_prefix(std::ostream& out) const;
 };
@@ -569,7 +569,6 @@ class PgScrubber : public ScrubPgIF,
 
   void update_rep_tracker_local() final;
   void update_rep_tracker_primary() final;
-  void relinquish_replica_tracker() final;
 
  protected:
   bool state_test(uint64_t m) const { return m_pg->state_test(m); }

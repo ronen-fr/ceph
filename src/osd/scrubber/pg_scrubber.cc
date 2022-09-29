@@ -1056,17 +1056,17 @@ void PgScrubber::update_rep_tracker_primary()
   m_remote_osd_resource->track_primary_alive();
 }
 
-void PgScrubber::relinquish_replica_tracker()
-{
-  if (!m_remote_osd_resource) {
-    dout(1) << fmt::format("relinquish_replica_tracker: no resource") << dendl;
-    return;
-  }
-  m_remote_osd_resource->relinquish_tracker();
-  //   m_osds->get_scrub_services().m_tracked_replicas.unregister_replica(
-  //     *m_tracking_hndl);
-  //   m_tracking_hndl.reset();
-}
+// void PgScrubber::relinquish_replica_tracker()
+// {
+//   if (!m_remote_osd_resource) {
+//     dout(1) << fmt::format("relinquish_replica_tracker: no resource") << dendl;
+//     return;
+//   }
+//   m_remote_osd_resource->relinquish_tracker();
+//   //   m_osds->get_scrub_services().m_tracked_replicas.unregister_replica(
+//   //     *m_tracking_hndl);
+//   //   m_tracking_hndl.reset();
+// }
 
 int PgScrubber::build_primary_map_chunk()
 {
@@ -2359,11 +2359,6 @@ void PgScrubber::replica_handling_done()
 {
   dout(10) << __func__ << dendl;
 
-  // can't call here, as called in advance_token, which is
-  // called for a second registration from the same Primary. But maybe
-  // we should change the code to accommodate that?
-  //relinquish_replica_tracker();
-
   state_clear(PG_STATE_SCRUBBING);
   state_clear(PG_STATE_DEEP_SCRUB);
 
@@ -2821,11 +2816,11 @@ void ReservedByRemotePrimary::track_chunk_response()
     m_tracking_hndl);
 }
 
-void ReservedByRemotePrimary::relinquish_tracker()
-{
-  m_osds->get_scrub_services().m_tracked_replicas.pg_relinquished(
-    m_tracking_hndl);
-}
+// void ReservedByRemotePrimary::relinquish_tracker()
+// {
+//   m_osds->get_scrub_services().m_tracked_replicas.pg_relinquished(
+//     m_tracking_hndl);
+// }
 
 std::ostream& ReservedByRemotePrimary::gen_prefix(std::ostream& out) const
 {

@@ -555,7 +555,7 @@ sc::result ReplicaWaitUpdates::react(const FullReset&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ReplicaWaitUpdates::react(const FullReset&)" << dendl;
-  scrbr->relinquish_replica_tracker();
+  scrbr->update_rep_tracker_local();
   return transit<NotActive>();
 }
 
@@ -603,7 +603,7 @@ sc::result ActiveReplica::react(const FullReset&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ActiveReplica::react(const FullReset&)" << dendl;
-  scrbr->relinquish_replica_tracker();
+  scrbr->update_rep_tracker_local();
   return transit<NotActive>();
 }
 
