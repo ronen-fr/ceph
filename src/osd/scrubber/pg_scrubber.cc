@@ -1038,23 +1038,23 @@ void PgScrubber::on_replica_init()
     m_active = true;
     ++m_sessions_counter;
   }
+  m_remote_osd_resource->track_primary_alive();
 }
 
 void PgScrubber::update_rep_tracker_local()
 {
   // must not assert on m_remote_osd_resources, as proven by tests...
-
-  ceph_assert(m_remote_osd_resource); // RRR reconsider this one. Can we get
-                                      // here racing with a release?
-  m_remote_osd_resource->track_chunk_response();
+  if (m_remote_osd_resource) {
+    m_remote_osd_resource->track_chunk_response();
+  }
 }
 
-void PgScrubber::update_rep_tracker_primary()
-{
-  ceph_assert(m_remote_osd_resource); // RRR reconsider this one. Can we get
-                                      // here racing with a release?
-  m_remote_osd_resource->track_primary_alive();
-}
+// void PgScrubber::update_rep_tracker_primary()
+// {
+//   ceph_assert(m_remote_osd_resource); // RRR reconsider this one. Can we get
+//                                       // here racing with a release?
+//   m_remote_osd_resource->track_primary_alive();
+// }
 
 // void PgScrubber::relinquish_replica_tracker()
 // {

@@ -203,8 +203,8 @@ struct ScrubMachineListener {
 
   // tracking the fwd advance of replica/Primary scrub operations
   virtual void update_rep_tracker_local() = 0;
-  virtual void update_rep_tracker_primary() = 0;
-   
+  //virtual void update_rep_tracker_primary() = 0;
+
   /**
    * the FSM interface into the "are we waiting for maps, either our own or from
    * replicas" state.
