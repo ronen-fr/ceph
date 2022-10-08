@@ -77,7 +77,7 @@
 └─────────────────────────────────┘
 
 
-SqrubQueue interfaces (main functions):
+ScrubQueue interfaces (main functions):
 
 <1> - OSD/PG resources management:
 
@@ -113,19 +113,153 @@ SqrubQueue interfaces (main functions):
 #include <optional>
 #include <vector>
 
+#include <boost/noncopyable.hpp>
+
 #include "common/RefCountedObj.h"
 #include "common/ceph_atomic.h"
-#include "osd/osd_types.h"
-#include "osd/scrubber_common.h"
 #include "include/utime_fmt.h"
+#include "osd/osd_types.h"
 #include "osd/osd_types_fmt.h"
-#include "utime.h"
+#include "osd/scrubber_common.h"
 
 class PG;
 
 namespace Scrub {
 
 using namespace ::std::literals;
+
+/// tracking the last forward motion of the active scrub
+
+// RRR we are mostly interested in the Primary's wellbeing. Must
+// make sure we are not "forgotten" - either as a result of us missing
+// an interval (a bug that should probably cause a crash), or as a result
+// of a Primary issue.
+
+/*
+  RRR there seem to be a few invariants maintained by this structure. Consider
+ 'classifying' it.
+
+  Invariants:
+   - the timeout, as a max(local,primary)+delta;
+
+
+*/
+/**
+ * A record maintained by the replica OSD for each active scrub.
+ * Tracking the last forward progress of the scrub - monitoring both the
+ * last request from the Primary, and the last reply from the replica.
+ *
+ * The record is owned by both the OSD the relevant PG. The updates are made
+ * by the PG, while the OSD just checks for timeouts.
+ */
+struct ScrubbingReplica : boost::noncopyable {
+  // the coarse_real_clock fails in fmt::formatting a timepoint. Todo: fix.
+  // using clock = ceph::coarse_real_clock;
+  using clock = std::chrono::system_clock;
+  using tpoint_t = std::chrono::time_point<clock>;
+
+  enum class rep_tracker_state_t {
+    wait_for_primary_request,  ///< waiting for a chunk request
+    t_o_on_primary_request,
+    wait_for_rep_reply,	 ///< waiting for our scrub data to be sent to the
+			 ///< Primary
+    t_o_on_reply,
+    relinquished  ///< the scrubber got a resource-release request
+  };
+
+  ScrubbingReplica(const spg_t& pgid, const spg_t& prim_pgid, epoch_t interval)
+      : m_state{rep_tracker_state_t::wait_for_primary_request}
+      , m_pgid(pgid)
+      , m_primary(prim_pgid)
+      , m_interval(interval)
+  {
+    auto now_is = clock::now();
+    m_created_at = now_is;
+    m_last_p_update = now_is;
+    m_last_local_update = now_is;
+    recompute_timeout();
+  }
+
+  tpoint_t m_timeout_at{tpoint_t::max()};
+  rep_tracker_state_t m_state;
+  spg_t m_pgid;
+  spg_t m_primary;
+  tpoint_t m_last_p_update;	 //< last time we have received a chunk request
+  tpoint_t m_last_local_update;	 //< we moved fwd with the scrub
+  tpoint_t m_created_at;	 //< for easy identification in the logs
+
+  const epoch_t m_interval;
+
+  bool m_pg_owned{true};  //< cleared by the scrubber when it releases the
+			  // registration
+
+  // RRR combine with the t.o. states?
+  bool m_reported{false};  //< set by the OSD after a t.o was handled
+
+  auto operator<=>(const ScrubbingReplica& rh) const
+  {
+    return m_timeout_at <=> rh.m_timeout_at;
+  }
+
+  // set the timeout, based on the two last updates and the state
+  void recompute_timeout();
+};
+
+using ReplicaTrackRef = std::shared_ptr<ScrubbingReplica>;
+using RepTrackerHandle = std::optional<ReplicaTrackRef>;
+
+/*
+  We'll think about the best container for these objects later.
+  For now - let's use an std::map.
+  Note that our requirements are:
+  - stable references are not required;
+  - fast insertions and removals;
+  - less important: fast scans for outdated entries.
+  - the number of elements is expected to be small (less than 10).
+*/
+
+/**
+ * the collection of all active scrub sessions performed by the OSD,
+ * acting as a replica.
+ *
+ * The collection is maintained by the OSD, and is updated by the PGs.
+ */
+class ScrubbingReplicas {
+ public:
+  RepTrackerHandle register_replica(
+    const spg_t& pgid,
+    const spg_t& primary_pgid,
+    epoch_t interval);
+
+  /**
+   * the PG has received the "release" request from the Primary.
+   */
+  void pg_relinquishes(RepTrackerHandle& hdl);
+
+  /**
+   * update the "local" (our shard) timeout, as we have sent a chunk
+   * reply to the Primary.
+   */
+  void update_local_times(const RepTrackerHandle& hdl);
+
+  /**
+   * update the last time we have received a request from the Primary.
+   */
+  void update_primary_times(const RepTrackerHandle& hdl);
+
+  /**
+   * find the first PG that has timed out on its scrub session (if any).
+   *
+   * the interface used by the OSD.
+   * Note: clears entries that were correctly terminated by the scrubbers
+   */
+  RepTrackerHandle get_timedout();
+
+ private:
+  ceph::mutex m_lock_replicas = ceph::make_mutex("Scrub::track_replicas");
+  std::map<spg_t, ReplicaTrackRef> m_replicas;
+};
+
 
 // possible outcome when trying to select a PG and scrub it
 enum class schedule_result_t {
@@ -468,7 +602,7 @@ class ScrubQueue {
   mutable ceph::mutex resource_lock =
     ceph::make_mutex("ScrubQueue::resource_lock");
 
-  // the counters used to manage scrub activity parallelism:
+  /// the counters used to manage scrub activity parallelism:
   int scrubs_local{0};
   int scrubs_remote{0};
 
@@ -514,6 +648,10 @@ class ScrubQueue {
     ScrubQContainer& group,
     const Scrub::ScrubPreconds& preconds,
     utime_t now_is);
+
+public:
+  /// tracking active scrubbers
+  Scrub::ScrubbingReplicas m_tracked_replicas;
 
 protected: // used by the unit-tests
   /**

@@ -1905,8 +1905,9 @@ protected:
   MPGStats *collect_pg_stats();
   std::vector<DaemonHealthMetric> get_health_metrics();
 
-
 private:
+  void look_for_stuck_scrubs();
+
   bool ms_can_fast_dispatch_any() const override { return true; }
   bool ms_can_fast_dispatch(const Message *m) const override {
     switch (m->get_type()) {
