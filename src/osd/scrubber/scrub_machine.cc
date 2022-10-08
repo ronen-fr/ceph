@@ -553,7 +553,9 @@ sc::result ReplicaWaitUpdates::react(const ReplicaPushesUpd&)
  */
 sc::result ReplicaWaitUpdates::react(const FullReset&)
 {
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ReplicaWaitUpdates::react(const FullReset&)" << dendl;
+  scrbr->update_rep_tracker_local();
   return transit<NotActive>();
 }
 
@@ -579,6 +581,7 @@ sc::result ActiveReplica::react(const SchedReplica&)
   if (scrbr->get_preemptor().was_preempted()) {
     dout(10) << "replica scrub job preempted" << dendl;
 
+    scrbr->update_rep_tracker_local();
     scrbr->send_preempted_replica();
     scrbr->replica_handling_done();
     return transit<NotActive>();
@@ -598,7 +601,9 @@ sc::result ActiveReplica::react(const SchedReplica&)
  */
 sc::result ActiveReplica::react(const FullReset&)
 {
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ActiveReplica::react(const FullReset&)" << dendl;
+  scrbr->update_rep_tracker_local();
   return transit<NotActive>();
 }
 

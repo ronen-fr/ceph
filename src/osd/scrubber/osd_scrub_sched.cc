@@ -815,3 +815,132 @@ int ScrubQueue::get_blocked_pgs_count() const
 {
   return blocked_scrubs_cnt;
 }
+
+// ////////////////////////////////////////////////////////////////////////// //
+// tracking the forward movement of the scrubber
+
+using ScrubbingReplica = Scrub::ScrubbingReplica;
+using ScrubbingReplicas = Scrub::ScrubbingReplicas;
+using rep_tracker_state_t = ScrubbingReplica::rep_tracker_state_t;
+
+/**
+ * The length of time to wait for a replica to respond to a scrub request, and
+ * for the Primary to send us the next chunk request.
+ * \todo make this a config option
+ */
+constexpr static std::chrono::seconds replica_timeout{5};
+
+void Scrub::ScrubbingReplica::recompute_timeout()
+{
+  if (m_state == rep_tracker_state_t::relinquished) {
+    m_timeout_at = tpoint_t::max();
+  } else {
+    auto last_update = std::max(m_last_p_update, m_last_local_update);
+    m_timeout_at = last_update + replica_timeout;
+  }
+}
+
+Scrub::RepTrackerHandle Scrub::ScrubbingReplicas::register_replica(
+  const spg_t& pgid,
+  const spg_t& primary_pgid,
+  epoch_t interval)
+{
+  auto rep_entry =
+    std::make_shared<ScrubbingReplica>(pgid, primary_pgid, interval);
+
+  std::lock_guard lck{m_lock_replicas};
+
+  // if we already have an entry for this PG, it should be already marked
+  // as 'done' ('relinquished' by the PG).
+  auto existing = m_replicas.find(pgid);
+  if (existing != m_replicas.end()) {
+    // RRR this might be risky, as the problem might be elsewhere. But for now:
+    ceph_assert(existing->second->m_state == rep_tracker_state_t::relinquished);
+    m_replicas.erase(existing);
+  }
+  auto [it, inserted] = m_replicas.insert(std::pair{pgid, rep_entry});
+  ceph_assert(inserted);
+  return rep_entry;
+}
+
+void Scrub::ScrubbingReplicas::pg_relinquishes(RepTrackerHandle& maybe_trk)
+{
+  // under lock, as the OSD expects a specific invariant (pg_owned & the state)
+  ceph_assert(maybe_trk);
+  std::lock_guard lck{m_lock_replicas};
+  auto& trckr = maybe_trk.value();
+  ceph_assert(trckr->m_pg_owned);
+
+  trckr->m_state = rep_tracker_state_t::relinquished;
+  trckr->m_pg_owned = false;
+  trckr.reset();
+}
+
+void Scrub::ScrubbingReplicas::update_local_times(
+  const RepTrackerHandle& maybe_trk)
+{
+  std::lock_guard lck{m_lock_replicas};
+  if (!maybe_trk) {
+    // possibly following a FullReset event
+    return;
+  }
+  auto& trckr = maybe_trk.value();
+  trckr->m_last_local_update = ScrubbingReplica::clock::now();
+  trckr->recompute_timeout();
+  trckr->m_state = rep_tracker_state_t::wait_for_primary_request;
+}
+
+void Scrub::ScrubbingReplicas::update_primary_times(
+  const RepTrackerHandle& maybe_trk)
+{
+  std::lock_guard lck{m_lock_replicas};
+  ceph_assert(maybe_trk);
+  auto& trckr = maybe_trk.value();
+  switch (trckr->m_state) {
+    case rep_tracker_state_t::wait_for_primary_request:
+      // the expected state
+      [[fallthrough]];
+    case rep_tracker_state_t::t_o_on_primary_request:
+      trckr->m_last_p_update = ScrubbingReplica::clock::now();
+      trckr->m_last_local_update = trckr->m_last_p_update;
+      trckr->recompute_timeout();
+      trckr->m_state = rep_tracker_state_t::wait_for_rep_reply;
+      break;
+
+    case rep_tracker_state_t::wait_for_rep_reply:
+      // the primary is sending us a request, but we are already handling its
+      // previous one. This is a bug. TBD - what are the options?
+      ceph_assert(false);
+      break;
+
+    case rep_tracker_state_t::t_o_on_reply:
+    case rep_tracker_state_t::relinquished:
+      ceph_assert(false);  // RRR not the correct response
+      break;
+  }
+}
+
+Scrub::RepTrackerHandle Scrub::ScrubbingReplicas::get_timedout()
+{
+  ScrubbingReplica::tpoint_t now_is = ScrubbingReplica::clock::now();
+  std::lock_guard lck{m_lock_replicas};
+
+  // entries that were relinquished by their perspective PG are OK - we can
+  // erase them.
+  for (auto it = m_replicas.begin(); it != m_replicas.end();) {
+    if (it->second->m_state == rep_tracker_state_t::relinquished) {
+      it = m_replicas.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  auto e = std::find_if(m_replicas.begin(), m_replicas.end(), [&](auto& e) {
+    return e.second->m_timeout_at < now_is && !e.second->m_reported;
+  });
+  if (e == m_replicas.end()) {
+    return std::nullopt;
+  }
+  e->second->m_reported = true;	 // RRR fold into the t.o. states
+  return e->second;
+}
