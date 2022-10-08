@@ -164,13 +164,18 @@ class LocalReservation {
 class ReservedByRemotePrimary {
   const PgScrubber* m_scrubber;	 ///< we will be using its gen_prefix()
   PG* m_pg;
+  spg_t m_primary;
   OSDService* m_osds;
   bool m_reserved_by_remote_primary{false};
   const epoch_t m_reserved_at;
+  // tracking forward progress of the scrub
+  Scrub::RepTrackerHandle m_tracking_hndl;
+  Scrub::ScrubbingReplicas& m_tracker;
 
  public:
   ReservedByRemotePrimary(const PgScrubber* scrubber,
 			  PG* pg,
+                          spg_t primary,
 			  OSDService* osds,
 			  epoch_t epoch);
   ~ReservedByRemotePrimary();
@@ -181,6 +186,12 @@ class ReservedByRemotePrimary {
 
   /// compare the remembered reserved-at epoch to the current interval
   [[nodiscard]] bool is_stale() const;
+
+  // the Primary pinged us ("I'm alive!")
+  void track_primary_alive();
+
+  // we have answered a chunk request from the Primary
+  void track_chunk_response();
 
   std::ostream& gen_prefix(std::ostream& out) const;
 };
@@ -553,6 +564,8 @@ class PgScrubber : public ScrubPgIF,
   }
 
   void log_cluster_warning(const std::string& warning) const final;
+
+  void update_rep_tracker_local() final;
 
  protected:
   bool state_test(uint64_t m) const { return m_pg->state_test(m); }
