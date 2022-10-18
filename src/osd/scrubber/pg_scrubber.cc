@@ -2255,8 +2255,8 @@ void PgScrubber::set_scrub_duration()
 void PgScrubber::reserve_replicas()
 {
   dout(10) << __func__ << dendl;
-  // the 2'000 will be replaced by a config parameter
-  m_reservations.emplace(m_pg, m_pg_whoami, m_scrub_job, 2'000ms);
+  m_reservations.emplace(
+    m_pg, m_pg_whoami, m_scrub_job, m_pg->get_cct()->_conf);
 }
 
 void PgScrubber::cleanup_on_finish()
@@ -2539,23 +2539,30 @@ ReplicaReservations::ReplicaReservations(
   PG* pg,
   pg_shard_t whoami,
   ScrubQueue::ScrubJobRef scrubjob,
-  std::chrono::milliseconds response_timeout)
+  const ConfigProxy& conf)
     : m_pg{pg}
     , m_acting_set{pg->get_actingset()}
     , m_osds{m_pg->get_pg_osd(ScrubberPasskey())}
     , m_pending{static_cast<int>(m_acting_set.size()) - 1}
     , m_pg_info{m_pg->get_pg_info(ScrubberPasskey())}
     , m_scrub_job{scrubjob}
-    , m_timeout{response_timeout}
+    , m_conf{conf}
 {
   epoch_t epoch = m_pg->get_osdmap_epoch();
 
-  {
-    std::stringstream prefix;
-    prefix << "osd." << m_osds->whoami << " ep: " << epoch
-	   << " scrubber::ReplicaReservations pg[" << pg->pg_id << "]: ";
-    m_log_msg_prefix = prefix.str();
-  }
+  m_log_msg_prefix = "88888888888 ";
+//   m_log_msg_prefix = fmt::format(
+//     "osd.{} ep: {} scrubber::ReplicaReservations pg[{}]: ", m_osds->whoami,
+//     epoch, pg->pg_id);
+
+  //   {
+  //     std::stringstream prefix;
+  //     prefix << "osd." << m_osds->whoami << " ep: " << epoch
+  // 	   << " scrubber::ReplicaReservations pg[" << pg->pg_id << "]: ";
+  //     m_log_msg_prefix = prefix.str();
+  //   }
+
+  dout(3) << m_log_msg_prefix << dendl;
 
   // handle the special case of no replicas
   if (m_pending <= 0) {
@@ -2564,13 +2571,16 @@ ReplicaReservations::ReplicaReservations(
 
   } else {
 
+    // start a timer to handle the case of no replies
+    m_no_reply = make_unique<ReplicaReservations::no_reply_t>(
+      m_osds, m_conf, *this, m_log_msg_prefix);
+
     for (auto p : m_acting_set) {
       if (p == whoami)
 	continue;
-      auto m = new MOSDScrubReserve(spg_t(m_pg_info.pgid.pgid, p.shard),
-				    epoch,
-				    MOSDScrubReserve::REQUEST,
-				    m_pg->pg_whoami);
+      auto m = new MOSDScrubReserve(
+	spg_t(m_pg_info.pgid.pgid, p.shard), epoch, MOSDScrubReserve::REQUEST,
+	m_pg->pg_whoami);
       m_osds->send_message_osd_cluster(p.osd, m, epoch);
       m_waited_for_peers.push_back(p);
       dout(10) << __func__ << ": reserve " << p.osd << dendl;
@@ -2580,11 +2590,15 @@ ReplicaReservations::ReplicaReservations(
 
 void ReplicaReservations::send_all_done()
 {
+  // stop any pending timeout timer
+  m_no_reply.reset();
   m_osds->queue_for_scrub_granted(m_pg, scrub_prio_t::low_priority);
 }
 
 void ReplicaReservations::send_reject()
 {
+  // stop any pending timeout timer
+  m_no_reply.reset();
   m_scrub_job->resources_failure = true;
   m_osds->queue_for_scrub_denied(m_pg, scrub_prio_t::low_priority);
 }
@@ -2593,6 +2607,7 @@ void ReplicaReservations::discard_all()
 {
   dout(10) << __func__ << ": " << m_reserved_peers << dendl;
 
+  m_no_reply.reset();
   m_had_rejections = true;  // preventing late-coming responses from triggering
 			    // events
   m_reserved_peers.clear();
@@ -2605,8 +2620,8 @@ void ReplicaReservations::discard_all()
  * - we might have already set a timer. If so, we should restart it.
  * - we might or might not have received responses from 50% of the replicas.
  */
-std::optional<ReplicaReservations::clock_base::time_point>
-ReplicaReservations::update_latecomers(clock_base::time_point now_is)
+std::optional<ReplicaReservations::tpoint_t>
+ReplicaReservations::update_latecomers(tpoint_t now_is)
 {
   if (m_reserved_peers.size() > m_waited_for_peers.size()) {
     // at least half of the replicas have already responded. Time we flag
@@ -2622,6 +2637,9 @@ ReplicaReservations::~ReplicaReservations()
 {
   m_had_rejections = true;  // preventing late-coming responses from triggering
 			    // events
+
+  // stop any pending timeout timer
+  m_no_reply.reset();
 
   // send un-reserve messages to all reserved replicas. We do not wait for
   // answer (there wouldn't be one). Other incoming messages will be discarded
@@ -2680,7 +2698,7 @@ void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
     m_reserved_peers.push_back(from);
 
     // was this response late?
-    auto now_is = clock_base::now();
+    auto now_is = clock::now();
     if (m_timeout_point && (now_is > *m_timeout_point)) {
 
       m_osds->clog->warn() << fmt::format(
@@ -2739,9 +2757,53 @@ void ReplicaReservations::handle_reserve_reject(OpRequestRef op,
   }
 }
 
+void ReplicaReservations::handle_no_reply_timeout()
+{
+  dout(1) << fmt::format(
+	       "{}: timeout! no reply from {}", __func__, m_waited_for_peers)
+	  << dendl;
+
+  m_had_rejections = true;  // preventing any additional notifications
+  send_reject();
+}
+
 std::ostream& ReplicaReservations::gen_prefix(std::ostream& out) const
 {
   return out << m_log_msg_prefix;
+}
+
+ReplicaReservations::no_reply_t::no_reply_t(
+  OSDService* osds,
+  const ConfigProxy& conf,
+  ReplicaReservations& parent,
+  std::string_view log_prfx)
+    : m_osds{osds}
+    , m_conf{conf}
+    , m_parent{parent}
+    , m_log_prfx{log_prfx}
+{
+  using namespace std::chrono;
+  auto now_is = clock::now();
+  milliseconds timeout =
+    milliseconds(conf.get_val<int64_t>("osd_scrub_reservation_timeout"));
+
+  m_abort_callback = new LambdaContext([this, now_is]([[maybe_unused]] int r) {
+    // behave as if a REJECT was received
+    m_osds->clog->warn() << fmt::format(
+      "{} timeout on replica reservations (since {})", m_log_prfx, now_is);
+    m_parent.handle_no_reply_timeout();
+  });
+
+  std::lock_guard l(m_osds->sleep_lock);
+  m_osds->sleep_timer.add_event_after(timeout, m_abort_callback);
+}
+
+ReplicaReservations::no_reply_t::~no_reply_t()
+{
+  std::lock_guard l(m_osds->sleep_lock);
+  if (m_abort_callback) {
+    m_osds->sleep_timer.cancel_event(m_abort_callback);
+  }
 }
 
 // ///////////////////// LocalReservation //////////////////////////////////
