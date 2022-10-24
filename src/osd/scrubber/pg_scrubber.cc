@@ -2799,7 +2799,7 @@ ReplicaReservations::no_reply_t::~no_reply_t()
 LocalReservation::LocalReservation(OSDService* osds) : m_osds{osds}
 {
   if (m_osds->get_scrub_services().inc_scrubs_local()) {
-    // the failure is signalled by not having m_holding_local_reservation set
+    // a failure is signalled by not having m_holding_local_reservation set
     m_holding_local_reservation = true;
   }
 }
