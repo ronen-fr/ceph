@@ -17,7 +17,21 @@ class Formatter;
 struct PGPool;
 
 namespace Scrub {
-  class ReplicaReservations;
+class ReplicaReservations;
+
+// possible outcome when trying to select a PG and scrub it
+enum class schedule_result_t {
+  scrub_initiated,     // successfully started a scrub
+  none_ready,	       // no pg to scrub
+  no_local_resources,  // failure to secure local OSD scrub resource
+  already_started,     // failed, as already started scrubbing this pg
+  no_such_pg,	       // can't find this pg
+  bad_pg_state,	       // pg state (clean, active, etc.)
+  preconditions	       // time, configuration, etc.
+};
+
+struct SchedTarget;
+
 }
 
 /// Facilitating scrub-realated object access to private PG data
@@ -48,6 +62,53 @@ struct ScrubPreconds {
   bool time_permit{true};
   bool only_deadlined{false};
 };
+
+// concise passing of PG state re scrubbing to the
+// scrubber at initiation of a scrub
+struct ScrubPgPreconds {
+  bool allow_shallow{true};
+  bool allow_deep{true};
+  bool has_deep_errors{false};
+  bool can_autorepair{false};
+};
+}
+
+template <>
+struct fmt::formatter<Scrub::ScrubPreconds> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::ScrubPreconds& conds, FormatContext& ctx)
+  {
+    return fmt::format_to(
+      ctx.out(),
+      "overdue-only:{} load:{} time:{} repair-only:{}",
+        conds.only_deadlined,
+        conds.load_is_low ? "ok" : "high",
+        conds.time_permit ? "ok" : "no",
+        conds.allow_requested_repair_only);
+  }
+};
+
+template <>
+struct fmt::formatter<Scrub::ScrubPgPreconds> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::ScrubPgPreconds& conds, FormatContext& ctx)
+  {
+    return fmt::format_to(
+      ctx.out(),
+      "allowed:{}/{} err:{} autorp:{}",
+        conds.allow_shallow ? "+" : "-",
+        conds.allow_deep ? "+" : "-",
+        conds.has_deep_errors ? "+" : "-",
+        conds.can_autorepair ? "+" : "-");
+  }
+};
+
+
+namespace Scrub {
 
 /// PG services used by the scrubber backend
 struct PgScrubBeListener {
@@ -100,14 +161,14 @@ struct requested_scrub_t {
 
   /**
    * Set from:
-   *  - scrub_requested() with need_auto param set, which only happens in
+   *  - request_rescrubbing(), which only happens in
    *  - scrub_finish() - if deep_scrub_on_error is set, and we have errors
    *
    * If set, will prevent the OSD from casually postponing our scrub. When
    * scrubbing starts, will cause must_scrub, must_deep_scrub and auto_repair to
    * be set.
    */
-  bool need_auto{false};
+  bool need_auto{false}; // obsolete
 
   /**
    * Set for scrub-after-recovery just before we initiate the recovery deep
@@ -240,6 +301,14 @@ struct ScrubPgIF {
   virtual void on_applied_when_primary(const eversion_t& applied_version) = 0;
 
   // --------------------------------------------------
+
+  virtual Scrub::schedule_result_t start_scrubbing(
+    ceph::ref_t<Scrub::SchedTarget> trgt,
+    requested_scrub_t& request,
+    const Scrub::ScrubPgPreconds& pg_cond) = 0;
+
+  virtual ceph::ref_t<Scrub::SchedTarget> mark_for_after_repair(
+    requested_scrub_t& request) = 0;
 
   [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	 // currently
 								 // only used

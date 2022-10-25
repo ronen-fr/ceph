@@ -20,8 +20,9 @@
 #include "common/config.h"
 #include "OSD.h"
 #include "OpRequest.h"
-#include "osd/scrubber/ScrubStore.h"
 #include "osd/scrubber/pg_scrubber.h"
+#include "osd/scrubber/osd_scrub_sched.h"
+#include "osd/scrubber/ScrubStore.h"
 #include "osd/scheduler/OpSchedulerItem.h"
 #include "Session.h"
 
@@ -423,7 +424,7 @@ void PG::queue_recovery()
   }
 }
 
-void PG::queue_scrub_after_repair()
+void PG::start_after_repair_scrub()
 {
   dout(10) << __func__ << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
@@ -433,17 +434,46 @@ void PG::queue_scrub_after_repair()
   m_planned_scrub.must_scrub = true;
   m_planned_scrub.calculated_to_deep = true;
 
-  if (is_scrub_queued_or_active()) {
-    dout(10) << __func__ << ": scrubbing already ("
-             << (is_scrubbing() ? "active)" : "queued)") << dendl;
-    return;
-  }
+  // manipulate the job's schedule-targets
+  auto deep_target = m_scrubber->mark_for_after_repair(m_planned_scrub);
 
-  m_scrubber->set_op_parameters(m_planned_scrub);
-  dout(15) << __func__ << ": queueing" << dendl;
-
-  osd->queue_scrub_after_repair(this, Scrub::scrub_prio_t::high_priority);
+  start_scrubbing(deep_target);
+//  
+//   if (is_scrub_queued_or_active()) {
+//     dout(10) << __func__ << ": scrubbing already ("
+//              << (is_scrubbing() ? "active)" : "queued)") << dendl;
+//     return;
+//   }
+// 
+//   // prioritize deep scrubbing
+//   m_scrubber->set_op_parameters(m_planned_scrub);
+//   dout(15) << __func__ << ": queueing" << dendl;
+// 
+//   osd->queue_scrub_after_repair(this, Scrub::scrub_prio_t::high_priority);
 }
+
+
+// void PG::queue_scrub_after_repair()
+// {
+//   dout(10) << __func__ << dendl;
+//   ceph_assert(ceph_mutex_is_locked(_lock));
+// 
+//   m_planned_scrub.must_deep_scrub = true;
+//   m_planned_scrub.check_repair = true;
+//   m_planned_scrub.must_scrub = true;
+//   m_planned_scrub.calculated_to_deep = true;
+// 
+//   if (is_scrub_queued_or_active()) {
+//     dout(10) << __func__ << ": scrubbing already ("
+//              << (is_scrubbing() ? "active)" : "queued)") << dendl;
+//     return;
+//   }
+// 
+//   m_scrubber->set_op_parameters(m_planned_scrub);
+//   dout(15) << __func__ << ": queueing" << dendl;
+// 
+//   osd->queue_scrub_after_repair(this, Scrub::scrub_prio_t::high_priority);
+// }
 
 unsigned PG::get_scrub_priority()
 {
@@ -489,7 +519,7 @@ void PG::_finish_recovery(Context* c)
     if (scrub_after_recovery) {
       dout(10) << "_finish_recovery requeueing for scrub" << dendl;
       scrub_after_recovery = false;
-      queue_scrub_after_repair();
+      start_after_repair_scrub();
     }
   } else {
     dout(10) << "_finish_recovery -- stale" << dendl;
@@ -1320,69 +1350,212 @@ unsigned int PG::scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsig
 
 /*
  *  implementation note:
- *  PG::sched_scrub() is called only once per a specific scrub session.
+ *  PG::start_scrubbing() is called only once per a specific scrub session.
  *  That call commits us to the whatever choices are made (deep/shallow, etc').
  *  Unless failing to start scrubbing, the 'planned scrub' flag-set is 'frozen' into
  *  PgScrubber's m_flags, then cleared.
  */
-Scrub::schedule_result_t PG::sched_scrub()
+
+/*
+Note that we know what type of scrub was requested of, as we have the specific SchedTarget.
+This object might be a 'deep scrub' request, or a 'shallow scrub' - but for a 'shallow'
+object, we may have the 'randomly upgraded to deep' flag set.
+*/
+Scrub::schedule_result_t PG::start_scrubbing(ceph::ref_t<Scrub::SchedTarget> trgt)
 {
   using Scrub::schedule_result_t;
-  dout(15) << __func__ << " pg(" << info.pgid
-	  << (is_active() ? ") <active>" : ") <not-active>")
-	  << (is_clean() ? " <clean>" : " <not-clean>") << dendl;
+  dout(10) << fmt::format(
+		"{}: pg[{}] {} {} target: {}", __func__, info.pgid,
+		(is_active() ? "<active>" : "<not-active>"),
+		(is_clean() ? "<clean>" : "<not-clean>"), *trgt)
+	   << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);
 
-  if (is_scrub_queued_or_active()) {
-    return schedule_result_t::already_started;
-  }
+//   if (is_scrub_queued_or_active()) {
+//     return schedule_result_t::already_started;
+//   }
+// 
+//   if (!is_primary() || !is_active() || !is_clean()) {
+//     return schedule_result_t::bad_pg_state;
+//   }
+// 
+//   if (state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
+//     // note that the trimmer checks scrub status when setting 'snaptrim_wait'
+//     // (on the transition from NotTrimming to Trimming/WaitReservation),
+//     // i.e. some time before setting 'snaptrim'.
+//     dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
+//     return schedule_result_t::bad_pg_state;
+//   }
 
-  if (!is_primary() || !is_active() || !is_clean()) {
-    return schedule_result_t::bad_pg_state;
-  }
+  Scrub::ScrubPgPreconds pg_cond{};
+  pg_cond.allow_shallow = !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
+      pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
+  pg_cond.allow_deep = !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
+      pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
+  pg_cond.has_deep_errors = (info.stats.stats.sum.num_deep_scrub_errors > 0);
+  pg_cond.can_autorepair = (cct->_conf->osd_scrub_auto_repair &&
+				   get_pgbackend()->auto_repair_supported());
 
-  if (state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
-    // note that the trimmer checks scrub status when setting 'snaptrim_wait'
-    // (on the transition from NotTrimming to Trimming/WaitReservation),
-    // i.e. some time before setting 'snaptrim'.
-    dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
-    return schedule_result_t::bad_pg_state;
-  }
+  // start_scrubbing() usually changes the planned scrub flags
+  auto ret = m_scrubber->start_scrubbing(trgt, m_planned_scrub, pg_cond);
 
-  // analyse the combination of the requested scrub flags, the osd/pool configuration
-  // and the PG status to determine whether we should scrub now, and what type of scrub
-  // should that be.
-  auto updated_flags = validate_scrub_mode();
-  if (!updated_flags) {
-    // the stars do not align for starting a scrub for this PG at this time
-    // (due to configuration or priority issues)
-    // The reason was already reported by the callee.
-    dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
-    return schedule_result_t::preconditions;
-  }
+//   // analyse the combination of the requested scrub flags, the osd/pool configuration
+//   // and the PG status to determine whether we should scrub now, and what type of scrub
+//   // should that be.
+//   // This might mean that we replace the specific 'trgt' with the PG's scrub-job's
+//   // second one (e.g. shallow -> deep scrub).
+//   auto updated_flags = validate_scrub_mode(trgt);
+//   if (!updated_flags) {
+//     // the stars do not align for starting a scrub for this PG at this time
+//     // (due to configuration or priority issues)
+//     // The reason was already reported by the callee.
+//     dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
+//     return schedule_result_t::preconditions;
+//   }
 
-  // try to reserve the local OSD resources. If failing: no harm. We will
-  // be retried by the OSD later on.
-  if (!m_scrubber->reserve_local()) {
-    dout(10) << __func__ << ": failed to reserve locally" << dendl;
-    return schedule_result_t::no_local_resources;
-  }
-
-  // can commit to the updated flags now, as nothing will stop the scrub
-  m_planned_scrub = *updated_flags;
-
-  // An interrupted recovery repair could leave this set.
-  state_clear(PG_STATE_REPAIR);
-
-  // Pass control to the scrubber. It is the scrubber that handles the replicas'
-  // resources reservations.
-  m_scrubber->set_op_parameters(m_planned_scrub);
-
-  dout(10) << __func__ << ": queueing" << dendl;
-  osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
-  return schedule_result_t::scrub_initiated;
+  return ret;
+// 
+//   // try to reserve the local OSD resources. If failing: no harm. We will
+//   // be retried by the OSD later on.
+//   if (!m_scrubber->reserve_local()) {
+//     dout(10) << __func__ << ": failed to reserve locally" << dendl;
+//     return schedule_result_t::no_local_resources;
+//   }
+// 
+//   // can commit to the updated flags now, as nothing will stop the scrub
+//   m_planned_scrub = *updated_flags;
+// 
+//   // An interrupted recovery repair could leave this set.
+//   state_clear(PG_STATE_REPAIR);
+// 
+//   // Pass control to the scrubber. It is the scrubber that handles the replicas'
+//   // resources reservations.
+//   m_scrubber->set_op_parameters(m_planned_scrub);
+// 
+//   dout(10) << __func__ << ": queueing" << dendl;
+//   osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
+//   return schedule_result_t::scrub_initiated;
 }
+
+bool PG::is_time_for_deep(Scrub::SchedTarget* trgt,
+                          bool allow_deep_scrub,
+			  bool allow_shallow_scrub,
+			  bool has_deep_errors,
+			  const requested_scrub_t& planned) const
+{
+  dout(10) << fmt::format(
+		"{} - target:{} need-auto? {} allowed? {}/{} deep-errors? {} "
+		"last_deep_scrub_stamp {}",
+		__func__,
+                *trgt,
+		planned.need_auto,
+		allow_shallow_scrub,
+		allow_deep_scrub,
+		has_deep_errors,
+		info.history.last_deep_scrub_stamp)
+	   << dendl;
+
+  if (!allow_deep_scrub)
+    return false;
+
+  if (planned.need_auto) {
+    dout(10) << __func__ << ": need repair after scrub errors" << dendl;
+    return true;
+  }
+
+  if (ceph_clock_now() >= next_deepscrub_interval()) {
+    dout(20) << __func__ << ": now (" << ceph_clock_now()
+             << ") >= time for deep (" << next_deepscrub_interval() << ")"
+             << dendl;
+    return true;
+  }
+
+  if (has_deep_errors) {
+    // note: the text below is matched by 'standalone' tests
+    osd->clog->info() << "osd." << osd->whoami << " pg " << info.pgid
+                      << " Deep scrub errors, upgrading scrub to deep-scrub";
+    return true;
+  }
+
+  // we only flip coins if 'allow_shallow_scrub' is asserted. Otherwise - as
+  // this function is called often, we will probably be deep-scrubbing most of
+  // the time.
+  if (allow_shallow_scrub) {
+    return trgt->check_and_redraw_upgrade();
+  }
+
+  return false;
+}
+
+
+
+
+// /*
+//  *  implementation note:
+//  *  PG::sched_scrub() is called only once per a specific scrub session.
+//  *  That call commits us to the whatever choices are made (deep/shallow, etc').
+//  *  Unless failing to start scrubbing, the 'planned scrub' flag-set is 'frozen' into
+//  *  PgScrubber's m_flags, then cleared.
+//  */
+// Scrub::schedule_result_t PG::sched_scrub()
+// {
+//   using Scrub::schedule_result_t;
+//   dout(15) << __func__ << " pg(" << info.pgid
+// 	  << (is_active() ? ") <active>" : ") <not-active>")
+// 	  << (is_clean() ? " <clean>" : " <not-clean>") << dendl;
+//   ceph_assert(ceph_mutex_is_locked(_lock));
+//   ceph_assert(m_scrubber);
+// 
+//   if (is_scrub_queued_or_active()) {
+//     return schedule_result_t::already_started;
+//   }
+// 
+//   if (!is_primary() || !is_active() || !is_clean()) {
+//     return schedule_result_t::bad_pg_state;
+//   }
+// 
+//   if (state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
+//     // note that the trimmer checks scrub status when setting 'snaptrim_wait'
+//     // (on the transition from NotTrimming to Trimming/WaitReservation),
+//     // i.e. some time before setting 'snaptrim'.
+//     dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
+//     return schedule_result_t::bad_pg_state;
+//   }
+// 
+//   // analyse the combination of the requested scrub flags, the osd/pool configuration
+//   // and the PG status to determine whether we should scrub now, and what type of scrub
+//   // should that be.
+//   auto updated_flags = validate_scrub_mode();
+//   if (!updated_flags) {
+//     // the stars do not align for starting a scrub for this PG at this time
+//     // (due to configuration or priority issues)
+//     // The reason was already reported by the callee.
+//     dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
+//     return schedule_result_t::preconditions;
+//   }
+// 
+//   // try to reserve the local OSD resources. If failing: no harm. We will
+//   // be retried by the OSD later on.
+//   if (!m_scrubber->reserve_local()) {
+//     dout(10) << __func__ << ": failed to reserve locally" << dendl;
+//     return schedule_result_t::no_local_resources;
+//   }
+// 
+//   // can commit to the updated flags now, as nothing will stop the scrub
+//   m_planned_scrub = *updated_flags;
+// 
+//   // An interrupted recovery repair could leave this set.
+//   state_clear(PG_STATE_REPAIR);
+// 
+//   // Pass control to the scrubber. It is the scrubber that handles the replicas'
+//   // resources reservations.
+//   m_scrubber->set_op_parameters(m_planned_scrub);
+// 
+//   dout(10) << __func__ << ": queueing" << dendl;
+//   osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
+//   return schedule_result_t::scrub_initiated;
+// }
 
 double PG::next_deepscrub_interval() const
 {
@@ -1577,7 +1750,7 @@ std::optional<requested_scrub_t> PG::validate_periodic_mode(
   return std::nullopt;	// no scrubbing
 }
 
-
+#if 0
 /*
  From docs.ceph.com (osd-internals/scrub):
 
@@ -1677,6 +1850,7 @@ std::optional<requested_scrub_t> PG::validate_scrub_mode() const
   upd_flags->need_auto = false;
   return upd_flags;
 }
+#endif
 
 /*
  * Note: on_info_history_change() is used in those two cases where we're not sure
