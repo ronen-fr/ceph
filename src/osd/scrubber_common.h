@@ -386,7 +386,8 @@ struct ScrubPgIF {
    *
    * Following our status as Primary or replica.
    */
-  virtual void on_primary_change(const requested_scrub_t& request_flags) = 0;
+  virtual void on_primary_change(std::string_view caller,
+    const requested_scrub_t& request_flags) = 0;
 
   /**
    * Recalculate the required scrub time.

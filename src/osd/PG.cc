@@ -1708,7 +1708,7 @@ void PG::on_primary_status_change(bool was_primary, bool now_primary)
 
   if (was_primary != now_primary) {
     ceph_assert(m_scrubber);
-    m_scrubber->on_primary_change(m_planned_scrub);
+    m_scrubber->on_primary_change(__func__, m_planned_scrub);
   }
 }
 

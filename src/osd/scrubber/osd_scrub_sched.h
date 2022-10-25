@@ -194,7 +194,8 @@ class ScrubQueue {
     utime_t deadline{0, 0};
   };
 
-
+  // Note: the order is reversed, to match the reversed order of the times
+  // for <=> (so that the earlier times will be first in the queue)
   enum class urgency_t {
     must,
     operator_requested,
@@ -204,6 +205,7 @@ class ScrubQueue {
     off,
   };
 
+
   enum class delay_cause_t {
     none,
     replicas,
@@ -211,18 +213,28 @@ class ScrubQueue {
   };
 
   struct SchedTarget {
+    static constexpr auto eternity =
+      utime_t{std::numeric_limits<uint32_t>::max(), 0};
     urgency_t urgency{urgency_t::off};
     utime_t target;  // the time at which we intended the scrub to be scheduled
-    utime_t not_before; // the time at which we are allowed to start the scrub. Never decreasing.
-    utime_t deadline; // RRR default to max-int // affecting the priority and the allowed times for this scrub
+    utime_t not_before{eternity};  // the time at which we are allowed to start
+				   // the scrub. Never decreasing after 'target'
+				   // is set.
+    utime_t deadline;  // RRR default to max-int // affecting the priority and
+		       // the allowed times for this scrub
     uint64_t penalized_at;
-    delay_cause_t reason{delay_cause_t::none}; // the reason for the delay
+    delay_cause_t reason{delay_cause_t::none};	// the reason for the delay
 
     auto operator<=>(const SchedTarget&) const = default;
-    bool is_ripe(utime_t now_is) const {
-      return priority > urgency_t::off && now_is >= not_before;
+    bool is_ripe(utime_t now_is) const
+    {
+      return urgency < urgency_t::off && now_is >= not_before;
     }
-    void push_nb_out(std::chrono::seconds seconds);
+    bool over_deadline(utime_t now_is) const
+    {
+      return urgency < urgency_t::off && now_is >= deadline;
+    }
+    void push_nb_out(std::chrono::seconds delay);
     void replica_refusal();
     void job_state_failure();
   };
@@ -237,6 +249,10 @@ class ScrubQueue {
       return effective <=> r.effective;
     }
     SchedTarget calculate_effective(utime_t time_now);
+    bool over_deadline(utime_t now_is) const
+    {
+      return effective.over_deadline(now_is);
+    }
 
 // probably not here:
    void replica_refusal(bool is_deep);
@@ -306,7 +322,11 @@ class ScrubQueue {
 
     ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
 
-    utime_t get_sched_time() const { return schedule.scheduled_at; }
+    utime_t get_sched_time() const { return nschedule.effective.not_before; }
+
+    bool is_ripe(utime_t now_is) const {
+      return nschedule.effective.is_ripe(now_is);
+    }
 
   
     /**
@@ -397,7 +417,7 @@ class ScrubQueue {
    * locking: might lock jobs_lock
    */
   void register_with_osd(ScrubJobRef sjob, const sched_params_t& suggested);
-  void register_with_osd(ScrubJobRef sjob) {}
+  void register_with_osd(ScrubJobRef sjob);
 
   /**
    * modify a scrub-job's schduled time and deadline
@@ -603,6 +623,63 @@ protected: // used by the unit-tests
   virtual utime_t time_now() const { return ceph_clock_now(); }
 };
 
+
+template <>
+struct fmt::formatter<ScrubQueue::urgency_t>
+    : fmt::formatter<std::string_view> {
+  template <typename FormatContext>
+  auto format(ScrubQueue::urgency_t urg, FormatContext& ctx)
+  {
+    using enum ScrubQueue::urgency_t;
+    std::string_view desc;
+    switch (urg) {
+      case must:
+	desc = "must";
+	break;
+      case operator_requested:
+	desc = "operator-requested";
+	break;
+      case overdue:
+	desc = "overdue";
+	break;
+      case periodic_regular:
+	desc = "periodic-regular";
+	break;
+      case penalized:
+	desc = "reservation-failure";
+	break;
+      case off:
+	desc = "off";
+	break;
+	// better to not have a default case, so that the compiler will warn
+    }
+    return formatter<string_view>::format(desc, ctx);
+  }
+};
+
+template <>
+struct fmt::formatter<ScrubQueue::SchedTarget> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const ScrubQueue::SchedTarget& st, FormatContext& ctx)
+  {
+    return format_to(
+      ctx.out(), "{}:{}/{}", st.urgency, st.target, st.not_before);
+  }
+};
+
+template <>
+struct fmt::formatter<ScrubQueue::SchedTargets> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const ScrubQueue::SchedTargets& sts, FormatContext& ctx)
+  {
+    return format_to(
+      ctx.out(), "{{ sh:{} dp:{} ef:{} }}", sts.shallow, sts.deep,
+      sts.effective);
+  }
+};
+
 template <>
 struct fmt::formatter<ScrubQueue::ScrubJob> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
@@ -612,13 +689,33 @@ struct fmt::formatter<ScrubQueue::ScrubJob> {
   {
     return fmt::format_to(
       ctx.out(),
-      "{}, {} dead: {} - {} / failure: {} / pen. t.o.: {} / queue state: {}",
+      "{}, {}  reg: {} failure: {} queue state: {}",
       sjob.pgid,
-      sjob.schedule.scheduled_at,
-      sjob.schedule.deadline,
+      sjob.nschedule,
       sjob.registration_state(),
       sjob.resources_failure,
-      sjob.penalty_timeout,
+      //sjob.penalty_timeout,
       ScrubQueue::qu_state_text(sjob.state));
   }
 };
+
+
+// template <>
+// struct fmt::formatter<ScrubQueue::ScrubJob> {
+//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+// 
+//   template <typename FormatContext>
+//   auto format(const ScrubQueue::ScrubJob& sjob, FormatContext& ctx)
+//   {
+//     return fmt::format_to(
+//       ctx.out(),
+//       "{}, {} dead: {} - {} / failure: {} / pen. t.o.: {} / queue state: {}",
+//       sjob.pgid,
+//       sjob.schedule.scheduled_at,
+//       sjob.schedule.deadline,
+//       sjob.registration_state(),
+//       sjob.resources_failure,
+//       sjob.penalty_timeout,
+//       ScrubQueue::qu_state_text(sjob.state));
+//   }
+// };
