@@ -292,7 +292,7 @@ public:
    */
   Scrub::schedule_result_t initiate_a_scrub(
     spg_t pgid,
-    Scrub::TargetRef trgt,
+    Scrub::SchedEntry trgt,
     bool allow_requested_repair_only) final;
 
 

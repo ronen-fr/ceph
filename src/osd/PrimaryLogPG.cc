@@ -1156,6 +1156,18 @@ void PrimaryLogPG::do_command(
 
   else if (prefix == "scrub" ||
 	   prefix == "deep_scrub") {
+
+/*
+RRR modify to:
+ - perform the time calculations in the ScrubJob;
+ - possibly (for the 'time' parameter missing only) implement via
+   setting to urgency=overdue (but can we keep this if a new interval
+   starts? should we?
+ - what about commands with 'time' specified? 
+
+
+*/
+
     bool deep = (prefix == "deep_scrub");
     int64_t time = cmd_getval_or<int64_t>(cmdmap, "time", 0);
 

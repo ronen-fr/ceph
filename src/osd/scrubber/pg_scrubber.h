@@ -450,9 +450,13 @@ class PgScrubber : public ScrubPgIF,
 		 std::stringstream& ss) override;
   int m_debug_blockrange{0};
 
-
   Scrub::schedule_result_t start_scrubbing(
     ceph::ref_t<Scrub::SchedTarget> trgt,
+    requested_scrub_t& request,
+    const Scrub::ScrubPgPreconds& pg_cond) final;
+
+  Scrub::schedule_result_t start_scrubbing(
+    Scrub::SchedEntry trgt,
     requested_scrub_t& request,
     const Scrub::ScrubPgPreconds& pg_cond) final;
 

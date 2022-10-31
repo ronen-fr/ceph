@@ -31,6 +31,7 @@ enum class schedule_result_t {
 };
 
 struct SchedTarget;
+struct SchedEntry;
 
 }
 
@@ -302,8 +303,14 @@ struct ScrubPgIF {
 
   // --------------------------------------------------
 
+  // obsolete
   virtual Scrub::schedule_result_t start_scrubbing(
     ceph::ref_t<Scrub::SchedTarget> trgt,
+    requested_scrub_t& request,
+    const Scrub::ScrubPgPreconds& pg_cond) = 0;
+
+  virtual Scrub::schedule_result_t start_scrubbing(
+    Scrub::SchedEntry trgt,
     requested_scrub_t& request,
     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
