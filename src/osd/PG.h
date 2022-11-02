@@ -85,6 +85,8 @@ namespace Scrub {
   typedef boost::intrusive_ptr<PG> PGRef;
 #endif
 
+
+
 class PGRecoveryStats {
   struct per_state_info {
     uint64_t enter, exit;     // enter/exit counts
@@ -174,6 +176,7 @@ class PG : public DoutPrefixProvider,
   friend class PeeringState;
   friend class PgScrubber;
   friend class ScrubBackend;
+  friend class ScrubQueue;
 
 public:
   const pg_shard_t pg_whoami;
@@ -711,12 +714,18 @@ public:
   virtual void on_shutdown() = 0;
 
   bool get_must_scrub() const;
-  Scrub::schedule_result_t start_scrubbing(ceph::ref_t<Scrub::SchedTarget> trgt);
 
-  unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const;
+  Scrub::schedule_result_t start_scrubbing(Scrub::SchedEntry trgt);
+
+//   /*obsolete*/ Scrub::schedule_result_t start_scrubbing(
+//     Scrub::SchedTarget* trgt);
+
+  unsigned int scrub_requeue_priority(
+    Scrub::scrub_prio_t with_priority,
+    unsigned int suggested_priority) const;
   /// the version that refers to flags_.priority
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority) const;
-private:
+ private:
   // auxiliaries used by sched_scrub():
   double next_deepscrub_interval() const;
 
@@ -1447,6 +1456,18 @@ public:
  {
    return get_pgbackend()->be_get_ondisk_size(logical_size);
  }
+};
+
+
+// RRR reimplement as a unique-ptr to a PGRef with custom deleter?
+class PgLockWrapper {
+public:
+  //PgLockWrapper(const spg_t& pg); // created from the outside (no access to the lookup_lock.. from the inside)
+  ~PgLockWrapper();
+  // RRR prevent copy and assignment
+
+
+  PGRef m_pg{nullptr};
 };
 
 #endif

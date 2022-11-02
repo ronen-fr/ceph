@@ -295,6 +295,8 @@ public:
     Scrub::SchedEntry trgt,
     bool allow_requested_repair_only) final;
 
+  PgLockWrapper get_locked_pg(spg_t pgid) final;
+
 
  private:
   // -- agent shared state --

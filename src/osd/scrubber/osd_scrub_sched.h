@@ -122,6 +122,7 @@ ScrubQueue interfaces (main functions):
 #include "osd/osd_types_fmt.h"
 #include "utime.h"
 
+//#include "osd/PG.h"
 class PG;
 
 namespace Scrub {
@@ -154,9 +155,11 @@ enum class delay_cause_t {
 struct sched_conf_t {
   double shallow_interval{0.0};
   double deep_interval{0.0};
-  std::optional<double> max_shallow{};
-  double max_deep{};
+  std::optional<double> max_shallow;
+  double max_deep{0.0};
   double interval_randomize_ratio{0.0};
+  //double deep_randomize_ratio{0.0};
+  bool mandatory_on_invalid{true};
 };
 
 struct ScrubJob;
@@ -169,8 +172,12 @@ struct SchedTarget /*final : public RefCountedObject*/ {
   static constexpr auto eternity =
     utime_t{std::numeric_limits<uint32_t>::max(), 0};
 
-  SchedTarget(ScrubJob& parent_job, scrub_level_t base_type);  // add pg, to allow
-							  // for set comparison
+  SchedTarget(ScrubJob& parent_job, scrub_level_t base_type);
+
+  // note that we do not try to copy the job reference:
+  // well - we couldn't do it anyway. But it's not needed, as
+  // we will only copy targets of the same ScrubJob.
+  SchedTarget& operator=(const SchedTarget& r);
 
   urgency_t urgency{urgency_t::off};
 
@@ -206,7 +213,7 @@ struct SchedTarget /*final : public RefCountedObject*/ {
    * the original scheduling object type. Note that for the shallow
    * scheduling target objects - overridden by 'upgraded_to_deep'
    */
-  const scrub_level_t base_target_level;
+  scrub_level_t base_target_level; // 'const' in semantics
 
   /**
    * (deep-scrub entries only:)
@@ -294,10 +301,10 @@ struct sched_params_t {
 
 struct ScrubJob final : public RefCountedObject {
   /// pg to be scrubbed
-  const spg_t pgid;
+  spg_t pgid;
 
   /// the OSD id (for the log)
-  const int whoami;
+  int whoami;
 
   ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
 
@@ -335,6 +342,8 @@ struct ScrubJob final : public RefCountedObject {
   TargetRef get_current_trgt(scrub_level_t lvl);
   TargetRef get_modif_trgt(scrub_level_t lvl);
 
+  void activate_next_targets();
+
   /**
    * the old 'is_registered'. Set whenever the job is registered with the OSD,
    * i.e. is in either the 'to_scrub' or the 'penalized' vectors.
@@ -368,6 +377,27 @@ struct ScrubJob final : public RefCountedObject {
 
   ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
 
+//   ScrubJob& operator=(const ScrubJob& other)
+//   {
+//     // note: the 'pgid' is const
+//     ceph_assert(pgid == other.pgid);
+//     whoami = other.whoami;
+//     state = other.state.load();
+//     shallow_target = other.shallow_target;
+//     deep_target = other.deep_target;
+//     closest_target = other.closest_target;
+//     next_shallow = other.next_shallow;
+//     next_deep = other.next_deep;
+//     resources_failure = other.resources_failure;
+//     in_queues = other.in_queues.load();
+//     updated = other.updated.load();
+//     blocked = other.blocked;
+//     blocked_since = other.blocked_since;
+//     penalty_timeout = other.penalty_timeout;
+//     cct = other.cct;
+//     return *this;
+//   }
+
   utime_t get_sched_time() const { return closest_target->not_before; }
 
   bool is_ripe(utime_t now_is) const { return closest_target->is_ripe(now_is); }
@@ -397,6 +427,12 @@ struct ScrubJob final : public RefCountedObject {
   void mark_for_rescrubbing(requested_scrub_t& request_flags);
 
   void at_scrub_completion(
+    const pg_info_t& info,
+    const sched_conf_t& aconf,
+    const requested_scrub_t& request_flags);
+
+  // retval: true if a change was made
+  bool on_periods_change(
     const pg_info_t& info,
     const sched_conf_t& aconf,
     const requested_scrub_t& request_flags);
@@ -810,6 +846,9 @@ class ScrubQueue {
    */
   void update_job(Scrub::ScrubJobRef sjob, const Scrub::sched_params_t& suggested);
 
+  // can only be moved here if we give the ScrubQueue the ability to lock PGs
+  void on_config_times_change();
+
   Scrub::sched_params_t determine_scrub_time(const requested_scrub_t& request_flags,
 				      const pg_info_t& pg_info,
 				      const pool_opts_t pool_conf) const;
@@ -996,6 +1035,8 @@ protected: // used by the unit-tests
   virtual utime_t time_now() const { return ceph_clock_now(); }
 };
 
+class PgLockWrapper;
+
 namespace Scrub {
 
 class ScrubSchedListener {
@@ -1017,6 +1058,8 @@ class ScrubSchedListener {
     spg_t pgid,
     Scrub::SchedEntry trgt,
     bool allow_requested_repair_only) = 0;
+
+  virtual PgLockWrapper get_locked_pg(spg_t pgid) = 0;
 
   virtual ~ScrubSchedListener() {}
 };

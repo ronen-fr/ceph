@@ -435,9 +435,8 @@ void PG::start_after_repair_scrub()
   m_planned_scrub.calculated_to_deep = true;
 
   // manipulate the job's schedule-targets
-  auto deep_target = m_scrubber->mark_for_after_repair(m_planned_scrub);
-
-  start_scrubbing(deep_target);
+  auto deep_job = m_scrubber->mark_for_after_repair();
+  start_scrubbing(deep_job);
 //  
 //   if (is_scrub_queued_or_active()) {
 //     dout(10) << __func__ << ": scrubbing already ("
@@ -1361,13 +1360,13 @@ Note that we know what type of scrub was requested of, as we have the specific S
 This object might be a 'deep scrub' request, or a 'shallow scrub' - but for a 'shallow'
 object, we may have the 'randomly upgraded to deep' flag set.
 */
-Scrub::schedule_result_t PG::start_scrubbing(ceph::ref_t<Scrub::SchedTarget> trgt)
+Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedEntry trgt)
 {
   using Scrub::schedule_result_t;
   dout(10) << fmt::format(
 		"{}: pg[{}] {} {} target: {}", __func__, info.pgid,
 		(is_active() ? "<active>" : "<not-active>"),
-		(is_clean() ? "<clean>" : "<not-clean>"), *trgt)
+		(is_clean() ? "<clean>" : "<not-clean>"), *trgt.target())
 	   << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);
@@ -1399,44 +1398,33 @@ Scrub::schedule_result_t PG::start_scrubbing(ceph::ref_t<Scrub::SchedTarget> trg
 
   // start_scrubbing() usually changes the planned scrub flags
   auto ret = m_scrubber->start_scrubbing(trgt, m_planned_scrub, pg_cond);
-
-//   // analyse the combination of the requested scrub flags, the osd/pool configuration
-//   // and the PG status to determine whether we should scrub now, and what type of scrub
-//   // should that be.
-//   // This might mean that we replace the specific 'trgt' with the PG's scrub-job's
-//   // second one (e.g. shallow -> deep scrub).
-//   auto updated_flags = validate_scrub_mode(trgt);
-//   if (!updated_flags) {
-//     // the stars do not align for starting a scrub for this PG at this time
-//     // (due to configuration or priority issues)
-//     // The reason was already reported by the callee.
-//     dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
-//     return schedule_result_t::preconditions;
-//   }
-
+  // debug log?
   return ret;
-// 
-//   // try to reserve the local OSD resources. If failing: no harm. We will
-//   // be retried by the OSD later on.
-//   if (!m_scrubber->reserve_local()) {
-//     dout(10) << __func__ << ": failed to reserve locally" << dendl;
-//     return schedule_result_t::no_local_resources;
-//   }
-// 
-//   // can commit to the updated flags now, as nothing will stop the scrub
-//   m_planned_scrub = *updated_flags;
-// 
-//   // An interrupted recovery repair could leave this set.
-//   state_clear(PG_STATE_REPAIR);
-// 
-//   // Pass control to the scrubber. It is the scrubber that handles the replicas'
-//   // resources reservations.
-//   m_scrubber->set_op_parameters(m_planned_scrub);
-// 
-//   dout(10) << __func__ << ": queueing" << dendl;
-//   osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
-//   return schedule_result_t::scrub_initiated;
 }
+
+// Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedTarget* trgt)
+// {
+//   using Scrub::schedule_result_t;
+//   dout(10) << fmt::format(
+// 		"{}: pg[{}] {} {} target: {}", __func__, info.pgid,
+// 		(is_active() ? "<active>" : "<not-active>"),
+// 		(is_clean() ? "<clean>" : "<not-clean>"), *trgt)
+// 	   << dendl;
+//   ceph_assert(ceph_mutex_is_locked(_lock));
+//   ceph_assert(m_scrubber);
+// 
+//   Scrub::ScrubPgPreconds pg_cond{};
+//   pg_cond.allow_shallow = !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
+//       pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
+//   pg_cond.allow_deep = !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
+//       pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
+//   pg_cond.has_deep_errors = (info.stats.stats.sum.num_deep_scrub_errors > 0);
+//   pg_cond.can_autorepair = (cct->_conf->osd_scrub_auto_repair &&
+// 				   get_pgbackend()->auto_repair_supported());
+// 
+//   // start_scrubbing() usually changes the planned scrub flags
+//   return m_scrubber->start_scrubbing(trgt, m_planned_scrub, pg_cond);
+// }
 
 bool PG::is_time_for_deep(Scrub::SchedTarget* trgt,
                           bool allow_deep_scrub,
@@ -3014,6 +3002,15 @@ void PG::with_heartbeat_peers(std::function<void(int)>&& f)
     f(p);
   }
 }
+
+
+PgLockWrapper::~PgLockWrapper()
+{
+  if (m_pg) {
+    m_pg->unlock();
+  }
+}
+
 
 uint64_t PG::get_min_alloc_size() const {
   return osd->store->get_min_alloc_size();

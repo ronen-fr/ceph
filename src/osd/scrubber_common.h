@@ -42,6 +42,7 @@ private:
   friend class PrimaryLogScrub;
   friend class PgScrubber;
   friend class ScrubBackend;
+  friend class ScrubQueue;
   ScrubberPasskey() {}
   ScrubberPasskey(const ScrubberPasskey&) = default;
   ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
@@ -304,18 +305,19 @@ struct ScrubPgIF {
   // --------------------------------------------------
 
   // obsolete
-  virtual Scrub::schedule_result_t start_scrubbing(
-    ceph::ref_t<Scrub::SchedTarget> trgt,
-    requested_scrub_t& request,
-    const Scrub::ScrubPgPreconds& pg_cond) = 0;
+//   virtual Scrub::schedule_result_t start_scrubbing(
+//     ceph::ref_t<Scrub::SchedTarget> trgt,
+//     requested_scrub_t& request,
+//     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual Scrub::schedule_result_t start_scrubbing(
     Scrub::SchedEntry trgt,
     requested_scrub_t& request,
     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
-  virtual ceph::ref_t<Scrub::SchedTarget> mark_for_after_repair(
-    requested_scrub_t& request) = 0;
+  virtual Scrub::SchedEntry mark_for_after_repair() = 0;
+//   virtual ceph::ref_t<Scrub::SchedTarget> mark_for_after_repair(
+//     requested_scrub_t& request) = 0;
 
   [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	 // currently
 								 // only used

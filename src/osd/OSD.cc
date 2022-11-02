@@ -7425,26 +7425,36 @@ Scrub::schedule_result_t OSDService::initiate_a_scrub(spg_t pgid, Scrub::SchedEn
   return scrub_attempt;
 }
 
+PgLockWrapper OSDService::get_locked_pg(spg_t pgid)
+{
+  PgLockWrapper locked_pg;
+  locked_pg.m_pg = osd->lookup_lock_pg(pgid);
+  return locked_pg;
+}
+
+
 void OSD::resched_all_scrubs()
 {
-  dout(10) << __func__ << ": start" << dendl;
-  auto all_jobs = service.get_scrub_services().list_registered_jobs();
-  for (auto& e : all_jobs) {
+  service.get_scrub_services().on_config_times_change();
 
-    auto& trgt = *e;
-    dout(20) << __func__ << ": examine " << trgt.job->pgid << dendl;
-
-    PGRef pg = _lookup_lock_pg(trgt.job->pgid);
-    if (!pg)
-      continue;
-
-    if (!pg->get_planned_scrub().must_scrub && !pg->get_planned_scrub().need_auto) {
-      dout(15) << __func__ << ": reschedule " << trgt.job->pgid << dendl;
-      pg->reschedule_scrub();
-    }
-    pg->unlock();
-  }
-  dout(10) << __func__ << ": done" << dendl;
+//   dout(10) << __func__ << ": start" << dendl;
+//   auto all_jobs = service.get_scrub_services().list_registered_jobs();
+//   for (auto& e : all_jobs) {
+// 
+//     auto& trgt = *e;
+//     dout(20) << __func__ << ": examine " << trgt.job->pgid << dendl;
+// 
+//     PGRef pg = _lookup_lock_pg(trgt.job->pgid);
+//     if (!pg)
+//       continue;
+// 
+//     if (!pg->get_planned_scrub().must_scrub && !pg->get_planned_scrub().need_auto) {
+//       dout(15) << __func__ << ": reschedule " << trgt.job->pgid << dendl;
+//       pg->reschedule_scrub();
+//     }
+//     pg->unlock();
+//   }
+//   dout(10) << __func__ << ": done" << dendl;
 }
 
 // Scrub::schedule_result_t OSDService::initiate_a_scrub(spg_t pgid, Scrub::TargetRef trgt,
@@ -9711,6 +9721,7 @@ void OSD::handle_conf_change(const ConfigProxy& conf,
 
   if (changed.count("osd_scrub_min_interval") ||
       changed.count("osd_scrub_max_interval")) {
+    //service.get_scrub_services()->on_config_change();
     resched_all_scrubs();
     dout(0) << __func__ << ": scrub interval change" << dendl;
   }
