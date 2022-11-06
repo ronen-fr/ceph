@@ -77,8 +77,8 @@ ostream& operator<<(ostream& out, const requested_scrub_t& sf)
     out << " MUST_DEEP_SCRUB";
   if (sf.must_scrub)
     out << " MUST_SCRUB";
-  if (sf.time_for_deep)
-    out << " TIME_FOR_DEEP";
+  //if (sf.time_for_deep)
+  //  out << " TIME_FOR_DEEP";
   if (sf.need_auto)
     out << " NEED_AUTO";
   if (sf.req_scrub)
@@ -975,7 +975,7 @@ Scrub::PossibleScrubMode PgScrubber::select_scrub_mode(
     }
   }
 
-  upd_flags.time_for_deep = trgt->base_target_level == scrub_level_t::deep;
+  //upd_flags.time_for_deep = trgt->base_target_level == scrub_level_t::deep;
   upd_flags.calculated_to_deep = trgt->base_target_level == scrub_level_t::deep;
 
   if (planned.must_scrub) {

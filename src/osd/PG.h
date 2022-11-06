@@ -729,6 +729,7 @@ public:
   // auxiliaries used by sched_scrub():
   double next_deepscrub_interval() const;
 
+#if 0
   /// should we perform deep scrub?
   bool is_time_for_deep(bool allow_deep_scrub,
                         bool allow_shallow_scrub,
@@ -763,6 +764,7 @@ public:
     bool time_for_deep,
     bool has_deep_errors,
     const requested_scrub_t& planned) const;
+#endif
 
   using ScrubAPI = void (ScrubPgIF::*)(epoch_t epoch_queued);
   void forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc);

@@ -319,6 +319,15 @@ void ScrubJob::disable_scheduling()
   // RRR consider the callers - should we reset the 'req'?
 }
 
+void ScrubJob::mark_for_dequeue()
+{
+  disable_scheduling();
+  shallow_target.marked_for_dequeue = true;
+  deep_target.marked_for_dequeue = true;
+  next_shallow.marked_for_dequeue = true;
+  next_deep.marked_for_dequeue = true;
+}
+
 // return either one of the current set of targets, or - if
 // that target is the one being scrubbed - the 'next' one
 TargetRef ScrubJob::get_modif_trgt(scrub_level_t lvl)

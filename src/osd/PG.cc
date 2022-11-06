@@ -1402,6 +1402,8 @@ Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedEntry trgt)
   return ret;
 }
 
+#if 0
+
 // Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedTarget* trgt)
 // {
 //   using Scrub::schedule_result_t;
@@ -1476,7 +1478,7 @@ bool PG::is_time_for_deep(Scrub::SchedTarget* trgt,
   return false;
 }
 
-
+#endif
 
 
 // /*
@@ -1554,6 +1556,8 @@ double PG::next_deepscrub_interval() const
   return info.history.last_deep_scrub_stamp + deep_scrub_interval;
 }
 
+#if 0
+
 bool PG::is_time_for_deep(bool allow_deep_scrub,
 			  bool allow_shallow_scrub,
 			  bool has_deep_errors,
@@ -1608,6 +1612,7 @@ bool PG::is_time_for_deep(bool allow_deep_scrub,
 
   return false;
 }
+
 
 /*
  clang-format off
@@ -1738,7 +1743,6 @@ std::optional<requested_scrub_t> PG::validate_periodic_mode(
   return std::nullopt;	// no scrubbing
 }
 
-#if 0
 /*
  From docs.ceph.com (osd-internals/scrub):
 

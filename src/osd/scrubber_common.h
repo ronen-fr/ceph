@@ -188,7 +188,7 @@ struct requested_scrub_t {
    * temporary that is set and reset by the same operation, will never
    * appear externally to be set
    */
-  bool time_for_deep{false};
+  //bool time_for_deep{false};
 
   bool deep_scrub_on_error{false};
 
@@ -232,14 +232,14 @@ struct fmt::formatter<requested_scrub_t> {
   auto format(const requested_scrub_t& rs, FormatContext& ctx)
   {
     return fmt::format_to(ctx.out(),
-                          "(plnd:{}{}{}{}{}{}{}{}{}{})",
+                          "(plnd:{}{}{}{}{}{}{}{}{})",
                           rs.must_repair ? " must_repair" : "",
                           rs.auto_repair ? " auto_repair" : "",
                           rs.check_repair ? " check_repair" : "",
                           rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
                           rs.must_deep_scrub ? " must_deep_scrub" : "",
                           rs.must_scrub ? " must_scrub" : "",
-                          rs.time_for_deep ? " time_for_deep" : "",
+                          //rs.time_for_deep ? " time_for_deep" : "",
                           rs.need_auto ? " need_auto" : "",
                           rs.req_scrub ? " req_scrub" : "",
                           rs.calculated_to_deep ? " deep" : "");
