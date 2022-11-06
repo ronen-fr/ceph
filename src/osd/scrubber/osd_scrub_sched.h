@@ -168,11 +168,11 @@ struct ScrubJob;
 using ScrubJobRef = std::shared_ptr<ScrubJob>;
 
 
-struct SchedTarget /*final : public RefCountedObject*/ {
+struct SchedTarget {
   static constexpr auto eternity =
     utime_t{std::numeric_limits<uint32_t>::max(), 0};
 
-  SchedTarget(ScrubJob& parent_job, scrub_level_t base_type);
+  SchedTarget(ScrubJob& parent_job, scrub_level_t base_type, std::string dbg_val);
 
   // note that we do not try to copy the job reference:
   // well - we couldn't do it anyway. But it's not needed, as
@@ -228,6 +228,8 @@ struct SchedTarget /*final : public RefCountedObject*/ {
   /// marked for de-queue, as the PG is no longer eligible for scrubbing
   bool marked_for_dequeue{false};
 
+  std::string dbg_val;
+
   /**
    * For sched-targets, lower is better.
    * The 'urgency' field (reversed) is the primary key.
@@ -263,9 +265,9 @@ struct SchedTarget /*final : public RefCountedObject*/ {
 
 };
 
-//using TargetRef = ceph::ref_t<SchedTarget>;
-
-using TargetRef = SchedTarget*; // not a shared_ptr, as the statically-allocated target is owned by the job
+// note: not a shared_ptr, as the statically-allocated target is owned by the
+// job
+using TargetRef = SchedTarget*;
 
 
 struct PossibleScrubMode {
@@ -821,7 +823,7 @@ class ScrubQueue {
    *
    * locking: might lock jobs_lock
    */
-  void register_with_osd(Scrub::ScrubJobRef sjob, const Scrub::sched_params_t& suggested);
+  //void register_with_osd(Scrub::ScrubJobRef sjob, const Scrub::sched_params_t& suggested);
   void register_with_osd(Scrub::ScrubJobRef sjob);
 
   /**
@@ -1111,11 +1113,17 @@ struct fmt::formatter<Scrub::SchedTarget> {
     const std::string_view effective_lvl =
       (st.base_target_level == scrub_level_t::shallow)
 	? (st.upgraded_to_deep ? "upg-to-deep" : "sh")
-	: "deep";
+	: "dp";
     return format_to(
-      ctx.out(), "{}/{}: {} ({},{})",
+      ctx.out(), "{}/{}: {}nb:{} ({},{},a-r:{}) {} [dbg:{}]",
       (st.base_target_level == scrub_level_t::deep ? "dp" : "sh"),
-      effective_lvl, st.not_before, st.urgency, st.target);
+      effective_lvl,
+      st.scrubbing ? "ACTIVE " : "",
+      st.not_before,
+      st.urgency, st.target,
+      st.auto_repair ? "+" : "-",
+      st.marked_for_dequeue ? "XXX" : "",
+      st.dbg_val);
   }
 };
 
@@ -1135,6 +1143,20 @@ struct fmt::formatter<Scrub::ScrubJob> {
       sjob.registration_state(),
       sjob.resources_failure,
       ScrubQueue::qu_state_text(sjob.state));
+  }
+};
+
+template <>
+struct fmt::formatter<Scrub::sched_conf_t> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const Scrub::sched_conf_t& cf, FormatContext& ctx)
+  {
+    return format_to(
+      ctx.out(), "periods: s:{}/{} d:{}/{} iv-ratio:{} on-inv:{}",
+      cf.shallow_interval, cf.max_shallow ? *cf.max_shallow : 0.0,
+      cf.deep_interval, cf.max_deep, cf.interval_randomize_ratio,
+      cf.mandatory_on_invalid);
   }
 };
 

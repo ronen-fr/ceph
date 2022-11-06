@@ -381,6 +381,11 @@ class PgScrubber : public ScrubPgIF,
 
   pg_scrubbing_status_t get_schedule() const final;
 
+  void on_operator_cmd(
+    scrub_level_t scrub_level,
+    int offset,
+    bool must) final;
+
   void dump_scrubber(ceph::Formatter* f,
 		     const requested_scrub_t& request_flags) const final;
 

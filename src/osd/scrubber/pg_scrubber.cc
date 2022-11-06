@@ -542,6 +542,8 @@ void PgScrubber::on_primary_change(
     //ceph_assert(m_scrub_job->verify_targets_disabled()); // RRR not sure about this one
     if (m_scrub_job->verify_targets_disabled()) {
       qu.set_initial_targets(m_scrub_job, request_flags, m_pg->info, applicable_conf);
+    } else {
+      dout(10) << __func__ << " targets already set!!!" << dendl;
     }
     qu.register_with_osd(m_scrub_job);
 
@@ -2510,6 +2512,45 @@ void PgScrubber::on_digest_updates()
     preemption_data.reset();
     m_osds->queue_scrub_next_chunk(m_pg, m_pg->is_scrub_blocking_ops());
   }
+}
+
+// handling Asok's "scrub" & "deep_scrub" commands
+void PgScrubber::on_operator_cmd(scrub_level_t lvl, int offset, bool must)
+{
+  auto& qu = m_osds->get_scrub_services();
+  auto cnf = qu.populate_config_params(m_pg->get_pgpool().info.opts);
+
+  if (must) {
+
+    requested_scrub_t r{};
+    scrub_requested(lvl, scrub_type_t::not_repair, r);
+    return;
+  }
+
+  // move the relevant time-stamp backwards - enough to trigger a scrub
+
+  utime_t stamp = ceph_clock_now();  // RRR use u.t. facilities!
+
+  if (offset > 0) {
+    stamp -= offset;
+  } else {
+    double max_iv =
+      (lvl == scrub_level_t::deep)
+	? cnf.max_deep
+	: (cnf.max_shallow ? *cnf.max_shallow : cnf.shallow_interval);
+    stamp -= max_iv;
+  }
+  stamp -= 100.0;  // for good measure
+
+  if (lvl == scrub_level_t::deep) {
+    m_pg->set_last_deep_scrub_stamp(stamp);
+  } else {
+    m_pg->set_last_scrub_stamp(stamp);
+  }
+
+  // use the newly-updated set of timestamps to schedule a scrub
+  m_scrub_job->at_scrub_completion(
+    m_pg->get_pg_info(ScrubberPasskey()), cnf, m_planned_scrub);
 }
 
 // RRR dump_scrubber() must be rewritten

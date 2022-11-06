@@ -1154,50 +1154,30 @@ void PrimaryLogPG::do_command(
     f->close_section();
   }
 
-  else if (prefix == "scrub" ||
-	   prefix == "deep_scrub") {
+  else if (prefix == "scrub" || prefix == "deep_scrub") {
 
-/*
-RRR modify to:
- - perform the time calculations in the ScrubJob;
- - possibly (for the 'time' parameter missing only) implement via
-   setting to urgency=overdue (but can we keep this if a new interval
-   starts? should we?
- - what about commands with 'time' specified? 
+    /*
+    RRR modify to:
+     - perform the time calculations in the ScrubJob;
+     - possibly (for the 'time' parameter missing only) implement via
+       setting to urgency=overdue (but can we keep this if a new interval
+       starts? should we?
+     - what about commands with 'time' specified?
 
 
-*/
+    */
 
     bool deep = (prefix == "deep_scrub");
     int64_t time = cmd_getval_or<int64_t>(cmdmap, "time", 0);
+    // bool as_must = cmd_getval_or<bool>(cmdmap, "must", false);
 
     if (is_primary()) {
-      const pg_pool_t *p = &pool.info;
-      double pool_scrub_max_interval = 0;
-      double scrub_max_interval;
-      if (deep) {
-        p->opts.get(pool_opts_t::DEEP_SCRUB_INTERVAL, &pool_scrub_max_interval);
-        scrub_max_interval = pool_scrub_max_interval > 0 ?
-          pool_scrub_max_interval : g_conf()->osd_deep_scrub_interval;
-      } else {
-        p->opts.get(pool_opts_t::SCRUB_MAX_INTERVAL, &pool_scrub_max_interval);
-        scrub_max_interval = pool_scrub_max_interval > 0 ?
-          pool_scrub_max_interval : g_conf()->osd_scrub_max_interval;
-      }
-      // Instead of marking must_scrub force a schedule scrub
-      utime_t stamp = ceph_clock_now();
-      if (time == 0)
-        stamp -= scrub_max_interval;
-      else
-        stamp -=  (float)time;
-      stamp -= 100.0;  // push back last scrub more for good measure
-      if (deep) {
-        set_last_deep_scrub_stamp(stamp);
-      }
-      set_last_scrub_stamp(stamp); // for 'deep' as well, as we use this value to order scrubs
+      m_scrubber->on_operator_cmd(
+	deep ? scrub_level_t::deep : scrub_level_t::shallow, time,
+	(time == 999));	 // RRR fix the ugly hack
       f->open_object_section("result");
       f->dump_bool("deep", deep);
-      f->dump_stream("stamp") << stamp;
+      // f->dump_stream("stamp") << stamp;
       f->close_section();
     } else {
       ss << "Not primary";
@@ -1206,8 +1186,9 @@ RRR modify to:
     outbl.append(ss.str());
   }
 
-  else if (prefix == "block" || prefix == "unblock" || prefix == "set" ||
-           prefix == "unset") {
+  else if (
+    prefix == "block" || prefix == "unblock" || prefix == "set" ||
+    prefix == "unset") {
     string value;
     cmd_getval(cmdmap, "value", value);
 
@@ -1221,8 +1202,7 @@ RRR modify to:
       ret = -EPERM;
     }
     outbl.append(ss.str());
-  }
-  else {
+  } else {
     ret = -ENOSYS;
     ss << "prefix '" << prefix << "' not implemented";
   }

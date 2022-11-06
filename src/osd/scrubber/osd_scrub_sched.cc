@@ -42,11 +42,14 @@ std::partial_ordering SchedTarget::operator<=>(const SchedTarget& r) const
   return not_before <=> r.not_before;
 }
 
-SchedTarget::SchedTarget(ScrubJob& parent_job, scrub_level_t base_type) :
-  job{parent_job},
-  base_target_level{base_type}
-{
-}
+SchedTarget::SchedTarget(
+  ScrubJob& parent_job,
+  scrub_level_t base_type,
+  std::string dbg)
+    : job{parent_job}
+    , base_target_level{base_type}
+    , dbg_val{dbg}
+{}
 
 bool SchedTarget::check_and_redraw_upgrade()
 {
@@ -139,10 +142,10 @@ ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
     //: RefCountedObject{cct}
     : pgid{pg}
     , whoami{node_id}
-    , shallow_target{*this, scrub_level_t::shallow}
-    , deep_target{*this, scrub_level_t::deep}
-    , next_shallow{*this, scrub_level_t::shallow}
-    , next_deep{*this, scrub_level_t::deep}
+    , shallow_target{*this, scrub_level_t::shallow, "cs"}
+    , deep_target{*this, scrub_level_t::deep, "cd"}
+    , next_shallow{*this, scrub_level_t::shallow, "ns"}
+    , next_deep{*this, scrub_level_t::deep, "nd"}
     , cct{cct}
 {
 }
@@ -306,6 +309,7 @@ SchedTarget& SchedTarget::operator=(const SchedTarget& r)
   reason = r.reason;
   auto_repair = r.auto_repair;
   marked_for_dequeue = r.marked_for_dequeue;
+  dbg_val = r.dbg_val;
   return *this;
 }
 
@@ -341,7 +345,7 @@ TargetRef ScrubJob::get_modif_trgt(scrub_level_t lvl)
 
 TargetRef ScrubJob::get_current_trgt(scrub_level_t lvl)
 {
-  return (lvl == scrub_level_t::deep) ? &next_deep : &next_shallow;
+  return (lvl == scrub_level_t::deep) ? &deep_target : &shallow_target;
 }
 
 
@@ -365,6 +369,11 @@ void ScrubJob::initial_shallow_target(
   const sched_conf_t& config,
   utime_t time_now)
 {
+  // fix scrub-job dout!
+#ifdef NOTYET
+  dout(20) << fmt::format("{}: pg: [{}] flags: {} conf: {}",
+                          __func__, pgid, request_flags, config) << dendl;
+#endif
   auto targ = get_modif_trgt(scrub_level_t::shallow);
   if (request_flags.must_scrub || request_flags.need_auto) {
     targ->urgency = urgency_t::must;
@@ -857,11 +866,29 @@ void ScrubQueue::set_initial_targets(
   const pg_info_t& pg_info,
   const Scrub::sched_conf_t& sched_configs)
 {
-  // assuming only called on 'on_primary_change': no need: std::unique_lock lck{jobs_lock};
+  // assuming only called on 'on_primary_change': no need: std::unique_lock
+  // lck{jobs_lock};
   auto now = time_now();
+  dout(15) << fmt::format(
+		"pg:[{} ({:s}/{:s})] (now:{:s}) conf:({})", pg_info.pgid,
+		pg_info.history.last_scrub_stamp,
+		pg_info.history.last_deep_scrub_stamp, now,
+                sched_configs)
+	   << dendl;
   sjob->initial_shallow_target(request_flags, pg_info, sched_configs, now);
+  dout(15) << fmt::format(
+		"after shallow pg:[{}] <{}>", pg_info.pgid,
+		*(sjob->get_modif_trgt(scrub_level_t::shallow)))
+	   << dendl;
   sjob->initial_deep_target(request_flags, pg_info, sched_configs, now);
+  dout(15) << fmt::format(
+		"after deep pg:[{}] <{}>", pg_info.pgid,
+		*(sjob->get_modif_trgt(scrub_level_t::deep)))
+	   << dendl;
   sjob->determine_closest();
+  dout(15) << fmt::format(
+		"best pg:[{}] <{}>", pg_info.pgid, *(sjob->closest_target))
+	   << dendl;
 }
 
 // void ScrubQueue::set_initial_targets(
@@ -1041,7 +1068,7 @@ void ScrubQueue::register_with_osd(Scrub::ScrubJobRef scrub_job)
 	   << " at: " << scrub_job->closest_target->not_before << dendl;
 }
 
-
+#if 0
 void ScrubQueue::register_with_osd(Scrub::ScrubJobRef scrub_job,
 				   const Scrub::sched_params_t& suggested)
 {
@@ -1102,7 +1129,7 @@ void ScrubQueue::register_with_osd(Scrub::ScrubJobRef scrub_job,
 // 	   << qu_state_text(scrub_job->state)
 // 	   << " at: " << scrub_job->nschedule.effective.not_before << dendl;
 }
-
+#endif
 
 
 

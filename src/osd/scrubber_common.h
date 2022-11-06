@@ -366,6 +366,12 @@ struct ScrubPgIF {
 
   virtual pg_scrubbing_status_t get_schedule() const = 0;
 
+  // RRR describe
+  virtual void on_operator_cmd(
+    scrub_level_t scrub_level,
+    int offset,
+    bool must) = 0;
+
   virtual void dump_scrubber(ceph::Formatter* f,
 			     const requested_scrub_t& request_flags) const = 0;
 
