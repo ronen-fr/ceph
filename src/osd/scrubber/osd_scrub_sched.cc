@@ -846,11 +846,13 @@ void ScrubJob::activate_next_targets()
   // But there is no actual scrubbing going on, so we can manipulate
   // the targets with no race risk.
 
+  shallow_target.urgency = urgency_t::off;
   if (next_shallow.urgency != urgency_t::off) {
     // we have a 'next' target. Use it.
     shallow_target = next_shallow;
     next_shallow.urgency = urgency_t::off;
   }
+  deep_target.urgency = urgency_t::off;
   if (next_deep.urgency != urgency_t::off) {
     // we have a 'next' target. Use it.
     deep_target = next_deep;
@@ -1396,10 +1398,12 @@ void ScrubQueue::sched_scrub(
   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
     dout(20) << __func__ << " sched_scrub starts" << dendl;
     auto all_jobs = list_registered_jobs();
-    for (const auto& [j,lvl] : all_jobs) {
-      dout(20) << fmt::format("{}: sched_scrub scrub_queue jobs: {} {}",
-                              __func__, *j, *j->get_current_trgt(lvl))
-               << dendl;
+    std::sort(all_jobs.begin(), all_jobs.end());
+    for (const auto& [j, lvl] : all_jobs) {
+      dout(20) << fmt::format(
+		    "scrub_queue jobs: {:s} <<target: {}>>", *j,
+		    *j->get_current_trgt(lvl))
+	       << dendl;
     }
   }
 
@@ -1509,7 +1513,7 @@ ScrubQueue::SchedulingQueue ScrubQueue::collect_ripe_jobs(
   std::copy_if(
     group.begin(), group.end(), std::back_inserter(ripes),
     [time_now](const auto& trgt) -> bool {
-      return trgt.target()->is_ripe(time_now);
+      return trgt.target()->is_ripe(time_now) && !trgt.is_scrubbing();
     });
   std::sort(ripes.begin(), ripes.end());
 
@@ -1524,8 +1528,11 @@ ScrubQueue::SchedulingQueue ScrubQueue::collect_ripe_jobs(
     }
   }
 
-  // consider - only if there are no ripe jobs, and as a help to the
-  // reader of the log - to sort the entire list
+  // only if there are no ripe jobs, and as a help to the
+  // readers of the log - ort the entire list
+  if (ripes.empty()) {
+    std::sort(group.begin(), group.end());
+  }
 
   return ripes;
 }
@@ -1537,8 +1544,8 @@ Scrub::schedule_result_t ScrubQueue::select_n_scrub(
   const Scrub::ScrubPreconds& preconds,
   utime_t now_is)
 {
-  dout(15) << fmt::format("{}: ripe jobs #:{} (for {} PGs). Preconds: {}",
-                          __func__, group.size(), group.size()/2, preconds)
+  dout(15) << fmt::format("{}: ripe jobs #:{}. Preconds: {}",
+                          __func__, group.size(), preconds)
            << dendl;
 
   for (auto& candidate : group) {
@@ -1575,6 +1582,7 @@ Scrub::schedule_result_t ScrubQueue::select_n_scrub(
 	// the happy path. We are done
 	dout(20) << " initiated for " << pgid << dendl;
         candidate.target()->last_issue = delay_cause_t::none;
+        // moved into set_op_p() candidate.target()->set_scrubbing();
 	return Scrub::schedule_result_t::scrub_initiated;
 
       case Scrub::schedule_result_t::already_started:

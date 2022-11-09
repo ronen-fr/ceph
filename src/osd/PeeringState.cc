@@ -3984,7 +3984,7 @@ void PeeringState::update_stats(
   if (f(info.history, info.stats)) {
     pl->publish_stats_to_osd();
   }
-  pl->reschedule_scrub(); // RRR must replace with direct calls in specific cases
+  // RRR pl->reschedule_scrub(); // RRR must replace with direct calls in specific cases
 
   if (t) {
     dirty_info = true;

@@ -437,7 +437,9 @@ class PgScrubber : public ScrubPgIF,
    * flag-set; PG_STATE_SCRUBBING, and possibly PG_STATE_DEEP_SCRUB &
    * PG_STATE_REPAIR are set.
    */
-  void set_op_parameters(const requested_scrub_t& request) final;
+  void set_op_parameters(
+    const Scrub::SchedEntry& target,
+    const requested_scrub_t& request) final;
 
   void cleanup_store(ObjectStore::Transaction* t) final;
 
@@ -600,6 +602,9 @@ class PgScrubber : public ScrubPgIF,
   utime_t m_scrub_reg_stamp;		///< stamp we registered for
   Scrub::ScrubJobRef m_scrub_job;	///< the scrub-job used by the OSD to
 					///< schedule us
+
+  // specifically - we were scheduled thru this entry in the OSD queue:
+  std::optional<Scrub::SchedEntry> m_active_target;
 
   ostream& show(ostream& out) const override;
 

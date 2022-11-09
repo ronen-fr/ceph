@@ -858,7 +858,7 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
 
   // Pass control to the scrubber. It is the scrubber that handles the replicas'
   // resources reservations.
-  set_op_parameters(request); // RRR send 'target'
+  set_op_parameters(entry, request);
 
   dout(10) << __func__ << ": queueing" << dendl;
   m_osds->queue_for_scrub(m_pg, Scrub::scrub_prio_t::low_priority);
@@ -1907,11 +1907,15 @@ void PgScrubber::replica_scrub_op(OpRequestRef op)
 			      m_current_token);
 }
 
-void PgScrubber::set_op_parameters(const requested_scrub_t& request)
+void PgScrubber::set_op_parameters(
+  const Scrub::SchedEntry& target,
+  const requested_scrub_t& request)
 {
   dout(10) << fmt::format("{}: @ input: {}", __func__, request) << dendl;
 
   set_queued_or_active(); // we are fully committed now.
+  target.target()->set_scrubbing();
+  m_active_target = target;
 
   // write down the epoch of starting a new scrub. Will be used
   // to discard stale messages from previous aborted scrubs.
@@ -2510,6 +2514,11 @@ void PgScrubber::on_operator_cmd(scrub_level_t lvl, int offset, bool must)
 {
   auto& qu = m_osds->get_scrub_services();
   auto cnf = qu.populate_config_params(m_pg->get_pgpool().info.opts);
+  dout(10) << fmt::format(
+		"{}: {} (cmd offset:{}) must:{} conf:{}", __func__,
+		(lvl == scrub_level_t::deep ? "deep" : "shallow"), offset, must,
+		cnf)
+	   << dendl;
 
   if (must) {
     requested_scrub_t r{};
@@ -2877,6 +2886,10 @@ void PgScrubber::reset_internal_state()
   ++m_sessions_counter;
   m_be.reset();
   clear_queued_or_active();
+  if (m_active_target) {
+    m_active_target->target()->clear_scrubbing();
+    m_active_target.reset();
+  }
 }
 
 // note that only applicable to the Replica:

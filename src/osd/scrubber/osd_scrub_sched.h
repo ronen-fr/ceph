@@ -239,12 +239,16 @@ struct SchedTarget {
 
   bool is_ripe(utime_t now_is) const
   {
-    return urgency > urgency_t::off && now_is >= not_before;
+    return urgency > urgency_t::off && !scrubbing && now_is >= not_before;
   }
   bool over_deadline(utime_t now_is) const
   {
     return urgency > urgency_t::off && now_is >= deadline;
   }
+
+  // status
+  void set_scrubbing() { scrubbing = true; push_nb_out(5s); }
+  void clear_scrubbing() { scrubbing = false; }
 
   // failures
   void push_nb_out(std::chrono::seconds delay);
@@ -495,6 +499,12 @@ struct SchedEntry {
   SchedEntry(ScrubJobRef j, scrub_level_t s) : job(j), s_or_d(s) {}
   TargetRef target() { return job->get_current_trgt(s_or_d); }
   TargetRef target() const { return job->get_current_trgt(s_or_d); }
+
+  bool is_scrubbing() const
+  {
+    return job->get_current_trgt(scrub_level_t::shallow)->scrubbing ||
+	   job->get_current_trgt(scrub_level_t::deep)->scrubbing;
+  }
 
   // smaller is better (i.e. the '<' is more urgent);
   std::partial_ordering operator<=>(const SchedEntry& r) const
@@ -939,7 +949,7 @@ struct fmt::formatter<Scrub::SchedTarget> {
 	? (st.upgraded_to_deep ? "upg-to-deep" : "sh")
 	: "dp";
     return format_to(
-      ctx.out(), "{}/{}: {}nb:{} ({},{},a-r:{}) {} [dbg:{} {}]",
+      ctx.out(), "{}/{}: {}nb:{:s} ({},{:s},a-r:{}) {} [dbg:{} {}]",
       (st.base_target_level == scrub_level_t::deep ? "dp" : "sh"),
       effective_lvl,
       st.scrubbing ? "ACTIVE " : "",
@@ -955,20 +965,32 @@ struct fmt::formatter<Scrub::SchedTarget> {
 
 template <>
 struct fmt::formatter<Scrub::ScrubJob> {
-  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    auto it = ctx.begin();
+    if (it != ctx.end() && *it == 's') {
+      shorted = true;	 // no 'nearest target' info
+      ++it;
+    }
+    return it;
+  }
 
   template <typename FormatContext>
   auto format(const Scrub::ScrubJob& sjob, FormatContext& ctx)
   {
+    if (shorted) {
+      return fmt::format_to(
+	ctx.out(), "{} reg:{} rep-fail:{} queue state: {}", sjob.pgid,
+	sjob.registration_state(), sjob.resources_failure,
+	ScrubQueue::qu_state_text(sjob.state));
+    }
     return fmt::format_to(
-      ctx.out(),
-      "{}, [t:{}]  reg: {} failure: {} queue state: {}",
-      sjob.pgid,
-      *sjob.closest_target,
-      sjob.registration_state(),
-      sjob.resources_failure,
+      ctx.out(), "{}, [t:{}]  reg:{} rep-fail:{} queue state: {}", sjob.pgid,
+      *sjob.closest_target, sjob.registration_state(), sjob.resources_failure,
       ScrubQueue::qu_state_text(sjob.state));
   }
+  bool shorted{false};
 };
 
 template <>
@@ -985,23 +1007,3 @@ struct fmt::formatter<Scrub::sched_conf_t> {
   }
 };
 
-
-// template <>
-// struct fmt::formatter<ScrubQueue::ScrubJob> {
-//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-// 
-//   template <typename FormatContext>
-//   auto format(const ScrubQueue::ScrubJob& sjob, FormatContext& ctx)
-//   {
-//     return fmt::format_to(
-//       ctx.out(),
-//       "{}, {} dead: {} - {} / failure: {} / pen. t.o.: {} / queue state: {}",
-//       sjob.pgid,
-//       sjob.schedule.scheduled_at,
-//       sjob.schedule.deadline,
-//       sjob.registration_state(),
-//       sjob.resources_failure,
-//       sjob.penalty_timeout,
-//       ScrubQueue::qu_state_text(sjob.state));
-//   }
-// };
