@@ -439,7 +439,8 @@ class PgScrubber : public ScrubPgIF,
    */
   void set_op_parameters(
     const Scrub::SchedEntry& target,
-    const requested_scrub_t& request) final;
+    const requested_scrub_t& request,
+    const Scrub::ScrubPgPreconds& pg_cond) final;
 
   void cleanup_store(ObjectStore::Transaction* t) final;
 

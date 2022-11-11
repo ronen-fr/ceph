@@ -302,7 +302,7 @@ SchedTarget& SchedTarget::operator=(const SchedTarget& r)
 }
 
 
-void ScrubJob::disable_scheduling()
+void ScrubJob::disable_scheduling() // RRR ever called directly?
 {
   shallow_target.urgency = urgency_t::off;
   deep_target.urgency = urgency_t::off;
@@ -319,6 +319,14 @@ void ScrubJob::mark_for_dequeue()
   next_shallow.marked_for_dequeue = true;
   next_deep.marked_for_dequeue = true;
 }
+
+// void ScrubJob::clear_marked_for_dequeue()
+// {
+//   shallow_target.marked_for_dequeue = false;
+//   deep_target.marked_for_dequeue = false;
+//   next_shallow.marked_for_dequeue = false;
+//   next_deep.marked_for_dequeue = false;
+// }
 
 // return either one of the current set of targets, or - if
 // that target is the one being scrubbed - the 'next' one
@@ -1036,7 +1044,7 @@ void ScrubQueue::remove_from_osd_queue(Scrub::ScrubJobRef scrub_job)
 
   if (ret) {
 
-    scrub_job->mark_for_dequeue();
+    //scrub_job->mark_for_dequeue();
     dout(10) << "pg[" << scrub_job->pgid << "] sched-state changed from "
 	     << qu_state_text(expected_state) << " to "
 	     << qu_state_text(scrub_job->state) << dendl;
@@ -1058,6 +1066,8 @@ void ScrubQueue::register_with_osd(Scrub::ScrubJobRef scrub_job)
 
   dout(15) << "pg[" << scrub_job->pgid << "] was "
 	   << qu_state_text(state_at_entry) << dendl;
+
+  //scrub_job->clear_marked_for_dequeue();
 
   switch (state_at_entry) {
     case qu_state_t::registered:
@@ -1406,7 +1416,7 @@ void ScrubQueue::sched_scrub(
     std::sort(all_jobs.begin(), all_jobs.end());
     for (const auto& [j, lvl] : all_jobs) {
       dout(20) << fmt::format(
-		    "scrub_queue jobs: {:s} <<target: {}>>", *j,
+		    "scrub_queue jobs: [{:s}] <<target: {}>>", *j,
 		    *j->get_current_trgt(lvl))
 	       << dendl;
     }
@@ -1432,7 +1442,7 @@ Scrub::schedule_result_t ScrubQueue::select_pg_and_scrub(
   Scrub::ScrubPreconds& preconds)
 {
   dout(10) << fmt::format(
-		"{}: jobs#:{} preconds: {}", __func__, to_scrub.size(),
+		"jobs#:{} preconds: {}", to_scrub.size(),
 		preconds)
 	   << dendl;
 
@@ -1557,7 +1567,7 @@ Scrub::schedule_result_t ScrubQueue::select_n_scrub(
     // we expect the first job in the list to be a good candidate (if any)
 
     auto pgid = candidate.job->pgid;
-    dout(10) << fmt::format("initiating a scrub for {} ({}) precondition: {}",
+    dout(10) << fmt::format("initiating a scrub for pg[{}] ({}) [preconds:{}]",
                             pgid, *candidate.target(), preconds)
              << dendl;
 
@@ -1731,16 +1741,6 @@ void ScrubQueue::scan_penalized(bool forgive_all, utime_t time_now)
       }
     }
   }
-
-//     auto forgiven_last = std::partition(
-//       penalized.begin(),
-//       penalized.end(),
-//       [time_now](const auto& e) {
-// 	return (*e).updated || ((*e).penalty_timeout <= time_now);
-//       });
-// 
-//     std::copy(penalized.begin(), forgiven_last, std::back_inserter(to_scrub));
-//     penalized.erase(penalized.begin(), forgiven_last);
 }
 
 // checks for half-closed ranges. Modify the (p<till)to '<=' to check for

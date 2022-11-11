@@ -202,6 +202,8 @@ struct SchedTarget {
    */
   bool upgraded_to_deep{false};
 
+  bool is_deep() const { return upgraded_to_deep; }
+
   /**
    * the result of the a 'coin flip' for the next time we consider
    * upgrading a shallow scrub to a deep scrub.
@@ -366,6 +368,7 @@ struct ScrubJob final : public RefCountedObject {
 
   void disable_scheduling(); // == reset all targets to 'off'
   void mark_for_dequeue();
+  //void clear_marked_for_dequeue();
   bool verify_targets_disabled() const;
 
   // note: guaranteed to return the entry that's possibly in the to_scrub queue
@@ -888,7 +891,7 @@ struct fmt::formatter<Scrub::urgency_t>
     std::string_view desc;
     switch (urg) {
       case after_repair:
-        desc = "after_repair";
+        desc = "after-repair";
         break;
       case must:
 	desc = "must";
@@ -974,7 +977,6 @@ struct fmt::formatter<Scrub::SchedTarget> {
   }
 };
 
-
 template <>
 struct fmt::formatter<Scrub::ScrubJob> {
   template <typename ParseContext>
@@ -982,7 +984,7 @@ struct fmt::formatter<Scrub::ScrubJob> {
   {
     auto it = ctx.begin();
     if (it != ctx.end() && *it == 's') {
-      shorted = true;	 // no 'nearest target' info
+      shorted = true;  // no 'nearest target' info
       ++it;
     }
     return it;
@@ -993,12 +995,12 @@ struct fmt::formatter<Scrub::ScrubJob> {
   {
     if (shorted) {
       return fmt::format_to(
-	ctx.out(), "{} reg:{} rep-fail:{} queue state: {}", sjob.pgid,
+	ctx.out(), "pg[{}]:reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
 	sjob.registration_state(), sjob.resources_failure,
 	ScrubQueue::qu_state_text(sjob.state));
     }
     return fmt::format_to(
-      ctx.out(), "{}, [t:{}]  reg:{} rep-fail:{} queue state: {}", sjob.pgid,
+      ctx.out(), "pg[{}]:[t:{}],reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
       *sjob.closest_target, sjob.registration_state(), sjob.resources_failure,
       ScrubQueue::qu_state_text(sjob.state));
   }
