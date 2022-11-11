@@ -360,7 +360,8 @@ struct ScrubPgIF {
 
   virtual void set_op_parameters(
     const Scrub::SchedEntry& target,
-    const requested_scrub_t&) = 0;
+    const requested_scrub_t&,
+    const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual void scrub_clear_state() = 0;
 

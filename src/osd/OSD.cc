@@ -7396,7 +7396,7 @@ Scrub::schedule_result_t OSDService::initiate_a_scrub(
   Scrub::SchedEntry trgt,
   bool allow_requested_repair_only)
 {
-  dout(20) << __func__ << " trying " << pgid << dendl;
+  dout(20) << __func__ << " trying pg[" << pgid << "]" << dendl;
 
   // we have a candidate to scrub. We need some PG information to know if
   // scrubbing is allowed
@@ -7405,11 +7405,11 @@ Scrub::schedule_result_t OSDService::initiate_a_scrub(
   if (!pg) {
     // the PG was dequeued in the short timespan between creating the candidates
     // list (collect_ripe_jobs()) and here
-    dout(5) << __func__ << " pg  " << pgid << " not found" << dendl;
+    dout(5) << __func__ << " pg[" << pgid << "] not found" << dendl;
     return Scrub::schedule_result_t::no_such_pg;
   }
 
-  // Skip other kinds of scrubbing if only explicitly requested repairing is
+  // Skip other kinds of scrubbing if only explicitly-requested repairing is
   // allowed
   if (allow_requested_repair_only && !pg->get_planned_scrub().must_repair) {
     pg->unlock();

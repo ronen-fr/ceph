@@ -439,7 +439,8 @@ class PgScrubber : public ScrubPgIF,
    */
   void set_op_parameters(
     const Scrub::SchedEntry& target,
-    const requested_scrub_t& request) final;
+    const requested_scrub_t& request,
+    const Scrub::ScrubPgPreconds& pg_cond) final;
 
   void cleanup_store(ObjectStore::Transaction* t) final;
 
@@ -647,6 +648,7 @@ class PgScrubber : public ScrubPgIF,
 
  private:
   void reset_internal_state();
+  void at_scrub_failure(Scrub::delay_cause_t issue);
 
   /**
    *  the current scrubbing operation is done. We should mark that fact, so that

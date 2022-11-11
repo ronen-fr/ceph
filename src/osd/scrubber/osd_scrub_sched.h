@@ -151,6 +151,7 @@ enum class delay_cause_t {
   pg_state,
   time,
   local_resources,
+  aborted, //< scrub was aborted on no(deep)-scrub
   environment,
 };
 
@@ -201,6 +202,10 @@ struct SchedTarget {
    * Always set for 'deep' objects.
    */
   bool upgraded_to_deep{false};
+
+  bool is_deep() const { return upgraded_to_deep; }
+  bool is_periodic() const { return urgency <= urgency_t::overdue; }   
+  bool is_viable() const { return urgency > urgency_t::off; }   
 
   /**
    * the result of the a 'coin flip' for the next time we consider
@@ -266,7 +271,8 @@ struct SchedTarget {
   void replica_refusal();
   void pg_state_failure();
   void wrong_time();
-  void no_local_resources();
+  void on_local_resources();
+  //void aborted_on_noscrub();
 
   void dump(ceph::Formatter* f) const;
 
@@ -366,11 +372,13 @@ struct ScrubJob final : public RefCountedObject {
 
   void disable_scheduling(); // == reset all targets to 'off'
   void mark_for_dequeue();
+  //void clear_marked_for_dequeue();
   bool verify_targets_disabled() const;
 
   // note: guaranteed to return the entry that's possibly in the to_scrub queue
   TargetRef get_current_trgt(scrub_level_t lvl);
   TargetRef get_modif_trgt(scrub_level_t lvl);
+  TargetRef get_next_trgt(scrub_level_t lvl);
 
   void activate_next_targets();
 
@@ -469,6 +477,8 @@ struct ScrubJob final : public RefCountedObject {
     const requested_scrub_t& request_flags);
 
   /* needed? */ void merge_deep_target(TargetRef&& candidate);
+
+  void merge_targets(scrub_level_t lvl);
 
   void un_penalize(utime_t now_is);
 
@@ -878,6 +888,7 @@ class ScrubSchedListener {
 
 }  // namespace Scrub
 
+// clang-format off
 template <>
 struct fmt::formatter<Scrub::urgency_t>
     : fmt::formatter<std::string_view> {
@@ -887,34 +898,21 @@ struct fmt::formatter<Scrub::urgency_t>
     using enum Scrub::urgency_t;
     std::string_view desc;
     switch (urg) {
-      case after_repair:
-        desc = "after_repair";
-        break;
-      case must:
-	desc = "must";
-	break;
-      case operator_requested:
-	desc = "operator-requested";
-	break;
-      case overdue:
-	desc = "overdue";
-	break;
-      case periodic_regular:
-	desc = "periodic-regular";
-	break;
-      case penalized:
-	desc = "reservation-failure";
-	break;
-      case off:
-	desc = "off";
-	break;
-	// better to not have a default case, so that the compiler will warn
+      case after_repair:        desc = "after-repair"; break;
+      case must:                desc = "must"; break;
+      case operator_requested:  desc = "operator-requested"; break;
+      case overdue:             desc = "overdue"; break;
+      case periodic_regular:    desc = "periodic-regular"; break;
+      case penalized:           desc = "reservation-failure"; break;
+      case off:                 desc = "off"; break;
+      // better to not have a default case, so that the compiler will warn
     }
     return formatter<string_view>::format(desc, ctx);
   }
 };
+// clang-format on
 
-
+// clang-format off
 template <>
 struct fmt::formatter<Scrub::delay_cause_t> : fmt::formatter<std::string_view> {
   template <typename FormatContext>
@@ -923,32 +921,20 @@ struct fmt::formatter<Scrub::delay_cause_t> : fmt::formatter<std::string_view> {
     using enum Scrub::delay_cause_t;
     std::string_view desc;
     switch (cause) {
-      case none:
-	desc = "ok";
-	break;
-      case replicas:
-	desc = "replicas";
-	break;
-      case flags:
-	desc = "flags";	 // RRR
-	break;
-      case pg_state:
-	desc = "pg_state";
-	break;
-      case time:
-	desc = "time";
-	break;
-      case local_resources:
-	desc = "local_resources";
-	break;
-      case environment:
-	desc = "environment";
-	break;
-	// better to not have a default case, so that the compiler will warn
+      case none:        desc = "ok"; break;
+      case replicas:    desc = "replicas"; break;
+      case flags:       desc = "flags"; break;	 // RRR
+      case pg_state:    desc = "pg-state"; break;
+      case time:        desc = "time"; break;
+      case local_resources: desc = "local-resources"; break;
+      case aborted:     desc = "noscrub"; break;
+      case environment: desc = "environment"; break;
+      // better to not have a default case, so that the compiler will warn
     }
     return formatter<string_view>::format(desc, ctx);
   }
 };
+// clang-format on
 
 template <>
 struct fmt::formatter<Scrub::SchedTarget> {
@@ -958,10 +944,10 @@ struct fmt::formatter<Scrub::SchedTarget> {
   {
     const std::string_view effective_lvl =
       (st.base_target_level == scrub_level_t::shallow)
-	? (st.upgraded_to_deep ? "upg-to-deep" : "sh")
+	? (st.upgraded_to_deep ? "up" : "sh")
 	: "dp";
     return format_to(
-      ctx.out(), "{}/{}: {}nb:{:s} ({},{:s},a-r:{}) {} [dbg:{} {}]",
+      ctx.out(), "{}/{}: {}nb:{:s},({},{:s},a-r:{}{}),issue:{},{}",
       (st.base_target_level == scrub_level_t::deep ? "dp" : "sh"),
       effective_lvl,
       st.scrubbing ? "ACTIVE " : "",
@@ -969,11 +955,10 @@ struct fmt::formatter<Scrub::SchedTarget> {
       st.urgency, st.target,
       st.auto_repair ? "+" : "-",
       st.marked_for_dequeue ? "XXX" : "",
-      st.dbg_val,
-      st.last_issue);
+      st.last_issue,
+      st.dbg_val);
   }
 };
-
 
 template <>
 struct fmt::formatter<Scrub::ScrubJob> {
@@ -982,7 +967,7 @@ struct fmt::formatter<Scrub::ScrubJob> {
   {
     auto it = ctx.begin();
     if (it != ctx.end() && *it == 's') {
-      shorted = true;	 // no 'nearest target' info
+      shorted = true;  // no 'nearest target' info
       ++it;
     }
     return it;
@@ -993,12 +978,12 @@ struct fmt::formatter<Scrub::ScrubJob> {
   {
     if (shorted) {
       return fmt::format_to(
-	ctx.out(), "{} reg:{} rep-fail:{} queue state: {}", sjob.pgid,
+	ctx.out(), "pg[{}]:reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
 	sjob.registration_state(), sjob.resources_failure,
 	ScrubQueue::qu_state_text(sjob.state));
     }
     return fmt::format_to(
-      ctx.out(), "{}, [t:{}]  reg:{} rep-fail:{} queue state: {}", sjob.pgid,
+      ctx.out(), "pg[{}]:[t:{}],reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
       *sjob.closest_target, sjob.registration_state(), sjob.resources_failure,
       ScrubQueue::qu_state_text(sjob.state));
   }
