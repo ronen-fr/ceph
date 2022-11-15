@@ -801,6 +801,8 @@ void PgScrubber::at_scrub_failure(delay_cause_t issue)
   auto aborted_target = m_active_target->target();//get_current_trgt(scrub_level_t::deep);
   auto& sjob = m_active_target->job;
 
+  aborted_target->clear_scrubbing();
+
   // RRR create a 'final level' in scrub_level_t in the targets
   auto lvl = aborted_target->upgraded_to_deep ? scrub_level_t::deep
                                               : scrub_level_t::shallow;
@@ -2558,6 +2560,7 @@ void PgScrubber::dump_scrubber(ceph::Formatter* f,
 
     // note that we are repeating logic that is coded elsewhere (currently
     // PG.cc). This is not optimal.
+    // RRR not needed anymore!
     bool deep_expected =
       (ceph_clock_now() >= m_pg->next_deepscrub_interval()) ||
       request_flags.must_deep_scrub || request_flags.need_auto;
@@ -2979,10 +2982,14 @@ void PgScrubber::update_scrub_stats(ceph::coarse_real_clock::time_point now_is)
     // a way for the operator to disable these stats updates
     return;
   }
+  auto base_inactive_upd = seconds(m_pg->get_cct()->_conf.get_val<int64_t>(
+    "osd_stats_update_period_not_scrubbing"));
+  // a period set to < 5 seconds means we are running a test. In that case -
+  // do not "randomize" the period based on the PG ID
   const seconds period_inactive =
-    seconds(m_pg->get_cct()->_conf.get_val<int64_t>(
-	      "osd_stats_update_period_not_scrubbing") +
-	    m_pg_id.pgid.m_seed % 30);
+    (base_inactive_upd > 5s)
+      ? base_inactive_upd + seconds(m_pg_id.pgid.m_seed % 30)
+      : base_inactive_upd;
 
   // determine the required update period, based on our current state
   auto period{period_inactive};
