@@ -1366,7 +1366,7 @@ Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedEntry trgt)
   dout(10) << fmt::format(
 		"{}: pg[{}] {} {} target: {}", __func__, info.pgid,
 		(is_active() ? "<active>" : "<not-active>"),
-		(is_clean() ? "<clean>" : "<not-clean>"), *trgt.target())
+		(is_clean() ? "<clean>" : "<not-clean>"), trgt.target())
 	   << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);

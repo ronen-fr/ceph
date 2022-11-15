@@ -166,7 +166,6 @@ struct sched_conf_t {
 };
 
 struct ScrubJob;
-//using ScrubJobRef = std::shared_ptr<ScrubJob>;
 using ScrubJobRef = ceph::ref_t<ScrubJob>;
 
 
@@ -213,6 +212,10 @@ struct SchedTarget {
    */
   bool upgradeable{false};
 
+  // an ephemeral flag used when sorting the targets. We use different
+  // sorting criteria for ripe vs future targets. See discussion in RRR
+  bool eph_ripe_for_sort{false};
+
   /// the reason for the latest failure/delay
   delay_cause_t last_issue{delay_cause_t::none};  
 
@@ -257,6 +260,12 @@ struct SchedTarget {
   {
     return urgency > urgency_t::off && !scrubbing && now_is >= not_before;
   }
+
+  void update_ripe_for_sort(utime_t now_is)
+  {
+    eph_ripe_for_sort = is_ripe(now_is);
+  }
+
   bool over_deadline(utime_t now_is) const
   {
     return urgency > urgency_t::off && now_is >= deadline;
@@ -299,7 +308,8 @@ struct SchedTarget {
 
 // note: not a shared_ptr, as the statically-allocated target is owned by the
 // job
-using TargetRef = SchedTarget*;
+using TargetRef = SchedTarget&;
+using TargetRefW = std::reference_wrapper<SchedTarget>;
 
 
 struct PossibleScrubMode {
@@ -355,7 +365,7 @@ struct ScrubJob final : public RefCountedObject {
   SchedTarget deep_target;
   // and a 'current' target, pointing to one of the above:
   // (mostly used for general schedule queries)
-  TargetRef closest_target;  // always updated to the closest target
+  TargetRefW closest_target;  // always updated to the closest target
 
   SchedTarget next_shallow; // only used when currently s-scrubbing
   SchedTarget next_deep;  // only used when currently d-scrubbing
@@ -380,7 +390,7 @@ struct ScrubJob final : public RefCountedObject {
   TargetRef get_modif_trgt(scrub_level_t lvl);
   TargetRef get_next_trgt(scrub_level_t lvl);
 
-  void activate_next_targets();
+  //void activate_next_targets();
 
   /**
    * the old 'is_registered'. Set whenever the job is registered with the OSD,
@@ -437,9 +447,9 @@ struct ScrubJob final : public RefCountedObject {
 //     return *this;
 //   }
 
-  utime_t get_sched_time() const { return closest_target->not_before; }
+  utime_t get_sched_time() const { return closest_target.get().not_before; }
 
-  bool is_ripe(utime_t now_is) const { return closest_target->is_ripe(now_is); }
+  bool is_ripe(utime_t now_is) const { return closest_target.get().is_ripe(now_is); }
 
   void initial_shallow_target(
     const requested_scrub_t& request_flags,
@@ -519,13 +529,20 @@ struct SchedEntry {
   scrub_level_t s_or_d;
 
   SchedEntry(ScrubJobRef j, scrub_level_t s) : job(j), s_or_d(s) {}
+  //   SchedEntry(const SchedEntry& other) : job(other.job),
+  //   s_or_d(other.s_or_d) {} SchedEntry& operator=(const SchedEntry& other)
+  //   {
+  //     job = other.job;
+  //     s_or_d = other.s_or_d;
+  //     return *this;
+  //   }
   TargetRef target() { return job->get_current_trgt(s_or_d); }
   TargetRef target() const { return job->get_current_trgt(s_or_d); }
 
   bool is_scrubbing() const
   {
-    return job->get_current_trgt(scrub_level_t::shallow)->scrubbing ||
-	   job->get_current_trgt(scrub_level_t::deep)->scrubbing;
+    return job->get_current_trgt(scrub_level_t::shallow).scrubbing ||
+	   job->get_current_trgt(scrub_level_t::deep).scrubbing;
   }
 
   // smaller is better (i.e. the '<' is more urgent);
@@ -534,7 +551,8 @@ struct SchedEntry {
     if (auto cmp = r.s_or_d <=> s_or_d; cmp != 0) {
       return cmp;
     }
-    return *job->get_current_trgt(s_or_d) <=> *r.job->get_current_trgt(s_or_d);
+    return job->get_current_trgt(s_or_d) <=>
+	   r.job->get_current_trgt(s_or_d);
   }
 };
 
@@ -678,7 +696,7 @@ class ScrubQueue {
 				      const pool_opts_t pool_conf) const;
 
  public:
-  void dump_scrubs(ceph::Formatter* f) const;
+  void dump_scrubs(ceph::Formatter* f);
 
   /**
    * No new scrub session will start while a scrub was initiated on a PG,
@@ -947,12 +965,12 @@ struct fmt::formatter<Scrub::SchedTarget> {
 	? (st.upgraded_to_deep ? "up" : "sh")
 	: "dp";
     return format_to(
-      ctx.out(), "{}/{}: {}nb:{:s},({},{:s},a-r:{}{}),issue:{},{}",
+      ctx.out(), "{}/{}: {}nb:{:s},({},tr:{:s},dl:{:s},a-r:{}{}),issue:{},{}",
       (st.base_target_level == scrub_level_t::deep ? "dp" : "sh"),
       effective_lvl,
       st.scrubbing ? "ACTIVE " : "",
       st.not_before,
-      st.urgency, st.target,
+      st.urgency, st.target, st.deadline.value_or(utime_t{}),
       st.auto_repair ? "+" : "-",
       st.marked_for_dequeue ? "XXX" : "",
       st.last_issue,
@@ -984,7 +1002,7 @@ struct fmt::formatter<Scrub::ScrubJob> {
     }
     return fmt::format_to(
       ctx.out(), "pg[{}]:[t:{}],reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
-      *sjob.closest_target, sjob.registration_state(), sjob.resources_failure,
+      sjob.closest_target.get(), sjob.registration_state(), sjob.resources_failure,
       ScrubQueue::qu_state_text(sjob.state));
   }
   bool shorted{false};
@@ -998,7 +1016,7 @@ struct fmt::formatter<Scrub::sched_conf_t> {
   {
     return format_to(
       ctx.out(), "periods: s:{}/{} d:{}/{} iv-ratio:{} on-inv:{}",
-      cf.shallow_interval, cf.max_shallow ? *cf.max_shallow : 0.0,
+      cf.shallow_interval, cf.max_shallow.value_or(-1.0),
       cf.deep_interval, cf.max_deep, cf.interval_randomize_ratio,
       cf.mandatory_on_invalid);
   }

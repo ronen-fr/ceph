@@ -7433,6 +7433,12 @@ PgLockWrapper OSDService::get_locked_pg(spg_t pgid)
 
 void OSD::resched_all_scrubs()
 {
+  dout(10) << fmt::format(
+		"resched_all_scrubs: min:{} deep:{} max:{}",
+		cct->_conf->osd_scrub_min_interval,
+		cct->_conf->osd_deep_scrub_interval,
+		cct->_conf->osd_scrub_max_interval)
+	   << dendl;
   service.get_scrub_services().on_config_times_change();
 }
 
@@ -9530,7 +9536,8 @@ const char** OSD::get_tracked_conf_keys() const
     "osd_object_clean_region_max_num_intervals",
     "osd_scrub_min_interval",
     "osd_scrub_max_interval",
-    NULL
+    "osd_deep_scrub_interval",
+    nullptr
   };
   return KEYS;
 }
@@ -9642,7 +9649,8 @@ void OSD::handle_conf_change(const ConfigProxy& conf,
   }
 
   if (changed.count("osd_scrub_min_interval") ||
-      changed.count("osd_scrub_max_interval")) {
+      changed.count("osd_scrub_max_interval") ||
+      changed.count("osd_deep_scrub_interval")) {
     //service.get_scrub_services()->on_config_change();
     resched_all_scrubs();
     dout(0) << __func__ << ": scrub interval change" << dendl;
