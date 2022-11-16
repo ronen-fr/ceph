@@ -129,8 +129,9 @@ bool PgScrubber::verify_against_abort(epoch_t epoch_to_verify)
     return true;
   }
 
-  dout(10) << __func__ << " aborting. incoming epoch: " << epoch_to_verify
-	   << " vs last-aborted: " << m_last_aborted << dendl;
+  dout(10) << fmt::format("{}: aborting. Incoming epoch: {} vs. last-aborted: {}",
+                          __func__, epoch_to_verify, m_last_aborted)
+           << dendl;
 
   // if we were not aware of the abort before - kill the scrub.
   if (epoch_to_verify >= m_last_aborted) {
@@ -797,12 +798,12 @@ Scrub::SchedEntry PgScrubber::mark_for_after_repair()
 void PgScrubber::at_scrub_failure(delay_cause_t issue)
 {
   // assuming we can still depend on the 'scrubbing' flag being set;
-  // Also on Q&A.
+  // Also on Queued&Active.
 
   // if there is a 'next' target - it might have higher priority than
   // what was just run. Let's merge the two.
   ceph_assert(m_active_target);
-  auto aborted_target = m_active_target->target();//get_current_trgt(scrub_level_t::deep);
+  auto& aborted_target = m_active_target->target();
   auto& sjob = m_active_target->job;
 
   aborted_target.clear_scrubbing();
@@ -844,7 +845,7 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
   const Scrub::ScrubPgPreconds& pg_cond)
 {
   using Scrub::schedule_result_t;
-  auto trgt = entry.target();
+  auto& trgt = entry.target();
   dout(10) << fmt::format(
 		"{}: pg[{}] {} {} target: {}", __func__, m_pg_id,
 		(m_pg->is_active() ? "<active>" : "<not-active>"),
@@ -929,7 +930,7 @@ Scrub::PossibleScrubMode PgScrubber::select_scrub_mode(
   const Scrub::ScrubPgPreconds& pg_cond) const
 {
   requested_scrub_t upd_flags{planned};
-  auto trgt = sched_entry.target();
+  auto& trgt = sched_entry.target();
 
   // if a shallow scrub, but upgradable - upgrade it to a deep-scrub.
   // (note - no need to check 'must_deep_scrub' - as if set, would have
