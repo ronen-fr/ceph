@@ -126,12 +126,31 @@ void SchedTarget::set_oper_deep_target(scrub_type_t rpr)
 {
   ceph_assert(base_target_level == scrub_level_t::deep);
   ceph_assert(!scrubbing);
-  urgency = urgency_t::operator_requested;
-  target = ceph_clock_now(); // consider merging?
-  not_before = ceph_clock_now();
-  auto_repair = (rpr == scrub_type_t::do_repair);
+  if (rpr == scrub_type_t::do_repair) {
+    urgency = std::max(urgency_t::must, urgency);
+    do_repair = true;
+  } else {
+    urgency = std::max(urgency_t::operator_requested, urgency);
+  }
+  target = std::min(ceph_clock_now(), target);
+  not_before = std::min(not_before, ceph_clock_now());
+  auto_repair = false;
   last_issue = delay_cause_t::none;
 }
+
+void SchedTarget::set_oper_shallow_target(scrub_type_t rpr)
+{
+  ceph_assert(base_target_level == scrub_level_t::shallow);
+  ceph_assert(!scrubbing);
+  ceph_assert(rpr != scrub_type_t::do_repair);
+
+  urgency = std::max(urgency_t::operator_requested, urgency);
+  target = std::min(ceph_clock_now(), target);
+  not_before = std::min(not_before, ceph_clock_now());
+  auto_repair = false;
+  last_issue = delay_cause_t::none;
+}
+
 
 void SchedTarget::push_nb_out(std::chrono::seconds delay)
 {
@@ -194,7 +213,6 @@ using qu_state_t = Scrub::qu_state_t;
 using ScrubJob = Scrub::ScrubJob;
 
 ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
-    //: RefCountedObject{cct}
     : pgid{pg}
     , whoami{node_id}
     , cct{cct}
@@ -823,7 +841,6 @@ void SchedTarget::update_as_deep(
   auto_repair = false;
   // so that we can refer to 'upgraded..' for both s & d:
   upgraded_to_deep = true;
-  //return target;
 }
 
 void SchedTarget::update_target(
@@ -1575,7 +1592,7 @@ void ScrubQueue::rm_unregistered_jobs()
       trgt.job->in_queues = false;
     }
     if (!trgt.job->in_queues) {
-      // RRR make sure we could not be scrubbing this target now
+      // RRR make sure we would not be scrubbing this target now
       dout(20) << fmt::format("{}: removing job: {}", __func__, *trgt.job)
 	       << dendl;
       trgt.job->mark_for_dequeue();
