@@ -198,7 +198,7 @@ struct requested_scrub_t {
    * - 'must_repair' is checked by the OSD when scheduling the scrubs.
    * - also checked & cleared at pg::queue_scrub()
    */
-  bool must_repair{false};
+  // obsolete. bool must_repair{false};
 
   /*
    * the value of auto_repair is determined in sched_scrub() (once per scrub.
@@ -233,7 +233,7 @@ struct fmt::formatter<requested_scrub_t> {
   {
     return fmt::format_to(ctx.out(),
                           "(plnd:{}{}{}{}{}{}{}{}{})",
-                          rs.must_repair ? " must_repair" : "",
+                          false /*rs.must_repair*/ ? " must_repair" : "",
                           rs.auto_repair ? " auto_repair" : "",
                           rs.check_repair ? " check_repair" : "",
                           rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",

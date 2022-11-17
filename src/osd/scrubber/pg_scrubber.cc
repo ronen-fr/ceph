@@ -65,8 +65,8 @@ ostream& operator<<(ostream& out, const scrub_flags_t& sf)
 
 ostream& operator<<(ostream& out, const requested_scrub_t& sf)
 {
-  if (sf.must_repair)
-    out << " MUST_REPAIR";
+  //if (sf.must_repair)
+  //  out << " MUST_REPAIR";
   if (sf.auto_repair)
     out << " planned AUTO_REPAIR";
   if (sf.check_repair)
@@ -639,7 +639,7 @@ void PgScrubber::scrub_requested(
   req_flags.must_scrub = true;
   req_flags.must_deep_scrub = (scrub_level == scrub_level_t::deep) ||
 			      (scrub_type == scrub_type_t::do_repair);
-  req_flags.must_repair = (scrub_type == scrub_type_t::do_repair);
+  //req_flags.must_repair = (scrub_type == scrub_type_t::do_repair);
   // User might intervene, so clear this
   req_flags.need_auto = false;
   req_flags.req_scrub = true;  // RRR obsolete
@@ -653,75 +653,21 @@ void PgScrubber::scrub_requested(
   // RRR should probably be locking now!
   if (deep_requested) {
     // get a reference to a modifiable deep target (which will either be the
-    // 'regular' one or - if deep-scrubbing now - the 'pending' one)
-    auto& targ = m_scrub_job->get_modif_trgt(scrub_level_t::deep);
-    if (targ.urgency >= Scrub::urgency_t::operator_requested) {
-      dout(10) << fmt::format(
-		    "{}: mandatory deep-scrub already planned", __func__)
-	       << dendl;
-      return;
-    }
+    // 'regular' one or - if deep-scrubbing now - the ScrubJob::next_deep)
+
+    SchedTarget& targ = m_scrub_job->get_modif_trgt(scrub_level_t::deep);
+// 
+//     if (targ.urgency >= Scrub::urgency_t::operator_requested) {
+//       dout(10) << fmt::format(
+// 		    "{}: mandatory deep-scrub already planned", __func__)
+// 	       << dendl;
+//       return;
+//     }
     targ.set_oper_deep_target(scrub_type);
 
   } else {
     // shallow scrub requested. Note: cannot have the 'repair' request flag set
     ceph_assert(scrub_type != scrub_type_t::do_repair);
-    if (is_queued_or_active()) {
-      // we'll just drop the request.
-      dout(5)
-	<< fmt::format(
-	     "{}: shallow scrub requested by operator, but already scrubbing",
-	     __func__)
-	<< dendl;
-      return;
-    }
-    auto& targ = m_scrub_job->get_modif_trgt(scrub_level_t::shallow);
-    targ.urgency =
-      std::max(targ.urgency, Scrub::urgency_t::operator_requested);
-    targ.not_before = std::min(targ.not_before, ceph_clock_now());
-  }
-}
-
-// void PgScrubber::scrub_requested(
-//   scrub_level_t scrub_level,
-//   scrub_type_t scrub_type,
-//   requested_scrub_t& req_flags)
-// {
-//   dout(10) << __func__
-// 	   << (scrub_level == scrub_level_t::deep ? " deep " : " shallow ")
-// 	   << (scrub_type == scrub_type_t::do_repair ? " repair-scrub "
-// 						     : " not-repair ")
-// 	   << " prev stamp: " << m_scrub_job->get_sched_time()
-// 	   << " registered? " << registration_state() << dendl;
-// 
-//   req_flags.must_scrub = true;
-//   req_flags.must_deep_scrub = (scrub_level == scrub_level_t::deep) ||
-// 			      (scrub_type == scrub_type_t::do_repair);
-//   req_flags.must_repair = (scrub_type == scrub_type_t::do_repair);
-//   // User might intervene, so clear this
-//   req_flags.need_auto = false;
-//   req_flags.req_scrub = true; // RRR obsolete
-// 
-//   dout(20) << __func__ << " pg(" << m_pg_id << ") planned:" << req_flags
-// 	   << dendl;
-// 
-//   const bool deep_requested = (scrub_level == scrub_level_t::deep) ||
-// 			      (scrub_type == scrub_type_t::do_repair);
-// 
-//   if (deep_requested) {
-// 
-//     // create a new deep-scrub target, to be compared against the existing one
-//     auto cand_target = m_scrub_job->create_oper_deep_target(scrub_type);
-//     if (is_queued_or_active() && m_is_deep) {
-//       // let's postpone the requested scrub until that one is finished
-//       m_scrub_job->set_postponed_target(std::move(cand_target));
-//     } else {
-//       // we can manipulate the existing deep target
-//       m_scrub_job->merge_deep_target(std::move(cand_target));
-//     }
-//   } else {
-//     // shallow scrub requested. Note: cannot have the 'repair' request flag set
-// 
 //     if (is_queued_or_active()) {
 //       // we'll just drop the request.
 //       dout(5)
@@ -731,24 +677,10 @@ void PgScrubber::scrub_requested(
 // 	<< dendl;
 //       return;
 //     }
-//     if (m_scrub_job->shallow_target->urgency == Scrub::urgency_t::off) {
-//       // we'll just drop the request.
-//       dout(5)
-// 	<< fmt::format(
-// 	     "{}: shallow scrub requested by operator, but PG not eligible",
-// 	     __func__)
-// 	<< dendl;
-//       return;
-//     }
-// 
-//     m_scrub_job->shallow_target->urgency = std::max(
-//       m_scrub_job->shallow_target->urgency,
-//       Scrub::urgency_t::operator_requested);
-//     m_scrub_job->shallow_target->not_before =
-//       std::min(m_scrub_job->shallow_target->not_before, ceph_clock_now());
-//   }
-// }
-
+    SchedTarget& targ = m_scrub_job->get_modif_trgt(scrub_level_t::shallow);
+    targ.set_oper_shallow_target(scrub_type);
+  }
+}
 
 // void PgScrubber::scrub_requested(scrub_level_t scrub_level,
 // 				 scrub_type_t scrub_type,
@@ -1936,8 +1868,10 @@ void PgScrubber::set_op_parameters(
   //
   // PG_STATE_REPAIR, on the other hand, is only used for status reports (inc.
   // the PG status as appearing in the logs).
-  m_is_repair = request.must_repair || m_flags.auto_repair;
-  if (request.must_repair) {
+  m_is_repair = target.target().do_repair || m_flags.auto_repair;
+  //m_is_repair = request.must_repair || m_flags.auto_repair;
+  //if (request.must_repair) {
+  if (target.target().do_repair) {
     state_set(PG_STATE_REPAIR);
     update_op_mode_text();
   }
@@ -2558,7 +2492,7 @@ void PgScrubber::dump_scrubber(ceph::Formatter* f,
     f->dump_bool("must_scrub",
 		 (m_planned_scrub.must_scrub || m_flags.required));
     f->dump_bool("must_deep_scrub", request_flags.must_deep_scrub);
-    f->dump_bool("must_repair", request_flags.must_repair);
+    // RRR f->dump_bool("must_repair", request_flags.must_repair);
     f->dump_bool("need_auto", request_flags.need_auto);
 
     f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time();
