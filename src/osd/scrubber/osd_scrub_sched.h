@@ -124,6 +124,8 @@ ScrubQueue interfaces (main functions):
 
 //#include "osd/PG.h"
 class PG;
+class PgScrubber;
+class OSDService;
 
 namespace Scrub {
 
@@ -173,7 +175,12 @@ struct SchedTarget {
   static constexpr auto eternity =
     utime_t{std::numeric_limits<uint32_t>::max(), 0};
 
-  SchedTarget(ScrubJob& parent_job, scrub_level_t base_type, std::string dbg_val);
+  friend class ::PgScrubber;
+
+  SchedTarget(
+    ScrubJob& parent_job,
+    scrub_level_t base_type,
+    std::string dbg_val);
 
   // note that we do not try to copy the job reference:
   // well - we couldn't do it anyway. But it's not needed, as
@@ -193,7 +200,7 @@ struct SchedTarget {
   utime_t target{eternity};
 
   // RRR consider atomic or lock
-  bool scrubbing{false}; // must match 'is_queued_or_active()'
+  bool scrubbing{false};  // must match 'is_queued_or_active()'
 
   /**
    * 'randomly selected' for shallow->deep for our next scrub.
@@ -203,8 +210,8 @@ struct SchedTarget {
   bool upgraded_to_deep{false};
 
   bool is_deep() const { return upgraded_to_deep; }
-  bool is_periodic() const { return urgency <= urgency_t::overdue; }   
-  bool is_viable() const { return urgency > urgency_t::off; }   
+  bool is_periodic() const { return urgency <= urgency_t::overdue; }
+  bool is_viable() const { return urgency > urgency_t::off; }
 
   /**
    * the result of the a 'coin flip' for the next time we consider
@@ -217,11 +224,11 @@ struct SchedTarget {
   bool eph_ripe_for_sort{false};
 
   /// the reason for the latest failure/delay
-  delay_cause_t last_issue{delay_cause_t::none};  
+  delay_cause_t last_issue{delay_cause_t::none};
 
   /// a back-link to the job. Used to update the job's state.
-  //ScrubJobRef job;
-  //ScrubJob& parent_job;
+  // ScrubJobRef job;
+  // ScrubJob& parent_job;
 
   // copied from the parent job, to avoid having to rely on a backlink
   spg_t pgid;
@@ -231,7 +238,7 @@ struct SchedTarget {
    * the original scheduling object type. Note that for the shallow
    * scheduling target objects - overridden by 'upgraded_to_deep'
    */
-  scrub_level_t base_target_level; // 'const' in semantics
+  scrub_level_t base_target_level;  // 'const' in semantics
 
   /**
    * (deep-scrub entries only:)
@@ -243,6 +250,14 @@ struct SchedTarget {
    */
   bool auto_repair{false};
 
+  /**
+   * (deep-scrub entries only:)
+   * Set for scrub_requested() scrubs with the 'repair' flag set.
+   * Translated (in set_op_parameters()) into a 'deep scrub' with
+   * m_is_repair & PG_REPAIR_SCRUB.
+   */
+  bool do_repair{false};
+
   /// marked for de-queue, as the PG is no longer eligible for scrubbing
   bool marked_for_dequeue{false};
 
@@ -253,7 +268,7 @@ struct SchedTarget {
    * The 'urgency' field (reversed) is the primary key.
    *
    * Note: 'partial order' due to strange utime_t::operator<=>()
-   */ 
+   */
   std::partial_ordering operator<=>(const SchedTarget&) const;
 
   bool is_ripe(utime_t now_is) const
@@ -272,7 +287,11 @@ struct SchedTarget {
   }
 
   // status
-  void set_scrubbing() { scrubbing = true; push_nb_out(5s); }
+  void set_scrubbing()
+  {
+    scrubbing = true;
+    push_nb_out(5s);
+  }
   void clear_scrubbing() { scrubbing = false; }
 
   // failures
@@ -289,18 +308,22 @@ struct SchedTarget {
   bool check_and_redraw_upgrade();
 
   void set_oper_deep_target(scrub_type_t rpr);
-
+  void set_oper_shallow_target(scrub_type_t rpr);
 
   void update_target(
     const pg_info_t& info,
     const sched_conf_t& aconf,
     const requested_scrub_t& request_flags);
 
-//private:
-  void update_as_shallow(utime_t now_is, const pg_info_t& info,
+  // private:
+  void update_as_shallow(
+    utime_t now_is,
+    const pg_info_t& info,
     const sched_conf_t& aconf,
     const requested_scrub_t& request_flags);
-  void update_as_deep(utime_t now_is, const pg_info_t& info,
+  void update_as_deep(
+    utime_t now_is,
+    const pg_info_t& info,
     const sched_conf_t& aconf,
     const requested_scrub_t& request_flags);
 };
