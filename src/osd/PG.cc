@@ -429,10 +429,10 @@ void PG::start_after_repair_scrub()
   dout(10) << __func__ << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
 
-  m_planned_scrub.must_deep_scrub = true;
-  m_planned_scrub.check_repair = true;
-  m_planned_scrub.must_scrub = true;
-  m_planned_scrub.calculated_to_deep = true;
+  m_planned_scrub.must_deep_scrub = true; // RRR shouldn't be needed
+  //m_planned_scrub.check_repair = true;
+  m_planned_scrub.must_scrub = true; // RRR shouldn't be needed
+  m_planned_scrub.calculated_to_deep = true; // RRR shouldn't be needed
 
   // manipulate the job's schedule-targets
   auto deep_job = m_scrubber->mark_for_after_repair();

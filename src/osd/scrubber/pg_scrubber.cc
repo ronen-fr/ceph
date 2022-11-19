@@ -69,8 +69,8 @@ ostream& operator<<(ostream& out, const requested_scrub_t& sf)
   //  out << " MUST_REPAIR";
   if (sf.auto_repair)
     out << " planned AUTO_REPAIR";
-  if (sf.check_repair)
-    out << " planned CHECK_REPAIR";
+//   if (sf.check_repair)
+//     out << " planned CHECK_REPAIR";
   if (sf.deep_scrub_on_error)
     out << " planned DEEP_SCRUB_ON_ERROR";
   if (sf.must_deep_scrub)
@@ -1833,7 +1833,8 @@ void PgScrubber::set_op_parameters(
   // to discard stale messages from previous aborted scrubs.
   m_epoch_start = m_pg->get_osdmap_epoch();
 
-  m_flags.check_repair = request.check_repair;
+  //m_flags.check_repair = request.check_repair;
+  m_flags.check_repair = target.target().urgency == urgency_t::after_repair;
   m_flags.auto_repair = request.auto_repair || request.need_auto;
   m_flags.required = request.req_scrub || request.must_scrub;
 
@@ -2556,18 +2557,15 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
   if (!m_scrub_job) {
     return pg_scrubbing_status_t{};
   }
-
-  dout(25) << fmt::format("{}: active:{} blocked:{}",
-			  __func__,
-			  m_active,
-			  m_scrub_job->blocked)
+  dout(25) << fmt::format(
+		"{}: active:{} blocked:{}", __func__, m_active,
+		m_scrub_job->blocked)
 	   << dendl;
 
   auto now_is = ceph_clock_now();
 
   if (m_active) {
     // report current scrub info, including updated duration
-
     if (m_scrub_job->blocked) {
       // a bug. An object is held locked.
       int32_t blocked_for =
@@ -2591,43 +2589,119 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 	false /* is periodic? unknown, actually */};
     }
   }
+
   if (m_scrub_job->state != Scrub::qu_state_t::registered) {
-    return pg_scrubbing_status_t{utime_t{},
-				 0,
-				 pg_scrub_sched_status_t::not_queued,
-				 false,
-				 scrub_level_t::shallow,
-				 false};
+    return pg_scrubbing_status_t{
+      utime_t{},
+      0,
+      pg_scrub_sched_status_t::not_queued,
+      false,
+      scrub_level_t::shallow,
+      false};
   }
 
-  // Will next scrub surely be a deep one? note that deep-scrub might be
-  // selected even if we report a regular scrub here.
-  bool deep_expected = (now_is >= m_pg->next_deepscrub_interval()) ||
-		       m_planned_scrub.must_deep_scrub ||
-		       m_planned_scrub.need_auto;
-  scrub_level_t expected_level =
-    deep_expected ? scrub_level_t::deep : scrub_level_t::shallow;
-  bool periodic = !m_planned_scrub.must_scrub && !m_planned_scrub.need_auto &&
-		  !m_planned_scrub.must_deep_scrub;
+  // not active (i.e. - not scrubbing just now). Report the information
+  // gleaned from the nearest scheduling target.
+  SchedTarget& closest = m_scrub_job->closest_target.get();
 
   // are we ripe for scrubbing?
-  if (m_scrub_job->is_ripe(now_is)) {
+  if (closest.is_ripe(now_is)) {
     // we are waiting for our turn at the OSD.
-    return pg_scrubbing_status_t{m_scrub_job->get_sched_time(),
-				 0,
-				 pg_scrub_sched_status_t::queued,
-				 false,
-				 expected_level,
-				 periodic};
+    return pg_scrubbing_status_t{
+      m_scrub_job->get_sched_time(),
+      0, // no relevant value for 'duration'
+      pg_scrub_sched_status_t::queued,
+      false, // not scrubbing at this time
+      closest.level(),
+      closest.is_periodic()};
   }
 
-  return pg_scrubbing_status_t{m_scrub_job->get_sched_time(),
-			       0,
-			       pg_scrub_sched_status_t::scheduled,
-			       false,
-			       expected_level,
-			       periodic};
+  return pg_scrubbing_status_t{
+    m_scrub_job->get_sched_time(),
+    0,
+    pg_scrub_sched_status_t::scheduled,
+    false,
+    closest.level(),
+    closest.is_periodic()};
 }
+
+// pg_scrubbing_status_t PgScrubber::get_schedule() const
+// {
+//   if (!m_scrub_job) {
+//     return pg_scrubbing_status_t{};
+//   }
+// 
+//   dout(25) << fmt::format("{}: active:{} blocked:{}",
+// 			  __func__,
+// 			  m_active,
+// 			  m_scrub_job->blocked)
+// 	   << dendl;
+// 
+//   auto now_is = ceph_clock_now();
+// 
+//   if (m_active) {
+//     // report current scrub info, including updated duration
+// 
+//     if (m_scrub_job->blocked) {
+//       // a bug. An object is held locked.
+//       int32_t blocked_for =
+// 	(utime_t{now_is} - m_scrub_job->blocked_since).sec();
+//       return pg_scrubbing_status_t{
+// 	utime_t{},
+// 	blocked_for,
+// 	pg_scrub_sched_status_t::blocked,
+// 	true,  // active
+// 	(m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow),
+// 	false};
+// 
+//     } else {
+//       int32_t duration = (utime_t{now_is} - scrub_begin_stamp).sec();
+//       return pg_scrubbing_status_t{
+// 	utime_t{},
+// 	duration,
+// 	pg_scrub_sched_status_t::active,
+// 	true,  // active
+// 	(m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow),
+// 	false /* is periodic? unknown, actually */};
+//     }
+//   }
+//   if (m_scrub_job->state != Scrub::qu_state_t::registered) {
+//     return pg_scrubbing_status_t{utime_t{},
+// 				 0,
+// 				 pg_scrub_sched_status_t::not_queued,
+// 				 false,
+// 				 scrub_level_t::shallow,
+// 				 false};
+//   }
+// 
+//   // Will next scrub surely be a deep one? note that deep-scrub might be
+//   // selected even if we report a regular scrub here.
+//   bool deep_expected = (now_is >= m_pg->next_deepscrub_interval()) ||
+// 		       m_planned_scrub.must_deep_scrub ||
+// 		       m_planned_scrub.need_auto;
+//   scrub_level_t expected_level =
+//     deep_expected ? scrub_level_t::deep : scrub_level_t::shallow;
+//   bool periodic = !m_planned_scrub.must_scrub && !m_planned_scrub.need_auto &&
+// 		  !m_planned_scrub.must_deep_scrub;
+// 
+//   // are we ripe for scrubbing?
+//   if (m_scrub_job->is_ripe(now_is)) {
+//     // we are waiting for our turn at the OSD.
+//     return pg_scrubbing_status_t{m_scrub_job->get_sched_time(),
+// 				 0,
+// 				 pg_scrub_sched_status_t::queued,
+// 				 false,
+// 				 expected_level,
+// 				 periodic};
+//   }
+// 
+//   return pg_scrubbing_status_t{m_scrub_job->get_sched_time(),
+// 			       0,
+// 			       pg_scrub_sched_status_t::scheduled,
+// 			       false,
+// 			       expected_level,
+// 			       periodic};
+// }
 
 void PgScrubber::handle_query_state(ceph::Formatter* f)
 {

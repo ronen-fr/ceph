@@ -210,6 +210,10 @@ struct SchedTarget {
   bool upgraded_to_deep{false};
 
   bool is_deep() const { return upgraded_to_deep; }
+  scrub_level_t level() const
+  {
+    return is_deep() ? scrub_level_t::deep : scrub_level_t::shallow;
+  }
   bool is_periodic() const { return urgency <= urgency_t::overdue; }
   bool is_viable() const { return urgency > urgency_t::off; }
 

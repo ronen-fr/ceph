@@ -213,7 +213,7 @@ struct requested_scrub_t {
    * indicating that we are scrubbing post repair to verify everything is fixed.
    * Otherwise - PG_STATE_FAILED_REPAIR will be asserted.
    */
-  bool check_repair{false};
+  // obsolete. bool check_repair{false};
 
   /**
    * Used to indicate, both in client-facing listings and internally, that
@@ -232,10 +232,10 @@ struct fmt::formatter<requested_scrub_t> {
   auto format(const requested_scrub_t& rs, FormatContext& ctx)
   {
     return fmt::format_to(ctx.out(),
-                          "(plnd:{}{}{}{}{}{}{}{}{})",
+                          "(plnd:{}{}{}{}{}{}{}{})",
                           false /*rs.must_repair*/ ? " must_repair" : "",
                           rs.auto_repair ? " auto_repair" : "",
-                          rs.check_repair ? " check_repair" : "",
+                          //rs.check_repair ? " check_repair" : "",
                           rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
                           rs.must_deep_scrub ? " must_deep_scrub" : "",
                           rs.must_scrub ? " must_scrub" : "",
