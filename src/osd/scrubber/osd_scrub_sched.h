@@ -224,7 +224,8 @@ struct SchedTarget {
   bool upgradeable{false};
 
   // an ephemeral flag used when sorting the targets. We use different
-  // sorting criteria for ripe vs future targets. See discussion in RRR
+  // sorting criteria for ripe vs future targets. See discussion in <=>
+  // operator.
   bool eph_ripe_for_sort{false};
 
   /// the reason for the latest failure/delay
@@ -313,6 +314,19 @@ struct SchedTarget {
 
   void set_oper_deep_target(scrub_type_t rpr);
   void set_oper_shallow_target(scrub_type_t rpr);
+
+  // RRR why differ from the regular handling of periodic scrubs schedule?
+  // seems that for some very minor issues, only needed for testing.
+  void set_oper_period_sh(
+      utime_t stamp,
+      const pg_info_t& info,
+      const Scrub::sched_conf_t& aconf,
+      utime_t now_is);
+  void set_oper_period_dp(
+      utime_t stamp,
+      const pg_info_t& info,
+      const Scrub::sched_conf_t& aconf,
+      utime_t now_is);
 
   void update_target(
       const pg_info_t& info,
@@ -466,6 +480,15 @@ struct ScrubJob final : public RefCountedObject {
       const requested_scrub_t& request_flags,
       const pg_info_t& pg_info,
       const sched_conf_t& sched_configs);
+
+  // the operator faked the timestamp. Reschedule the
+  // relevant target.
+  void operator_periodic_targets(
+      scrub_level_t level,
+      utime_t upd_stamp,
+      const pg_info_t& pg_info,
+      const sched_conf_t& sched_configs,
+      utime_t time_now);
 
   // void mark_after_repair(const requested_scrub_t& request_flags);
 
