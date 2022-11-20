@@ -69,7 +69,7 @@ std::partial_ordering SchedTarget::operator<=>(const SchedTarget& r) const
     if (auto cmp = target <=> r.target; cmp != 0) {
       return cmp;
     }
-    if (auto cmp = r.auto_repair <=> auto_repair; cmp != 0) {
+    if (auto cmp = r.auto_repairing <=> auto_repairing; cmp != 0) {
       return cmp;
     }
     if (auto cmp = r.is_deep() <=> is_deep(); cmp != 0) {
@@ -94,7 +94,7 @@ std::partial_ordering SchedTarget::operator<=>(const SchedTarget& r) const
   if (auto cmp = target <=> r.target; cmp != 0) {
     return cmp;
   }
-  if (auto cmp = r.auto_repair <=> auto_repair; cmp != 0) {
+  if (auto cmp = r.auto_repairing <=> auto_repairing; cmp != 0) {
     return cmp;
   }
   return r.is_deep() <=> is_deep();
@@ -134,7 +134,7 @@ void SchedTarget::set_oper_deep_target(scrub_type_t rpr)
   }
   target = std::min(ceph_clock_now(), target);
   not_before = std::min(not_before, ceph_clock_now());
-  auto_repair = false;
+  auto_repairing = false;
   last_issue = delay_cause_t::none;
 }
 
@@ -147,7 +147,7 @@ void SchedTarget::set_oper_shallow_target(scrub_type_t rpr)
   urgency = std::max(urgency_t::operator_requested, urgency);
   target = std::min(ceph_clock_now(), target);
   not_before = std::min(not_before, ceph_clock_now());
-  auto_repair = false;
+  auto_repairing = false;
   last_issue = delay_cause_t::none;
 }
 
@@ -261,7 +261,7 @@ std::string ScrubJob::scheduling_state(utime_t now_is,
   }
 
   return fmt::format("{}scrub scheduled @ {}",
-		     (is_deep_expected ? "deep " : ""), // replace with upgraded_to_deep
+		     (is_deep_expected ? "deep " : ""), // replace with deep_or_upgraded
 		     closest_target.get().not_before);
 }
 
@@ -356,9 +356,9 @@ SchedTarget& SchedTarget::operator=(const SchedTarget& r)
   deadline = r.deadline;
   target = r.target;
   scrubbing = r.scrubbing;  // to reconsider
-  upgraded_to_deep = r.upgraded_to_deep;
+  deep_or_upgraded = r.deep_or_upgraded;
   last_issue = r.last_issue;
-  auto_repair = r.auto_repair;
+  auto_repairing = r.auto_repairing;
   marked_for_dequeue = r.marked_for_dequeue;
   dbg_val = r.dbg_val;
   return *this;
@@ -463,7 +463,7 @@ void ScrubJob::initial_shallow_target(
   targ.deadline = add_double(base, config.max_deep);
 
   // prepare the 'upgrade lottery' for some possible future use.
-  //   targ.upgraded_to_deep =
+  //   targ.deep_or_upgraded =
   //       (rand() % 100) < cct->_conf->osd_deep_scrub_randomize_ratio * 100;
 }
 
@@ -497,12 +497,12 @@ void ScrubJob::initial_deep_target(
   }
 
   targ.deadline = add_double(base, config.max_deep);
-  targ.auto_repair = false;
+  targ.auto_repairing = false;
   targ.last_issue = delay_cause_t::none;
-  // 'upgraded_to_deep' is always asserted for deep targets, enabling
+  // 'deep_or_upgraded' is always asserted for deep targets, enabling
   // us to query for the level of the 'next' target regardless of its
   // base level.
-  targ.upgraded_to_deep = true;
+  targ.deep_or_upgraded = true;
 }
 
 /**
@@ -511,7 +511,7 @@ void ScrubJob::initial_deep_target(
 void ScrubJob::mark_for_rescrubbing(requested_scrub_t& request_flags)
 {
   auto& targ = get_modif_trgt(scrub_level_t::deep);
-  targ.auto_repair = true;
+  targ.auto_repairing = true;
   targ.urgency = urgency_t::must; // no need, I think, to use max(...)
   targ.target = ceph_clock_now(); // replace with time_now()
   targ.not_before = targ.target;
@@ -552,7 +552,7 @@ void ScrubJob::merge_deep_target(TargetRef&& candidate)
 #endif
 }
 
-// RRR verify handling if 'last_issue'
+// RRR verify handling of 'last_issue'
 void ScrubJob::merge_targets(scrub_level_t lvl)
 {
   // RRR the 5s should be a param based on failure type
@@ -560,7 +560,7 @@ void ScrubJob::merge_targets(scrub_level_t lvl)
   auto& c_target = get_current_trgt(lvl);
   auto& n_target = get_next_trgt(lvl);
 
-  c_target.auto_repair = c_target.auto_repair || n_target.auto_repair;
+  c_target.auto_repairing = c_target.auto_repairing || n_target.auto_repairing;
   if (n_target > c_target) {
     // use the next target's urgency - but modify NB.
     c_target = n_target;
@@ -696,7 +696,7 @@ void ScrubJob::at_scrub_completion(
     d_targ.target > s_targ.target &&
     d_targ.target < (s_targ.target + utime_t(10s))) {
     // better have a deep scrub
-    s_targ.upgraded_to_deep = true;
+    s_targ.deep_or_upgraded = true;
   }
 
   determine_closest();
@@ -838,9 +838,9 @@ void SchedTarget::update_as_deep(
   }
 
   deadline = add_double(base, config.max_deep);
-  auto_repair = false;
+  auto_repairing = false;
   // so that we can refer to 'upgraded..' for both s & d:
-  upgraded_to_deep = true;
+  deep_or_upgraded = true;
 }
 
 void SchedTarget::update_target(
