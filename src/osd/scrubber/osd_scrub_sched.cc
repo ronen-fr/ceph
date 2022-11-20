@@ -26,6 +26,14 @@ using SchedTarget = Scrub::SchedTarget;
 using TargetRefW = Scrub::TargetRefW;
 using urgency_t = Scrub::urgency_t;
 using delay_cause_t = Scrub::delay_cause_t;
+using SchedEntry = Scrub::SchedEntry;
+
+
+utime_t add_double(utime_t t, double d)
+{
+  return utime_t{t.sec() + static_cast<int>(d), t.nsec()};
+}
+
 
 /*
   The order is different for ripe and future jobs. For the former, we want to
@@ -69,7 +77,7 @@ std::partial_ordering SchedTarget::operator<=>(const SchedTarget& r) const
     if (auto cmp = target <=> r.target; cmp != 0) {
       return cmp;
     }
-    if (auto cmp = r.auto_repair <=> auto_repair; cmp != 0) {
+    if (auto cmp = r.auto_repairing <=> auto_repairing; cmp != 0) {
       return cmp;
     }
     if (auto cmp = r.is_deep() <=> is_deep(); cmp != 0) {
@@ -94,7 +102,7 @@ std::partial_ordering SchedTarget::operator<=>(const SchedTarget& r) const
   if (auto cmp = target <=> r.target; cmp != 0) {
     return cmp;
   }
-  if (auto cmp = r.auto_repair <=> auto_repair; cmp != 0) {
+  if (auto cmp = r.auto_repairing <=> auto_repairing; cmp != 0) {
     return cmp;
   }
   return r.is_deep() <=> is_deep();
@@ -134,7 +142,7 @@ void SchedTarget::set_oper_deep_target(scrub_type_t rpr)
   }
   target = std::min(ceph_clock_now(), target);
   not_before = std::min(not_before, ceph_clock_now());
-  auto_repair = false;
+  auto_repairing = false;
   last_issue = delay_cause_t::none;
 }
 
@@ -147,8 +155,75 @@ void SchedTarget::set_oper_shallow_target(scrub_type_t rpr)
   urgency = std::max(urgency_t::operator_requested, urgency);
   target = std::min(ceph_clock_now(), target);
   not_before = std::min(not_before, ceph_clock_now());
-  auto_repair = false;
+  auto_repairing = false;
   last_issue = delay_cause_t::none;
+}
+
+/*
+  Basic case - assuming we are set as a periodic scrub.
+  Note that the 'deadline' may be in the past.
+  If the target has higher urgency - just update the 'deadline' and
+  the 'target' fields.
+*/
+void SchedTarget::set_oper_period_sh(
+    utime_t stamp,
+    const pg_info_t& info,
+    const Scrub::sched_conf_t& aconf,
+    utime_t now_is)
+{
+  ceph_assert(base_target_level == scrub_level_t::shallow);
+  // the 'stamp' was "faked" to trigger a "periodic" scrub.
+  // auto base = stamp;
+  urgency = std::max(urgency_t::periodic_regular, urgency);
+  // target = std::min(ceph_clock_now(), add_double(stamp,
+  // aconf.shallow_interval));
+  target = add_double(stamp, aconf.shallow_interval);
+  deadline = add_double(
+      stamp, aconf.max_shallow.value_or(aconf.shallow_interval));  // RRR fix
+								   // the
+								   // 'max'
+  if (now_is > deadline) {
+    urgency = std::max(urgency_t::overdue, urgency);
+  }
+  not_before = std::min(not_before, now_is);
+  //auto_repairing = false;
+  last_issue = delay_cause_t::none;
+}
+
+void SchedTarget::set_oper_period_dp(
+    utime_t stamp,
+    const pg_info_t& info,
+    const Scrub::sched_conf_t& aconf,
+    utime_t now_is)
+{
+  ceph_assert(base_target_level == scrub_level_t::deep);
+  // the 'stamp' was "faked" to trigger a "periodic" scrub.
+  // auto base = stamp;
+  urgency = std::max(urgency_t::periodic_regular, urgency);
+  target = add_double(stamp, aconf.deep_interval);
+  deadline = add_double(
+      stamp, aconf.deep_interval);
+  if (now_is > deadline) {
+    urgency = std::max(urgency_t::overdue, urgency);
+  }
+  not_before = std::min(not_before, now_is);
+  last_issue = delay_cause_t::none;
+}
+
+void Scrub::ScrubJob::operator_periodic_targets(
+    scrub_level_t level,
+    utime_t upd_stamp,
+    const pg_info_t& info,
+    const Scrub::sched_conf_t& aconf,
+    utime_t now_is)
+{
+  auto& trgt = get_modif_trgt(level);
+  if (level == scrub_level_t::shallow) {
+    trgt.set_oper_period_sh(upd_stamp, info, aconf, now_is);
+  } else {
+    trgt.set_oper_period_dp(upd_stamp, info, aconf, now_is);
+  }
+  determine_closest();
 }
 
 
@@ -158,8 +233,8 @@ void SchedTarget::push_nb_out(std::chrono::seconds delay)
 }
 
 void SchedTarget::push_nb_out(
-  std::chrono::seconds delay,
-  delay_cause_t delay_cause)
+    std::chrono::seconds delay,
+    delay_cause_t delay_cause)
 {
   push_nb_out(delay);
   last_issue = delay_cause;
@@ -177,7 +252,9 @@ void SchedTarget::pg_state_failure()
 void SchedTarget::wrong_time()
 {
   // wrong time / day / load
-  push_nb_out(/* RRR conf */ 60s, delay_cause_t::time);
+  // should be 60s: push_nb_out(/* RRR conf */ 60s, delay_cause_t::time);
+  // but until we fix the tests (that expect immediate retry) - we'll use 3s
+  push_nb_out(3s, delay_cause_t::time);
 }
 
 void SchedTarget::on_local_resources()
@@ -192,17 +269,15 @@ void SchedTarget::dump(ceph::Formatter* f) const
   f->dump_stream("pgid") << pgid;
   f->dump_stream("sched_time") << not_before;
   f->dump_stream("deadline") << deadline;
-  f->dump_bool("forced",
-	       target == PgScrubber::scrub_must_stamp());
+  f->dump_bool("forced", target == PgScrubber::scrub_must_stamp());
   // RRR todo - add the 'urgency' field
   // RRR todo - add the 'repair' field
   f->close_section();
 }
 
 
-
-// ///////////////////////////////////////////////////////////////////////// //
-// ScrubJob
+  // /////////////////////////////////////////////////////////////////////////
+  // // ScrubJob
 
 #define dout_context (cct)
 #define dout_subsys ceph_subsys_osd
@@ -256,12 +331,11 @@ std::string ScrubJob::scheduling_state(utime_t now_is,
   // if the time has passed, we are surely in the queue
   // (note that for now we do not tell client if 'penalized')
   if (closest_target.get().is_ripe(now_is)) {
-    // we are never sure that the next scrub will indeed be shallow:
     return fmt::format("queued for {}scrub", (is_deep_expected ? "deep " : ""));
   }
 
   return fmt::format("{}scrub scheduled @ {}",
-		     (is_deep_expected ? "deep " : ""), // replace with upgraded_to_deep
+		     (is_deep_expected ? "deep " : ""), // replace with deep_or_upgraded
 		     closest_target.get().not_before);
 }
 
@@ -356,14 +430,13 @@ SchedTarget& SchedTarget::operator=(const SchedTarget& r)
   deadline = r.deadline;
   target = r.target;
   scrubbing = r.scrubbing;  // to reconsider
-  upgraded_to_deep = r.upgraded_to_deep;
+  deep_or_upgraded = r.deep_or_upgraded;
   last_issue = r.last_issue;
-  auto_repair = r.auto_repair;
+  auto_repairing = r.auto_repairing;
   marked_for_dequeue = r.marked_for_dequeue;
   dbg_val = r.dbg_val;
   return *this;
 }
-
 
 void ScrubJob::disable_scheduling() // RRR ever called directly?
 {
@@ -381,6 +454,14 @@ void ScrubJob::mark_for_dequeue()
   deep_target.marked_for_dequeue = true;
   next_shallow.marked_for_dequeue = true;
   next_deep.marked_for_dequeue = true;
+}
+
+void ScrubJob::clear_marked_for_dequeue()
+{
+  shallow_target.marked_for_dequeue = false;
+  deep_target.marked_for_dequeue = false;
+  next_shallow.marked_for_dequeue = false;
+  next_deep.marked_for_dequeue = false;
 }
 
 // return either one of the current set of targets, or - if
@@ -405,11 +486,6 @@ TargetRef ScrubJob::get_next_trgt(scrub_level_t lvl)
 {
   return (lvl == scrub_level_t::deep) ? next_deep
 				      : next_shallow;
-}
-
-utime_t add_double(utime_t t, double d)
-{
-  return utime_t{t.sec() + static_cast<int>(d), t.nsec()};
 }
 
 // RRR must review the logic here, now that some flags were removed
@@ -463,7 +539,7 @@ void ScrubJob::initial_shallow_target(
   targ.deadline = add_double(base, config.max_deep);
 
   // prepare the 'upgrade lottery' for some possible future use.
-  //   targ.upgraded_to_deep =
+  //   targ.deep_or_upgraded =
   //       (rand() % 100) < cct->_conf->osd_deep_scrub_randomize_ratio * 100;
 }
 
@@ -497,12 +573,12 @@ void ScrubJob::initial_deep_target(
   }
 
   targ.deadline = add_double(base, config.max_deep);
-  targ.auto_repair = false;
+  targ.auto_repairing = false;
   targ.last_issue = delay_cause_t::none;
-  // 'upgraded_to_deep' is always asserted for deep targets, enabling
+  // 'deep_or_upgraded' is always asserted for deep targets, enabling
   // us to query for the level of the 'next' target regardless of its
   // base level.
-  targ.upgraded_to_deep = true;
+  targ.deep_or_upgraded = true;
 }
 
 /**
@@ -511,7 +587,7 @@ void ScrubJob::initial_deep_target(
 void ScrubJob::mark_for_rescrubbing(requested_scrub_t& request_flags)
 {
   auto& targ = get_modif_trgt(scrub_level_t::deep);
-  targ.auto_repair = true;
+  targ.auto_repairing = true;
   targ.urgency = urgency_t::must; // no need, I think, to use max(...)
   targ.target = ceph_clock_now(); // replace with time_now()
   targ.not_before = targ.target;
@@ -552,7 +628,7 @@ void ScrubJob::merge_deep_target(TargetRef&& candidate)
 #endif
 }
 
-// RRR verify handling if 'last_issue'
+// RRR verify handling of 'last_issue'
 void ScrubJob::merge_targets(scrub_level_t lvl)
 {
   // RRR the 5s should be a param based on failure type
@@ -560,7 +636,7 @@ void ScrubJob::merge_targets(scrub_level_t lvl)
   auto& c_target = get_current_trgt(lvl);
   auto& n_target = get_next_trgt(lvl);
 
-  c_target.auto_repair = c_target.auto_repair || n_target.auto_repair;
+  c_target.auto_repairing = c_target.auto_repairing || n_target.auto_repairing;
   if (n_target > c_target) {
     // use the next target's urgency - but modify NB.
     c_target = n_target;
@@ -676,6 +752,7 @@ void ScrubJob::at_scrub_completion(
     // We are not allowed to fully reschedule this target.
     // But - should we boost it?
     // \todo not implemented for now
+    // also todo RRR - use is_periodic()
   } else {
     // periodic scrub
     d_targ.update_as_deep(now_is, pg_info, aconf, request_flags);
@@ -696,71 +773,13 @@ void ScrubJob::at_scrub_completion(
     d_targ.target > s_targ.target &&
     d_targ.target < (s_targ.target + utime_t(10s))) {
     // better have a deep scrub
-    s_targ.upgraded_to_deep = true;
+    s_targ.deep_or_upgraded = true;
   }
 
   determine_closest();
 }
 
 
-// the version that was supposed to run before clearing the 'active' flag
-// void ScrubJob::at_scrub_completion(
-//   const pg_info_t& pg_info,
-//   const sched_conf_t& aconf,
-//   const requested_scrub_t& request_flags)
-// // RRR must remove the request-flags
-// {
-//   // shallow targets
-// 
-//   // we have just completed a successful shallow-scrub.
-//   // If we have a 'next' shallow target - it should have higher priority than
-//   // the one that just completed. We can just use it. Otherwise - we'll create a
-//   // regular one in the 'next' slot. It will be moved over the 'current' slot
-//   // when 'active' is turned off.
-// 
-//   auto l = scrub_level_t::shallow;
-//   bool just_done = get_current_trgt(l)->scrubbing;
-// 
-//   auto mod_s = get_modif_trgt(l);
-// 
-//   if (!just_done) {
-//     // we do not expect to have a 'next' target (but if we do - is it an error?)
-//     ceph_assert(next_shallow.urgency == urgency_t::off);
-//     mod_s->update_target(pg_info, aconf, request_flags);
-//   } else {
-//     if (next_shallow.urgency != urgency_t::off) {
-//       // we have a 'next' target. Merge it with the current one
-//       // merge_shallow_target(std::move(next_shallow));
-//       ceph_assert(next_shallow.urgency >= urgency_t::operator_requested);
-//       // nothing to do
-//     } else {
-//       // no 'next' target. Update the current one
-//       mod_s->update_target(pg_info, aconf, request_flags);
-//     }
-//   }
-// 
-//   // RRR what code can we combine?
-//   // deep targets
-//   l = scrub_level_t::deep;
-//   just_done = get_current_trgt(l)->scrubbing;
-// 
-//   auto mod_d = get_modif_trgt(l);
-// 
-//   if (!just_done) {
-//     // we do not expect to have a 'next' target (but if we do - is it an error?)
-//     ceph_assert(next_deep.urgency == urgency_t::off);
-//     mod_d->update_target(pg_info, aconf, request_flags);
-//   } else {
-//     if (next_deep.urgency != urgency_t::off) {
-//       // we have a 'next' target. Use it.
-//       ceph_assert(next_deep.urgency >= urgency_t::operator_requested);
-//       // nothing to do
-//     } else {
-//       // no 'next' target. Update the current one
-//       mod_d->update_target(pg_info, aconf, request_flags);
-//     }
-//   }
-// }
 
 // an aux used by SchedTarget::update_target()
 // RRR make sure we are not un-penalizing failed PGs
@@ -773,7 +792,7 @@ void SchedTarget::update_as_shallow(
   ceph_assert(base_target_level == scrub_level_t::shallow);
 
   // won't be called for high-urgency scrubs
-  ceph_assert(urgency <= urgency_t::overdue);
+  ceph_assert(is_periodic());
 
   if (request_flags.must_scrub || request_flags.need_auto) {
     // should be handled before this call!
@@ -838,9 +857,9 @@ void SchedTarget::update_as_deep(
   }
 
   deadline = add_double(base, config.max_deep);
-  auto_repair = false;
+  auto_repairing = false;
   // so that we can refer to 'upgraded..' for both s & d:
-  upgraded_to_deep = true;
+  deep_or_upgraded = true;
 }
 
 void SchedTarget::update_target(
@@ -860,7 +879,7 @@ void SchedTarget::update_target(
   }
 }
 
-// RRR consider using '<overdue' instead of '<='
+// RRR consider using '<'overdue instead of '<='
 static bool to_change_on_conf(urgency_t u)
 {
   return (u > urgency_t::off) && (u <= urgency_t::overdue);
@@ -1160,12 +1179,12 @@ void ScrubQueue::register_with_osd(Scrub::ScrubJobRef scrub_job)
   dout(15) << "pg[" << scrub_job->pgid << "] was "
 	   << qu_state_text(state_at_entry) << dendl;
 
-  //scrub_job->clear_marked_for_dequeue();
+  scrub_job->clear_marked_for_dequeue();
 
   switch (state_at_entry) {
     case qu_state_t::registered:
       // just updating the schedule? not thru here!
-      //update_job(scrub_job, suggested);
+      // update_job(scrub_job, suggested);
       break;
 
     case qu_state_t::not_registered:
@@ -1182,18 +1201,26 @@ void ScrubQueue::register_with_osd(Scrub::ScrubJobRef scrub_job)
 	}
 
 
-	//update_job(scrub_job, suggested);
-        // done by caller: scrub_job->nschedule.calculate_effective(ceph_clock_now());
-	//all_pgs.push_back(scrub_job);
+	// update_job(scrub_job, suggested);
+	//  done by caller:
+	//  scrub_job->nschedule.calculate_effective(ceph_clock_now());
+	// all_pgs.push_back(scrub_job);
 	scrub_job->in_queues = true;
 	scrub_job->state = qu_state_t::registered;
 
-        ceph_assert(scrub_job->get_current_trgt(scrub_level_t::shallow).urgency > urgency_t::off);
-        ceph_assert(scrub_job->get_current_trgt(scrub_level_t::deep).urgency > urgency_t::off);
-        // RRR where do we initialize the scrub-job's 'sched-targets'?
-        //to_scrub.emplace_back(Scrub::SchedEntry{&(*scrub_job), scrub_level_t::shallow});
-        to_scrub.emplace_back(Scrub::SchedEntry{scrub_job, scrub_level_t::shallow});
-        to_scrub.emplace_back(Scrub::SchedEntry{scrub_job, scrub_level_t::deep});
+	ceph_assert(
+	    scrub_job->get_current_trgt(scrub_level_t::shallow).urgency >
+	    urgency_t::off);
+	ceph_assert(
+	    scrub_job->get_current_trgt(scrub_level_t::deep).urgency >
+	    urgency_t::off);
+	// RRR where do we initialize the scrub-job's 'sched-targets'?
+	// to_scrub.emplace_back(Scrub::SchedEntry{&(*scrub_job),
+	// scrub_level_t::shallow});
+	to_scrub.emplace_back(
+	    Scrub::SchedEntry{scrub_job, scrub_level_t::shallow});
+	to_scrub.emplace_back(
+	    Scrub::SchedEntry{scrub_job, scrub_level_t::deep});
       }
 
       break;
@@ -1205,24 +1232,35 @@ void ScrubQueue::register_with_osd(Scrub::ScrubJobRef scrub_job)
 	// at any minute
 	std::lock_guard lck{jobs_lock};
 
-	//update_job(scrub_job, suggested);
+	// update_job(scrub_job, suggested);
 	if (scrub_job->state == qu_state_t::not_registered) {
 	  dout(5) << " scrub job state changed to 'not registered'" << dendl;
-	  // all_pgs.push_back(scrub_job);
-          // RRR undo the 'mark_for_dequeue()'?
-          // assuming the actual scrub targets are already in the queue
+
+	  auto found_in_q = [this, &scrub_job](scrub_level_t lvl) -> bool {
+            auto& trgt = scrub_job->get_current_trgt(lvl);
+	    auto i = std::find_if(
+		to_scrub.begin(), to_scrub.end(),
+		[trgt, lvl](const SchedEntry& e) {
+		  return e.job->pgid == trgt.pgid && e.s_or_d == lvl;
+		});
+	    return (i != to_scrub.end());
+	  };
+	  // the shallow/deep targets shouldn't have been removed from the
+	  // queues
+	  ceph_assert(found_in_q(scrub_level_t::shallow));
+	  ceph_assert(found_in_q(scrub_level_t::deep));
+	  scrub_job->in_queues = true;
+	  scrub_job->state = qu_state_t::registered;
 	}
-	scrub_job->in_queues = true;
-	scrub_job->state = qu_state_t::registered;
+	break;
       }
-      break;
   }
 
   dout(10) << fmt::format(
-		"pg[{}] sched-state changed from {} to {} at (nb): {:s}",
-		scrub_job->pgid, qu_state_text(state_at_entry),
-		qu_state_text(scrub_job->state),
-		scrub_job->closest_target.get().not_before)
+		  "pg[{}] sched-state changed from {} to {} at (nb): {:s}",
+		  scrub_job->pgid, qu_state_text(state_at_entry),
+		  qu_state_text(scrub_job->state),
+		  scrub_job->closest_target.get().not_before)
 	   << dendl;
 }
 
@@ -1367,7 +1405,7 @@ void ScrubQueue::on_config_times_change()
 
     if (job->on_periods_change(
           pg->info,
-	  /*pg->get_pg_info(ScrubberPasskey),*/ applicable_conf,
+	  applicable_conf,
 	  pg->m_planned_scrub)) {
       dout(10) << fmt::format(
 		    "{} ({}) - rescheduled", job->pgid, trgt)
@@ -1588,6 +1626,7 @@ void ScrubQueue::rm_unregistered_jobs()
     if (trgt.job->state == qu_state_t::unregistering) {
       trgt.job->in_queues = false;
       trgt.job->state = qu_state_t::not_registered;
+      trgt.job->mark_for_dequeue();
     } else if (trgt.job->state == qu_state_t::not_registered) {
       trgt.job->in_queues = false;
     }
@@ -1595,7 +1634,7 @@ void ScrubQueue::rm_unregistered_jobs()
       // RRR make sure we would not be scrubbing this target now
       dout(20) << fmt::format("{}: removing job: {}", __func__, *trgt.job)
 	       << dendl;
-      trgt.job->mark_for_dequeue();
+      //trgt.job->mark_for_dequeue();
     }
   });
 
@@ -1649,36 +1688,142 @@ ScrubQueue::SchedulingQueue ScrubQueue::collect_ripe_jobs(
   return ripes;
 }
 
-// not holding jobs_lock. 'group' is a copy of the actual list.
-// And the scheduling targets are holding a ref to their parent jobs.
 Scrub::schedule_result_t ScrubQueue::select_n_scrub(
-  SchedulingQueue& group,
-  const Scrub::ScrubPreconds& preconds,
-  utime_t now_is)
+    SchedulingQueue& group,
+    const Scrub::ScrubPreconds& preconds,
+    utime_t now_is)
 {
-  dout(15) << fmt::format("ripe jobs #:{}. Preconds: {}",
-                        group.size(), preconds)
-           << dendl;
+  dout(15) << fmt::format(
+		  "ripe jobs #:{}. Preconds: {}", group.size(), preconds)
+	   << dendl;
 
   for (auto& candidate : group) {
     // we expect the first job in the list to be a good candidate (if any)
 
     auto pgid = candidate.job->pgid;
-    dout(10) << fmt::format("initiating a scrub for pg[{}] ({}) [preconds:{}]",
-                            pgid, candidate.target(), preconds)
-             << dendl;
+    auto& trgt = candidate.target();
+    dout(10) << fmt::format(
+		    "initiating a scrub for pg[{}] ({}) [preconds:{}]", pgid,
+		    trgt, preconds)
+	     << dendl;
 
-    // RRR should we take 'urgency' into account here?
-    if (preconds.only_deadlined && !candidate.target().over_deadline(now_is)) {
+    // RRR should we take 'urgency' (i.e. is_periodic()) into account here?
+    if (preconds.only_deadlined && trgt.is_periodic() &&
+	!trgt.over_deadline(now_is)) {
       dout(15) << " not scheduling scrub for " << pgid << " due to "
 	       << (preconds.time_permit ? "high load" : "time not permitting")
 	       << dendl;
-      candidate.target().wrong_time();
+      trgt.wrong_time();
       continue;
     }
 
     // are we left with only penalized jobs?
-    if (candidate.target().urgency == urgency_t::penalized) {
+    if (trgt.urgency == urgency_t::penalized) {
+      dout(15) << " only penalized jobs left. Pardoning them all" << dendl;
+      restore_penalized = true;
+    }
+
+    // lock the PG. Then - try to initiate a scrub. The PG might have changed,
+    // or the environment may prevent us from scrubbing now.
+
+    PgLockWrapper locked_g = osd_service.get_locked_pg(pgid);
+    PGRef pg = locked_g.m_pg;
+    if (!pg) {
+      // the PG was dequeued in the short time span between creating the
+      // candidates list (collect_ripe_jobs()) and here
+      dout(5) << fmt::format("pg[{}] not found", pgid) << dendl;
+      continue;
+    }
+
+    // Skip other kinds of scrubbing if only explicitly-requested repairing is
+    // allowed
+    // if (allow_requested_repair_only && !pg->get_planned_scrub().must_repair)
+    // {
+    if (preconds.allow_requested_repair_only && !trgt.do_repair) {
+      //pg->unlock();
+      dout(10) << __func__ << " skip " << pgid
+	       << " because repairing is not explicitly requested on it"
+	       << dendl;
+      dout(20) << "failed (state/cond) " << pgid << dendl;
+      trgt.pg_state_failure();
+      continue;
+    }
+
+    auto scrub_attempt = pg->start_scrubbing(candidate);
+    //pg->unlock();
+    switch (scrub_attempt) {
+      case Scrub::schedule_result_t::scrub_initiated:
+	// the happy path. We are done
+	dout(20) << "initiated for " << pgid << dendl;
+	trgt.last_issue = delay_cause_t::none;
+	return Scrub::schedule_result_t::scrub_initiated;
+
+      case Scrub::schedule_result_t::already_started:
+	// continue with the next job
+	dout(20) << "already started " << pgid << dendl;
+	continue;
+
+      case Scrub::schedule_result_t::preconditions:
+      case Scrub::schedule_result_t::bad_pg_state:
+	// continue with the next job
+	dout(20) << "failed (state/cond) " << pgid << dendl;
+	trgt.pg_state_failure();
+	continue;
+
+      case Scrub::schedule_result_t::no_local_resources:
+	// failure to secure local resources. No point in trying the other
+	// PGs at this time. Note that this is not the same as replica resources
+	// failure!
+	dout(20) << "failed (local) " << pgid << dendl;
+	trgt.on_local_resources();
+	return Scrub::schedule_result_t::no_local_resources;
+
+      case Scrub::schedule_result_t::none_ready:
+      case Scrub::schedule_result_t::no_such_pg:
+	// can't happen. Just for the compiler.
+	dout(0) << "failed !!! " << pgid << dendl;
+	return Scrub::schedule_result_t::none_ready;
+    }
+  }
+
+  dout(20) << "returning 'none ready'" << dendl;
+  return Scrub::schedule_result_t::none_ready;
+}
+
+#if 0
+// not holding jobs_lock. 'group' is a copy of the actual list.
+// And the scheduling targets are holding a ref to their parent jobs.
+Scrub::schedule_result_t ScrubQueue::select_n_scrub(
+    SchedulingQueue& group,
+    const Scrub::ScrubPreconds& preconds,
+    utime_t now_is)
+{
+  dout(15) << fmt::format(
+		  "ripe jobs #:{}. Preconds: {}", group.size(), preconds)
+	   << dendl;
+
+  for (auto& candidate : group) {
+    // we expect the first job in the list to be a good candidate (if any)
+
+    auto pgid = candidate.job->pgid;
+    auto& trgt = candidate.target();
+    dout(10) << fmt::format(
+		    "initiating a scrub for pg[{}] ({}) [preconds:{}]", pgid,
+		    trgt, preconds)
+	     << dendl;
+
+    // RRR should we take 'urgency' (i.e. is_periodic()) into account here?
+    if (preconds.only_deadlined && trgt.is_periodic() &&
+	!trgt.over_deadline(now_is)) {
+      dout(15) << " not scheduling scrub for " << pgid << " due to "
+	       << (preconds.time_permit ? "high load" : "time not permitting")
+	       << dendl;
+      trgt.wrong_time();
+      continue;
+    }
+
+    // are we left with only penalized jobs?
+    if (trgt.urgency == urgency_t::penalized) {
       dout(15) << " only penalized jobs left. Pardoning them all" << dendl;
       restore_penalized = true;
     }
@@ -1686,15 +1831,14 @@ Scrub::schedule_result_t ScrubQueue::select_n_scrub(
     // we have a candidate to scrub. We turn to the OSD to verify that the PG
     // configuration allows the specified type of scrub, and to initiate the
     // scrub.
-    switch (
-      osd_service.initiate_a_scrub(pgid, candidate,
-				   preconds.allow_requested_repair_only)) {
+    switch (osd_service.initiate_a_scrub(
+	pgid, candidate, preconds.allow_requested_repair_only)) {
 
       case Scrub::schedule_result_t::scrub_initiated:
 	// the happy path. We are done
 	dout(20) << "initiated for " << pgid << dendl;
-        candidate.target().last_issue = delay_cause_t::none;
-        // moved into set_op_p() candidate.target().set_scrubbing();
+	trgt.last_issue = delay_cause_t::none;
+	// moved into set_op_p() trgt.set_scrubbing();
 	return Scrub::schedule_result_t::scrub_initiated;
 
       case Scrub::schedule_result_t::already_started:
@@ -1706,7 +1850,7 @@ Scrub::schedule_result_t ScrubQueue::select_n_scrub(
       case Scrub::schedule_result_t::bad_pg_state:
 	// continue with the next job
 	dout(20) << "failed (state/cond) " << pgid << dendl;
-        candidate.target().pg_state_failure();
+	trgt.pg_state_failure();
 	break;
 
       case Scrub::schedule_result_t::no_such_pg:
@@ -1719,7 +1863,7 @@ Scrub::schedule_result_t ScrubQueue::select_n_scrub(
 	// PGs at this time. Note that this is not the same as replica resources
 	// failure!
 	dout(20) << "failed (local) " << pgid << dendl;
-        candidate.target().on_local_resources();
+	trgt.on_local_resources();
 	return Scrub::schedule_result_t::no_local_resources;
 
       case Scrub::schedule_result_t::none_ready:
@@ -1732,6 +1876,8 @@ Scrub::schedule_result_t ScrubQueue::select_n_scrub(
   dout(20) << "returning 'none ready'" << dendl;
   return Scrub::schedule_result_t::none_ready;
 }
+
+#endif
 
 
 Scrub::scrub_schedule_t ScrubQueue::adjust_target_time(

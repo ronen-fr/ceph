@@ -127,7 +127,7 @@ struct PgScrubBeListener {
   // query the PG backend for the on-disk size of an object
   virtual uint64_t logical_to_ondisk_size(uint64_t logical_size) const = 0;
 
-  // used to verify our "cleaness" before scrubbing
+  // used to verify our "cleanliness" before scrubbing
   virtual bool is_waiting_for_unreadable_object() const = 0;
 };
 
@@ -207,7 +207,7 @@ struct requested_scrub_t {
    * - must_scrub is not set (i.e. - this is a periodic scrub),
    * - time_for_deep was just set
    */
-  bool auto_repair{false};
+  //bool auto_repair{false};
 
   /**
    * indicating that we are scrubbing post repair to verify everything is fixed.
@@ -232,9 +232,9 @@ struct fmt::formatter<requested_scrub_t> {
   auto format(const requested_scrub_t& rs, FormatContext& ctx)
   {
     return fmt::format_to(ctx.out(),
-                          "(plnd:{}{}{}{}{}{}{}{})",
+                          "(plnd:{}{}{}{}{}{}{})",
                           false /*rs.must_repair*/ ? " must_repair" : "",
-                          rs.auto_repair ? " auto_repair" : "",
+                          //rs.auto_repair ? " auto_repair" : "",
                           //rs.check_repair ? " check_repair" : "",
                           rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
                           rs.must_deep_scrub ? " must_deep_scrub" : "",

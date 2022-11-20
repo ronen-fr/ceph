@@ -190,6 +190,90 @@ function TEST_interval_changes() {
 
 function TEST_scrub_extended_sleep() {
     local dir=$1
+
+    DAY=$(date +%w)
+    # Handle wrap
+    if [ "$DAY" -ge "4" ];
+    then
+      DAY="0"
+    fi
+    # Start after 2 days in case we are near midnight
+    DAY_START=$(expr $DAY + 2)
+    DAY_END=$(expr $DAY + 3)
+
+    local -A cluster_conf=(
+        ['osds_num']="3" 
+        ['pgs_in_pool']="1"
+        ['pool_name']="test"
+        ['extras']=" --osd_scrub_extended_sleep=20 \
+         --osd_scrub_begin_week_day=$DAY_START --osd_scrub_end_week_day=$DAY_END \
+         --bluestore_cache_autotune=false"
+    )
+
+    local objects=15
+    standard_scrub_wpq_cluster $dir cluster_conf  0 || return 1
+    local poolid=${cluster_conf['pool_id']}
+    local poolname=${cluster_conf['pool_name']}
+    echo "Pool: $poolname : $poolid"
+
+    TESTDATA="testdata.$$"
+
+    # Trigger a scrub on a PG
+    local pgid=$(get_pg $poolname SOMETHING)
+    local primary=$(get_primary $poolname SOMETHING)
+    local last_scrub=$(get_last_scrub_stamp $pgid)
+    # RRR the 999 makes it an operator-requested scrub
+    ceph tell $pgid scrub || return 1
+
+    # Allow scrub to start extended sleep
+    PASSED="false"
+    for ((i=0; i < 15; i++)); do
+      if grep -q "scrub state.*, sleeping" $dir/osd.${primary}.log
+      then
+	PASSED="true"
+        break
+      fi
+      sleep 1
+    done
+
+    # Check that extended sleep was triggered
+    if [ $PASSED = "false" ];
+    then
+      return 1
+    fi
+
+    # release scrub to run after extended sleep finishes
+    ceph tell osd.$primary config set osd_scrub_begin_week_day 0
+    ceph tell osd.$primary config set osd_scrub_end_week_day 0
+
+    # Due to extended sleep, the scrub should not be done within 20 seconds
+    # but test up to 10 seconds and make sure it happens by 25 seconds.
+    count=0
+    PASSED="false"
+    for ((i=0; i < 25; i++)); do
+	count=$(expr $count + 1)
+        if test "$(get_last_scrub_stamp $pgid)" '>' "$last_scrub" ; then
+	    # Did scrub run too soon?
+	    if [ $count -lt "10" ];
+	    then
+              return 1
+            fi
+	    PASSED="true"
+	    break
+        fi
+        sleep 1
+    done
+
+    # Make sure scrub eventually ran
+    if [ $PASSED = "false" ];
+    then
+      return 1
+    fi
+}
+
+
+function T__EST_scrub_extended_sleep() {
+    local dir=$1
     local poolname=test
     local OSDS=3
     local objects=15
