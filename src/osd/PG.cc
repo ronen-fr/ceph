@@ -437,42 +437,7 @@ void PG::start_after_repair_scrub()
   // manipulate the job's schedule-targets
   auto deep_job = m_scrubber->mark_for_after_repair();
   start_scrubbing(deep_job);
-//  
-//   if (is_scrub_queued_or_active()) {
-//     dout(10) << __func__ << ": scrubbing already ("
-//              << (is_scrubbing() ? "active)" : "queued)") << dendl;
-//     return;
-//   }
-// 
-//   // prioritize deep scrubbing
-//   m_scrubber->set_op_parameters(m_planned_scrub);
-//   dout(15) << __func__ << ": queueing" << dendl;
-// 
-//   osd->queue_scrub_after_repair(this, Scrub::scrub_prio_t::high_priority);
 }
-
-
-// void PG::queue_scrub_after_repair()
-// {
-//   dout(10) << __func__ << dendl;
-//   ceph_assert(ceph_mutex_is_locked(_lock));
-// 
-//   m_planned_scrub.must_deep_scrub = true;
-//   m_planned_scrub.check_repair = true;
-//   m_planned_scrub.must_scrub = true;
-//   m_planned_scrub.calculated_to_deep = true;
-// 
-//   if (is_scrub_queued_or_active()) {
-//     dout(10) << __func__ << ": scrubbing already ("
-//              << (is_scrubbing() ? "active)" : "queued)") << dendl;
-//     return;
-//   }
-// 
-//   m_scrubber->set_op_parameters(m_planned_scrub);
-//   dout(15) << __func__ << ": queueing" << dendl;
-// 
-//   osd->queue_scrub_after_repair(this, Scrub::scrub_prio_t::high_priority);
-// }
 
 unsigned PG::get_scrub_priority()
 {
