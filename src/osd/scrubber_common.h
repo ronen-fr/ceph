@@ -255,10 +255,12 @@ struct ScrubPgIF {
 
   friend std::ostream& operator<<(std::ostream& out, const ScrubPgIF& s)
   {
-    return s.show(out);
+    return s.show_concised(out);
   }
 
-  virtual std::ostream& show(std::ostream& out) const = 0;
+  virtual std::ostream& show_concised(std::ostream& out) const = 0;
+
+  //virtual std::string next_scrub_flags() const = 0;
 
   // --------------- triggering state-machine events:
 
@@ -304,11 +306,6 @@ struct ScrubPgIF {
 
   // --------------------------------------------------
 
-  // obsolete
-//   virtual Scrub::schedule_result_t start_scrubbing(
-//     ceph::ref_t<Scrub::SchedTarget> trgt,
-//     requested_scrub_t& request,
-//     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual Scrub::schedule_result_t start_scrubbing(
     Scrub::SchedEntry trgt,
@@ -316,13 +313,9 @@ struct ScrubPgIF {
     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual Scrub::SchedEntry mark_for_after_repair() = 0;
-//   virtual ceph::ref_t<Scrub::SchedTarget> mark_for_after_repair(
-//     requested_scrub_t& request) = 0;
 
-  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	 // currently
-								 // only used
-								 // for an
-								 // assert
+  // currently only used for an assertion:
+  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	
 
   /**
    * the scrubber is marked 'active':
@@ -473,8 +466,7 @@ struct ScrubPgIF {
    *
    * Following our status as Primary or replica.
    */
-  virtual void on_primary_change(std::string_view caller,
-    const requested_scrub_t& request_flags) = 0;
+  virtual void on_primary_change(std::string_view caller) = 0;
 
   /**
    * Recalculate the required scrub time.

@@ -261,6 +261,20 @@ struct scrub_flags_t {
   bool required{false};
 };
 
+
+template <>
+struct fmt::formatter<scrub_flags_t> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const scrub_flags_t& mf, FormatContext& ctx)
+  {
+    return format_to(
+	ctx.out(), "{}{}{}{}", mf.required ? ",mandatory" : "",
+	mf.auto_repair ? ",auto-rpr" : "", mf.check_repair ? ",chk-rpr" : "",
+	mf.deep_scrub_on_error ? ",deep-on-error" : "");
+  }
+};
+
 ostream& operator<<(ostream& out, const scrub_flags_t& sf);
 
 
@@ -359,8 +373,7 @@ class PgScrubber : public ScrubPgIF,
 
   void rm_from_osd_scrubbing() final;
 
-  void on_primary_change(std::string_view caller, 
-    const requested_scrub_t& request_flags) final;
+  void on_primary_change(std::string_view caller) final;
 
   void on_maybe_registration_change(
     const requested_scrub_t& request_flags) final;
@@ -607,7 +620,9 @@ class PgScrubber : public ScrubPgIF,
   // specifically - we were scheduled thru this entry in the OSD queue:
   std::optional<Scrub::SchedEntry> m_active_target;
 
-  ostream& show(ostream& out) const override;
+  ostream& show_concised(ostream& out) const override;
+
+  std::string next_scrub_flags() const;
 
  public:
   //  ------------------  the I/F used by the ScrubBackend (ScrubBeListener)
