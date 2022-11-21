@@ -214,6 +214,13 @@ struct SchedTarget {
   {
     return is_deep() ? scrub_level_t::deep : scrub_level_t::shallow;
   }
+  std::string_view effective_lvl() const
+  {
+    return (base_target_level == scrub_level_t::shallow)
+	       ? (deep_or_upgraded ? "up" : "sh")
+	       : "dp";
+  }
+
   bool is_periodic() const { return urgency <= urgency_t::overdue; }
   bool is_viable() const { return urgency > urgency_t::off; }
 
@@ -243,7 +250,7 @@ struct SchedTarget {
    * the original scheduling object type. Note that for the shallow
    * scheduling target objects - overridden by 'deep_or_upgraded'
    */
-  scrub_level_t base_target_level;  // 'const' in semantics
+  scrub_level_t base_target_level;  // 'const' in its semantics
 
   /**
    * (deep-scrub entries only:)
@@ -275,6 +282,7 @@ struct SchedTarget {
    * Note: 'partial order' due to strange utime_t::operator<=>()
    */
   std::partial_ordering operator<=>(const SchedTarget&) const;
+  bool operator==(const SchedTarget& r) const { return (*this <=> r) == 0; }
 
   bool is_ripe(utime_t now_is) const
   {
@@ -303,10 +311,11 @@ struct SchedTarget {
   void push_nb_out(std::chrono::seconds delay);
   void push_nb_out(std::chrono::seconds delay, delay_cause_t delay_cause);
   void pg_state_failure();
+  void level_not_allowed();
   void wrong_time();
   void on_local_resources();
 
-  void dump(ceph::Formatter* f) const;
+  void dump(std::string_view sect_name, ceph::Formatter* f) const;
 
   // consult the current value of the 'random upgrade" flag, and
   // redraw the 'deep_or_upgraded' flag for the next run.
@@ -328,22 +337,21 @@ struct SchedTarget {
       const Scrub::sched_conf_t& aconf,
       utime_t now_is);
 
-  void update_target(
-      const pg_info_t& info,
-      const sched_conf_t& aconf,
-      const requested_scrub_t& request_flags);
+//   void update_target(
+//       const pg_info_t& info,
+//       const sched_conf_t& aconf,
+//       const requested_scrub_t& request_flags);
 
-  // private:
+  // updating periodic targets:
+
   void update_as_shallow(
-      utime_t now_is,
       const pg_info_t& info,
       const sched_conf_t& aconf,
-      const requested_scrub_t& request_flags);
+      utime_t now_is);
   void update_as_deep(
-      utime_t now_is,
       const pg_info_t& info,
       const sched_conf_t& aconf,
-      const requested_scrub_t& request_flags);
+      utime_t now_is);
 };
 
 // note: not a shared_ptr, as the statically-allocated target is owned by the
@@ -465,21 +473,14 @@ struct ScrubJob final : public RefCountedObject {
   }
 
   void initial_shallow_target(
-      const requested_scrub_t& request_flags,
       const pg_info_t& pg_info,
       const sched_conf_t& sched_configs,
-      utime_t time_now);
+      utime_t now_is);
 
   void initial_deep_target(
-      const requested_scrub_t& request_flags,
       const pg_info_t& pg_info,
       const sched_conf_t& sched_configs,
-      utime_t time_now);
-
-  void set_initial_targets(
-      const requested_scrub_t& request_flags,
-      const pg_info_t& pg_info,
-      const sched_conf_t& sched_configs);
+      utime_t now_is);
 
   // the operator faked the timestamp. Reschedule the
   // relevant target.
@@ -488,29 +489,30 @@ struct ScrubJob final : public RefCountedObject {
       utime_t upd_stamp,
       const pg_info_t& pg_info,
       const sched_conf_t& sched_configs,
-      utime_t time_now);
-
-  // void mark_after_repair(const requested_scrub_t& request_flags);
+      utime_t now_is);
 
   // 'need_auto' is set;
   // deep scrub is marked for the next scrub cycle for this PG
   // The equivalent of must_scrub & must_deep_scrub
   void mark_for_rescrubbing(requested_scrub_t& request_flags);
 
+  void set_initial_targets(
+      const pg_info_t& info,
+      const sched_conf_t& aconf,
+      utime_t now_is);
+
   void at_scrub_completion(
       const pg_info_t& info,
       const sched_conf_t& aconf,
-      const requested_scrub_t& request_flags);
+      utime_t now_is);
 
   // retval: true if a change was made
   bool on_periods_change(
       const pg_info_t& info,
       const sched_conf_t& aconf,
-      const requested_scrub_t& request_flags);
+      utime_t now_is);
 
-  /* needed? */ void merge_deep_target(TargetRef&& candidate);
-
-  void merge_targets(scrub_level_t lvl);
+  void merge_targets(scrub_level_t lvl, std::chrono::seconds delay);
 
   void un_penalize(utime_t now_is);
 
@@ -551,16 +553,9 @@ struct SchedEntry {
   scrub_level_t s_or_d;
 
   SchedEntry(ScrubJobRef j, scrub_level_t s) : job(j), s_or_d(s) {}
-  //   SchedEntry(const SchedEntry& other) : job(other.job),
-  //   s_or_d(other.s_or_d) {} SchedEntry& operator=(const SchedEntry& other)
-  //   {
-  //     job = other.job;
-  //     s_or_d = other.s_or_d;
-  //     return *this;
-  //   }
   TargetRef target()
   {
-    {  // RRR bug:
+    {  // RRR debug code:
       if (s_or_d == scrub_level_t::deep) {
 	auto& x1 = job->get_current_trgt(s_or_d);
 	auto& x2 = (s_or_d == scrub_level_t::deep) ? job->deep_target
@@ -576,7 +571,7 @@ struct SchedEntry {
 
   TargetRef target() const
   {
-    {  // RRR bug:
+    {  // RRR debug code:
       if (s_or_d == scrub_level_t::deep) {
 	auto& x1 = job->get_current_trgt(s_or_d);
 	auto& x2 = (s_or_d == scrub_level_t::deep) ? job->deep_target
@@ -599,45 +594,15 @@ struct SchedEntry {
   // smaller is better (i.e. the '<' is more urgent);
   std::partial_ordering operator<=>(const SchedEntry& r) const
   {
-    if (auto cmp = r.s_or_d <=> s_or_d; cmp != 0) {
-      return cmp;
-    }
-    return job->get_current_trgt(s_or_d) <=> r.job->get_current_trgt(s_or_d);
+    return job->get_current_trgt(s_or_d) <=> r.job->get_current_trgt(r.s_or_d);
   }
+  bool operator==(const SchedEntry& r) const { return (*this <=> r) == 0; }
 };
 
 
 class ScrubSchedListener;
 
-// the OSD services provided to the scrub scheduler
-// class ScrubSchedListener {
-//  public:
-//   virtual int get_nodeid() const = 0;  // returns the OSD number ('whoami')
-// 
-//   /**
-//    * A callback used by the ScrubQueue object to initiate a scrub on a specific
-//    * PG.
-//    *
-//    * The request might fail for multiple reasons, as ScrubQueue cannot by its
-//    * own check some of the PG-specific preconditions and those are checked here.
-//    * See attempt_t definition.
-//    *
-//    * @return a Scrub::attempt_t detailing either a success, or the failure
-//    * reason.
-//    */
-//   virtual schedule_result_t initiate_a_scrub(
-//     spg_t pgid,
-//     bool allow_requested_repair_only) = 0;
-// 
-//   virtual schedule_result_t initiate_a_scrub(
-//     spg_t pgid,
-//     bool allow_requested_repair_only) = 0;
-// 
-//   virtual ~ScrubSchedListener() {}
-// };
-
-}  // namespace Scrub
-
+} // namespace Scrub
 /**
  * the queue of PGs waiting to be scrubbed.
  * Main operations are scheduling/unscheduling a PG to be scrubbed at a certain
@@ -741,9 +706,9 @@ class ScrubQueue {
   // can only be moved here if we give the ScrubQueue the ability to lock PGs
   void on_config_times_change();
 
-  Scrub::sched_params_t determine_scrub_time(const requested_scrub_t& request_flags,
-				      const pg_info_t& pg_info,
-				      const pool_opts_t pool_conf) const;
+//   Scrub::sched_params_t determine_scrub_time(const requested_scrub_t& request_flags,
+// 				      const pg_info_t& pg_info,
+// 				      const pool_opts_t pool_conf) const;
 
  public:
   void dump_scrubs(ceph::Formatter* f);
@@ -776,7 +741,7 @@ class ScrubQueue {
    * (read - with higher value) configuration element
    * (osd_scrub_extended_sleep).
    */
-  double scrub_sleep_time(bool must_scrub) const;  /// \todo (future) return
+  double scrub_sleep_time(bool is_mandatory) const;  /// \todo (future) return
 						   /// milliseconds
 
   /**
@@ -785,25 +750,6 @@ class ScrubQueue {
    *  @returns a load value for the logger
    */
   [[nodiscard]] std::optional<double> update_load_average();
-
-
-  Scrub::SchedTarget initial_shallow_target(
-    const requested_scrub_t& request_flags,
-    const pg_info_t& pg_info,
-    const Scrub::sched_conf_t& sched_configs,
-    utime_t time_now) const;
-
-  Scrub::SchedTarget initial_deep_target(
-    const requested_scrub_t& request_flags,
-    const pg_info_t& pg_info,
-    const Scrub::sched_conf_t& sched_configs,
-    utime_t time_now) const;
-
-  void set_initial_targets(
-    Scrub::ScrubJobRef sjob,
-    const requested_scrub_t& request_flags,
-    const pg_info_t& pg_info,
-    const Scrub::sched_conf_t& sched_configs);
 
   Scrub::sched_conf_t populate_config_params(const pool_opts_t& pool_conf);
 
@@ -918,7 +864,7 @@ class ScrubQueue {
     const Scrub::ScrubPreconds& preconds,
     utime_t now_is);
 
-protected: // used by the unit-tests
+public: // used by the unit-tests
   /**
    * unit-tests will override this function to return a mock time
    */
@@ -932,22 +878,6 @@ namespace Scrub {
 class ScrubSchedListener {
  public:
   virtual int get_nodeid() const = 0;  // returns the OSD number ('whoami')
-
-  /**
-   * A callback used by the ScrubQueue object to initiate a scrub on a specific
-   * PG.
-   *
-   * The request might fail for multiple reasons, as ScrubQueue cannot by its
-   * own check some of the PG-specific preconditions and those are checked here.
-   * See attempt_t definition.
-   *
-   * @return a Scrub::attempt_t detailing either a success, or the failure
-   * reason.
-   */
-  virtual schedule_result_t initiate_a_scrub(
-    spg_t pgid,
-    Scrub::SchedEntry trgt,
-    bool allow_requested_repair_only) = 0;
 
   virtual PgLockWrapper get_locked_pg(spg_t pgid) = 0;
 
@@ -991,7 +921,7 @@ struct fmt::formatter<Scrub::delay_cause_t> : fmt::formatter<std::string_view> {
     switch (cause) {
       case none:        desc = "ok"; break;
       case replicas:    desc = "replicas"; break;
-      case flags:       desc = "flags"; break;	 // RRR
+      case flags:       desc = "flags"; break;	 // no-scrub etc'
       case pg_state:    desc = "pg-state"; break;
       case time:        desc = "time"; break;
       case local_resources: desc = "local-cnt"; break;
@@ -1010,14 +940,14 @@ struct fmt::formatter<Scrub::SchedTarget> {
   template <typename FormatContext>
   auto format(const Scrub::SchedTarget& st, FormatContext& ctx)
   {
-    const std::string_view effective_lvl =
-      (st.base_target_level == scrub_level_t::shallow)
-	? (st.deep_or_upgraded ? "up" : "sh")
-	: "dp";
+//     const std::string_view effective_lvl =
+//       (st.base_target_level == scrub_level_t::shallow)
+// 	? (st.deep_or_upgraded ? "up" : "sh")
+// 	: "dp";
     return format_to(
       ctx.out(), "{}/{}: {}nb:{:s},({},tr:{:s},dl:{:s},a-r:{}{}),issue:{},{}",
       (st.base_target_level == scrub_level_t::deep ? "dp" : "sh"),
-      effective_lvl,
+      st.effective_lvl(),
       st.scrubbing ? "ACTIVE " : "",
       st.not_before,
       st.urgency, st.target, st.deadline.value_or(utime_t{}),
@@ -1035,7 +965,7 @@ struct fmt::formatter<Scrub::ScrubJob> {
   {
     auto it = ctx.begin();
     if (it != ctx.end() && *it == 's') {
-      shorted = true;  // no 'nearest target' info
+      shortened = true;	 // no 'nearest target' info
       ++it;
     }
     return it;
@@ -1044,18 +974,18 @@ struct fmt::formatter<Scrub::ScrubJob> {
   template <typename FormatContext>
   auto format(const Scrub::ScrubJob& sjob, FormatContext& ctx)
   {
-    if (shorted) {
+    if (shortened) {
       return fmt::format_to(
-	ctx.out(), "pg[{}]:reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
-	sjob.registration_state(), sjob.resources_failure,
-	ScrubQueue::qu_state_text(sjob.state));
+	  ctx.out(), "pg[{}]:reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
+	  sjob.registration_state(), sjob.resources_failure,
+	  ScrubQueue::qu_state_text(sjob.state));
     }
     return fmt::format_to(
-      ctx.out(), "pg[{}]:[t:{}],reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
-      sjob.closest_target.get(), sjob.registration_state(), sjob.resources_failure,
-      ScrubQueue::qu_state_text(sjob.state));
+	ctx.out(), "pg[{}]:[t:{}],reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
+	sjob.closest_target.get(), sjob.registration_state(),
+	sjob.resources_failure, ScrubQueue::qu_state_text(sjob.state));
   }
-  bool shorted{false};
+  bool shortened{false};
 };
 
 template <>
@@ -1065,10 +995,8 @@ struct fmt::formatter<Scrub::sched_conf_t> {
   auto format(const Scrub::sched_conf_t& cf, FormatContext& ctx)
   {
     return format_to(
-      ctx.out(), "periods: s:{}/{} d:{}/{} iv-ratio:{} on-inv:{}",
-      cf.shallow_interval, cf.max_shallow.value_or(-1.0),
-      cf.deep_interval, cf.max_deep, cf.interval_randomize_ratio,
-      cf.mandatory_on_invalid);
+	ctx.out(), "periods: s:{}/{} d:{}/{} iv-ratio:{} on-inv:{}",
+	cf.shallow_interval, cf.max_shallow.value_or(-1.0), cf.deep_interval,
+	cf.max_deep, cf.interval_randomize_ratio, cf.mandatory_on_invalid);
   }
 };
-

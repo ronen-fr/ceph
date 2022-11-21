@@ -429,7 +429,7 @@ void PG::start_after_repair_scrub()
   dout(10) << __func__ << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
 
-  m_planned_scrub.must_deep_scrub = true; // RRR shouldn't be needed
+  //m_planned_scrub.must_deep_scrub = true; // RRR shouldn't be needed
   //m_planned_scrub.check_repair = true;
   m_planned_scrub.must_scrub = true; // RRR shouldn't be needed
   m_planned_scrub.calculated_to_deep = true; // RRR shouldn't be needed
@@ -437,42 +437,7 @@ void PG::start_after_repair_scrub()
   // manipulate the job's schedule-targets
   auto deep_job = m_scrubber->mark_for_after_repair();
   start_scrubbing(deep_job);
-//  
-//   if (is_scrub_queued_or_active()) {
-//     dout(10) << __func__ << ": scrubbing already ("
-//              << (is_scrubbing() ? "active)" : "queued)") << dendl;
-//     return;
-//   }
-// 
-//   // prioritize deep scrubbing
-//   m_scrubber->set_op_parameters(m_planned_scrub);
-//   dout(15) << __func__ << ": queueing" << dendl;
-// 
-//   osd->queue_scrub_after_repair(this, Scrub::scrub_prio_t::high_priority);
 }
-
-
-// void PG::queue_scrub_after_repair()
-// {
-//   dout(10) << __func__ << dendl;
-//   ceph_assert(ceph_mutex_is_locked(_lock));
-// 
-//   m_planned_scrub.must_deep_scrub = true;
-//   m_planned_scrub.check_repair = true;
-//   m_planned_scrub.must_scrub = true;
-//   m_planned_scrub.calculated_to_deep = true;
-// 
-//   if (is_scrub_queued_or_active()) {
-//     dout(10) << __func__ << ": scrubbing already ("
-//              << (is_scrubbing() ? "active)" : "queued)") << dendl;
-//     return;
-//   }
-// 
-//   m_scrubber->set_op_parameters(m_planned_scrub);
-//   dout(15) << __func__ << ": queueing" << dendl;
-// 
-//   osd->queue_scrub_after_repair(this, Scrub::scrub_prio_t::high_priority);
-// }
 
 unsigned PG::get_scrub_priority()
 {
@@ -1638,16 +1603,16 @@ std::optional<requested_scrub_t> PG::validate_initiated_scrub(
 {
   requested_scrub_t upd_flags{planned};
 
-  upd_flags.time_for_deep = time_for_deep;
-  upd_flags.deep_scrub_on_error = false;
-  upd_flags.auto_repair = false;  // will only be considered for periodic scrubs
+  upd_flags.time_fo r_deep = time_for_deep;
+  upd_flags.deep_scrub _on_error = false;
+  upd_flags.auto_r epair = false;  // will only be considered for periodic scrubs
 
-  if (upd_flags.must_deep_scrub) {
-    upd_flags.calculated_to_deep = true;
+  if (upd_flags.must_ deep_scrub) {
+    upd_flags.calculate d_to_deep = true;
   } else if (upd_flags.time_for_deep && allow_deep_scrub) {
-    upd_flags.calculated_to_deep = true;
+    upd_flags.calculat ed_to_deep = true;
   } else {
-    upd_flags.calculated_to_deep = false;
+    upd_flags.calculated _to_deep = false;
     if (has_deep_errors) {
       osd->clog->error() << fmt::format(
 	"osd.{} pg {} Regular scrub request, deep-scrub details will be lost",
@@ -1695,7 +1660,7 @@ std::optional<requested_scrub_t> PG::validate_periodic_mode(
   requested_scrub_t upd_flags{planned};
 
   upd_flags.time_for_deep = time_for_deep;
-  upd_flags.deep_scrub_on_error = false;
+  upd_flags.deep_scrub _on_error = false;
   upd_flags.auto_repair = false;
   upd_flags.calculated_to_deep = false;
 
@@ -1714,7 +1679,7 @@ std::optional<requested_scrub_t> PG::validate_periodic_mode(
 	dout(10) << __func__
 		 << ": auto repair with scrubbing, rescrub if errors found"
 		 << dendl;
-	upd_flags.deep_scrub_on_error = true;
+	upd_flags.deep_scr ub_on_error = true;
       }
       dout(20) << __func__ << " will do shallow scrub (time_for_deep = "
 	       << upd_flags.time_for_deep << ")" << dendl;
@@ -1776,7 +1741,7 @@ std::optional<requested_scrub_t> PG::validate_periodic_mode(
  *
  *   - calculated_to_deep will be set to shallow or deep, depending on the
  *     scrub type (according to the decision table above);
- *   - deep_scrub_on_error will be determined;
+ *   - deep_scrub_o n_error will be determined;
  *   - same for auto_repair;
  *   - time_for_deep will be set to true if the scrub is periodic and the
  *     time for a deep scrub has been reached (+ some other conditions);
@@ -1851,22 +1816,22 @@ std::optional<requested_scrub_t> PG::validate_scrub_mode() const
  */
 void PG::on_info_history_change()
 {
-  dout(20) << __func__ << " for a " << (is_primary() ? "Primary" : "non-primary") <<dendl;
-
+  dout(20) << __func__ << " for a "
+	   << (is_primary() ? "Primary" : "non-primary") << dendl;
   ceph_assert(m_scrubber);
   m_scrubber->on_maybe_registration_change(m_planned_scrub);
 }
 
-void PG::reschedule_scrub()
-{
-  dout(20) << __func__ << " for a " << (is_primary() ? "Primary" : "non-primary") <<dendl;
-
-  // we are assuming no change in primary status
-  if (is_primary()) {
-    ceph_assert(m_scrubber);
-    m_scrubber->update_scrub_job(m_planned_scrub);
-  }
-}
+// void PG::reschedule_scrub()
+// {
+//   dout(20) << __func__ << " for a "
+// 	   << (is_primary() ? "Primary" : "non-primary") << dendl;
+//   // we are assuming no change in primary status
+//   if (is_primary()) {
+//     ceph_assert(m_scrubber);
+//     m_scrubber->update_scrub_job(m_planned_scrub);
+//   }
+// }
 
 void PG::on_primary_status_change(bool was_primary, bool now_primary)
 {
@@ -1874,7 +1839,7 @@ void PG::on_primary_status_change(bool was_primary, bool now_primary)
 
   if (was_primary != now_primary) {
     ceph_assert(m_scrubber);
-    m_scrubber->on_primary_change(__func__, m_planned_scrub);
+    m_scrubber->on_primary_change(__func__);
   }
 }
 
@@ -2428,10 +2393,9 @@ ostream& operator<<(ostream& out, const PG& pg)
   out << pg.recovery_state;
 
   // listing all scrub-related flags - both current and "planned next scrub"
-  if (pg.is_scrubbing()) {
+  if (pg.m_scrubber) {
     out << *pg.m_scrubber;
   }
-  out << pg.m_planned_scrub;
 
   if (pg.recovery_ops_active)
     out << " rops=" << pg.recovery_ops_active;

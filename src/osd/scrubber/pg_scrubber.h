@@ -261,6 +261,20 @@ struct scrub_flags_t {
   bool required{false};
 };
 
+
+template <>
+struct fmt::formatter<scrub_flags_t> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const scrub_flags_t& mf, FormatContext& ctx)
+  {
+    return format_to(
+	ctx.out(), "{}{}{}{}", mf.required ? ",mandatory" : "",
+	mf.auto_repair ? ",auto-rpr" : "", mf.check_repair ? ",chk-rpr" : "",
+	mf.deep_scrub_on_error ? ",deep-on-error" : "");
+  }
+};
+
 ostream& operator<<(ostream& out, const scrub_flags_t& sf);
 
 
@@ -355,12 +369,11 @@ class PgScrubber : public ScrubPgIF,
 
   // managing scrub op registration
 
-  void update_scrub_job(const requested_scrub_t& request_flags) final;
+  //void update_scrub_job(const requested_scrub_t& request_flags) final;
 
   void rm_from_osd_scrubbing() final;
 
-  void on_primary_change(std::string_view caller, 
-    const requested_scrub_t& request_flags) final;
+  void on_primary_change(std::string_view caller) final;
 
   void on_maybe_registration_change(
     const requested_scrub_t& request_flags) final;
@@ -377,7 +390,7 @@ class PgScrubber : public ScrubPgIF,
    */
   bool reserve_local() final;
 
-  void handle_query_state(ceph::Formatter* f) final;
+  //void handle_query_state(ceph::Formatter* f) final;
 
   pg_scrubbing_status_t get_schedule() const final;
 
@@ -439,8 +452,7 @@ class PgScrubber : public ScrubPgIF,
    */
   void set_op_parameters(
     const Scrub::SchedEntry& target,
-    const requested_scrub_t& request,
-    const Scrub::ScrubPgPreconds& pg_cond) final;
+    const Scrub::ScrubPgPreconds& pg_cond);
 
   void cleanup_store(ObjectStore::Transaction* t) final;
 
@@ -472,7 +484,6 @@ class PgScrubber : public ScrubPgIF,
 
   Scrub::PossibleScrubMode select_scrub_mode(
     Scrub::SchedEntry sched_entry,
-    const requested_scrub_t& request,
     const Scrub::ScrubPgPreconds& pg_cond) const;
 
   bool start_scrub_after_repair(requested_scrub_t& request_flags);
@@ -607,7 +618,7 @@ class PgScrubber : public ScrubPgIF,
   // specifically - we were scheduled thru this entry in the OSD queue:
   std::optional<Scrub::SchedEntry> m_active_target;
 
-  ostream& show(ostream& out) const override;
+  ostream& show_concise(ostream& out) const override;
 
  public:
   //  ------------------  the I/F used by the ScrubBackend (ScrubBeListener)

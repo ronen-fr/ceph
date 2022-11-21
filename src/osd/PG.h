@@ -549,7 +549,7 @@ public:
 
   void on_primary_status_change(bool was_primary, bool now_primary) override;
 
-  void reschedule_scrub() override;
+  //void reschedule_scrub() override;
 
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) override;
 

@@ -190,7 +190,7 @@ struct requested_scrub_t {
    */
   //bool time_for_deep{false};
 
-  bool deep_scrub_on_error{false};
+  //bool deep_scrub_on_error{false};
 
   /**
    * If set, we should see must_deep_scrub & must_scrub, too
@@ -232,11 +232,11 @@ struct fmt::formatter<requested_scrub_t> {
   auto format(const requested_scrub_t& rs, FormatContext& ctx)
   {
     return fmt::format_to(ctx.out(),
-                          "(plnd:{}{}{}{}{}{}{})",
+                          "(plnd:{}{}{}{}{}{})",
                           false /*rs.must_repair*/ ? " must_repair" : "",
                           //rs.auto_repair ? " auto_repair" : "",
                           //rs.check_repair ? " check_repair" : "",
-                          rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
+                          //rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
                           rs.must_deep_scrub ? " must_deep_scrub" : "",
                           rs.must_scrub ? " must_scrub" : "",
                           //rs.time_for_deep ? " time_for_deep" : "",
@@ -255,10 +255,10 @@ struct ScrubPgIF {
 
   friend std::ostream& operator<<(std::ostream& out, const ScrubPgIF& s)
   {
-    return s.show(out);
+    return s.show_concise(out);
   }
 
-  virtual std::ostream& show(std::ostream& out) const = 0;
+  virtual std::ostream& show_concise(std::ostream& out) const = 0;
 
   // --------------- triggering state-machine events:
 
@@ -304,11 +304,6 @@ struct ScrubPgIF {
 
   // --------------------------------------------------
 
-  // obsolete
-//   virtual Scrub::schedule_result_t start_scrubbing(
-//     ceph::ref_t<Scrub::SchedTarget> trgt,
-//     requested_scrub_t& request,
-//     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual Scrub::schedule_result_t start_scrubbing(
     Scrub::SchedEntry trgt,
@@ -316,13 +311,9 @@ struct ScrubPgIF {
     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual Scrub::SchedEntry mark_for_after_repair() = 0;
-//   virtual ceph::ref_t<Scrub::SchedTarget> mark_for_after_repair(
-//     requested_scrub_t& request) = 0;
 
-  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	 // currently
-								 // only used
-								 // for an
-								 // assert
+  // currently only used for an assertion:
+  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	
 
   /**
    * the scrubber is marked 'active':
@@ -358,14 +349,14 @@ struct ScrubPgIF {
 
   virtual void replica_scrub_op(OpRequestRef op) = 0;
 
-  virtual void set_op_parameters(
-    const Scrub::SchedEntry& target,
-    const requested_scrub_t&,
-    const Scrub::ScrubPgPreconds& pg_cond) = 0;
+//   virtual void set_op_parameters(
+//     const Scrub::SchedEntry& target,
+//     const requested_scrub_t&,
+//     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual void scrub_clear_state() = 0;
 
-  virtual void handle_query_state(ceph::Formatter* f) = 0;
+  //virtual void handle_query_state(ceph::Formatter* f) = 0;
 
   virtual pg_scrubbing_status_t get_schedule() const = 0;
 
@@ -473,8 +464,7 @@ struct ScrubPgIF {
    *
    * Following our status as Primary or replica.
    */
-  virtual void on_primary_change(std::string_view caller,
-    const requested_scrub_t& request_flags) = 0;
+  virtual void on_primary_change(std::string_view caller) = 0;
 
   /**
    * Recalculate the required scrub time.
@@ -482,7 +472,7 @@ struct ScrubPgIF {
    * This function assumes that the queue registration status is up-to-date,
    * i.e. the OSD "knows our name" if-f we are the Primary.
    */
-  virtual void update_scrub_job(const requested_scrub_t& request_flags) = 0;
+  //virtual void update_scrub_job(const requested_scrub_t& request_flags) = 0;
 
   virtual void on_maybe_registration_change(
     const requested_scrub_t& request_flags) = 0;

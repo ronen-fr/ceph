@@ -7390,41 +7390,6 @@ void OSD::handle_fast_scrub(MOSDScrub2 *m)
   m->put();
 }
 
-// RRR move into osd_scrub_sched, now that we have a locker
-Scrub::schedule_result_t OSDService::initiate_a_scrub(
-  spg_t pgid,
-  Scrub::SchedEntry trgt,
-  bool allow_requested_repair_only)
-{
-  dout(20) << fmt::format("{}: trying pg[{}] (target: {})", __func__, pgid,
-                          trgt.target()) << dendl;
-
-  // we have a candidate to scrub. We need some PG information to know if
-  // scrubbing is allowed
-
-  PGRef pg = osd->lookup_lock_pg(pgid);
-  if (!pg) {
-    // the PG was dequeued in the short timespan between creating the candidates
-    // list (collect_ripe_jobs()) and here
-    dout(5) << __func__ << " pg[" << pgid << "] not found" << dendl;
-    return Scrub::schedule_result_t::no_such_pg;
-  }
-
-  // Skip other kinds of scrubbing if only explicitly-requested repairing is
-  // allowed
-  //if (allow_requested_repair_only && !pg->get_planned_scrub().must_repair) {
-  if (allow_requested_repair_only && !trgt.target().do_repair) {
-    pg->unlock();
-    dout(10) << __func__ << " skip " << pgid
-	     << " because repairing is not explicitly requested on it" << dendl;
-    return Scrub::schedule_result_t::preconditions;
-  }
-
-  auto scrub_attempt = pg->start_scrubbing(trgt);
-  pg->unlock();
-  return scrub_attempt;
-}
-
 PgLockWrapper OSDService::get_locked_pg(spg_t pgid)
 {
   PgLockWrapper locked_pg;
@@ -7432,18 +7397,6 @@ PgLockWrapper OSDService::get_locked_pg(spg_t pgid)
   return locked_pg;
 }
 
-
-void OSD::resched_all_scrubs()
-{
-  // RRR 
-  dout(10) << fmt::format(
-		"resched_all_scrubs: min:{} deep:{} max:{}",
-		cct->_conf->osd_scrub_min_interval,
-		cct->_conf->osd_deep_scrub_interval,
-		cct->_conf->osd_scrub_max_interval)
-	   << dendl;
-  service.get_scrub_services().on_config_times_change();
-}
 
 MPGStats* OSD::collect_pg_stats()
 {
@@ -9655,8 +9608,6 @@ void OSD::handle_conf_change(const ConfigProxy& conf,
       changed.count("osd_scrub_max_interval") ||
       changed.count("osd_deep_scrub_interval")) {
     service.get_scrub_services().on_config_times_change();
-    //resched_all_scrubs();
-    //dout(0) << __func__ << ": scrub interval change" << dendl;
     dout(0) << fmt::format(
 		   "{}:  scrub interval change (min:{} deep:{} max:{})",
 		   __func__, cct->_conf->osd_scrub_min_interval,

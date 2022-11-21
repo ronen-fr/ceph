@@ -736,9 +736,9 @@ void PeeringState::start_peering_interval(
     }
   }
 
-  if (is_primary() && was_old_primary) {
-    // RRR why do we need this? pl->reschedule_scrub();
-  }
+//   if (is_primary() && was_old_primary) {
+//     // RRR why do we need this? pl->reschedule_scrub();
+//   }
 
   if (acting.empty() && !up.empty() && up_primary == pg_whoami) {
     psdout(10) << " acting empty, but i am up[0], clearing pg_temp" << dendl;
