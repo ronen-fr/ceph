@@ -378,8 +378,7 @@ class PgScrubber : public ScrubPgIF,
   void on_maybe_registration_change() final;
 
   void scrub_requested(scrub_level_t scrub_level,
-		       scrub_type_t scrub_type,
-		       requested_scrub_t& req_flags) final;
+		       scrub_type_t scrub_type) final;
 
   /**
    * Reserve local scrub resources (managed by the OSD)
@@ -398,8 +397,7 @@ class PgScrubber : public ScrubPgIF,
     int offset,
     bool must) final;
 
-  void dump_scrubber(ceph::Formatter* f,
-		     const requested_scrub_t& request_flags) const final;
+  void dump_scrubber(ceph::Formatter* f) const final;
 
   // used if we are a replica
 
@@ -482,8 +480,6 @@ class PgScrubber : public ScrubPgIF,
   std::optional<Scrub::schedule_result_t> validate_scrub_mode(
       Scrub::TargetRef sched_target,
       const Scrub::ScrubPgPreconds& pg_cond);
-
-  bool start_scrub_after_repair(requested_scrub_t& request_flags);
 
   // --------------------------------------------------------------------------
   // the I/F used by the state-machine (i.e. the implementation of
@@ -805,7 +801,7 @@ class PgScrubber : public ScrubPgIF,
 
   /// a reference to the details of the next scrub (as requested and managed by
   /// the PG)
-  requested_scrub_t& m_planned_scrub;
+  //requested_scrub_t& m_planned_scrub;
 
   bool m_active{false};
 

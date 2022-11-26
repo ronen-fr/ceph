@@ -359,13 +359,6 @@ struct SchedTarget {
 using TargetRef = SchedTarget&;
 using TargetRefW = std::reference_wrapper<SchedTarget>;
 
-
-struct PossibleScrubMode {
-  TargetRef selected_target;
-  std::optional<requested_scrub_t> updated_flags;
-  Scrub::schedule_result_t outcome{schedule_result_t::scrub_initiated};
-};
-
 enum class must_scrub_t { not_mandatory, mandatory };
 
 enum class qu_state_t {
@@ -494,7 +487,7 @@ struct ScrubJob final : public RefCountedObject {
   // 'need_auto' is set;
   // deep scrub is marked for the next scrub cycle for this PG
   // The equivalent of must_scrub & must_deep_scrub
-  void mark_for_rescrubbing(requested_scrub_t& request_flags);
+  void mark_for_rescrubbing();
 
   void set_initial_targets(
       const pg_info_t& info,

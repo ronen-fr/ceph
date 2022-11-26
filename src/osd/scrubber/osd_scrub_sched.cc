@@ -643,7 +643,7 @@ void ScrubJob::initial_shallow_target(
 /**
  * mark for a deep-scrub after the current scrub ended with errors.
  */
-void ScrubJob::mark_for_rescrubbing(requested_scrub_t& request_flags)
+void ScrubJob::mark_for_rescrubbing()
 {
   auto& targ = get_modif_trgt(scrub_level_t::deep);
   targ.auto_repairing = true;

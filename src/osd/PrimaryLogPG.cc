@@ -1028,7 +1028,7 @@ void PrimaryLogPG::do_command(
     f->close_section();
 
     if (is_primary() && is_active() && m_scrubber) {
-      m_scrubber->dump_scrubber(f.get(), m_planned_scrub);
+      m_scrubber->dump_scrubber(f.get());
     }
 
     f->open_object_section("agent_state");
@@ -13129,7 +13129,7 @@ void PrimaryLogPG::_clear_recovery_state()
 #ifdef DEBUG_RECOVERY_OIDS
   recovering_oids.clear();
 #endif
-  dout(15) << __func__ << " flags: " << m_planned_scrub << dendl;
+  dout(15) << __func__ << dendl;
 
   last_backfill_started = hobject_t();
   set<hobject_t>::iterator i = backfills_in_flight.begin();

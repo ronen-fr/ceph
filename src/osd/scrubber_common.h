@@ -140,7 +140,7 @@ struct PgScrubBeListener {
  * we hold two of these flag collections: one
  * for the next scrub, and one frozen at initiation (i.e. in pg::queue_scrub())
  */
-struct requested_scrub_t {
+//struct requested_scrub_t {
 
   // flags to indicate explicitly requested scrubs (by admin):
   // bool must_scrub, must_deep_scrub, must_repair, need_auto;
@@ -150,7 +150,7 @@ struct requested_scrub_t {
    *  Affects the priority of the scrubbing, and the sleep periods
    *  during the scrub.
    */
-  bool must_scrub{false};
+  //bool must_scrub{false};
 
   /**
    * scrub must not be aborted.
@@ -177,7 +177,7 @@ struct requested_scrub_t {
    * scrub, or if scrub_requested() was called with either need_auto ot repair.
    * Affects PG_STATE_DEEP_SCRUB.
    */
-  bool must_deep_scrub{false};
+  //bool must_deep_scrub{false};
 
   /**
    * (An intermediary flag used by pg::sched_scrub() on the first time
@@ -220,30 +220,30 @@ struct requested_scrub_t {
    * the planned scrub will be a deep one.
    */
   //bool calculated_to_deep{false};
-};
+//};
 
-std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
-
-template <>
-struct fmt::formatter<requested_scrub_t> {
-  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
-  template <typename FormatContext>
-  auto format(const requested_scrub_t& rs, FormatContext& ctx)
-  {
-    return fmt::format_to(ctx.out(),"requested_scrub_t is obsolete");
-                        //   "(plnd:{}{}{})",
-                        //   //false /*rs.must_repair*/ ? " must_repair" : "",
-                        //   //rs.auto_repair ? " auto_repair" : "",
-                        //   //rs.check_repair ? " check_repair" : "",
-                        //   //rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
-                        //   //rs.must_deep_scrub ? " must_deep_scrub" : "",
-                        //   rs.must_scrub ? " must_scrub" : "",
-                        //   //rs.time_for_deep ? " time_for_deep" : "",
-                        //   rs.need_auto ? " need_auto" : "",
-                        //   rs.req_scrub ? " req_scrub" : "");
-  }
-};
+// std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
+// 
+// template <>
+// struct fmt::formatter<requested_scrub_t> {
+//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+// 
+//   template <typename FormatContext>
+//   auto format(const requested_scrub_t& rs, FormatContext& ctx)
+//   {
+//     return fmt::format_to(ctx.out(),"requested_scrub_t is obsolete");
+//                         //   "(plnd:{}{}{})",
+//                         //   //false /*rs.must_repair*/ ? " must_repair" : "",
+//                         //   //rs.auto_repair ? " auto_repair" : "",
+//                         //   //rs.check_repair ? " check_repair" : "",
+//                         //   //rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
+//                         //   //rs.must_deep_scrub ? " must_deep_scrub" : "",
+//                         //   rs.must_scrub ? " must_scrub" : "",
+//                         //   //rs.time_for_deep ? " time_for_deep" : "",
+//                         //   rs.need_auto ? " need_auto" : "",
+//                         //   rs.req_scrub ? " req_scrub" : "");
+//   }
+// };
 
 /**
  *  The interface used by the PG when requesting scrub-related info or services
@@ -364,8 +364,7 @@ struct ScrubPgIF {
     int offset,
     bool must) = 0;
 
-  virtual void dump_scrubber(ceph::Formatter* f,
-			     const requested_scrub_t& request_flags) const = 0;
+  virtual void dump_scrubber(ceph::Formatter* f) const = 0;
 
   /**
    * Return true if soid is currently being scrubbed and pending IOs should
@@ -487,8 +486,7 @@ struct ScrubPgIF {
   virtual void rm_from_osd_scrubbing() = 0;
 
   virtual void scrub_requested(scrub_level_t scrub_level,
-			       scrub_type_t scrub_type,
-			       requested_scrub_t& req_flags) = 0;
+			       scrub_type_t scrub_type) = 0;
 
   // --------------- debugging via the asok ------------------------------
 

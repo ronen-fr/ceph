@@ -186,13 +186,6 @@ public:
   /// and be removed only in the PrimaryLogPG destructor.
   std::unique_ptr<ScrubPgIF> m_scrubber;
 
-  /// flags detailing scheduling/operation characteristics of the next scrub 
-  requested_scrub_t m_planned_scrub;
-
-  const requested_scrub_t& get_planned_scrub() const {
-    return m_planned_scrub;
-  }
-
   /// scrubbing state for both Primary & replicas
   bool is_scrub_active() const { return m_scrubber->is_scrub_active(); }
 
@@ -723,43 +716,6 @@ public:
  private:
   // auxiliaries used by sched_scrub():
   double next_deepscrub_interval() const;
-
-#if 0
-  /// should we perform deep scrub?
-  bool is_time_for_deep(bool allow_deep_scrub,
-                        bool allow_shallow_scrub,
-                        bool has_deep_errors,
-                        const requested_scrub_t& planned) const;
-
-  bool is_time_for_deep(Scrub::SchedTarget* trgt,
-                        bool allow_deep_scrub,
-                        bool allow_shallow_scrub,
-                        bool has_deep_errors,
-                        const requested_scrub_t& planned) const;
-
-  /**
-   * Validate the various 'next scrub' flags in m_planned_scrub against configuration
-   * and scrub-related timestamps.
-   *
-   * @returns an updated copy of the m_planned_flags (or nothing if no scrubbing)
-   */
-  //std::optional<requested_scrub_t> validate_scrub_mode() const;
-  
-  std::optional<requested_scrub_t> validate_periodic_mode(
-    bool allow_deep_scrub,
-    bool try_to_auto_repair,
-    bool allow_shallow_scrub,
-    bool time_for_deep,
-    bool has_deep_errors,
-    const requested_scrub_t& planned) const;
-
-  std::optional<requested_scrub_t> validate_initiated_scrub(
-    bool allow_deep_scrub,
-    bool try_to_auto_repair,
-    bool time_for_deep,
-    bool has_deep_errors,
-    const requested_scrub_t& planned) const;
-#endif
 
   using ScrubAPI = void (ScrubPgIF::*)(epoch_t epoch_queued);
   void forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc);
@@ -1436,10 +1392,6 @@ public:
 
  OSDService* get_pg_osd(ScrubberPasskey) const { return osd; }
 
- requested_scrub_t& get_planned_scrub(ScrubberPasskey)
- {
-   return m_planned_scrub;
- }
 
  void force_object_missing(ScrubberPasskey,
                            const std::set<pg_shard_t>& peer,
