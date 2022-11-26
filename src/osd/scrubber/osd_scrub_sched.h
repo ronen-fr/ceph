@@ -701,7 +701,7 @@ class ScrubQueue {
    *
    *  locking: not using the jobs_lock
    */
-  void update_job(Scrub::ScrubJobRef sjob, const Scrub::sched_params_t& suggested);
+  //void update_job(Scrub::ScrubJobRef sjob, const Scrub::sched_params_t& suggested);
 
   // can only be moved here if we give the ScrubQueue the ability to lock PGs
   void on_config_times_change();
@@ -846,8 +846,8 @@ class ScrubQueue {
    *
    * @return a pair of values: the determined scrub time, and the deadline
    */
-  Scrub::scrub_schedule_t adjust_target_time(
-    const Scrub::sched_params_t& recomputed_params) const;
+//   Scrub::scrub_schedule_t adjust_target_time(
+//     const Scrub::sched_params_t& recomputed_params) const;
 
   /**
    * Look for scrub jobs that have their 'resources_failure' set. These jobs

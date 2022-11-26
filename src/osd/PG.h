@@ -713,12 +713,7 @@ public:
   void shutdown();
   virtual void on_shutdown() = 0;
 
-  bool get_must_scrub() const;
-
   Scrub::schedule_result_t start_scrubbing(Scrub::SchedEntry trgt);
-
-//   /*obsolete*/ Scrub::schedule_result_t start_scrubbing(
-//     Scrub::SchedTarget* trgt);
 
   unsigned int scrub_requeue_priority(
     Scrub::scrub_prio_t with_priority,

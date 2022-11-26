@@ -1371,13 +1371,13 @@ void ScrubQueue::register_with_osd(Scrub::ScrubJobRef scrub_job,
 
 
 
-void ScrubQueue::update_job(Scrub::ScrubJobRef scrub_job,
-			    const Scrub::sched_params_t& suggested)
-{
-  // adjust the suggested scrub time according to OSD-wide status
-  auto adjusted = adjust_target_time(suggested);
-  scrub_job->update_schedule(adjusted);
-}
+// void ScrubQueue::update_job(Scrub::ScrubJobRef scrub_job,
+// 			    const Scrub::sched_params_t& suggested)
+// {
+//   // adjust the suggested scrub time according to OSD-wide status
+//   auto adjusted = adjust_target_time(suggested);
+//   scrub_job->update_schedule(adjusted);
+// }
 
 
 // Scrub::sched_params_t ScrubQueue::determine_scrub_time(
@@ -1916,48 +1916,48 @@ Scrub::schedule_result_t ScrubQueue::select_n_scrub(
 #endif
 
 
-Scrub::scrub_schedule_t ScrubQueue::adjust_target_time(
-  const Scrub::sched_params_t& times) const
-{
-  Scrub::scrub_schedule_t sched_n_dead{times.proposed_time,
-					    times.proposed_time};
-
-  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
-    dout(20) << "min t: " << times.min_interval
-	     << " osd: " << conf()->osd_scrub_min_interval
-	     << " max t: " << times.max_interval
-	     << " osd: " << conf()->osd_scrub_max_interval << dendl;
-
-    dout(20) << "at " << sched_n_dead.scheduled_at << " ratio "
-	     << conf()->osd_scrub_interval_randomize_ratio << dendl;
-  }
-
-  if (times.is_must == Scrub::must_scrub_t::not_mandatory) {
-
-    // unless explicitly requested, postpone the scrub with a random delay
-    double scrub_min_interval = times.min_interval > 0
-				  ? times.min_interval
-				  : conf()->osd_scrub_min_interval;
-    double scrub_max_interval = times.max_interval > 0
-				  ? times.max_interval
-				  : conf()->osd_scrub_max_interval;
-
-    sched_n_dead.scheduled_at += scrub_min_interval;
-    double r = rand() / (double)RAND_MAX;
-    sched_n_dead.scheduled_at +=
-      scrub_min_interval * conf()->osd_scrub_interval_randomize_ratio * r;
-
-    if (scrub_max_interval <= 0) {
-      sched_n_dead.deadline = utime_t{};
-    } else {
-      sched_n_dead.deadline += scrub_max_interval;
-    }
-  }
-
-  dout(17) << "at (final) " << sched_n_dead.scheduled_at << " - "
-	   << sched_n_dead.deadline << dendl;
-  return sched_n_dead;
-}
+// Scrub::scrub_schedule_t ScrubQueue::adjust_target_time(
+//   const Scrub::sched_params_t& times) const
+// {
+//   Scrub::scrub_schedule_t sched_n_dead{times.proposed_time,
+// 					    times.proposed_time};
+// 
+//   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+//     dout(20) << "min t: " << times.min_interval
+// 	     << " osd: " << conf()->osd_scrub_min_interval
+// 	     << " max t: " << times.max_interval
+// 	     << " osd: " << conf()->osd_scrub_max_interval << dendl;
+// 
+//     dout(20) << "at " << sched_n_dead.scheduled_at << " ratio "
+// 	     << conf()->osd_scrub_interval_randomize_ratio << dendl;
+//   }
+// 
+//   if (times.is_must == Scrub::must_scrub_t::not_mandatory) {
+// 
+//     // unless explicitly requested, postpone the scrub with a random delay
+//     double scrub_min_interval = times.min_interval > 0
+// 				  ? times.min_interval
+// 				  : conf()->osd_scrub_min_interval;
+//     double scrub_max_interval = times.max_interval > 0
+// 				  ? times.max_interval
+// 				  : conf()->osd_scrub_max_interval;
+// 
+//     sched_n_dead.scheduled_at += scrub_min_interval;
+//     double r = rand() / (double)RAND_MAX;
+//     sched_n_dead.scheduled_at +=
+//       scrub_min_interval * conf()->osd_scrub_interval_randomize_ratio * r;
+// 
+//     if (scrub_max_interval <= 0) {
+//       sched_n_dead.deadline = utime_t{};
+//     } else {
+//       sched_n_dead.deadline += scrub_max_interval;
+//     }
+//   }
+// 
+//   dout(17) << "at (final) " << sched_n_dead.scheduled_at << " - "
+// 	   << sched_n_dead.deadline << dendl;
+//   return sched_n_dead;
+// }
 
 double ScrubQueue::scrub_sleep_time(bool is_mandatory) const
 {

@@ -375,8 +375,7 @@ class PgScrubber : public ScrubPgIF,
 
   void on_primary_change(std::string_view caller) final;
 
-  void on_maybe_registration_change(
-    const requested_scrub_t& request_flags) final;
+  void on_maybe_registration_change() final;
 
   void scrub_requested(scrub_level_t scrub_level,
 		       scrub_type_t scrub_type,
@@ -437,8 +436,9 @@ class PgScrubber : public ScrubPgIF,
   /**
    *  add to scrub statistics, but only if the soid is below the scrub start
    */
-  void stats_of_handled_objects(const object_stat_sum_t& delta_stats,
-				const hobject_t& soid) override
+  void stats_of_handled_objects(
+      const object_stat_sum_t& delta_stats,
+      const hobject_t& soid) override
   {
     ceph_assert(false);
   }
@@ -451,40 +451,37 @@ class PgScrubber : public ScrubPgIF,
    * PG_STATE_REPAIR are set.
    */
   void set_op_parameters(
-    const Scrub::SchedEntry& target,
-    const Scrub::ScrubPgPreconds& pg_cond);
+      const Scrub::SchedEntry& target,
+      const Scrub::ScrubPgPreconds& pg_cond);
 
   void cleanup_store(ObjectStore::Transaction* t) final;
 
-  bool get_store_errors(const scrub_ls_arg_t& arg,
-			scrub_ls_result_t& res_inout) const override
+  bool get_store_errors(const scrub_ls_arg_t& arg, scrub_ls_result_t& res_inout)
+      const override
   {
     return false;
   }
 
   void update_scrub_stats(ceph::coarse_real_clock::time_point now_is) final;
 
-  int asok_debug(std::string_view cmd,
-		 std::string param,
-		 Formatter* f,
-		 std::stringstream& ss) override;
+  int asok_debug(
+      std::string_view cmd,
+      std::string param,
+      Formatter* f,
+      std::stringstream& ss) override;
+
   int m_debug_blockrange{0};
 
-//   Scrub::schedule_result_t start_scrubbing(
-//     ceph::ref_t<Scrub::SchedTarget> trgt,
-//     requested_scrub_t& request,
-//     const Scrub::ScrubPgPreconds& pg_cond) final;
-
   Scrub::schedule_result_t start_scrubbing(
-    Scrub::SchedEntry trgt,
-    requested_scrub_t& request,
-    const Scrub::ScrubPgPreconds& pg_cond) final;
+      Scrub::SchedEntry trgt,
+      const Scrub::ScrubPgPreconds& pg_cond) final;
 
   Scrub::SchedEntry mark_for_after_repair() final;
 
-  Scrub::PossibleScrubMode select_scrub_mode(
-    Scrub::SchedEntry sched_entry,
-    const Scrub::ScrubPgPreconds& pg_cond) const;
+  // a null return means everything is OK
+  std::optional<Scrub::schedule_result_t> validate_scrub_mode(
+      Scrub::TargetRef sched_target,
+      const Scrub::ScrubPgPreconds& pg_cond);
 
   bool start_scrub_after_repair(requested_scrub_t& request_flags);
 

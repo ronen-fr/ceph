@@ -159,7 +159,7 @@ struct requested_scrub_t {
    *
    * Will be copied into the 'required' scrub flag upon scrub start.
    */
-  bool req_scrub{false};
+  //bool req_scrub{false};
 
   /**
    * Set from:
@@ -170,7 +170,7 @@ struct requested_scrub_t {
    * scrubbing starts, will cause must_scrub, must_deep_scrub and auto_repair to
    * be set.
    */
-  bool need_auto{false}; // obsolete
+  //bool need_auto{false}; // obsolete
 
   /**
    * Set for scrub-after-recovery just before we initiate the recovery deep
@@ -219,7 +219,7 @@ struct requested_scrub_t {
    * Used to indicate, both in client-facing listings and internally, that
    * the planned scrub will be a deep one.
    */
-  bool calculated_to_deep{false};
+  //bool calculated_to_deep{false};
 };
 
 std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
@@ -231,18 +231,17 @@ struct fmt::formatter<requested_scrub_t> {
   template <typename FormatContext>
   auto format(const requested_scrub_t& rs, FormatContext& ctx)
   {
-    return fmt::format_to(ctx.out(),
-                          "(plnd:{}{}{}{}{}{})",
-                          false /*rs.must_repair*/ ? " must_repair" : "",
-                          //rs.auto_repair ? " auto_repair" : "",
-                          //rs.check_repair ? " check_repair" : "",
-                          //rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
-                          rs.must_deep_scrub ? " must_deep_scrub" : "",
-                          rs.must_scrub ? " must_scrub" : "",
-                          //rs.time_for_deep ? " time_for_deep" : "",
-                          rs.need_auto ? " need_auto" : "",
-                          rs.req_scrub ? " req_scrub" : "",
-                          rs.calculated_to_deep ? " deep" : "");
+    return fmt::format_to(ctx.out(),"requested_scrub_t is obsolete");
+                        //   "(plnd:{}{}{})",
+                        //   //false /*rs.must_repair*/ ? " must_repair" : "",
+                        //   //rs.auto_repair ? " auto_repair" : "",
+                        //   //rs.check_repair ? " check_repair" : "",
+                        //   //rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
+                        //   //rs.must_deep_scrub ? " must_deep_scrub" : "",
+                        //   rs.must_scrub ? " must_scrub" : "",
+                        //   //rs.time_for_deep ? " time_for_deep" : "",
+                        //   rs.need_auto ? " need_auto" : "",
+                        //   rs.req_scrub ? " req_scrub" : "");
   }
 };
 
@@ -307,7 +306,6 @@ struct ScrubPgIF {
 
   virtual Scrub::schedule_result_t start_scrubbing(
     Scrub::SchedEntry trgt,
-    requested_scrub_t& request,
     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual Scrub::SchedEntry mark_for_after_repair() = 0;
@@ -475,7 +473,7 @@ struct ScrubPgIF {
   //virtual void update_scrub_job(const requested_scrub_t& request_flags) = 0;
 
   virtual void on_maybe_registration_change(
-    const requested_scrub_t& request_flags) = 0;
+    /*const requested_scrub_t& request_flags*/) = 0;
 
   // on the replica:
   virtual void handle_scrub_reserve_request(OpRequestRef op) = 0;
