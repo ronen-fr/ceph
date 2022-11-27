@@ -369,15 +369,13 @@ class PgScrubber : public ScrubPgIF,
 
   // managing scrub op registration
 
-  //void update_scrub_job(const requested_scrub_t& request_flags) final;
-
   void rm_from_osd_scrubbing() final;
 
   void on_primary_change(std::string_view caller) final;
 
   void on_maybe_registration_change() final;
 
-  void scrub_requested(scrub_level_t scrub_level,
+  bool scrub_requested(scrub_level_t scrub_level,
 		       scrub_type_t scrub_type) final;
 
   /**
@@ -388,11 +386,10 @@ class PgScrubber : public ScrubPgIF,
    */
   bool reserve_local() final;
 
-  //void handle_query_state(ceph::Formatter* f) final;
-
   pg_scrubbing_status_t get_schedule() const final;
 
   void on_operator_cmd(
+    ceph::Formatter* f,
     scrub_level_t scrub_level,
     int offset,
     bool must) final;

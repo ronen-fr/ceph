@@ -1156,29 +1156,15 @@ void PrimaryLogPG::do_command(
 
   else if (prefix == "scrub" || prefix == "deep_scrub") {
 
-    /*
-    RRR modify to:
-     - perform the time calculations in the ScrubJob;
-     - possibly (for the 'time' parameter missing only) implement via
-       setting to urgency=overdue (but can we keep this if a new interval
-       starts? should we?
-     - what about commands with 'time' specified?
-
-
-    */
-
     bool deep = (prefix == "deep_scrub");
     int64_t time = cmd_getval_or<int64_t>(cmdmap, "time", 0);
     // bool as_must = cmd_getval_or<bool>(cmdmap, "must", false);
 
     if (is_primary()) {
+      // the '999' to signal a 'must scrub' is an ugly hack. To fix.
       m_scrubber->on_operator_cmd(
-	deep ? scrub_level_t::deep : scrub_level_t::shallow, time,
-	(time == 999));	 // RRR fix the ugly hack
-      f->open_object_section("result");
-      f->dump_bool("deep", deep);
-      // f->dump_stream("stamp") << stamp;
-      f->close_section();
+	  f.get(), deep ? scrub_level_t::deep : scrub_level_t::shallow, time,
+	  (time == 999));
     } else {
       ss << "Not primary";
       ret = -EPERM;
@@ -1187,8 +1173,8 @@ void PrimaryLogPG::do_command(
   }
 
   else if (
-    prefix == "block" || prefix == "unblock" || prefix == "set" ||
-    prefix == "unset") {
+      prefix == "block" || prefix == "unblock" || prefix == "set" ||
+      prefix == "unset") {
     string value;
     cmd_getval(cmdmap, "value", value);
 
