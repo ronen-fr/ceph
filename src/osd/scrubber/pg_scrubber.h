@@ -102,10 +102,8 @@ struct BuildMap;
  * std::vector: no need to pre-reserve.
  */
 class ReplicaReservations {
-  using OrigSet = decltype(std::declval<PG>().get_actingset());
-
   PG* m_pg;
-  OrigSet m_acting_set;
+  std::set<pg_shard_t> m_acting_set;
   OSDService* m_osds;
   std::vector<pg_shard_t> m_waited_for_peers;
   std::vector<pg_shard_t> m_reserved_peers;
@@ -369,7 +367,6 @@ class PgScrubber : public ScrubPgIF,
 
   // managing scrub op registration
 
-  //void update_scrub_job(const requested_scrub_t& request_flags) final;
 
   void rm_from_osd_scrubbing() final;
 
@@ -377,7 +374,7 @@ class PgScrubber : public ScrubPgIF,
 
   void on_maybe_registration_change() final;
 
-  void scrub_requested(scrub_level_t scrub_level,
+  bool scrub_requested(scrub_level_t scrub_level,
 		       scrub_type_t scrub_type) final;
 
   /**
@@ -388,11 +385,10 @@ class PgScrubber : public ScrubPgIF,
    */
   bool reserve_local() final;
 
-  //void handle_query_state(ceph::Formatter* f) final;
-
   pg_scrubbing_status_t get_schedule() const final;
 
   void on_operator_cmd(
+    ceph::Formatter* f,
     scrub_level_t scrub_level,
     int offset,
     bool must) final;
@@ -740,6 +736,8 @@ class PgScrubber : public ScrubPgIF,
   void cleanup_on_finish();  // scrub_clear_state() as called for a Primary when
 			     // Active->NotActive
 
+  void err_cnt_to_clog() const;
+
  protected:
   PG* const m_pg;
 
@@ -798,10 +796,6 @@ class PgScrubber : public ScrubPgIF,
 				   //output?
 
   scrub_flags_t m_flags;
-
-  /// a reference to the details of the next scrub (as requested and managed by
-  /// the PG)
-  //requested_scrub_t& m_planned_scrub;
 
   bool m_active{false};
 
@@ -875,11 +869,6 @@ class PgScrubber : public ScrubPgIF,
   void update_op_mode_text();
 
  private:
-  /**
-   * initiate a deep-scrub after the current scrub ended with errors.
-   */
-  //void request_rescrubbing(requested_scrub_t& req_flags);
-
   void unregister_from_osd();
 
   /*
