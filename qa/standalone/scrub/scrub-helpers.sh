@@ -18,7 +18,7 @@ function extract_published_sch() {
   local -n dict=$4 # a ref to the in/out dictionary
   local current_time=$2
   local extra_time=$3
-  local extr_dbg=1 # note: 3 and above leave some temp files around
+  local extr_dbg=3 # note: 3 and above leave some temp files around
 
   #turn off '-x' (but remember previous state)
   local saved_echo_flag=${-//[^x]/}
@@ -239,6 +239,9 @@ function standard_scrub_cluster() {
             --osd_scrub_interval_randomize_ratio=0 \
             --osd_scrub_backoff_ratio=0.0 \
             --osd_pool_default_pg_autoscale_mode=off \
+            --osd_blocked_scrub_grace_period=20 \
+            --osd_stats_update_period_not_scrubbing=3 \
+            --osd_stats_update_period_scrubbing=2 \
             $extra_pars"
 
     for osd in $(seq 0 $(expr $OSDS - 1))
