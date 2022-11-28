@@ -147,7 +147,7 @@ class ReplicaReservations {
   bool m_had_rejections{false};
   int m_pending{-1};
   const pg_info_t& m_pg_info;
-  ScrubQueue::ScrubJobRef m_scrub_job;	///< a ref to this PG's scrub job
+  Scrub::ScrubJobRef m_scrub_job;	///< a ref to this PG's scrub job
   const ConfigProxy& m_conf;
 
   // detecting slow peers (see 'slow-secondary' above)
@@ -178,10 +178,11 @@ class ReplicaReservations {
    */
   void discard_all();
 
-  ReplicaReservations(PG* pg,
-                      pg_shard_t whoami,
-                      ScrubQueue::ScrubJobRef scrubjob,
-                      const ConfigProxy& conf); 
+  ReplicaReservations(
+      PG* pg,
+      pg_shard_t whoami,
+      Scrub::ScrubJobRef scrubjob,
+      const ConfigProxy& conf);
 
   ~ReplicaReservations();
 
@@ -310,6 +311,20 @@ struct scrub_flags_t {
   bool required{false};
 };
 
+
+template <>
+struct fmt::formatter<scrub_flags_t> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const scrub_flags_t& mf, FormatContext& ctx)
+  {
+    return format_to(
+	ctx.out(), "{}{}{}{}", mf.required ? ",mandatory" : "",
+	mf.auto_repair ? ",auto-rpr" : "", mf.check_repair ? ",chk-rpr" : "",
+	mf.deep_scrub_on_error ? ",deep-on-error" : "");
+  }
+};
+
 ostream& operator<<(ostream& out, const scrub_flags_t& sf);
 
 
@@ -403,17 +418,14 @@ class PgScrubber : public ScrubPgIF,
 
   // managing scrub op registration
 
-  void update_scrub_job(const requested_scrub_t& request_flags) final;
-
   void rm_from_osd_scrubbing() final;
 
-  void on_primary_change(
-    std::string_view caller,
-    const requested_scrub_t& request_flags) final;
+  void on_primary_change(std::string_view caller) final;
 
-  void scrub_requested(scrub_level_t scrub_level,
-		       scrub_type_t scrub_type,
-		       requested_scrub_t& req_flags) final;
+  void on_maybe_registration_change() final;
+
+  bool scrub_requested(scrub_level_t scrub_level,
+		       scrub_type_t scrub_type) final;
 
   /**
    * Reserve local scrub resources (managed by the OSD)
@@ -423,12 +435,15 @@ class PgScrubber : public ScrubPgIF,
    */
   bool reserve_local() final;
 
-  void handle_query_state(ceph::Formatter* f) final;
-
   pg_scrubbing_status_t get_schedule() const final;
 
-  void dump_scrubber(ceph::Formatter* f,
-		     const requested_scrub_t& request_flags) const final;
+  void on_operator_cmd(
+    ceph::Formatter* f,
+    scrub_level_t scrub_level,
+    int offset,
+    bool must) final;
+
+  void dump_scrubber(ceph::Formatter* f) const final;
 
   // used if we are a replica
 
@@ -449,8 +464,8 @@ class PgScrubber : public ScrubPgIF,
 
   void add_callback(Context* context) final { m_callbacks.push_back(context); }
 
-  [[nodiscard]] bool are_callbacks_pending() const final  // used for an assert
-							  // in PG.cc
+  /// used by an assert
+  [[nodiscard]] bool are_callbacks_pending() const final
   {
     return !m_callbacks.empty();
   }
@@ -465,8 +480,9 @@ class PgScrubber : public ScrubPgIF,
   /**
    *  add to scrub statistics, but only if the soid is below the scrub start
    */
-  void stats_of_handled_objects(const object_stat_sum_t& delta_stats,
-				const hobject_t& soid) override
+  void stats_of_handled_objects(
+      const object_stat_sum_t& delta_stats,
+      const hobject_t& soid) override
   {
     ceph_assert(false);
   }
@@ -478,23 +494,38 @@ class PgScrubber : public ScrubPgIF,
    * flag-set; PG_STATE_SCRUBBING, and possibly PG_STATE_DEEP_SCRUB &
    * PG_STATE_REPAIR are set.
    */
-  void set_op_parameters(const requested_scrub_t& request) final;
+  void set_op_parameters(
+      const Scrub::SchedEntry& target,
+      const Scrub::ScrubPgPreconds& pg_cond);
 
   void cleanup_store(ObjectStore::Transaction* t) final;
 
-  bool get_store_errors(const scrub_ls_arg_t& arg,
-			scrub_ls_result_t& res_inout) const override
+  bool get_store_errors(const scrub_ls_arg_t& arg, scrub_ls_result_t& res_inout)
+      const override
   {
     return false;
   }
 
   void update_scrub_stats(ceph::coarse_real_clock::time_point now_is) final;
 
-  int asok_debug(std::string_view cmd,
-		 std::string param,
-		 Formatter* f,
-		 std::stringstream& ss) override;
+  int asok_debug(
+      std::string_view cmd,
+      std::string param,
+      Formatter* f,
+      std::stringstream& ss) override;
+
   int m_debug_blockrange{0};
+
+  Scrub::schedule_result_t start_scrubbing(
+      Scrub::SchedEntry trgt,
+      const Scrub::ScrubPgPreconds& pg_cond) final;
+
+  Scrub::SchedEntry mark_for_after_repair() final;
+
+  // a null return means everything is OK
+  std::optional<Scrub::schedule_result_t> validate_scrub_mode(
+      Scrub::TargetRef sched_target,
+      const Scrub::ScrubPgPreconds& pg_cond);
 
   // --------------------------------------------------------------------------
   // the I/F used by the state-machine (i.e. the implementation of
@@ -619,10 +650,13 @@ class PgScrubber : public ScrubPgIF,
   virtual void _scrub_clear_state() {}
 
   utime_t m_scrub_reg_stamp;		///< stamp we registered for
-  ScrubQueue::ScrubJobRef m_scrub_job;	///< the scrub-job used by the OSD to
+  Scrub::ScrubJobRef m_scrub_job;	///< the scrub-job used by the OSD to
 					///< schedule us
 
-  ostream& show(ostream& out) const override;
+  // specifically - we were scheduled thru this entry in the OSD queue:
+  std::optional<Scrub::SchedEntry> m_active_target;
+
+  ostream& show_concise(ostream& out) const override;
 
  public:
   //  ------------------  the I/F used by the ScrubBackend (ScrubBeListener)
@@ -663,6 +697,7 @@ class PgScrubber : public ScrubPgIF,
 
  private:
   void reset_internal_state();
+  void at_scrub_failure(Scrub::delay_cause_t issue);
 
   /**
    *  the current scrubbing operation is done. We should mark that fact, so that
@@ -750,6 +785,8 @@ class PgScrubber : public ScrubPgIF,
   void cleanup_on_finish();  // scrub_clear_state() as called for a Primary when
 			     // Active->NotActive
 
+  void err_cnt_to_clog() const;
+
  protected:
   PG* const m_pg;
 
@@ -808,10 +845,6 @@ class PgScrubber : public ScrubPgIF,
 				   //output?
 
   scrub_flags_t m_flags;
-
-  /// a reference to the details of the next scrub (as requested and managed by
-  /// the PG)
-  requested_scrub_t& m_planned_scrub;
 
   bool m_active{false};
 
@@ -885,11 +918,6 @@ class PgScrubber : public ScrubPgIF,
   void update_op_mode_text();
 
  private:
-  /**
-   * initiate a deep-scrub after the current scrub ended with errors.
-   */
-  void request_rescrubbing(requested_scrub_t& req_flags);
-
   void unregister_from_osd();
 
   /*
