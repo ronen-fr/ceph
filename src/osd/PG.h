@@ -64,12 +64,16 @@ class DynamicPerfStats;
 class PgScrubber;
 class ScrubBackend;
 
+class ScrubQueue;
+
 namespace Scrub {
   class Store;
   class ReplicaReservations;
   class LocalReservation;
   class ReservedByRemotePrimary;
   enum class schedule_result_t;
+
+  struct SchedTarget;
 }
 
 #ifdef PG_DEBUG_REFS
@@ -170,6 +174,7 @@ class PG : public DoutPrefixProvider,
   friend class PeeringState;
   friend class PgScrubber;
   friend class ScrubBackend;
+  friend class ScrubQueue;
 
 public:
   const pg_shard_t pg_whoami;
@@ -178,13 +183,6 @@ public:
   /// the 'scrubber'. Will be allocated in the derivative (PrimaryLogPG) ctor,
   /// and be removed only in the PrimaryLogPG destructor.
   std::unique_ptr<ScrubPgIF> m_scrubber;
-
-  /// flags detailing scheduling/operation characteristics of the next scrub 
-  requested_scrub_t m_planned_scrub;
-
-  const requested_scrub_t& get_planned_scrub() const {
-    return m_planned_scrub;
-  }
 
   /// scrubbing state for both Primary & replicas
   bool is_scrub_active() const { return m_scrubber->is_scrub_active(); }
@@ -542,8 +540,6 @@ public:
 
   void on_primary_status_change(bool was_primary, bool now_primary) override;
 
-  void reschedule_scrub() override;
-
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) override;
 
   uint64_t get_snap_trimq_size() const override {
@@ -706,44 +702,16 @@ public:
   void shutdown();
   virtual void on_shutdown() = 0;
 
-  bool get_must_scrub() const;
-  Scrub::schedule_result_t sched_scrub();
+  Scrub::schedule_result_t start_scrubbing(Scrub::SchedEntry trgt);
 
-  unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const;
+  unsigned int scrub_requeue_priority(
+    Scrub::scrub_prio_t with_priority,
+    unsigned int suggested_priority) const;
   /// the version that refers to flags_.priority
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority) const;
-private:
+ private:
   // auxiliaries used by sched_scrub():
   double next_deepscrub_interval() const;
-
-  /// should we perform deep scrub?
-  bool is_time_for_deep(bool allow_deep_scrub,
-                        bool allow_shallow_scrub,
-                        bool has_deep_errors,
-                        const requested_scrub_t& planned) const;
-
-  /**
-   * Validate the various 'next scrub' flags in m_planned_scrub against configuration
-   * and scrub-related timestamps.
-   *
-   * @returns an updated copy of the m_planned_flags (or nothing if no scrubbing)
-   */
-  std::optional<requested_scrub_t> validate_scrub_mode() const;
-
-  std::optional<requested_scrub_t> validate_periodic_mode(
-    bool allow_deep_scrub,
-    bool try_to_auto_repair,
-    bool allow_shallow_scrub,
-    bool time_for_deep,
-    bool has_deep_errors,
-    const requested_scrub_t& planned) const;
-
-  std::optional<requested_scrub_t> validate_initiated_scrub(
-    bool allow_deep_scrub,
-    bool try_to_auto_repair,
-    bool time_for_deep,
-    bool has_deep_errors,
-    const requested_scrub_t& planned) const;
 
   using ScrubAPI = void (ScrubPgIF::*)(epoch_t epoch_queued);
   void forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc);
@@ -1369,7 +1337,7 @@ protected:
   virtual void snap_trimmer_scrub_complete() = 0;
 
   void queue_recovery();
-  void queue_scrub_after_repair();
+  void start_after_repair_scrub();
   unsigned int get_scrub_priority();
 
   bool try_flush_or_schedule_async() override;
@@ -1420,10 +1388,6 @@ public:
 
  OSDService* get_pg_osd(ScrubberPasskey) const { return osd; }
 
- requested_scrub_t& get_planned_scrub(ScrubberPasskey)
- {
-   return m_planned_scrub;
- }
 
  void force_object_missing(ScrubberPasskey,
                            const std::set<pg_shard_t>& peer,
@@ -1437,6 +1401,18 @@ public:
  {
    return get_pgbackend()->be_get_ondisk_size(logical_size);
  }
+};
+
+
+// RRR reimplement as a unique-ptr to a PGRef with custom deleter?
+class PgLockWrapper {
+public:
+  //PgLockWrapper(const spg_t& pg); // created from the outside (no access to the lookup_lock.. from the inside)
+  ~PgLockWrapper();
+  // RRR prevent copy and assignment
+
+
+  PGRef m_pg{nullptr};
 };
 
 #endif
