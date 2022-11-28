@@ -17,7 +17,21 @@ class Formatter;
 struct PGPool;
 
 namespace Scrub {
-  class ReplicaReservations;
+class ReplicaReservations;
+
+// possible outcome when trying to select a PG and scrub it
+enum class schedule_result_t {
+  scrub_initiated,     // successfully started a scrub
+  none_ready,	       // no pg to scrub
+  no_local_resources,  // failure to secure local OSD scrub resource
+  already_started,     // failed, as already started scrubbing this pg
+  no_such_pg,	       // can't find this pg
+  bad_pg_state,	       // pg state (clean, active, etc.)
+  preconditions	       // time, configuration, etc.
+};
+
+class SchedTarget;
+struct SchedEntry;
 }
 
 /// Facilitating scrub-realated object access to private PG data
@@ -27,6 +41,7 @@ private:
   friend class PrimaryLogScrub;
   friend class PgScrubber;
   friend class ScrubBackend;
+  friend class ScrubQueue;
   ScrubberPasskey() {}
   ScrubberPasskey(const ScrubberPasskey&) = default;
   ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
@@ -49,6 +64,53 @@ struct ScrubPreconds {
   bool only_deadlined{false};
 };
 
+// concise passing of PG state re scrubbing to the
+// scrubber at initiation of a scrub
+struct ScrubPgPreconds {
+  bool allow_shallow{true};
+  bool allow_deep{true};
+  bool has_deep_errors{false};
+  bool can_autorepair{false};
+};
+}
+
+template <>
+struct fmt::formatter<Scrub::ScrubPreconds> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::ScrubPreconds& conds, FormatContext& ctx)
+  {
+    return fmt::format_to(
+      ctx.out(),
+      "overdue-only:{} load:{} time:{} repair-only:{}",
+        conds.only_deadlined,
+        conds.load_is_low ? "ok" : "high",
+        conds.time_permit ? "ok" : "no",
+        conds.allow_requested_repair_only);
+  }
+};
+
+template <>
+struct fmt::formatter<Scrub::ScrubPgPreconds> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::ScrubPgPreconds& conds, FormatContext& ctx)
+  {
+    return fmt::format_to(
+      ctx.out(),
+      "allowed:{}/{} err:{} autorp:{}",
+        conds.allow_shallow ? "+" : "-",
+        conds.allow_deep ? "+" : "-",
+        conds.has_deep_errors ? "+" : "-",
+        conds.can_autorepair ? "+" : "-");
+  }
+};
+
+
+namespace Scrub {
+
 /// PG services used by the scrubber backend
 struct PgScrubBeListener {
   virtual ~PgScrubBeListener() = default;
@@ -64,124 +126,12 @@ struct PgScrubBeListener {
   // query the PG backend for the on-disk size of an object
   virtual uint64_t logical_to_ondisk_size(uint64_t logical_size) const = 0;
 
-  // used to verify our "cleaness" before scrubbing
+  // used to verify our "cleanliness" before scrubbing
   virtual bool is_waiting_for_unreadable_object() const = 0;
 };
 
 }  // namespace Scrub
 
-
-/**
- * Flags affecting the scheduling and behaviour of the *next* scrub.
- *
- * we hold two of these flag collections: one
- * for the next scrub, and one frozen at initiation (i.e. in pg::queue_scrub())
- */
-struct requested_scrub_t {
-
-  // flags to indicate explicitly requested scrubs (by admin):
-  // bool must_scrub, must_deep_scrub, must_repair, need_auto;
-
-  /**
-   * 'must_scrub' is set by an admin command (or by need_auto).
-   *  Affects the priority of the scrubbing, and the sleep periods
-   *  during the scrub.
-   */
-  bool must_scrub{false};
-
-  /**
-   * scrub must not be aborted.
-   * Set for explicitly requested scrubs, and for scrubs originated by the
-   * pairing process with the 'repair' flag set (in the RequestScrub event).
-   *
-   * Will be copied into the 'required' scrub flag upon scrub start.
-   */
-  bool req_scrub{false};
-
-  /**
-   * Set from:
-   *  - scrub_requested() with need_auto param set, which only happens in
-   *  - scrub_finish() - if deep_scrub_on_error is set, and we have errors
-   *
-   * If set, will prevent the OSD from casually postponing our scrub. When
-   * scrubbing starts, will cause must_scrub, must_deep_scrub and auto_repair to
-   * be set.
-   */
-  bool need_auto{false};
-
-  /**
-   * Set for scrub-after-recovery just before we initiate the recovery deep
-   * scrub, or if scrub_requested() was called with either need_auto ot repair.
-   * Affects PG_STATE_DEEP_SCRUB.
-   */
-  bool must_deep_scrub{false};
-
-  /**
-   * (An intermediary flag used by pg::sched_scrub() on the first time
-   * a planned scrub has all its resources). Determines whether the next
-   * repair/scrub will be 'deep'.
-   *
-   * Note: 'dumped' by PgScrubber::dump() and such. In reality, being a
-   * temporary that is set and reset by the same operation, will never
-   * appear externally to be set
-   */
-  bool time_for_deep{false};
-
-  bool deep_scrub_on_error{false};
-
-  /**
-   * If set, we should see must_deep_scrub & must_scrub, too
-   *
-   * - 'must_repair' is checked by the OSD when scheduling the scrubs.
-   * - also checked & cleared at pg::queue_scrub()
-   */
-  bool must_repair{false};
-
-  /*
-   * the value of auto_repair is determined in sched_scrub() (once per scrub.
-   * previous value is not remembered). Set if
-   * - allowed by configuration and backend, and
-   * - must_scrub is not set (i.e. - this is a periodic scrub),
-   * - time_for_deep was just set
-   */
-  bool auto_repair{false};
-
-  /**
-   * indicating that we are scrubbing post repair to verify everything is fixed.
-   * Otherwise - PG_STATE_FAILED_REPAIR will be asserted.
-   */
-  bool check_repair{false};
-
-  /**
-   * Used to indicate, both in client-facing listings and internally, that
-   * the planned scrub will be a deep one.
-   */
-  bool calculated_to_deep{false};
-};
-
-std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
-
-template <>
-struct fmt::formatter<requested_scrub_t> {
-  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
-  template <typename FormatContext>
-  auto format(const requested_scrub_t& rs, FormatContext& ctx)
-  {
-    return fmt::format_to(ctx.out(),
-                          "(plnd:{}{}{}{}{}{}{}{}{}{})",
-                          rs.must_repair ? " must_repair" : "",
-                          rs.auto_repair ? " auto_repair" : "",
-                          rs.check_repair ? " check_repair" : "",
-                          rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
-                          rs.must_deep_scrub ? " must_deep_scrub" : "",
-                          rs.must_scrub ? " must_scrub" : "",
-                          rs.time_for_deep ? " time_for_deep" : "",
-                          rs.need_auto ? " need_auto" : "",
-                          rs.req_scrub ? " req_scrub" : "",
-                          rs.calculated_to_deep ? " deep" : "");
-  }
-};
 
 /**
  *  The interface used by the PG when requesting scrub-related info or services
@@ -192,10 +142,10 @@ struct ScrubPgIF {
 
   friend std::ostream& operator<<(std::ostream& out, const ScrubPgIF& s)
   {
-    return s.show(out);
+    return s.show_concise(out);
   }
 
-  virtual std::ostream& show(std::ostream& out) const = 0;
+  virtual std::ostream& show_concise(std::ostream& out) const = 0;
 
   // --------------- triggering state-machine events:
 
@@ -241,10 +191,15 @@ struct ScrubPgIF {
 
   // --------------------------------------------------
 
-  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	 // currently
-								 // only used
-								 // for an
-								 // assert
+
+  virtual Scrub::schedule_result_t start_scrubbing(
+    Scrub::SchedEntry trgt,
+    const Scrub::ScrubPgPreconds& pg_cond) = 0;
+
+  virtual Scrub::SchedEntry mark_for_after_repair() = 0;
+
+  // currently only used for an assertion:
+  [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	
 
   /**
    * the scrubber is marked 'active':
@@ -280,16 +235,18 @@ struct ScrubPgIF {
 
   virtual void replica_scrub_op(OpRequestRef op) = 0;
 
-  virtual void set_op_parameters(const requested_scrub_t&) = 0;
-
   virtual void scrub_clear_state() = 0;
-
-  virtual void handle_query_state(ceph::Formatter* f) = 0;
 
   virtual pg_scrubbing_status_t get_schedule() const = 0;
 
-  virtual void dump_scrubber(ceph::Formatter* f,
-			     const requested_scrub_t& request_flags) const = 0;
+  //// perform 'scrub'/'deep_scrub' asok commands
+  virtual void on_operator_cmd(
+    ceph::Formatter* f,
+    scrub_level_t scrub_level,
+    int offset,
+    bool must) = 0;
+
+  virtual void dump_scrubber(ceph::Formatter* f) const = 0;
 
   /**
    * Return true if soid is currently being scrubbed and pending IOs should
@@ -386,17 +343,9 @@ struct ScrubPgIF {
    *
    * Following our status as Primary or replica.
    */
-  virtual void on_primary_change(
-    std::string_view caller,
-    const requested_scrub_t& request_flags) = 0;
+  virtual void on_primary_change(std::string_view caller) = 0;
 
-  /**
-   * Recalculate the required scrub time.
-   *
-   * This function assumes that the queue registration status is up-to-date,
-   * i.e. the OSD "knows our name" if-f we are the Primary.
-   */
-  virtual void update_scrub_job(const requested_scrub_t& request_flags) = 0;
+  virtual void on_maybe_registration_change() = 0;
 
   // on the replica:
   virtual void handle_scrub_reserve_request(OpRequestRef op) = 0;
@@ -409,9 +358,9 @@ struct ScrubPgIF {
 
   virtual void rm_from_osd_scrubbing() = 0;
 
-  virtual void scrub_requested(scrub_level_t scrub_level,
-			       scrub_type_t scrub_type,
-			       requested_scrub_t& req_flags) = 0;
+  /// returns the requested scrub's level
+  virtual bool scrub_requested(scrub_level_t scrub_level,
+			       scrub_type_t scrub_type) = 0;
 
   // --------------- debugging via the asok ------------------------------
 
