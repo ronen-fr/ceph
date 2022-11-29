@@ -163,10 +163,10 @@ public:
   /// Notify PG that Primary/Replica status has changed (to update scrub registration)
   void on_primary_status_change(bool was_primary, bool now_primary) final {
   }
-
-  /// Need to reschedule next scrub. Assuming no change in role
-  void reschedule_scrub() final {
-  }
+// 
+//   /// Need to reschedule next scrub. Assuming no change in role
+//   void reschedule_scrub() final {
+//   }
 
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) final;
 
