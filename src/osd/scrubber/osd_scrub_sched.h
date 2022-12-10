@@ -190,6 +190,7 @@ public:
   // well - we couldn't do it anyway. But it's not needed, as
   // we will only copy targets of the same ScrubJob.
   SchedTarget& operator=(const SchedTarget& r);
+  std::ostream& gen_prefix(std::ostream& out) const;
 
 private:
   urgency_t urgency{urgency_t::off};
@@ -231,6 +232,8 @@ private:
 
   // copied from the parent job, to avoid having to rely on a backlink
   spg_t pgid;
+  /// the OSD id (for the log)
+  int whoami;
   CephContext* cct;
 
   /**
@@ -279,8 +282,6 @@ public:
   bool is_viable() const { return urgency > urgency_t::off; }
   bool is_scrubbing() const { return scrubbing; }
 
-
-public:
   /**
    * For sched-targets, lower is better.
    * The <=> operator is used for "regular" comparisons.
@@ -353,6 +354,8 @@ private:
       const pg_info_t& info,
       const sched_conf_t& aconf,
       utime_t now_is);
+
+  std::string m_log_prefix;
 };
 
 std::partial_ordering clock_based_cmp(

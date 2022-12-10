@@ -367,7 +367,6 @@ class PgScrubber : public ScrubPgIF,
 
   // managing scrub op registration
 
-
   void rm_from_osd_scrubbing() final;
 
   void on_primary_change(std::string_view caller) final;
@@ -414,8 +413,8 @@ class PgScrubber : public ScrubPgIF,
 
   void add_callback(Context* context) final { m_callbacks.push_back(context); }
 
-  [[nodiscard]] bool are_callbacks_pending() const final  // used for an assert
-							  // in PG.cc
+  /// used by an assert
+  [[nodiscard]] bool are_callbacks_pending() const final
   {
     return !m_callbacks.empty();
   }

@@ -169,6 +169,19 @@ std::partial_ordering Scrub::clock_based_cmp(
   return r.is_deep() <=> l.is_deep();
 }
 
+// 'dout' defs for SchedTarget
+#define dout_context (cct)
+#define dout_subsys ceph_subsys_osd
+#undef dout_prefix
+#define dout_prefix _prefix_target(_dout, this)
+
+template <class T>
+static ostream& _prefix_target(std::ostream* _dout, T* t)
+{
+  return t->gen_prefix(*_dout);
+}
+
+
 /**
  * A SchedTarget names both a PG to scrub and the level (deepness) of scrubbing.
  * SchedTarget objects are what the OSD schedules in the scrub queue, then
@@ -182,12 +195,21 @@ SchedTarget::SchedTarget(
     scrub_level_t base_type,
     std::string dbg)
     : pgid{owning_job.pgid}
+    , whoami{owning_job.whoami}
     , cct{owning_job.cct}
     , base_target_level{base_type}
     , dbg_val{dbg}
 {
   ceph_assert(cct);
+  m_log_prefix =
+      fmt::format("osd.{} pg[{}] ScrubTrgt: ", whoami, pgid.pgid, dbg_val);
 }
+
+std::ostream& SchedTarget::gen_prefix(std::ostream& out) const
+{
+  return out << m_log_prefix;
+}
+
 
 bool SchedTarget::check_and_redraw_upgrade()
 {
@@ -212,6 +234,10 @@ void SchedTarget::set_oper_deep_target(scrub_type_t rpr)
   not_before = std::min(not_before, ceph_clock_now());
   auto_repairing = false;
   last_issue = delay_cause_t::none;
+  dout(20) << fmt::format(
+		  "{}: repair?{} final:{}", __func__,
+		  ((rpr == scrub_type_t::do_repair) ? "+" : "-"), *this)
+	   << dendl;
 }
 
 void SchedTarget::set_oper_shallow_target(scrub_type_t rpr)
@@ -227,7 +253,9 @@ void SchedTarget::set_oper_shallow_target(scrub_type_t rpr)
   last_issue = delay_cause_t::none;
 }
 
-/// \todo verify there's no interaction with 'noscrub'
+
+using TargetRef = Scrub::TargetRef;
+
 void Scrub::ScrubJob::operator_forced_targets(
     scrub_level_t level,
     scrub_type_t scrub_type)
@@ -338,6 +366,107 @@ void SchedTarget::dump(std::string_view sect_name, ceph::Formatter* f) const
 }
 
 
+SchedTarget& SchedTarget::operator=(const SchedTarget& r)
+{
+  ceph_assert(base_target_level == r.base_target_level);
+  ceph_assert(pgid == r.pgid);
+  // the above also guarantees that we have the same cct
+  urgency = r.urgency;
+  not_before = r.not_before;
+  deadline = r.deadline;
+  target = r.target;
+  scrubbing = r.scrubbing;  // to reconsider
+  deep_or_upgraded = r.deep_or_upgraded;
+  last_issue = r.last_issue;
+  auto_repairing = r.auto_repairing;
+  do_repair = r.do_repair;
+  marked_for_dequeue = r.marked_for_dequeue;
+  eph_ripe_for_sort = r.eph_ripe_for_sort;
+  dbg_val = r.dbg_val;
+  return *this;
+}
+
+// an aux used by SchedTarget::update_target()
+// RRR make sure we are not un-penalizing failed PGs
+
+void SchedTarget::update_as_shallow(
+    const pg_info_t& pg_info,
+    const Scrub::sched_conf_t& config,
+    utime_t time_now)
+{
+  ceph_assert(base_target_level == scrub_level_t::shallow);
+  if (!is_periodic()) {
+    // shouldn't be called for high-urgency scrubs
+    return;
+  }
+
+  if (pg_info.stats.stats_invalid && config.mandatory_on_invalid) {
+    urgency = urgency_t::must;
+    target = time_now;
+    not_before = time_now;
+    if (config.max_shallow && *config.max_shallow > 0.1) {
+      deadline = add_double(time_now, *config.max_shallow);
+    }
+  } else {
+    auto base = pg_info.stats.stats_invalid ? time_now
+					    : pg_info.history.last_scrub_stamp;
+    target = add_double(base, config.shallow_interval);
+    // if in the past - do not delay. Otherwise - add a random delay
+    if (target > time_now) {
+      double r = rand() / (double)RAND_MAX;
+      target += config.shallow_interval * config.interval_randomize_ratio * r;
+    }
+    not_before = target;
+    urgency = urgency_t::periodic_regular;
+
+    if (config.max_shallow && *config.max_shallow > 0.1) {
+      deadline = add_double(target, *config.max_shallow);
+
+      if (time_now > deadline) {
+	urgency = urgency_t::overdue;
+      }
+    }
+  }
+  last_issue = delay_cause_t::none;
+
+  // prepare the 'upgrade lottery' for when it will be needed (i.e. when
+  // we schedule the next shallow scrub)
+  std::ignore = check_and_redraw_upgrade();
+
+  // RRR does not match the original logic, but seems to be required
+  // for testing (standalone/scrub-test):
+  deadline = add_double(target, config.max_deep);
+}
+
+void SchedTarget::update_as_deep(
+    const pg_info_t& pg_info,
+    const Scrub::sched_conf_t& config,
+    utime_t time_now)
+{
+  ceph_assert(base_target_level == scrub_level_t::deep);
+  ceph_assert(is_periodic());
+
+  auto base = pg_info.stats.stats_invalid
+		  ? time_now
+		  : pg_info.history.last_deep_scrub_stamp;
+
+  target = add_double(base, config.deep_interval);
+  // if in the past - do not delay. Otherwise - add a random delay
+  if (target > time_now) {
+    double r = rand() / (double)RAND_MAX;
+    target += config.deep_interval * config.interval_randomize_ratio * r;
+  }
+  not_before = target;
+  deadline = add_double(target, config.max_deep);
+
+  urgency =
+      (time_now > deadline) ? urgency_t::overdue : urgency_t::periodic_regular;
+  auto_repairing = false;
+  // so that we can refer to 'upgraded..' for both shallow & deep targets:
+  deep_or_upgraded = true;
+}
+
+
 // /////////////////////////////////////////////////////////////////////////
 // ScrubJob
 
@@ -445,51 +574,6 @@ void ScrubJob::at_failure(scrub_level_t lvl, delay_cause_t issue)
 }
 
 
-// ////////////////////////////////////////////////////////////////////////// //
-// ScrubQueue
-
-#undef dout_context
-#define dout_context (cct)
-#undef dout_prefix
-#define dout_prefix                                                            \
-  *_dout << "osd." << osd_service.get_nodeid() << " scrub-queue::" << __func__ \
-	 << " "
-
-using TargetRef = Scrub::TargetRef;
-
-ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
-    : cct{cct}
-    , osd_service{osds}
-{
-  // initialize the daily loadavg with current 15min loadavg
-  if (double loadavgs[3]; getloadavg(loadavgs, 3) == 3) {
-    daily_loadavg = loadavgs[2];
-  } else {
-    derr << "OSD::init() : couldn't read loadavgs\n" << dendl;
-    daily_loadavg = 1.0;
-  }
-}
-
-std::optional<double> ScrubQueue::update_load_average()
-{
-  int hb_interval = conf()->osd_heartbeat_interval;
-  int n_samples = 60 * 24 * 24;
-  if (hb_interval > 1) {
-    n_samples /= hb_interval;
-    if (n_samples < 1)
-      n_samples = 1;
-  }
-
-  // get CPU load avg
-  double loadavg;
-  if (getloadavg(&loadavg, 1) == 1) {
-    daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavg) / n_samples;
-    dout(17) << "heartbeat: daily_loadavg " << daily_loadavg << dendl;
-    return 100 * loadavg;
-  }
-
-  return std::nullopt;
-}
 
 std::string_view ScrubJob::state_desc() const
 {
@@ -517,25 +601,6 @@ void ScrubJob::determine_closest()
   }
 }
 
-SchedTarget& SchedTarget::operator=(const SchedTarget& r)
-{
-  ceph_assert(base_target_level == r.base_target_level);
-  ceph_assert(pgid == r.pgid);
-  // the above also guarantees that we have the same cct
-  urgency = r.urgency;
-  not_before = r.not_before;
-  deadline = r.deadline;
-  target = r.target;
-  scrubbing = r.scrubbing;  // to reconsider
-  deep_or_upgraded = r.deep_or_upgraded;
-  last_issue = r.last_issue;
-  auto_repairing = r.auto_repairing;
-  do_repair = r.do_repair;
-  marked_for_dequeue = r.marked_for_dequeue;
-  eph_ripe_for_sort = r.eph_ripe_for_sort;
-  dbg_val = r.dbg_val;
-  return *this;
-}
 
 void ScrubJob::mark_for_dequeue()
 {
@@ -708,86 +773,6 @@ and, btw:
 */
 
 
-// an aux used by SchedTarget::update_target()
-// RRR make sure we are not un-penalizing failed PGs
-
-void SchedTarget::update_as_shallow(
-    const pg_info_t& pg_info,
-    const Scrub::sched_conf_t& config,
-    utime_t time_now)
-{
-  ceph_assert(base_target_level == scrub_level_t::shallow);
-  if (!is_periodic()) {
-    // shouldn't be called for high-urgency scrubs
-    return;
-  }
-
-  if (pg_info.stats.stats_invalid && config.mandatory_on_invalid) {
-    urgency = urgency_t::must;
-    target = time_now;
-    not_before = time_now;
-    if (config.max_shallow && *config.max_shallow > 0.1) {
-      deadline = add_double(time_now, *config.max_shallow);
-    }
-  } else {
-    auto base = pg_info.stats.stats_invalid ? time_now
-					    : pg_info.history.last_scrub_stamp;
-    target = add_double(base, config.shallow_interval);
-    // if in the past - do not delay. Otherwise - add a random delay
-    if (target > time_now) {
-      double r = rand() / (double)RAND_MAX;
-      target += config.shallow_interval * config.interval_randomize_ratio * r;
-    }
-    not_before = target;
-    urgency = urgency_t::periodic_regular;
-
-    if (config.max_shallow && *config.max_shallow > 0.1) {
-      deadline = add_double(target, *config.max_shallow);
-
-      if (time_now > deadline) {
-	urgency = urgency_t::overdue;
-      }
-    }
-  }
-  last_issue = delay_cause_t::none;
-
-  // prepare the 'upgrade lottery' for when it will be needed (i.e. when
-  // we schedule the next shallow scrub)
-  std::ignore = check_and_redraw_upgrade();
-
-  // RRR does not match the original logic, but seems to be required
-  // for testing (standalone/scrub-test):
-  deadline = add_double(target, config.max_deep);
-}
-
-void SchedTarget::update_as_deep(
-    const pg_info_t& pg_info,
-    const Scrub::sched_conf_t& config,
-    utime_t time_now)
-{
-  ceph_assert(base_target_level == scrub_level_t::deep);
-  ceph_assert(is_periodic());
-
-  auto base = pg_info.stats.stats_invalid
-		  ? time_now
-		  : pg_info.history.last_deep_scrub_stamp;
-
-  target = add_double(base, config.deep_interval);
-  // if in the past - do not delay. Otherwise - add a random delay
-  if (target > time_now) {
-    double r = rand() / (double)RAND_MAX;
-    target += config.deep_interval * config.interval_randomize_ratio * r;
-  }
-  not_before = target;
-  deadline = add_double(target, config.max_deep);
-
-  urgency =
-      (time_now > deadline) ? urgency_t::overdue : urgency_t::periodic_regular;
-  auto_repairing = false;
-  // so that we can refer to 'upgraded..' for both shallow & deep targets:
-  deep_or_upgraded = true;
-}
-
 
 // should we use '<'overdue instead of '<='?
 static bool to_change_on_conf(urgency_t u)
@@ -898,6 +883,51 @@ void ScrubJob::un_penalize(utime_t now_is)
 
   penalized = false;
   determine_closest();
+}
+
+// ////////////////////////////////////////////////////////////////////////// //
+// ScrubQueue
+
+#undef dout_context
+#define dout_context (cct)
+#undef dout_prefix
+#define dout_prefix                                                            \
+  *_dout << "osd." << osd_service.get_nodeid() << " scrub-queue::" << __func__ \
+	 << " "
+
+
+ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
+    : cct{cct}
+    , osd_service{osds}
+{
+  // initialize the daily loadavg with current 15min loadavg
+  if (double loadavgs[3]; getloadavg(loadavgs, 3) == 3) {
+    daily_loadavg = loadavgs[2];
+  } else {
+    derr << "OSD::init() : couldn't read loadavgs\n" << dendl;
+    daily_loadavg = 1.0;
+  }
+}
+
+std::optional<double> ScrubQueue::update_load_average()
+{
+  int hb_interval = conf()->osd_heartbeat_interval;
+  int n_samples = 60 * 24 * 24;
+  if (hb_interval > 1) {
+    n_samples /= hb_interval;
+    if (n_samples < 1)
+      n_samples = 1;
+  }
+
+  // get CPU load avg
+  double loadavg;
+  if (getloadavg(&loadavg, 1) == 1) {
+    daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavg) / n_samples;
+    dout(17) << "heartbeat: daily_loadavg " << daily_loadavg << dendl;
+    return 100 * loadavg;
+  }
+
+  return std::nullopt;
 }
 
 
