@@ -137,9 +137,60 @@ struct scrub_schedule_t {
   utime_t deadline{0, 0};
 };
 
+/**
+ * Possible urgency levels for a specific scheduling target (shallow or deep):
+ *
+ * 'off' - the target is not scheduled for scrubbing. This is the initial state,
+ * 	and is also the state for a target that is not eligible for scrubbing
+ * 	(e.g. before removing from the OSD).
+ *
+ * periodic scrubs:
+ * ---------------
+ *
+ * 'penalized' - our last attempt to scrub the specific PG has failed due to
+ *      reservation issues. We will try again, but with a delay:
+ *      all other targets will be tried first.
+ *      This state is time-limited by the penalty_timeout field in the
+ *      owning ScrubJob.
+ *
+ * 'periodic_regular' - the "standard" shallow/deep scrub performed
+ *      periodically on each PG.
+ *
+ * 'overdue' - the target is eligible for periodic scrubbing, but has not been
+ *      scrubbed for a while, and the time now is past its deadline.
+ *      Overdue scrubs are allowed to run even if the OSD is overloaded, and in
+ *      the wrong time or day.
+ *      Also - their target time is not modified upon a configuration change.
+ *
+ *
+ * priority scrubs (termed 'required' or 'must' in the legacy code):
+ * ---------------------------------------------------------------
+ * Priority scrubs:
+ * - are not subject to times/days/load limitations;
+ * - cannot be aborted by 'noscrub'/'nodeep-scrub' flags;
+ * - are never marked 'penalized' (even if failing to reserve replicas);
+ * - do not have random delays added to their target time;
+ * - never have their target time modified by a configuration change;
+ * - never subject to 'extended sleep time' (see scrub_sleep_time());
+ *
+ *
+ * 'operator_requested' - the target was manually requested for scrubbing by
+ *      an administrator.
+ *
+ * 'must' - the target is required to be scrubbed, as:
+ *      - the scrub was initiated by a message specifying 'do_repair'; or
+ *      - the PG info is not valid (i.e. we do not have a valid 'last-scrub' stamp)
+ *   or - a deep scrub is required after the previous scrub ended with errors.
+ *      'must' scrubs are similar to 'operator_requested', but have a higher
+ *      priority (and have a repair flag set).
+ *
+
+
+ *
+ */
 enum class urgency_t {
   off,
-  penalized,  //< replica reservation failure
+  penalized,
   periodic_regular,
   overdue,
   operator_requested,
@@ -279,6 +330,7 @@ public:
   }
 
   bool is_periodic() const { return urgency <= urgency_t::overdue; }
+  bool is_required() const { return urgency > urgency_t::overdue; }
   bool is_viable() const { return urgency > urgency_t::off; }
   bool is_scrubbing() const { return scrubbing; }
 
@@ -406,6 +458,7 @@ struct ScrubJob final : public RefCountedObject {
 
   /// update 'closest_target':
   void determine_closest();
+  void determine_closest(utime_t now_is);
 
   void mark_for_dequeue();
   void clear_marked_for_dequeue();
@@ -449,7 +502,7 @@ struct ScrubJob final : public RefCountedObject {
 
   bool is_ripe(utime_t now_is) const
   {
-    return closest_target.get().is_ripe(now_is);
+    return shallow_target.is_ripe(now_is) || deep_target.is_ripe(now_is);
   }
 
   /**
@@ -626,11 +679,14 @@ class ScrubQueue {
 
   static std::string_view qu_state_text(Scrub::qu_state_t st);
 
-  // RRR describe
+  /**
+   * the main entry point for the OSD. Called in OSD::tick_without_osd_lock()
+   * to determine if there are PGs that are ready to be scrubbed, and to
+   * initiate a scrub session on one of them.
+   */
   void sched_scrub(
       const ceph::common::ConfigProxy& config,
       bool is_recovery_active);
-
 
   /**
    * Translate attempt_ values into readable text
@@ -661,7 +717,10 @@ class ScrubQueue {
    */
   void register_with_osd(Scrub::ScrubJobRef sjob);
 
-  // can only be moved here if we give the ScrubQueue the ability to lock PGs
+  /*
+   * handles a change to the configuration parameters affecting the scheduling
+   * of scrubs.
+   */
   void on_config_times_change();
 
  public:
@@ -712,15 +771,9 @@ class ScrubQueue {
   Scrub::ScrubSchedListener& osd_service;
 
 #ifdef WITH_SEASTAR
-  auto& conf() const
-  {
-    return local_conf();
-  }
+  auto& conf() const { return local_conf(); }
 #else
-  auto& conf() const
-  {
-    return cct->_conf;
-  }
+  auto& conf() const { return cct->_conf; }
 #endif
 
   /**
@@ -800,7 +853,7 @@ class ScrubQueue {
   mutable ceph::mutex resource_lock =
       ceph::make_mutex("ScrubQueue::resource_lock");
 
-  // the counters used to manage scrub activity parallelism:
+  /// the counters used to manage scrub activity parallelism:
   int scrubs_local{0};
   int scrubs_remote{0};
 
@@ -840,10 +893,7 @@ class ScrubQueue {
   /**
    * unit-tests will override this function to return a mock time
    */
-  virtual utime_t time_now() const
-  {
-    return ceph_clock_now();
-  }
+  virtual utime_t time_now() const { return ceph_clock_now(); }
 };
 
 class PgLockWrapper;

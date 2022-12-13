@@ -711,8 +711,6 @@ public:
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority) const;
  private:
   // auxiliaries used by sched_scrub():
-  double next_deepscrub_interval() const;
-
   using ScrubAPI = void (ScrubPgIF::*)(epoch_t epoch_queued);
   void forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc);
   // and for events that carry a meaningful 'activation token'
@@ -1403,15 +1401,9 @@ public:
  }
 };
 
-
-// RRR reimplement as a unique-ptr to a PGRef with custom deleter?
 class PgLockWrapper {
 public:
-  //PgLockWrapper(const spg_t& pg); // created from the outside (no access to the lookup_lock.. from the inside)
   ~PgLockWrapper();
-  // RRR prevent copy and assignment
-
-
   PGRef m_pg{nullptr};
 };
 

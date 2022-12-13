@@ -1292,7 +1292,9 @@ unsigned int PG::scrub_requeue_priority(Scrub::scrub_prio_t with_priority) const
   return m_scrubber->scrub_requeue_priority(with_priority);
 }
 
-unsigned int PG::scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const
+unsigned int PG::scrub_requeue_priority(
+    Scrub::scrub_prio_t with_priority,
+    unsigned int suggested_priority) const
 {
   return m_scrubber->scrub_requeue_priority(with_priority, suggested_priority);
 }
@@ -1301,18 +1303,12 @@ unsigned int PG::scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsig
 // SCRUB
 
 /*
- *  implementation note:
+ *  Implementation note:
  *  PG::start_scrubbing() is called only once per a specific scrub session.
  *  That call commits us to the whatever choices are made (deep/shallow, etc').
- *  Unless failing to start scrubbing, the 'planned scrub' flag-set is 'frozen' into
- *  PgScrubber's m_flags, then cleared.
+ *  We do know, entering this function, what type of scrub we are to perform -
+ *  as we have the specific SchedTarget.
  */
-
-/*
-Note that we know what type of scrub was requested of, as we have the specific SchedTarget.
-This object might be a 'deep scrub' request, or a 'shallow scrub' - but for a 'shallow'
-object, we may have the 'randomly upgraded to deep' flag set.
-*/
 Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedEntry trgt)
 {
   using Scrub::schedule_result_t;
@@ -1324,21 +1320,9 @@ Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedEntry trgt)
   ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);
 
-//   if (is_scrub_queued_or_active()) {
-//     return schedule_result_t::already_started;
-//   }
-
   if (!is_primary() || !is_active() || !is_clean()) {
     return schedule_result_t::bad_pg_state;
   }
-
-//   if (state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
-//     // note that the trimmer checks scrub status when setting 'snaptrim_wait'
-//     // (on the transition from NotTrimming to Trimming/WaitReservation),
-//     // i.e. some time before setting 'snaptrim'.
-//     dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
-//     return schedule_result_t::bad_pg_state;
-//   }
 
   Scrub::ScrubPgPreconds pg_cond{};
   pg_cond.allow_shallow = !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
@@ -1349,94 +1333,8 @@ Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedEntry trgt)
   pg_cond.can_autorepair = (cct->_conf->osd_scrub_auto_repair &&
 				   get_pgbackend()->auto_repair_supported());
 
-  auto ret = m_scrubber->start_scrubbing(trgt, pg_cond);
-  // debug log?
-  return ret;
+  return m_scrubber->start_scrubbing(trgt, pg_cond);
 }
-
-
-
-// /*
-//  *  implementation note:
-//  *  PG::sched_scrub() is called only once per a specific scrub session.
-//  *  That call commits us to the whatever choices are made (deep/shallow, etc').
-//  *  Unless failing to start scrubbing, the 'planned scrub' flag-set is 'frozen' into
-//  *  PgScrubber's m_flags, then cleared.
-//  */
-// Scrub::schedule_result_t PG::sched_scrub()
-
-double PG::next_deepscrub_interval() const
-{
-  double deep_scrub_interval =
-    pool.info.opts.value_or(pool_opts_t::DEEP_SCRUB_INTERVAL, 0.0);
-  if (deep_scrub_interval <= 0.0)
-    deep_scrub_interval = cct->_conf->osd_deep_scrub_interval;
-  return info.history.last_deep_scrub_stamp + deep_scrub_interval;
-}
-
-#if 0
-
-
-/*
- clang-format off
-
-   Request details    |  none    |  no-scrub  | no-scrub+no-deep | no-deep
-   ------------------------------------------------------------------------
-   ------------------------------------------------------------------------
-   initiated          |  shallow |  shallow   |  shallow         | shallow
-   ------------------------------------------------------------------------
-   init. + t.f.deep   |  deep    |  deep      |  shallow         | shallow
-   ------------------------------------------------------------------------
-   initiated deep     |  deep    |  deep      |  deep            | deep
-   ------------------------------------------------------------------------
-
- clang-format on
-*/
-
-/*
- clang-format off
-
-   for periodic scrubs:
-
-   Periodic  type     |  none    |  no-scrub  | no-scrub+no-deep | no-deep
-   ------------------------------------------------------------------------
-   ------------------------------------------------------------------------
-   periodic           |  shallow |  x         |  x               | shallow
-   ------------------------------------------------------------------------
-   periodic + t.f.deep|  deep    |  deep      |  x               | shallow
-   ------------------------------------------------------------------------
-
- clang-format on
-*/
-
-/*
- From docs.ceph.com (osd-internals/scrub):
-
- clang-format off
-
-   Desired no-scrub flags & scrub type interactions:
-
-   Periodic  type     |  none    |  no-scrub  | no-scrub+no-deep | no-deep
-   ------------------------------------------------------------------------
-   ------------------------------------------------------------------------
-   periodic           |  shallow |  x         |  x               | shallow
-   ------------------------------------------------------------------------
-   periodic + t.f.deep|  deep    |  deep      |  x               | shallow
-   ------------------------------------------------------------------------
-   initiated          |  shallow |  shallow   |  shallow         | shallow
-   ------------------------------------------------------------------------
-   init. + t.f.deep   |  deep    |  deep      |  shallow         | shallow
-   ------------------------------------------------------------------------
-   initiated deep     |  deep    |  deep      |  deep            | deep
-   ------------------------------------------------------------------------
-
-   "periodic" - if !must_scrub && !must_deep_scrub;
-   "initiated deep" - if must_scrub && must_deep_scrub;
-   "initiated" - if must_scrub && !must_deep_scrub;
-
- clang-format on
-*/
-#endif
 
 /*
  * Note: on_info_history_change() is used in those two cases where we're not sure
