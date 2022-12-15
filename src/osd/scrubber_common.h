@@ -5,6 +5,7 @@
 #include <fmt/ranges.h>
 
 #include "common/scrub_types.h"
+#include "include/expected.hpp"
 #include "include/types.h"
 #include "os/ObjectStore.h"
 
@@ -240,11 +241,16 @@ struct ScrubPgIF {
   virtual pg_scrubbing_status_t get_schedule() const = 0;
 
   //// perform 'scrub'/'deep_scrub' asok commands
-  virtual void on_operator_cmd(
+  virtual void on_operator_periodic_cmd(
     ceph::Formatter* f,
     scrub_level_t scrub_level,
-    int offset,
-    bool must) = 0;
+    int offset) = 0;
+
+  virtual void on_operator_forced_scrub(
+    ceph::Formatter* f,
+    scrub_level_t scrub_level
+    //int offset,
+    ) = 0;
 
   virtual void dump_scrubber(ceph::Formatter* f) const = 0;
 
@@ -358,9 +364,11 @@ struct ScrubPgIF {
 
   virtual void rm_from_osd_scrubbing() = 0;
 
-  /// returns the requested scrub's level
-  virtual bool scrub_requested(scrub_level_t scrub_level,
-			       scrub_type_t scrub_type) = 0;
+  /// returns the requested scrub's level (which is shallow
+  /// only if scrub_level is shallow *and* no repair is requested)
+  virtual scrub_level_t scrub_requested(
+      scrub_level_t scrub_level,
+      scrub_type_t scrub_type) = 0;
 
   // --------------- debugging via the asok ------------------------------
 

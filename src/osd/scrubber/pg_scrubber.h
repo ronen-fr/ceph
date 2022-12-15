@@ -288,7 +288,7 @@ class PgScrubber : public ScrubPgIF,
                    public SnapMapperAccessor,
                    public ScrubBeListener {
  public:
-  explicit PgScrubber(PG* pg);
+  explicit PgScrubber(PG* pg, ScrubQueue& osd_scrubq);
 
   friend class ScrubBackend;  // will be replaced by a limited interface
 
@@ -373,8 +373,9 @@ class PgScrubber : public ScrubPgIF,
 
   void on_maybe_registration_change() final;
 
-  bool scrub_requested(scrub_level_t scrub_level,
-		       scrub_type_t scrub_type) final;
+  scrub_level_t scrub_requested(
+      scrub_level_t scrub_level,
+      scrub_type_t scrub_type) final;
 
   /**
    * Reserve local scrub resources (managed by the OSD)
@@ -386,11 +387,20 @@ class PgScrubber : public ScrubPgIF,
 
   pg_scrubbing_status_t get_schedule() const final;
 
-  void on_operator_cmd(
+//   void on_operator_cmd(
+//     ceph::Formatter* f,
+//     scrub_level_t scrub_level,
+//     int offset,
+//     bool must) final;
+
+  void on_operator_periodic_cmd(
     ceph::Formatter* f,
     scrub_level_t scrub_level,
-    int offset,
-    bool must) final;
+    int offset) final;
+
+  void on_operator_forced_scrub(
+    ceph::Formatter* f,
+    scrub_level_t scrub_level) final;
 
   void dump_scrubber(ceph::Formatter* f) const final;
 
@@ -758,6 +768,7 @@ class PgScrubber : public ScrubPgIF,
   const char* m_fsm_state_name{nullptr};
   const spg_t m_pg_id;	///< a local copy of m_pg->pg_id
   OSDService* const m_osds;
+  ScrubQueue& m_scrub_queue;
   const pg_shard_t m_pg_whoami;	 ///< a local copy of m_pg->pg_whoami;
 
   epoch_t m_interval_start{0};	///< interval's 'from' of when scrubbing was
