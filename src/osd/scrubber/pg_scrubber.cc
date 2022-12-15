@@ -599,10 +599,11 @@ void PgScrubber::on_maybe_registration_change()
 
 
 */
-bool PgScrubber::scrub_requested(
+scrub_level_t PgScrubber::scrub_requested(
     scrub_level_t scrub_level,
     scrub_type_t scrub_type)
 {
+ // RRR fix the back&forth between the two types, now that we return the level
   const bool deep_requested = (scrub_level == scrub_level_t::deep) ||
 			      (scrub_type == scrub_type_t::do_repair);
   dout(5) << fmt::format(
@@ -617,7 +618,7 @@ bool PgScrubber::scrub_requested(
   auto deduced_level =
       deep_requested ? scrub_level_t::deep : scrub_level_t::shallow;
   m_scrub_job->operator_forced_targets(deduced_level, scrub_type);
-  return deep_requested;
+  return deduced_level;
 }
 
 Scrub::SchedEntry PgScrubber::mark_for_after_repair()
@@ -2240,28 +2241,33 @@ void PgScrubber::on_digest_updates()
 }
 
 // handling Asok's "scrub" & "deep_scrub" commands
-void PgScrubber::on_operator_cmd(
+
+namespace {
+void asok_response_section(
     ceph::Formatter* f,
-    scrub_level_t lvl,
-    int offset,
-    bool must)
+    bool is_periodic,
+    scrub_level_t scrub_level
+    /*const char* section_value*/)
 {
-  auto& qu = m_osds->get_scrub_services();
+  f->open_object_section("result");
+  f->dump_bool("deep", (scrub_level == scrub_level_t::deep));
+  f->dump_bool("must", !is_periodic);
+  f->close_section();
+}
+}  // namespace
+
+// when asked to force a "periodic" scrub by faking the timestamps
+void PgScrubber::on_operator_periodic_cmd(
+    ceph::Formatter* f,
+    scrub_level_t scrub_level,
+    int offset)
+{
   auto cnf = qu.populate_config_params(m_pg->get_pgpool().info.opts);
   dout(10) << fmt::format(
-		  "{}: {} (cmd offset:{}) must:{} conf:{}", __func__,
+		  "{}: {} (cmd offset:{}) conf:{}", __func__,
 		  (lvl == scrub_level_t::deep ? "deep" : "shallow"), offset,
-		  must, cnf)
+		  cnf)
 	   << dendl;
-
-  f->open_object_section("result");
-  if (must) {
-    auto deep_req = scrub_requested(lvl, scrub_type_t::not_repair);
-    f->dump_bool("deep", deep_req);
-    f->dump_bool("must", true);
-    f->close_section();
-    return;
-  }
 
   // move the relevant time-stamp backwards - enough to trigger a scrub
 
@@ -2272,7 +2278,7 @@ void PgScrubber::on_operator_cmd(
     stamp -= offset;
   } else {
     double max_iv =
-	(lvl == scrub_level_t::deep)
+	(scrub_level == scrub_level_t::deep)
 	    ? 2 * cnf.max_deep
 	    : (cnf.max_shallow ? *cnf.max_shallow : cnf.shallow_interval);
     dout(20) << fmt::format(
@@ -2285,23 +2291,99 @@ void PgScrubber::on_operator_cmd(
   }
   stamp -= 100.0;  // for good measure
 
-  dout(20) << fmt::format("{}: stamp:{} ", __func__, stamp) << dendl;
+  dout(10) << fmt::format("{}: stamp:{} ", __func__, stamp) << dendl;
+  asok_response_section(f, true, scrub_level);
 
-  if (lvl == scrub_level_t::deep) {
-    m_pg->set_last_deep_scrub_stamp(stamp);
-    f->dump_bool("deep", true);
-  } else {
-    m_pg->set_last_scrub_stamp(stamp);
-    f->dump_bool("deep", false);
-  }
-
-  f->dump_bool("must", false);
-  f->close_section();
+//   f->open_object_section("result");
+//   if (scrub_level == scrub_level_t::deep) {
+//     m_pg->set_last_deep_scrub_stamp(stamp);
+//     f->dump_bool("deep", true);
+//   } else {
+//     m_pg->set_last_scrub_stamp(stamp);
+//     f->dump_bool("deep", false);
+//   }
+// 
+//   f->dump_bool("must", false);
+//   f->close_section();
 
   // use the newly-updated set of timestamps to schedule a scrub
   m_scrub_job->operator_periodic_targets(
-      lvl, stamp, m_pg->get_pg_info(ScrubberPasskey()), cnf, now_is);
+      scrub_level, stamp, m_pg->get_pg_info(ScrubberPasskey()), cnf, now_is);
 }
+
+// when asked to force a high-priority scrub
+void PgScrubber::on_operator_forced_scrub(
+    ceph::Formatter* f,
+    scrub_level_t scrub_level)
+{
+  auto deep_req = scrub_requested(lvl, scrub_type_t::not_repair);
+  // RRR handle the deep_req usage instead of scrub_level in asok_response_section
+  asok_response_section(f, false, scrub_level);
+}
+
+
+// void PgScrubber::on_operator_cmd(
+//     ceph::Formatter* f,
+//     scrub_level_t lvl,
+//     int offset,
+//     bool must)
+// {
+//   auto& qu = m_osds->get_scrub_services();
+//   auto cnf = qu.populate_config_params(m_pg->get_pgpool().info.opts);
+//   dout(10) << fmt::format(
+// 		  "{}: {} (cmd offset:{}) must:{} conf:{}", __func__,
+// 		  (lvl == scrub_level_t::deep ? "deep" : "shallow"), offset,
+// 		  must, cnf)
+// 	   << dendl;
+// 
+//   f->open_object_section("result");
+//   if (must) {
+//     auto deep_req = scrub_requested(lvl, scrub_type_t::not_repair);
+//     f->dump_bool("deep", deep_req);
+//     f->dump_bool("must", true);
+//     f->close_section();
+//     return;
+//   }
+// 
+//   // move the relevant time-stamp backwards - enough to trigger a scrub
+// 
+//   utime_t now_is = ceph_clock_now();  /// \todo use u.test facilities!
+//   utime_t stamp = now_is;
+// 
+//   if (offset > 0) {
+//     stamp -= offset;
+//   } else {
+//     double max_iv =
+// 	(lvl == scrub_level_t::deep)
+// 	    ? 2 * cnf.max_deep
+// 	    : (cnf.max_shallow ? *cnf.max_shallow : cnf.shallow_interval);
+//     dout(20) << fmt::format(
+// 		    "{}: stamp:{} ms:{}/{}/{}", __func__, stamp,
+// 		    (cnf.max_shallow ? "ms+" : "ms-"),
+// 		    (cnf.max_shallow ? *cnf.max_shallow : -999.99),
+// 		    cnf.shallow_interval)
+// 	     << dendl;
+//     stamp -= max_iv;
+//   }
+//   stamp -= 100.0;  // for good measure
+// 
+//   dout(20) << fmt::format("{}: stamp:{} ", __func__, stamp) << dendl;
+// 
+//   if (lvl == scrub_level_t::deep) {
+//     m_pg->set_last_deep_scrub_stamp(stamp);
+//     f->dump_bool("deep", true);
+//   } else {
+//     m_pg->set_last_scrub_stamp(stamp);
+//     f->dump_bool("deep", false);
+//   }
+// 
+//   f->dump_bool("must", false);
+//   f->close_section();
+// 
+//   // use the newly-updated set of timestamps to schedule a scrub
+//   m_scrub_job->operator_periodic_targets(
+//       lvl, stamp, m_pg->get_pg_info(ScrubberPasskey()), cnf, now_is);
+// }
 
 void PgScrubber::dump_scrubber(ceph::Formatter* f) const
 {
@@ -2450,10 +2532,11 @@ PgScrubber::~PgScrubber()
   }
 }
 
-PgScrubber::PgScrubber(PG* pg)
+PgScrubber::PgScrubber(PG* pg, ScrubQueue& osd_scrubq)
     : m_pg{pg}
     , m_pg_id{pg->pg_id}
     , m_osds{m_pg->osd}
+    , m_scrub_queue{osd_scrubq}
     , m_pg_whoami{pg->pg_whoami}
     , preemption_data{pg}
 {
