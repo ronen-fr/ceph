@@ -5,6 +5,7 @@
 #include <fmt/ranges.h>
 
 #include "common/scrub_types.h"
+#include "include/expected.hpp"
 #include "include/types.h"
 #include "os/ObjectStore.h"
 

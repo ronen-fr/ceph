@@ -110,6 +110,7 @@ ScrubQueue interfaces (main functions):
 #include <atomic>
 #include <chrono>
 #include <compare>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -133,10 +134,6 @@ namespace Scrub {
 
 using namespace ::std::literals;
 
-struct scrub_schedule_t {
-  utime_t scheduled_at{};
-  utime_t deadline{0, 0};
-};
 
 /**
  * Possible urgency levels for a specific scheduling target (shallow or deep):
@@ -204,6 +201,7 @@ enum class urgency_t {
 
 // RRR 
 enum class delay_cause_t {
+//enum class delay_cause_t : uint_fast16_t{
   none,
   replicas,
   flags,
@@ -250,6 +248,10 @@ public:
   std::ostream& gen_prefix(std::ostream& out) const;
 
 private:
+  spg_t pgid;
+
+  CephContext* cct;
+
   urgency_t urgency{urgency_t::off};
 
   /// the time at which we are allowed to start the scrub. Never
@@ -277,6 +279,24 @@ private:
   // member functions)
   //bool scrubbing{false};
 
+
+  // an ephemeral flag used when sorting the targets. We use different
+  // sorting criteria for ripe vs future targets. See discussion in
+  // operator<=>.
+  //mutable bool eph_ripe_for_sort{false};
+
+  /// the reason for the latest failure/delay (for logging/reporting purposes)
+  delay_cause_t last_issue{delay_cause_t::none};
+
+  /// the OSD id (for the log)
+  int whoami;
+
+  /**
+   * the original scheduling object type. Note that for the shallow
+   * scheduling target objects - overridden by 'deep_or_upgraded'
+   */
+  scrub_level_t base_target_level;  // 'const' in its semantics
+
   /**
    * 'randomly selected' for shallow->deep for our next scrub.
    * "Freezing" the value of 'upgradable' when consulted.
@@ -289,26 +309,6 @@ private:
    * upgrading a shallow scrub to a deep scrub.
    */
   bool upgradeable{false};
-
-  // an ephemeral flag used when sorting the targets. We use different
-  // sorting criteria for ripe vs future targets. See discussion in
-  // operator<=>.
-  //mutable bool eph_ripe_for_sort{false};
-
-  /// the reason for the latest failure/delay (for logging/reporting purposes)
-  delay_cause_t last_issue{delay_cause_t::none};
-
-  spg_t pgid;
-
-  /// the OSD id (for the log)
-  int whoami;
-  CephContext* cct;
-
-  /**
-   * the original scheduling object type. Note that for the shallow
-   * scheduling target objects - overridden by 'deep_or_upgraded'
-   */
-  scrub_level_t base_target_level;  // 'const' in its semantics
 
   /**
    * (deep-scrub entries only:)
@@ -331,7 +331,7 @@ private:
   /// marked for de-queue, as the PG is no longer eligible for scrubbing
   //bool marked_for_dequeue{false};
 
-  std::string dbg_val;
+  //std::string dbg_val; // RRR remove, as adds 32B to the size of the object
 
 public:
   bool is_deep() const { return deep_or_upgraded; }
@@ -768,7 +768,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   friend class TestOSDScrub;
   friend class ScrubSchedTestWrapper;  ///< unit-tests structure
 
-  using SchedulingQueue = std::vector<Scrub::SchedEntry>;
+  using SchedulingQueue = std::deque<Scrub::SchedEntry>;
   using SchedEntry = Scrub::SchedEntry;
 
   static std::string_view qu_state_text(Scrub::qu_state_t st);
@@ -906,6 +906,13 @@ public:
   static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
     return jobref->state == Scrub::qu_state_t::not_registered;
   };
+
+  std::optional<Scrub::ScrubPreconds> preconditions_to_scrubbing(
+      const ceph::common::ConfigProxy& config,
+      bool is_recovery_active,
+      utime_t scrub_clock_now);
+
+  bool normalize_the_queue(utime_t scrub_clock_now);
 
   /**
    * called periodically(*) to select the first scrub-eligible PG
@@ -1093,7 +1100,7 @@ struct fmt::formatter<Scrub::SchedTarget> {
   auto format(const Scrub::SchedTarget& st, FormatContext& ctx)
   {
     return format_to(
-      ctx.out(), "{}/{}: {}nb:{:s},({},tr:{:s},dl:{:s},a-r:{}{}),issue:{},{}",
+      ctx.out(), "{}/{}: {}nb:{:s},({},tr:{:s},dl:{:s},a-r:{}{}),issue:{}",
       (st.base_target_level == scrub_level_t::deep ? "dp" : "sh"),
       st.effective_lvl(),
       st.scrubbing ? "ACTIVE " : "",
@@ -1101,8 +1108,7 @@ struct fmt::formatter<Scrub::SchedTarget> {
       st.urgency, st.target, st.deadline.value_or(utime_t{}),
       st.auto_repairing ? "+" : "-",
       st.marked_for_dequeue ? "XXX" : "",
-      st.last_issue,
-      st.dbg_val);
+      st.last_issue);
   }
 };
 
