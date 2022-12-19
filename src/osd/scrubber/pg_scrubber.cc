@@ -661,6 +661,76 @@ bool PgScrubber::reserve_local()
   return false;
 }
 
+Scrub::schedule_result_t PgScrubber::start_scrubbing(
+    utime_t scrub_clock_now,
+    Scrub::target_id_t trgt_id,
+    const Scrub::ScrubPgPreconds& pg_cond)
+{
+  using Scrub::schedule_result_t;
+  //auto& trgt = entry.target();
+  dout(10) << fmt::format(
+		  "{}: pg[{}] {} {} target: {}", __func__, m_pg_id,
+		  (m_pg->is_active() ? "<active>" : "<not-active>"),
+		  (m_pg->is_clean() ? "<clean>" : "<not-clean>"), trgt)
+	   << dendl;
+  // if we encounter any error - we must requeue the target!
+
+  
+  // mark our target as not-in-queue
+  auto trgt = m_scrub_job->get_trgt(trgt_id);
+
+  if (is_queued_or_active()) {
+    return schedule_result_t::already_started;
+  }
+
+  if (state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
+    // note that the trimmer checks scrub status when setting 'snaptrim_wait'
+    // (on the transition from NotTrimming to Trimming/WaitReservation),
+    // i.e. some time before setting 'snaptrim'.
+    dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
+    return schedule_result_t::bad_pg_state;
+  }
+
+  // a sanity-check for the target. Make sure we are in this OSD's queue
+  // (not as assert, as this is the first time we check after locking the PG)
+  if (trgt.urgency <= urgency_t::off) {
+    dout(1) << __func__ << ": not a valid target" << dendl;
+    return schedule_result_t::bad_pg_state;
+  }
+
+  // analyze the combination of the requested scrub flags, the osd/pool
+  // configuration and the PG status to determine whether we should scrub now.
+  auto validation = validate_scrub_mode(trgt, pg_cond);
+  if (validation) {
+    // the stars do not align for starting a scrub for this PG at this time
+    // (due to configuration or priority issues)
+    // The reason was already reported by the callee.
+    dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
+    return validation.value();
+  }
+
+  // try to reserve the local OSD resources. If failing: no harm. We will
+  // be retried by the OSD later on.
+  if (!reserve_local()) {
+    dout(10) << __func__ << ": failed to reserve locally" << dendl;
+    return schedule_result_t::no_local_resources;
+  }
+
+  // An interrupted recovery repair could leave this set.
+  // RRR this is a 4 years old comment. Is it still relevant?
+  if (state_test(PG_STATE_REPAIR)) {
+    dout(1) << __func__ << ": clearing repair state" << dendl;
+    state_clear(PG_STATE_REPAIR);
+  }
+
+  // we are now committed to scrubbing this PG
+  set_op_parameters(entry, pg_cond);
+
+  dout(10) << __func__ << ": queueing" << dendl;
+  m_osds->queue_for_scrub(m_pg, Scrub::scrub_prio_t::low_priority);
+  return schedule_result_t::scrub_initiated;
+}
+
 
 Scrub::schedule_result_t PgScrubber::start_scrubbing(
     Scrub::SchedEntry entry,

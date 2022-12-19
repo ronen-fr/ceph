@@ -6095,7 +6095,7 @@ void OSD::tick_without_osd_lock()
 
   if (is_active()) {
     service.get_scrub_services().sched_scrub(
-      cct->_conf, service.is_recovery_active());
+	cct->_conf, service.is_recovery_active());
     service.promote_throttle_recalibrate();
     resume_creating_pg();
     bool need_send_beacon = false;
@@ -6118,6 +6118,49 @@ void OSD::tick_without_osd_lock()
   service.kick_recovery_queue();
   tick_timer_without_osd_lock.add_event_after(get_tick_interval(),
 					      new C_Tick_WithoutOSDLock(this));
+}
+
+// void OSD::sched_scrub(const ceph::common::ConfigProxy& config,
+//       bool is_recovery_active)
+// {
+//   auto maybe_candidate = service.get_scrub_services().get_top_candidate(
+//       cct->_conf, service.is_recovery_active());
+//   if (!maybe_candidate.has_value()) {
+//     return;
+//   }
+//   auto cand = maybe_candidate.value();
+// 
+//   // the candidate names a PG and a scrub type. Can we perform this scrub?
+//   dout(20) << __func__ << " trying " << cand.entry.value(). << dendl;
+// 
+//   // we have a candidate to scrub. We need some PG information to know if scrubbing is
+//   // allowed
+// 
+//   PGRef pg = osd->lookup_lock_pg(pgid);
+//   if (!pg) {
+//     dout(5) << __func__ << " pg  " << pgid << " not found" << dendl;
+//     return;
+//   }
+// 
+//   // This has already started, so go on to the next scrub job
+//   if (pg->is_scrub_queued_or_active()) {
+//     pg->unlock();
+//     dout(20) << __func__ << ": already in progress pgid " << pgid << dendl;
+//     return Scrub::schedule_result_t::already_started;
+//   }
+//   // Skip other kinds of scrubbing if only explicitly requested repairing is allowed
+//   if (allow_requested_repair_only && !pg->get_planned_scrub().must_repair) {
+//     pg->unlock();
+//     dout(10) << __func__ << " skip " << pgid
+// 	     << " because repairing is not explicitly requested on it" << dendl;
+//     return Scrub::schedule_result_t::preconditions;
+//   }
+// 
+//   auto scrub_attempt = pg->sched_scrub();
+//   pg->unlock();
+//   return scrub_attempt;
+// }
+  
 }
 
 // Usage:

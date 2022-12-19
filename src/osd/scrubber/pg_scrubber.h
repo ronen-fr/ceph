@@ -476,8 +476,13 @@ class PgScrubber : public ScrubPgIF,
   int m_debug_blockrange{0};
 
   Scrub::schedule_result_t start_scrubbing(
-      Scrub::SchedEntry trgt,
+      utime_t scrub_clock_now,
+      Scrub::target_id_t trgt,
       const Scrub::ScrubPgPreconds& pg_cond) final;
+
+  Scrub::schedule_result_t start_scrubbing(
+      Scrub::SchedEntry trgt,
+      const Scrub::ScrubPgPreconds& pg_cond);
 
   Scrub::SchedEntry mark_for_after_repair() final;
 

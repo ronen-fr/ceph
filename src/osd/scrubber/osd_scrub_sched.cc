@@ -56,6 +56,8 @@ using SchedTarget = Scrub::SchedTarget;
 using urgency_t = Scrub::urgency_t;
 using delay_cause_t = Scrub::delay_cause_t;
 using SchedEntry = Scrub::SchedEntry;
+using schedule_result_t = Scrub::schedule_result_t;
+using ScrubPreconds = Scrub::ScrubPreconds;
 
 namespace {
 utime_t add_double(utime_t t, double d)
@@ -187,22 +189,19 @@ static ostream& _prefix_target(std::ostream* _dout, T* t)
  * A SchedTarget names both a PG to scrub and the level (deepness) of scrubbing.
  * SchedTarget objects are what the OSD schedules in the scrub queue, then
  * initiates the scrubbing of the PG.
- *
-//  * The Targets are owned by the ScrubJob (which is shared between the PG and the
-//  * OSD's scrub queue).
  */
 SchedTarget::SchedTarget(
-    const ScrubJob& owning_job,
-    scrub_level_t base_type,
-    std::string dbg)
-    : pgid{owning_job.pgid}
-    , cct{owning_job.cct}
-    , whoami{owning_job.whoami}
-    , base_target_level{base_type}
+    spg_t pg_id,
+      scrub_level_t base_type,
+      int osd_num,
+      CephContext* cct)
+    : sched_info{pg_id, base_type}
+    , cct{cct}
+    , whoami{osd_num}
 {
   ceph_assert(cct);
   m_log_prefix =
-      fmt::format("osd.{} pg[{}] ScrubTrgt: ", whoami, pgid.pgid, dbg);
+      fmt::format("osd.{} pg[{}] ScrubTrgt: ", whoami, sched_info.id.pgid.pgid);
 }
 
 std::ostream& SchedTarget::gen_prefix(std::ostream& out) const
@@ -1614,7 +1613,8 @@ std::string_view ScrubQueue::qu_state_text(Scrub::qu_state_t st)
 // }
 
 
-std::optional<Scrub::ScrubPreconds> ScrubQueue::preconditions_to_scrubbing(
+//std::optional<Scrub::ScrubPreconds> ScrubQueue::preconditions_to_scrubbing(
+tl::expected<ScrubPreconds, schedule_result_t> ScrubQueue::preconditions_to_scrubbing(
     const ceph::common::ConfigProxy& config,
     bool is_recovery_active,
     utime_t scrub_clock_now)
@@ -1635,13 +1635,13 @@ std::optional<Scrub::ScrubPreconds> ScrubQueue::preconditions_to_scrubbing(
 		    ": lost coin flip, randomly backing off (ratio: {:f})",
 		    config->osd_scrub_backoff_ratio)
 	     << dendl;
-    // return std::nullopt;
+    tl::unexpected(schedule_result_t::lost_coin_flip);
   }
 
   // fail fast if no resources are available
   if (!can_inc_scrubs()) {
     dout(10) << __func__ << ": OSD cannot inc scrubs" << dendl;
-    return std::nullopt;
+    return tl::unexpected(schedule_result_t::no_local_resources);
   }
 
   // if there is a PG that is just now trying to reserve scrub replica resources
@@ -1649,7 +1649,7 @@ std::optional<Scrub::ScrubPreconds> ScrubQueue::preconditions_to_scrubbing(
   if (is_reserving_now()) {
     dout(20) << __func__ << ": scrub resources reservation in progress"
 	     << dendl;
-    return std::nullopt;
+    return tl::unexpected(schedule_result_t::repl_reservation_in_progress);
   }
 
   Scrub::ScrubPreconds env_conditions;
@@ -1661,7 +1661,7 @@ std::optional<Scrub::ScrubPreconds> ScrubQueue::preconditions_to_scrubbing(
     if (!config->osd_repair_during_recovery) {
       dout(15) << __func__ << ": not scheduling scrubs due to active recovery"
 	       << dendl;
-      return std::nullopt;
+      return tl::unexpected(schedule_result_t::recovery_is_active)
     }
     dout(10) << __func__
 	     << " will only schedule explicitly requested repair due to active "
@@ -1699,56 +1699,57 @@ bool ScrubQueue::normalize_the_queue(utime_t scrub_clock_now)
 
 }
 
-void ScrubQueue::sched_scrub(
-    const ceph::common::ConfigProxy& config,
-    bool is_recovery_active)
-{
-  utime_t scrub_tick_time = ceph_clock_now();
+// void ScrubQueue::sched_scrub(
+//     const ceph::common::ConfigProxy& config,
+//     bool is_recovery_active)
+// {
+//   utime_t scrub_tick_time = ceph_clock_now();
+// 
+//   // do the OSD-wide environment conditions, and the availability of scrub
+//   // resources, allow us to start a scrub?
+// 
+//   auto maybe_env_cond = preconditions_to_scrubbing(config, is_recovery_active);
+//   if (!maybe_env_cond) {
+//     return;
+//   }
+//   auto preconds = maybe_env_cond.value();
+// 
+//   std::lock_guard l{jobs_lock};
+// 
+//   // normalize the queue
+//   normalize_the_queue(scrub_tick_time);
+// 
+//   // pop the first job from the queue, as a candidate
+// 
+//   auto [pgid, trgt, lvl] = to_scrub.front();  // RRR consider moving from q[0]
+//   auto& cand = to_scrub.front();
+//   to_scrub.pop_front();
+// 
+//   // if, by chance, the popped job is 'penalized' it means that we are out
+//   // of ripe and un-penalized jobs. Time to XXX all penalized jobs.
+//   if (cand.sched_target->urgency == urgency_t::penalized) {
+//     ;  // set the 'de-penalize all on next round' flag
+//   }
+// 
+//   dout(10) << fmt::format(
+// 		  "initiating a scrub for pg[{}] ({}) [preconds:{}]", pgid,
+// 		  trgt, preconds)
+// 	   << dendl;
+// 
+//   // now that we have some knowledge of the PG we'd like to scrub, we can
+//   // perform some more verification steps.
+//   // Note - at this stage - the other target of the named PG is still in the
+//   // queue. We'll remove it later, if we decide to scrub the PG.
+// 
+// 
+//   ccc;
+//   auto was_started = select_pg_and_scrub(env_conditions);
+//   dout(20) << " done (" << ScrubQueue::attempt_res_text(was_started) << ")"
+// 	   << dendl;
+// }
 
-  // do the OSD-wide environment conditions, and the availability of scrub
-  // resources, allow us to start a scrub?
-
-  auto maybe_env_cond = preconditions_to_scrubbing(config, is_recovery_active);
-        if (!maybe_env_cond) {
-        return;
-        }
-
-  // normalize the queue
-        std::lock_guard l{jobs_lock};
-        normalize_the_queue(scrub_tick_time);
-
-  // pop the first job from the queue, as a candidate
-
-        auto [pgid, trgt, lvl] = to_scrub.front(); // RRR consider moving from q[0]
-auto& cand = to_scrub.front();
-        to_scrub.pop_front();
-
-  // if, by chance, the popped job is 'penalized' it means that we are out
-  // of ripe and un-penalized jobs. Time to XXX all penalized jobs.
-  if (cand.sched_target->urgency == urgency_t::penalized) {
-    ; // set the 'de-penalize all on next round' flag
-  }
-
-    dout(10) << fmt::format(
-		    "initiating a scrub for pg[{}] ({}) [preconds:{}]", pgid,
-		    trgt, preconds)
-	     << dendl;
-
-  // now that we have some knowledge of the PG we'd like to scrub, we can
-  // perform some more verification steps.
-  // Note - at this stage - the other target of the named PG is still in the
-  // queue. We'll remove it later, if we decide to scrub the PG.
-  
-
-
-
-ccc;
-  auto was_started = select_pg_and_scrub(env_conditions);
-  dout(20) << " done (" << ScrubQueue::attempt_res_text(was_started) << ")"
-	   << dendl;
-}
-
-Scrub::SchedEntry ScrubQueue::get_top_candidate(utime_t scrub_clock_now)
+Scrub::SchedOutcome ScrubQueue::sched_scrub(const ceph::common::ConfigProxy& config,
+     bool is_recovery_active)
 {
   utime_t scrub_tick_time = ceph_clock_now();
 
@@ -1757,30 +1758,35 @@ Scrub::SchedEntry ScrubQueue::get_top_candidate(utime_t scrub_clock_now)
 
   auto maybe_env_cond = preconditions_to_scrubbing(config, is_recovery_active);
   if (!maybe_env_cond) {
-    return;
+    return SchedOutcome{maybe_env_cond.error(), std::nullopt};
   }
+  auto preconds = maybe_env_cond.value();
 
   std::lock_guard l{jobs_lock};
 
   // normalize the queue
-  normalize_the_queue(scrub_tick_time);
+  if (bool not_empty = normalize_the_queue(scrub_tick_time); !not_empty) {
+    return SchedOutcome{schedule_result_t::no_pg_ready, std::nullopt};
+  }
 
   // pop the first job from the queue, as a candidate
-  auto [pgid, trgt, lvl] = to_scrub.front();  // RRR consider moving from q[0]
-  //auto& cand = to_scrub.front();
+  //auto [pgid, trgt, lvl] = to_scrub.front();  // RRR consider moving from q[0]
+  auto cand = to_scrub.front();
   to_scrub.pop_front();
-  trgt->in_queue = false;
+  //trgt->in_queue = false;
 
   // if the popped job is 'penalized' it means that we are out
-  // of ripe and un-penalized jobs. Time to XXX all penalized jobs.
-  if (cand.sched_target->urgency == urgency_t::penalized) {
-    ;  // set the 'de-penalize all on next round' flag
+  // of ripe and un-penalized jobs. Time to pardon all penalized jobs.
+  if (cand.urgency == urgency_t::penalized) {
+    // set the 'de-penalize all on next round' flag
+    dout(15) << " only penalized jobs left. Pardoning them all" << dendl;
+    restore_penalized = true;
   }
 
   l.unlock();
 
   dout(10) << fmt::format(
-		  "initiating a scrub for pg[{}] ({}) [preconds:{}]", pgid,
+		  "initiating a scrub for pg[{}] ({}) [preconds:{}]", cand.id.pgid,
 		  trgt, preconds)
 	   << dendl;
 
@@ -1789,7 +1795,38 @@ Scrub::SchedEntry ScrubQueue::get_top_candidate(utime_t scrub_clock_now)
   // Note - at this stage - the other target of the named PG is still in the
   // queue. We'll remove it later, if we decide to scrub the PG.
 
-  
+  // possible interactions with the PgScrubber at this point:
+  // - instruct it to scrub the specific (attached) target;
+  //   - will also cause a dequeuing of the other target;
+  //   - ... and a de-penalization of both targets;
+  // - letting the PG know that the dequeued target cannot be scrubbed, and
+  //     should be fixed and re-enqueued;
+
+    // lock the PG. Then - try to initiate a scrub. The PG might have changed,
+    // or the environment may prevent us from scrubbing now.
+
+    PgLockWrapper locked_g = osd_service.get_locked_pg(pgid);
+    PGRef pg = locked_g.m_pg;
+    if (!pg) {
+      // the PG was dequeued in the short time span between creating the
+      // candidates list (collect_ripe_jobs()) and here
+      dout(5) << fmt::format("pg[{}] not found", pgid) << dendl;
+      return SchedOutcome{schedule_result_t::no_such_pg, std::nullopt};;
+    }
+
+    
+//     // if only explicitly-requested repairing is allowed, we would not
+//     // initiate other type of scrub
+//     if (preconds.allow_requested_repair_only && !trgt.do_repair) {
+//       dout(10) << __func__ << " skip " << pgid
+// 	       << " because repairing is not explicitly requested on it"
+// 	       << dendl;
+//       dout(20) << "failed (state/cond) " << pgid << dendl;
+//       trgt.pg_state_failure();
+//       continue;
+//     }
+
+    auto scrub_attempt = pg->start_scrubbing(scrub_tick_time, candidate);
 }
 
 

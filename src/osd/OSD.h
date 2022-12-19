@@ -1115,6 +1115,10 @@ protected:
   PerfCounters* create_recoverystate_perf();
   void tick();
   void tick_without_osd_lock();
+  void sched_scrub(
+      const ceph::common::ConfigProxy &config,
+      bool is_recovery_active);
+
   void _dispatch(Message *m);
 
   void check_osdmap_features();

@@ -1309,32 +1309,74 @@ unsigned int PG::scrub_requeue_priority(
  *  We do know, entering this function, what type of scrub we are to perform -
  *  as we have the specific SchedTarget.
  */
-Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedEntry trgt)
+/*
+18.12.2022: the target mentioned was now removed from the OSD's queue.
+ If we fail to start the scrub, we will need to requeue it.
+
+ */
+Scrub::schedule_result_t PG::start_scrubbing(
+    utime_t scrub_clock_now,
+    Scrub::target_id_t trgt)
 {
   using Scrub::schedule_result_t;
   dout(10) << fmt::format(
-		"{}: pg[{}] {} {} target: {}", __func__, info.pgid,
-		(is_active() ? "<active>" : "<not-active>"),
-		(is_clean() ? "<clean>" : "<not-clean>"), trgt.target())
+		  "{}: pg[{}] {} {} target: {}", __func__, info.pgid,
+		  (is_active() ? "<active>" : "<not-active>"),
+		  (is_clean() ? "<clean>" : "<not-clean>"), trgt)
 	   << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);
 
+  /*
+  as the handling of errors was made complicated - move the checks into the
+  scrubber, that performs some of them anyway.
+
   if (!is_primary() || !is_active() || !is_clean()) {
     return schedule_result_t::bad_pg_state;
   }
+  */
 
   Scrub::ScrubPgPreconds pg_cond{};
-  pg_cond.allow_shallow = !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
-      pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
-  pg_cond.allow_deep = !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
-      pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
+  pg_cond.allow_shallow =
+      !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
+	pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
+  pg_cond.allow_deep =
+      !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
+	pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
   pg_cond.has_deep_errors = (info.stats.stats.sum.num_deep_scrub_errors > 0);
-  pg_cond.can_autorepair = (cct->_conf->osd_scrub_auto_repair &&
-				   get_pgbackend()->auto_repair_supported());
+  pg_cond.can_autorepair =
+      (cct->_conf->osd_scrub_auto_repair &&
+       get_pgbackend()->auto_repair_supported());
 
-  return m_scrubber->start_scrubbing(trgt, pg_cond);
+  return m_scrubber->start_scrubbing(scrub_clock_now, trgt, pg_cond);
 }
+
+// Scrub::schedule_result_t PG::start_scrubbing(Scrub::QSchedTarget trgt)
+// {
+//   using Scrub::schedule_result_t;
+//   dout(10) << fmt::format(
+// 		"{}: pg[{}] {} {} target: {}", __func__, info.pgid,
+// 		(is_active() ? "<active>" : "<not-active>"),
+// 		(is_clean() ? "<clean>" : "<not-clean>"), trgt.target())
+// 	   << dendl;
+//   ceph_assert(ceph_mutex_is_locked(_lock));
+//   ceph_assert(m_scrubber);
+// 
+//   if (!is_primary() || !is_active() || !is_clean()) {
+//     return schedule_result_t::bad_pg_state;
+//   }
+// 
+//   Scrub::ScrubPgPreconds pg_cond{};
+//   pg_cond.allow_shallow = !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
+//       pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
+//   pg_cond.allow_deep = !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
+//       pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
+//   pg_cond.has_deep_errors = (info.stats.stats.sum.num_deep_scrub_errors > 0);
+//   pg_cond.can_autorepair = (cct->_conf->osd_scrub_auto_repair &&
+// 				   get_pgbackend()->auto_repair_supported());
+// 
+//   return m_scrubber->start_scrubbing(trgt, pg_cond);
+// }
 
 /*
  * Note: on_info_history_change() is used in those two cases where we're not sure

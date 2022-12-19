@@ -28,14 +28,24 @@ enum class schedule_result_t {
   already_started,     // failed, as already started scrubbing this pg
   no_such_pg,	       // can't find this pg
   bad_pg_state,	       // pg state (clean, active, etc.)
-  preconditions	       // time, configuration, etc.
+  preconditions,       // time, configuration, etc.
+  // and some errors that may be returned if the OSD won't even be
+  // attempting to scrub:
+  // RRR (we do not really care about the difference
+  // between the following three. Consider unifying them)
+  lost_coin_flip,
+  repl_reservation_in_progress,
+  recovery_is_active,
 };
 
-struct SchedTarget;
+class SchedTarget;
 struct SchedEntry;
-}
+struct QSchedTarget;
+struct target_id_t;
 
-/// Facilitating scrub-realated object access to private PG data
+}  // namespace Scrub
+
+/// Facilitating scrub-related object access to private PG data
 class ScrubberPasskey {
 private:
   friend class Scrub::ReplicaReservations;
@@ -192,6 +202,11 @@ struct ScrubPgIF {
 
   // --------------------------------------------------
 
+
+  virtual Scrub::schedule_result_t start_scrubbing(
+    utime_t scrub_clock_now,
+    Scrub::target_id_t trgt,
+    const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual Scrub::schedule_result_t start_scrubbing(
     Scrub::SchedEntry trgt,

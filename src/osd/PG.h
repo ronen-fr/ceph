@@ -72,8 +72,7 @@ namespace Scrub {
   class LocalReservation;
   class ReservedByRemotePrimary;
   enum class schedule_result_t;
-
-  struct SchedTarget;
+  struct target_id_t;
 }
 
 #ifdef PG_DEBUG_REFS
@@ -702,7 +701,9 @@ public:
   void shutdown();
   virtual void on_shutdown() = 0;
 
-  Scrub::schedule_result_t start_scrubbing(Scrub::SchedEntry trgt);
+  Scrub::schedule_result_t start_scrubbing(
+      utime_t scrub_clock_now,
+      Scrub::target_id_t trgt_id);
 
   unsigned int scrub_requeue_priority(
     Scrub::scrub_prio_t with_priority,
