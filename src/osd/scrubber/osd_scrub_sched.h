@@ -233,10 +233,10 @@ using ScrubJobRef = ceph::ref_t<ScrubJob>;
  * information.
  */
 
-struct target_id_t {
-  spg_t pgid;
-  scrub_level_t level; // note: not handling 'upgrades' in this design RRR
-};
+// struct target_id_t {
+//   spg_t pgid;
+//   scrub_level_t level; // note: not handling 'upgrades' in this design RRR
+// };
 
 /*
  * the following invariants hold re the two 'SchedTarget' objects:
@@ -252,9 +252,10 @@ struct QSchedTarget {
       utime_t{std::numeric_limits<uint32_t>::max(), 0};
 
   QSchedTarget(spg_t pgid, scrub_level_t level)
-      : id{pgid, level} {}
+      : pgid{pgid}, level{level} {}
 
-  target_id_t id;
+  spg_t pgid;
+  scrub_level_t level; // note: not handling 'upgrades' in this design RRR
 
   /// 'white-out' support: if false, the target was removed from the queue
   bool is_valid{true};
@@ -316,6 +317,8 @@ public:
 
 
   std::ostream& gen_prefix(std::ostream& out) const;
+
+  void reset();
 
 private:
 
@@ -387,6 +390,7 @@ private:
   //std::string dbg_val; // RRR remove, as adds 32B to the size of the object
 
 public:
+  const QSchedTarget& queue_element() const { return sched_info; }
   bool is_deep() const { return deep_or_upgraded; }
   scrub_level_t level() const
   {
@@ -739,22 +743,28 @@ struct SchedEntry {
 // Queue-manipulation by a PG:
 using TargetFilter = std::function<bool(const SchedTarget&)>;
 struct ScrubQueueOps {
-  virtual SchedEntry extract_target(spg_t pgid, scrub_level_t s_or_d) = 0;
+  //virtual SchedEntry extract_target(spg_t pgid, scrub_level_t s_or_d) = 0;
 
-  virtual std::optional<SchedEntry> extract_target(TargetRef& t, TargetFilter cond) = 0;
-  virtual bool white_out_target(const TargetRef& t, TargetFilter cond) = 0;
+  //virtual std::optional<SchedEntry> extract_target(TargetRef& t, TargetFilter cond) = 0;
+  //virtual bool white_out_target(const TargetRef& t, TargetFilter cond) = 0;
 
-  virtual void white_out_target(const TargetRef& t) = 0;
-
-  // note: sets the 'in_queue' flag
-  virtual void push_target(SchedEntry&& e) = 0;
+  //virtual void white_out_target(const TargetRef& t) = 0;
 
   // note: sets the 'in_queue' flag
-  virtual void push_both_targets(SchedEntry&& s, SchedEntry&& d) = 0;
+  //virtual void push_target(SchedEntry&& e) = 0;
+
+  virtual void push_target_copy(const QSchedTarget& t) = 0;
+
+  // note: sets the 'in_queue' flag
+  //virtual void push_both_targets(SchedEntry&& s, SchedEntry&& d) = 0;
   virtual ~ScrubQueueOps() = default;
 };
 
-struct ScrubJob final {
+
+// ////////////////////////////////////////////////////////////////////////// //
+// ScrubJob -- scrub scheduling & parameters for a specific PG (PgScrubber)
+
+struct ScrubJob {
 public:
 
   // used by the PG to register itself for scrubbing with the OSD
@@ -780,7 +790,12 @@ public:
   */
   void remove_from_osd_queue();
 
+  // push a target back to the queue (after having it modified)
+  void requeue_entry(target_id_t tid);
 
+  // returns a copy of the named target, and resets the 'left behind'
+  // copy (which is either 'shallow_target' or 'deep_target')
+  SchedTarget get_moved_target(scrub_level_t s_or_d); 
 
 public: // for now
   /// pg to be scrubbed
@@ -1178,6 +1193,30 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   Scrub::SchedOutcome get_top_candidate(const ceph::common::ConfigProxy& config,
      bool is_recovery_active);
+
+
+  // /////////////////////////////////////////////////// 
+  // the ScrubQueueOps interface:
+
+//   SchedEntry extract_target(spg_t pgid, scrub_level_t s_or_d) final {}
+// 
+//   std::optional<SchedEntry> extract_target(TargetRef& t, TargetFilter cond)
+//       final
+//   {}
+// 
+//   bool white_out_target(const TargetRef& t, TargetFilter cond) final {}
+// 
+//   void white_out_target(const TargetRef& t) final {}
+// 
+
+  // note: sets the 'in_queue' flag
+  // virtual void push_target(SchedEntry&& e) = 0;
+
+  void push_target_copy(const QSchedTarget& t) final;
+
+  // note: sets the 'in_queue' flag
+  //void push_both_targets(SchedEntry&& s, SchedEntry&& d) final {}
+
 
   // locks and removes from the queue
   // (RRR may be implemented by a copy + marking the original as 'to be removed')

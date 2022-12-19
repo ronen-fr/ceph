@@ -454,8 +454,11 @@ class PgScrubber : public ScrubPgIF,
    * PG_STATE_REPAIR are set.
    */
   void set_op_parameters(
-      const Scrub::SchedEntry& target,
+      Scrub::SchedTarget& target,
       const Scrub::ScrubPgPreconds& pg_cond);
+//   void set_op_parameters(
+//       const Scrub::SchedEntry& target,
+//       const Scrub::ScrubPgPreconds& pg_cond);
 
   void cleanup_store(ObjectStore::Transaction* t) final;
 
@@ -477,7 +480,7 @@ class PgScrubber : public ScrubPgIF,
 
   Scrub::schedule_result_t start_scrubbing(
       utime_t scrub_clock_now,
-      Scrub::target_id_t trgt,
+      scrub_level_t lvl,
       const Scrub::ScrubPgPreconds& pg_cond) final;
 
   Scrub::schedule_result_t start_scrubbing(
@@ -487,6 +490,9 @@ class PgScrubber : public ScrubPgIF,
   Scrub::SchedEntry mark_for_after_repair() final;
 
   // a null return means everything is OK
+  std::optional<Scrub::schedule_result_t> validate_scrub_mode(
+      Scrub::SchedTarget& sched_target,
+      const Scrub::ScrubPgPreconds& pg_cond);
   std::optional<Scrub::schedule_result_t> validate_scrub_mode(
       Scrub::TargetRef sched_target,
       const Scrub::ScrubPgPreconds& pg_cond);
@@ -619,7 +625,8 @@ class PgScrubber : public ScrubPgIF,
 					///< schedule us
 
   // specifically - we were scheduled thru this entry in the OSD queue:
-  std::optional<Scrub::SchedEntry> m_active_target;
+  //std::optional<Scrub::SchedEntry> m_active_target;
+  std::optional<Scrub::SchedTarget> m_active_target;
 
   ostream& show_concise(ostream& out) const override;
 
