@@ -891,7 +891,7 @@ class PgScrubber : public ScrubPgIF,
   void update_op_mode_text();
 
  private:
-  void unregister_from_osd();
+  //void unregister_from_osd();
 
   /*
    * Select a range of objects to scrub.

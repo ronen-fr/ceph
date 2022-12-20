@@ -1316,13 +1316,13 @@ unsigned int PG::scrub_requeue_priority(
  */
 Scrub::schedule_result_t PG::start_scrubbing(
     utime_t scrub_clock_now,
-    scrub_level_t_t level)
+    scrub_level_t level)
 {
   using Scrub::schedule_result_t;
   dout(10) << fmt::format(
 		  "{}: pg[{}] {} {} target: {}", __func__, info.pgid,
 		  (is_active() ? "<active>" : "<not-active>"),
-		  (is_clean() ? "<clean>" : "<not-clean>"), level)
+		  (is_clean() ? "<clean>" : "<not-clean>"), 17/*level*/)
 	   << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);

@@ -482,18 +482,10 @@ unsigned int PgScrubber::scrub_requeue_priority(
 // ///////////////////////////////////////////////////////////////////// //
 // scrub-op registration handling
 
-void PgScrubber::unregister_from_osd()
-{
-  if (m_scrub_job) {
-    dout(15) << __func__ << " prev. state: " << registration_state() << dendl;
-    //m_osds->get_scrub_services().remove_from_osd_queue(m_scrub_job);
-    m_scrub_job->remove_from_osd_queue();
-  }
-}
 
 bool PgScrubber::is_scrub_registered() const
 {
-  return m_scrub_job && m_scrub_job->in_queues;
+  return m_scrub_job && m_scrub_job->in_queue();
 }
 
 std::string_view PgScrubber::registration_state() const
@@ -506,9 +498,9 @@ std::string_view PgScrubber::registration_state() const
 
 void PgScrubber::rm_from_osd_scrubbing()
 {
-  // make sure the OSD won't try to scrub this one just now
-  m_scrub_job->remove_from_osd_queue();
-  //unregister_from_osd();
+  if (m_scrub_job) {
+    m_scrub_job->remove_from_osd_queue();
+  }
 }
 
 void PgScrubber::on_primary_change(std::string_view caller)
@@ -538,12 +530,12 @@ void PgScrubber::on_primary_change(std::string_view caller)
     }
   }
 
-  auto& qu = m_osds->get_scrub_services();
+  //auto& qu = m_osds->get_scrub_services();
   if (is_primary()) {
     auto applicable_conf =
-	qu.populate_config_params(m_pg->get_pgpool().info.opts);
+	m_scrub_queue.populate_config_params(m_pg->get_pgpool().info.opts);
 
-    m_scrub_job->set_initial_targets(
+    m_scrub_job->init_and_queue_targets(
 	m_pg->info, applicable_conf, qu.time_now());
     dout(20) << fmt::format(
 		    "{}: (from {}) {}.Reg-state:{:.7}. "
@@ -553,10 +545,10 @@ void PgScrubber::on_primary_change(std::string_view caller)
 		    registration_state(), m_scrub_job->shallow_target,
 		    m_scrub_job->deep_target)
 	     << dendl;
-    qu.register_with_osd(m_scrub_job);
+    //m_scrub_queue.register_with_osd(m_scrub_job);
 
   } else {
-    qu.remove_from_osd_queue(m_scrub_job);
+    m_scrub_queue.remove_from_osd_queue(m_scrub_job);
   }
 
   dout(10)
@@ -725,7 +717,7 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
   // upon failure: we have already modified the NB of the target. Just push it
   // back to the queue
   if (failure_code.has_value()) {
-    m_scrub_job->requeue_entry(trgt_id);
+    m_scrub_job->requeue_entry(lvl);
     return failure_code.value();
   }
   
@@ -1791,8 +1783,9 @@ void PgScrubber::set_op_parameters(
   // scheduling the next scrub of this level.
   set_queued_or_active();
   // trgt.set_scrubbing();
-  m_active_target = get_moved_target(trgt.id.level);
-  trgt = 
+  m_active_target = m_scrub_job->get_moved_target(trgt.level());
+  // remove our sister target from the queue
+  m_scrub_job->dequeue_entry(ScrubJob::the_other_level(trgt.level()));
 
   // write down the epoch of starting a new scrub. Will be used
   // to discard stale messages from previous aborted scrubs.
@@ -2751,7 +2744,7 @@ PgScrubber::~PgScrubber()
 {
   if (m_scrub_job) {
     // make sure the OSD won't try to scrub this one just now
-    rm_from_osd_scrubbing();
+    m_scrub_job->remove_from_osd_queue();
     m_scrub_job.reset();
   }
 }
