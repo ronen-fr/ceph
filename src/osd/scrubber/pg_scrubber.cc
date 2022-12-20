@@ -151,14 +151,14 @@ bool PgScrubber::verify_against_abort(epoch_t epoch_to_verify)
 
 bool PgScrubber::should_abort() const
 {
-  if (m_flags.required != !m_active_target->target().is_periodic()) {
+  if (m_flags.required != !m_active_target->is_periodic()) {
     dout(1) << fmt::format(
 		   "(possible bug) the required flag {} vs {}",
-		   m_flags.required, m_active_target->target().is_periodic())
+		   m_flags.required, m_active_target->is_periodic())
 	    << dendl;
   }
 
-  if (m_active_target->target().is_required()) {
+  if (m_active_target->is_required()) {
     return false;  // not stopping 'required' scrubs for configuration changes
   }
 
@@ -545,7 +545,6 @@ void PgScrubber::on_primary_change(std::string_view caller)
 		    registration_state(), m_scrub_job->shallow_target,
 		    m_scrub_job->deep_target)
 	     << dendl;
-    //m_scrub_queue.register_with_osd(m_scrub_job);
 
   } else {
     m_scrub_queue.remove_from_osd_queue(m_scrub_job);
@@ -632,7 +631,7 @@ void PgScrubber::at_scrub_failure(delay_cause_t issue)
   // if there is a 'next' target - it might have higher priority than
   // what was just run. Let's merge the two.
   ceph_assert(m_active_target);
-  m_active_target->job->at_failure(m_active_target->s_or_d, issue);
+  m_scrub_job->on_abort(std::move(*m_active_target), issue, ceph_clock_now());
   m_active_target.reset();
 }
 

@@ -820,6 +820,10 @@ struct ScrubJob {
 
   bool in_queue() const { return shallow_target.in_queue || deep_target.in_queue; }
 
+  //void on_abort(scrub_level_t lvl, delay_cause_t issue);
+  void on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime_t now_is);
+
+
  public:  // for now
   /// pg to be scrubbed
   spg_t pgid;
@@ -959,26 +963,11 @@ struct ScrubJob {
 
   void un_penalize(utime_t now_is);
 
-  void at_failure(scrub_level_t lvl, delay_cause_t issue);
-
-  /**
-   * relatively low-cost(*) access to the scrub job's state, to be used in
-   * logging.
-   *  (*) not a low-cost access on x64 architecture
-   */
-  std::string_view state_desc() const;
-
   void dump(ceph::Formatter* f) const;
 
-  /*
-   * as the atomic 'in_queues' appears in many log prints, accessing it for
-   * display-only should be made less expensive (on ARM. On x86 the _relaxed
-   * produces the same code as '_cs')
-   */
   std::string_view registration_state() const
   {
-    return in_queues.load(std::memory_order_relaxed) ? "in-queue"
-						     : "not-queued";
+    return in_queue() ? "in-queue" : "not-queued";
   }
 
   /**

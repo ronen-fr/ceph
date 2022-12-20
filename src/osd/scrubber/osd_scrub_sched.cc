@@ -554,7 +554,7 @@ void ScrubJob::init_and_queue_targets(
   deep_target->update_as_shallow(info, aconf, scrub_clock_now);
 
   scrub_queue.queue_entries(
-      pgid, shallow_target.sched_info, deep_target.sched_info);
+      pgid, shallow_target.queued_element(), deep_target.queued_element());
   shallow_target->set_queued();
   deep_target->set_queued();
 }
@@ -574,48 +574,38 @@ void ScrubJob::remove_from_osd_queue()
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
 std::string ScrubJob::scheduling_state(utime_t now_is) const
 {
-  // if not in the OSD scheduling queues, not a candidate for scrubbing
-  if (state != qu_state_t::registered) {
-    return "no scrub is scheduled";
-  }
-
-  // must lock, to guarantee the targets are not removed under our feet
-  // RRRR RRR
-
-  auto closest_target = determine_closest(now_is);
-
-  // if the time has passed, we are surely in the queue
-  // (note that for now we do not tell client if 'penalized')
-  if (closest_target->is_ripe(now_is)) {
-    return fmt::format(
-	"queued for {}scrub", (closest_target->is_deep() ? "deep " : ""));
-  }
-
-  return fmt::format(
-      "{}scrub scheduled @ {}",
-      (closest_target->is_deep() ? "deep " : ""),  // replace with
-						   // deep_or_upgraded
-      closest_target->not_before);
+  return "not yet";
+//   // if not in the OSD scheduling queues, not a candidate for scrubbing
+//   if (state != qu_state_t::registered) {
+//     return "no scrub is scheduled";
+//   }
+// 
+//   // must lock, to guarantee the targets are not removed under our feet
+//   // RRRR RRR
+// 
+//   auto closest_target = determine_closest(now_is);
+// 
+//   // if the time has passed, we are surely in the queue
+//   // (note that for now we do not tell client if 'penalized')
+//   if (closest_target->is_ripe(now_is)) {
+//     return fmt::format(
+// 	"queued for {}scrub", (closest_target->is_deep() ? "deep " : ""));
+//   }
+// 
+//   return fmt::format(
+//       "{}scrub scheduled @ {}",
+//       (closest_target->is_deep() ? "deep " : ""),  // replace with
+// 						   // deep_or_upgraded
+//       closest_target->not_before);
 }
 
 
-void ScrubQueue::requeue_entry(scrub_level_t level)
+void ScrubJob::requeue_entry(scrub_level_t level)
 {
-  auto& target = get_trgt(level);
   if (!scrubbing) {
+    auto& target = get_trgt(level);
     scrub_queue.cp_and_queue_target(target.queued_element());
     target.in_queue = true;
   }
@@ -663,10 +653,7 @@ void ScrubJob::operator_forced_targets(
   } else {
     deep_target.set_oper_deep_target(scrub_type, now_is);
   }
-  if (!scrubbing) {
-    scrub_queue.cp_and_queue_target(trgt.queued_element());
-    trgt.set_queued();
-  }
+  requeue_entry(level);
 }
 
 
@@ -689,7 +676,6 @@ void ScrubJob::operator_periodic_targets(
     return;
   }
 
-  TargetRef trgt = get_trgt(level);
   scrub_queue.white_out_entry(pgid, level);
   trgt.clear_queued();
 
@@ -710,10 +696,7 @@ void ScrubJob::operator_periodic_targets(
   if (scrub_clock_now > trgt.sched_info.deadline) {
     trgt.set_min_urgency(urgency_t::overdue);
   }
-  if (!scrubbing) {
-    scrub_queue.cp_and_queue_target(trgt.queued_element());
-    trgt.set_queued();
-  }
+  requeue_entry(level);
 }
 
 // void ScrubJob::operator_periodic_targets(
@@ -758,41 +741,103 @@ void ScrubJob::operator_periodic_targets(
 
 
 /**
- * delay the next time we'll be able to scrub the PG by pushing the
- * not_before time forward.
+ * Handle a scrub aborted mid-execution.
+ * State on entry:
+ * - no target is in the queue (both were dequeued when the scrub started);
+ * - both 'shallow' & 'deep' targets are valid - set for the next scrub;
+ * Process:
+ * - merge the failing target with the corresponding 'next' target;
+ * - make sure 'not-before' is somewhat in the future;
+ * - requeue both targets.
+ *
  * \todo use the number of ripe jobs to determine the delay
  */
-void ScrubJob::at_failure(scrub_level_t lvl, delay_cause_t issue)
+void ScrubJob::on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime_t now_is)
 {
-  std::unique_lock l{targets_lock};
-  auto& aborted_target = get_current_trgt(lvl);
   dout(15) << fmt::format("{}: pre-abort: {}", __func__, aborted_target)
 	   << dendl;
 
-  aborted_target.clear_scrubbing();
-  aborted_target.last_issue = issue;
+  scrubbing = false;
+  auto& nxt_target = get_trgt(aborted_target.level());
   ++consec_aborts;
 
-  // if there is a 'next' target - it might have higher priority than
-  // what was just run. Let's merge the two.
+  // merge the targets:
+  auto sched_to = std::min(aborted_target.sched_info.target, nxt_target.sched_info.target);
+  auto delay_to = now_is + utime_t{5s * consec_aborts}; // RRR conf
+  // no, as does not match required behavior: auto auto_repairing = aborted_target.auto_repairing || nxt_target.auto_repairing;
 
-  auto base_lvl = aborted_target.base_target_level;
-  if (get_next_trgt(base_lvl).is_viable()) {
-    // we already have plans for the next scrub once we manage to finish the
-    // one that just failed. The 'N' one is high-priority for sure. The
-    // failed one - may be.
-    // Note that merge_targets() will clear the 'N' target.
-    merge_targets(base_lvl, 5s * consec_aborts);
-  } else {
-    aborted_target.push_nb_out(5s * consec_aborts, issue);
+  if (aborted_target.sched_info.urgency > nxt_target.sched_info.urgency) {
+    nxt_target = aborted_target;
   }
+  nxt_target.sched_info.target = sched_to;
+  nxt_target.sched_info.not_before = delay_to;
+  nxt_target.last_issue = issue;
+  nxt_target.auto_repairing = auto_repairing;
+  ceph_assert(nxt_target.is_viable());
+ 
+  scrub_queue.queue_entries(
+      pgid, shallow_target.queued_element(), deep_target.queued_element());
+  shallow_target->set_queued();
+  deep_target->set_queued();
   dout(10) << fmt::format(
 		  "{}: post [c.target/base:{}] [c.target/abrtd:{}] {}s delay",
-		  __func__, get_current_trgt(base_lvl), get_current_trgt(lvl),
+		  __func__, nxt_target, aborted_target,
 		  5 * consec_aborts)
 	   << dendl;
-  determine_closest(ceph_clock_now());
 }
+
+/**
+ * mark for a deep-scrub after the current scrub ended with errors.
+ */
+void ScrubJob::mark_for_rescrubbing()
+{
+  ceph_assert(scrubbing);
+  ceph_assert(!deep_target->is_queued());
+  deep_target.auto_repairing = true;
+  deep_target.sched_info.target =
+      ceph_clock_now();	 // RRR replace with time_now()
+  deep_target.sched_info.not_before = deep_target.sched_info.target;
+  deep_target.sched_info.urgency =
+      urgency_t::must;	// no need, I think, to use max(...)
+
+  dout(10) << fmt::format(
+		  "{}: need deep+a.r. after scrub errors. Target set to {}",
+		  __func__, deep_target)
+	   << dendl;
+}
+
+
+// void ScrubJob::on_abort(scrub_level_t lvl, delay_cause_t issue)
+// {
+//   std::unique_lock l{targets_lock};
+//   auto& aborted_target = get_current_trgt(lvl);
+//   dout(15) << fmt::format("{}: pre-abort: {}", __func__, aborted_target)
+// 	   << dendl;
+// 
+//   aborted_target.clear_scrubbing();
+//   aborted_target.last_issue = issue;
+//   ++consec_aborts;
+// 
+//   // if there is a 'next' target - it might have higher priority than
+//   // what was just run. Let's merge the two.
+// 
+//   auto base_lvl = aborted_target.base_target_level;
+//   if (get_next_trgt(base_lvl).is_viable()) {
+//     // we already have plans for the next scrub once we manage to finish the
+//     // one that just failed. The 'N' one is high-priority for sure. The
+//     // failed one - may be.
+//     // Note that merge_targets() will clear the 'N' target.
+//     merge_targets(base_lvl, 5s * consec_aborts);
+//   } else {
+//     aborted_target.push_nb_out(5s * consec_aborts, issue);
+//   }
+//   dout(10) << fmt::format(
+// 		  "{}: post [c.target/base:{}] [c.target/abrtd:{}] {}s delay",
+// 		  __func__, get_current_trgt(base_lvl), get_current_trgt(lvl),
+// 		  5 * consec_aborts)
+// 	   << dendl;
+//   determine_closest(ceph_clock_now());
+// }
 
 
 std::string_view ScrubJob::state_desc() const
@@ -821,17 +866,17 @@ std::string_view ScrubJob::state_desc() const
 //   }
 // }
 
-Scrub::TargetRef ScrubJob::determine_closest(utime_t scrub_clock_now)
-{
-  shallow_target.update_ripe_for_sort(now_is);
-  deep_target.update_ripe_for_sort(now_is);
-  auto cp = clock_based_cmp(shallow_target, deep_target);
-  if (cp == std::partial_ordering::less) {
-    closest_target = std::ref(shallow_target);
-  } else {
-    closest_target = std::ref(deep_target);
-  }
-}
+// Scrub::TargetRef ScrubJob::determine_closest(utime_t scrub_clock_now)
+// {
+//   shallow_target.update_ripe_for_sort(now_is);
+//   deep_target.update_ripe_for_sort(now_is);
+//   auto cp = clock_based_cmp(shallow_target, deep_target);
+//   if (cp == std::partial_ordering::less) {
+//     closest_target = std::ref(shallow_target);
+//   } else {
+//     closest_target = std::ref(deep_target);
+//   }
+// }
 
 
 // void ScrubJob::determine_closest(utime_t now_is)
@@ -869,6 +914,12 @@ void ScrubJob::clear_marked_for_dequeue()
   next_deep.marked_for_dequeue = false;
 }
 
+SchedTarget& ScrubJob::get_trgt(scrub_level_t lvl)
+{
+  return (lvl == scrub_level_t::deep) ? deep_target : shallow_target;
+}
+
+#if 0
 /**
  * get a ref to the selected target of the 'current' set of targets, or - if
  * that target is being scrubbed - the corresponding 'next' target for this PG.
@@ -892,29 +943,30 @@ TargetRef ScrubJob::get_next_trgt(scrub_level_t lvl)
 {
   return (lvl == scrub_level_t::deep) ? next_deep : next_shallow;
 }
+#endif
 
 
-/**
- * mark for a deep-scrub after the current scrub ended with errors.
- */
-void ScrubJob::mark_for_rescrubbing()
-{
-  std::unique_lock l{targets_lock};
+// /**
+//  * mark for a deep-scrub after the current scrub ended with errors.
+//  */
+// void ScrubJob::mark_for_rescrubbing()
+// {
+//   std::unique_lock l{targets_lock};
+// 
+//   auto& targ = get_modif_trgt(scrub_level_t::deep);
+//   targ.auto_repairing = true;
+//   targ.urgency = urgency_t::must;  // no need, I think, to use max(...)
+//   targ.target = ceph_clock_now();  // replace with time_now()
+//   targ.not_before = targ.target;
+//   determine_closest();
+// 
+//   dout(10) << fmt::format(
+// 		  "{}: need deep+a.r. after scrub errors. Target set to {}",
+// 		  __func__, targ)
+// 	   << dendl;
+// }
 
-  auto& targ = get_modif_trgt(scrub_level_t::deep);
-  targ.auto_repairing = true;
-  targ.urgency = urgency_t::must;  // no need, I think, to use max(...)
-  targ.target = ceph_clock_now();  // replace with time_now()
-  targ.not_before = targ.target;
-  determine_closest();
-
-  dout(10) << fmt::format(
-		  "{}: need deep+a.r. after scrub errors. Target set to {}",
-		  __func__, targ)
-	   << dendl;
-}
-
-
+#if 0
 void ScrubJob::merge_targets(scrub_level_t lvl, std::chrono::seconds delay)
 {
   // must not try to lock targets_lock!
@@ -935,7 +987,7 @@ void ScrubJob::merge_targets(scrub_level_t lvl, std::chrono::seconds delay)
   n_target.urgency = urgency_t::off;
   c_target.scrubbing = false;
 }
-
+#endif
 
 #if 0
 /*
@@ -1182,7 +1234,7 @@ void ScrubJob::init_and_queue_targets(
   deep_target->update_as_shallow(info, aconf, scrub_clock_now);
 
   scrub_queue.queue_entries(
-      pgid, shallow_target.sched_info, deep_target.sched_info);
+      pgid, shallow_target.queued_element(), deep_target.queued_element());
 }
 
 
@@ -1284,7 +1336,7 @@ void ScrubQueue::cp_and_queue_target(const QSchedTarget& t)
 {
   dout(20) << fmt::format("{}: restoring {} to the scrub-queue", __func__, t)
 	   << dendl;
-  std::unique_lock l{targets_lock};
+  std::unique_lock l{jobs_lock};
   ceph_assert(t.urgency > urgency_t::off);
   t.is_valid = true;
   to_scrub.push_back(t);
@@ -1314,7 +1366,7 @@ void ScrubQueue::white_out_entries(
 		  "{}: dequeuing pg[{}]: queuing <{}> & <{}>", __func__, pgid)
 	   << dendl;
 
-  std::unique_lock l{targets_lock};
+  std::unique_lock l{jobs_lock};
   if (known_cnt) {
     for (auto& e : to_scrub) {
       if (same_pg(e, pgid)) {
@@ -1339,7 +1391,7 @@ void ScrubQueue::queue_entries(
   ceph_assert(shallow.pgid == pgid && deep.pgid == pgid);
   ceph_assert(shallow.is_valid && deep.is_valid);
 
-  std::unique_lock l{targets_lock};
+  std::unique_lock l{jobs_lock};
 
   // now - add the new targets
   to_scrub.push_back(shallow);
@@ -1699,16 +1751,16 @@ std::string_view ScrubQueue::attempt_res_text(Scrub::schedule_result_t v)
 }
 
 /// \todo replace with the fmt::format version
-std::string_view ScrubQueue::qu_state_text(Scrub::qu_state_t st)
-{
-  switch (st) {
-    case qu_state_t::not_registered: return "not registered w/ OSD"sv;
-    case qu_state_t::registered: return "registered"sv;
-    case qu_state_t::unregistering: return "unregistering"sv;
-  }
-  // g++ (unlike CLANG), requires an extra 'return' here
-  return "(unknown)"sv;
-}
+// std::string_view ScrubQueue::qu_state_text(Scrub::qu_state_t st)
+// {
+//   switch (st) {
+//     case qu_state_t::not_registered: return "not registered w/ OSD"sv;
+//     case qu_state_t::registered: return "registered"sv;
+//     case qu_state_t::unregistering: return "unregistering"sv;
+//   }
+//   // g++ (unlike CLANG), requires an extra 'return' here
+//   return "(unknown)"sv;
+// }
 // clang-format on
 
 // Scrub::SchedEntry ScrubQueue::get_top_candidate(utime_t scrub_clock_now)
