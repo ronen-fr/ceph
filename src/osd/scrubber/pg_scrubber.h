@@ -487,15 +487,16 @@ class PgScrubber : public ScrubPgIF,
       Scrub::SchedEntry trgt,
       const Scrub::ScrubPgPreconds& pg_cond);
 
-  Scrub::SchedEntry mark_for_after_repair() final;
+  void mark_for_after_repair() final;
 
   // a null return means everything is OK
   std::optional<Scrub::schedule_result_t> validate_scrub_mode(
+      utime_t scrub_clock_now,
       Scrub::SchedTarget& sched_target,
       const Scrub::ScrubPgPreconds& pg_cond);
-  std::optional<Scrub::schedule_result_t> validate_scrub_mode(
-      Scrub::TargetRef sched_target,
-      const Scrub::ScrubPgPreconds& pg_cond);
+//   std::optional<Scrub::schedule_result_t> validate_scrub_mode(
+//       Scrub::TargetRef sched_target,
+//       const Scrub::ScrubPgPreconds& pg_cond);
 
   // --------------------------------------------------------------------------
   // the I/F used by the state-machine (i.e. the implementation of
@@ -780,7 +781,7 @@ class PgScrubber : public ScrubPgIF,
   const char* m_fsm_state_name{nullptr};
   const spg_t m_pg_id;	///< a local copy of m_pg->pg_id
   OSDService* const m_osds;
-  ScrubQueue& m_scrub_queue;
+  ScrubQueueOps& m_scrub_queue;
   const pg_shard_t m_pg_whoami;	 ///< a local copy of m_pg->pg_whoami;
 
   epoch_t m_interval_start{0};	///< interval's 'from' of when scrubbing was

@@ -212,7 +212,7 @@ struct ScrubPgIF {
     Scrub::SchedEntry trgt,
     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
-  virtual Scrub::SchedEntry mark_for_after_repair() = 0;
+  virtual void mark_for_after_repair() = 0;
 
   // currently only used for an assertion:
   [[nodiscard]] virtual bool are_callbacks_pending() const = 0;	

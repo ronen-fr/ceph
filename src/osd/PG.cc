@@ -429,8 +429,7 @@ void PG::start_after_repair_scrub()
   dout(10) << __func__ << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
   // manipulate the job's schedule-targets
-  auto deep_job = m_scrubber->mark_for_after_repair();
-  start_scrubbing(deep_job);
+  m_scrubber->mark_for_after_repair();
 }
 
 unsigned PG::get_scrub_priority()
