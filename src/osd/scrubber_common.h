@@ -259,12 +259,11 @@ struct ScrubPgIF {
   virtual void on_operator_periodic_cmd(
     ceph::Formatter* f,
     scrub_level_t scrub_level,
-    int offset) = 0;
+    int64_t offset) = 0;
 
   virtual void on_operator_forced_scrub(
     ceph::Formatter* f,
     scrub_level_t scrub_level
-    //int offset,
     ) = 0;
 
   virtual void dump_scrubber(ceph::Formatter* f) const = 0;

@@ -80,6 +80,7 @@ Main Scrubber interfaces:
 
 #include "ScrubStore.h"
 #include "osd_scrub_sched.h"
+#include "scrub_queue_if.h"
 #include "scrub_backend.h"
 #include "scrub_machine_lstnr.h"
 
@@ -396,7 +397,7 @@ class PgScrubber : public ScrubPgIF,
   void on_operator_periodic_cmd(
     ceph::Formatter* f,
     scrub_level_t scrub_level,
-    int offset) final;
+    int64_t offset) final;
 
   void on_operator_forced_scrub(
     ceph::Formatter* f,
@@ -781,7 +782,7 @@ class PgScrubber : public ScrubPgIF,
   const char* m_fsm_state_name{nullptr};
   const spg_t m_pg_id;	///< a local copy of m_pg->pg_id
   OSDService* const m_osds;
-  ScrubQueueOps& m_scrub_queue;
+  Scrub::ScrubQueueOps& m_scrub_queue;
   const pg_shard_t m_pg_whoami;	 ///< a local copy of m_pg->pg_whoami;
 
   epoch_t m_interval_start{0};	///< interval's 'from' of when scrubbing was

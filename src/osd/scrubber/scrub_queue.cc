@@ -7,6 +7,8 @@
 //#include <iostream>
 #include "osd_scrub_sched.h"
 #include "scrub_queue.h"
+#include "osd/osd_types_fmt.h"
+
 
 using namespace ::std::literals;
 
@@ -14,13 +16,9 @@ using namespace ::std::literals;
 #define dout_context (cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
-#define dout_prefix _prefix_target(_dout, this)
-
-template <class T>
-static std::ostream& _prefix_target(std::ostream* _dout, T* t)
-{
-  return t->gen_prefix(*_dout);
-}
+#define dout_prefix                                                            \
+  *_dout << "osd." << osd_service.get_nodeid() << " scrub-queue::" << __func__ \
+	 << " "
 
 
 ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
@@ -69,6 +67,25 @@ std::optional<double> ScrubQueue::update_load_average()
 // ////////////////////////////////////////////////////////////////////////// //
 // queue manipulation - implementing the ScrubQueueOps interface
 
+using QSchedTarget = Scrub::QSchedTarget;
+using urgency_t = Scrub::urgency_t;
+
+
+namespace {
+
+// the 'identification' function for the 'to_scrub' queue
+// (would have been a key in a map, where we not sorting the entries
+// by different fields)
+auto same_key(const QSchedTarget& t, spg_t pgid, scrub_level_t s_or_d)
+{
+  return t.is_valid && t.pgid == pgid && t.level == s_or_d;
+}
+auto same_pg(const QSchedTarget& t, spg_t pgid)
+{
+  return t.is_valid && t.pgid == pgid;
+}
+}  // namespace
+
 
 void ScrubQueue::queue_entries(
     spg_t pgid,
@@ -89,7 +106,159 @@ void ScrubQueue::queue_entries(
   to_scrub.push_back(deep);
 }
 
+void ScrubQueue::remove_entry(spg_t pgid, scrub_level_t s_or_d)
+{
+  dout(20) << fmt::format(
+		  "{}: removing {}/{} from the scrub-queue", __func__, pgid,
+		  s_or_d)
+	   << dendl;
+  std::unique_lock l{jobs_lock};
+  auto i = std::find_if(
+      to_scrub.begin(), to_scrub.end(), [pgid, s_or_d](const QSchedTarget& t) {
+	return same_key(t, pgid, s_or_d);
+      });
+  if (i != to_scrub.end()) {
+    i->is_valid = false;
+  }
+}
 
+void ScrubQueue::remove_entries(spg_t pgid, int known_cnt)
+{
+  dout(20) << fmt::format(
+		  "{}: dequeuing pg[{}]: queuing <{}> & <{}>", __func__, pgid)
+	   << dendl;
+
+  std::unique_lock l{jobs_lock};
+  if (known_cnt) {
+    for (auto& e : to_scrub) {
+      if (same_pg(e, pgid)) {
+	e.is_valid = false;
+	if (--known_cnt <= 0) {
+	  break;
+	}
+      }
+    }
+  }
+}
+
+void ScrubQueue::cp_and_queue_target(QSchedTarget t)
+{
+  dout(20) << fmt::format("{}: restoring {} to the scrub-queue", __func__, t)
+	   << dendl;
+  ceph_assert(t.urgency > urgency_t::off);
+  std::unique_lock l{jobs_lock};
+  t.is_valid = true;
+  to_scrub.push_back(t);
+}
+
+// ////////////////////////////////////////////////////////////////////////// //
+// initiating a scrub
+
+using ScrubPreconds = Scrub::ScrubPreconds;
+using schedule_result_t = Scrub::schedule_result_t;
+
+void ScrubQueue::sched_scrub(
+    const ceph::common::ConfigProxy& config,
+    bool is_recovery_active)
+{
+  utime_t scrub_tick_time = scrub_clock_now();
+
+  // do the OSD-wide environment conditions, and the availability of scrub
+  // resources, allow us to start a scrub?
+
+  auto maybe_env_cond =
+      preconditions_to_scrubbing(config, is_recovery_active, scrub_tick_time);
+  if (!maybe_env_cond) {
+    return;  // SchedOutcome{maybe_env_cond.error(), std::nullopt};
+  }
+  auto preconds = maybe_env_cond.value();
+
+  std::unique_lock l{jobs_lock};
+
+  // normalize the queue
+  if (bool not_empty = normalize_the_queue(scrub_tick_time); !not_empty) {
+    return;  // SchedOutcome{schedule_result_t::no_pg_ready, std::nullopt};
+  }
+
+  // pop the first job from the queue, as a candidate
+  auto cand = to_scrub.front();
+  to_scrub.pop_front();
+
+  l.unlock();
+
+  PgLockWrapper locked_g = osd_service.get_locked_pg(cand.pgid);
+  PGRef pg = locked_g.m_pg;
+  if (!pg) {
+    // the PG was dequeued in the short time span between creating the
+    // candidates list (collect_ripe_jobs()) and here
+    dout(5) << fmt::format("pg[{}] not found", cand.pgid) << dendl;
+    return;  // SchedOutcome{schedule_result_t::no_such_pg, std::nullopt};
+  }
+
+  pg->start_scrubbing(scrub_tick_time, cand.level);
+}
+
+
+tl::expected<ScrubPreconds, schedule_result_t>
+ScrubQueue::preconditions_to_scrubbing(
+    const ceph::common::ConfigProxy& config,
+    bool is_recovery_active,
+    utime_t scrub_clock_now)
+{
+  if (auto blocked_pgs = get_blocked_pgs_count(); blocked_pgs > 0) {
+    // some PGs managed by this OSD were blocked by a locked object during
+    // scrub. This means we might not have the resources needed to scrub now.
+    dout(10) << fmt::format(
+		    "{}: PGs are blocked while scrubbing due to locked objects "
+		    "({} PGs)",
+		    __func__, blocked_pgs)
+	     << dendl;
+  }
+
+  // sometimes we just skip the scrubbing
+  if ((rand() / (double)RAND_MAX) < config->osd_scrub_backoff_ratio) {
+    dout(20) << fmt::format(
+		    ": lost coin flip, randomly backing off (ratio: {:f})",
+		    config->osd_scrub_backoff_ratio)
+	     << dendl;
+    tl::unexpected(schedule_result_t::lost_coin_flip);
+  }
+
+  // fail fast if no resources are available
+  if (!can_inc_scrubs()) {
+    dout(10) << __func__ << ": OSD cannot inc scrubs" << dendl;
+    return tl::unexpected(schedule_result_t::no_local_resources);
+  }
+
+  // if there is a PG that is just now trying to reserve scrub replica resources
+  // - we should wait and not initiate a new scrub
+  if (is_reserving_now()) {
+    dout(20) << __func__ << ": scrub resources reservation in progress"
+	     << dendl;
+    return tl::unexpected(schedule_result_t::repl_reservation_in_progress);
+  }
+
+  Scrub::ScrubPreconds env_conditions;
+  env_conditions.time_permit = scrub_time_permit(scrub_clock_now);
+  env_conditions.load_is_low = scrub_load_below_threshold();
+  env_conditions.only_deadlined =
+      !env_conditions.time_permit || !env_conditions.load_is_low;
+
+  if (is_recovery_active && !config->osd_scrub_during_recovery) {
+    if (!config->osd_repair_during_recovery) {
+      dout(15) << __func__ << ": not scheduling scrubs due to active recovery"
+	       << dendl;
+      return tl::unexpected(schedule_result_t::recovery_is_active);
+    }
+    dout(10) << __func__
+	     << " will only schedule explicitly requested repair due to active "
+		"recovery"
+	     << dendl;
+    env_conditions.allow_requested_repair_only = true;
+  }
+
+  return env_conditions;
+}
 
 
 // ////////////////////////////////////////////////////////////////////////// //
@@ -144,8 +313,12 @@ Scrub::sched_conf_t ScrubQueue::populate_config_params(
   return configs;
 }
 
+
+
 // ////////////////////////////////////////////////////////////////////////// //
 // container low-level operations. Will be extracted, and implemented by Sam's
+
+
 
 
 

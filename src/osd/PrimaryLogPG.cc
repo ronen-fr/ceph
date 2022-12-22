@@ -1156,15 +1156,17 @@ void PrimaryLogPG::do_command(
 
   else if (prefix == "scrub" || prefix == "deep_scrub") {
 
-    bool deep = (prefix == "deep_scrub");
+    scrub_level_t deep =
+	(prefix == "deep_scrub") ? scrub_level_t::deep : scrub_level_t::shallow;
     int64_t time = cmd_getval_or<int64_t>(cmdmap, "time", 0);
-    // bool as_must = cmd_getval_or<bool>(cmdmap, "must", false);
+    bool as_must = cmd_getval_or<bool>(cmdmap, "force", false);
 
     if (is_primary()) {
-      // the '999' to signal a 'must scrub' is an ugly hack. To fix.
-      m_scrubber->on_operator_cmd(
-	  f.get(), deep ? scrub_level_t::deep : scrub_level_t::shallow, time,
-	  (time == 999));
+      if (as_must) {
+	m_scrubber->on_operator_forced_scrub(f.get(), deep);
+      } else {
+        m_scrubber->on_operator_periodic_cmd(f.get(), deep, time);
+      }
     } else {
       ss << "Not primary";
       ret = -EPERM;

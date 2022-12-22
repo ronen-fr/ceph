@@ -36,6 +36,84 @@ targets.
 
 */
 
+// ////////////////////////////////////////////////////////////////////////// //
+// QSchedTarget
+
+
+std::weak_ordering cmp_ripe_entries(
+    const Scrub::QSchedTarget& l,
+    const Scrub::QSchedTarget& r)
+{
+  // for 'higher is better' sub elements - the 'r.' is on the left
+  if (auto cmp = r.urgency <=> l.urgency; cmp != 0) {
+    return cmp;
+  }
+  // the 'utime_t' operator<=> is 'partial_ordering', it seems.
+  if (auto cmp = std::weak_order(double(l.deadline), double(r.deadline));
+      cmp != 0) {
+    return cmp;
+  }
+  if (auto cmp = std::weak_order(double(l.target), double(r.target));
+      cmp != 0) {
+    return cmp;
+  }
+  if (auto cmp = std::weak_order(double(l.not_before), double(r.not_before));
+      cmp != 0) {
+    return cmp;
+  }
+  if (l.level < r.level) {
+    return std::weak_ordering::less;
+  }
+  return std::weak_ordering::greater;
+}
+
+std::weak_ordering cmp_future_entries(
+    const Scrub::QSchedTarget& l,
+    const Scrub::QSchedTarget& r)
+{
+  if (auto cmp = std::weak_order(double(l.not_before), double(r.not_before));
+      cmp != 0) {
+    return cmp;
+  }
+  // for 'higher is better' sub elements - the 'r.' is on the left
+  if (auto cmp = r.urgency <=> l.urgency; cmp != 0) {
+    return cmp;
+  }
+  // the 'utime_t' operator<=> is 'partial_ordering', it seems.
+  if (auto cmp = std::weak_order(double(l.deadline), double(r.deadline));
+      cmp != 0) {
+    return cmp;
+  }
+  if (auto cmp = std::weak_order(double(l.target), double(r.target));
+      cmp != 0) {
+    return cmp;
+  }
+  if (l.level < r.level) {
+    return std::weak_ordering::less;
+  }
+  return std::weak_ordering::greater;
+}
+
+std::weak_ordering cmp_entries(
+    utime_t t,
+    const Scrub::QSchedTarget& l,
+    const Scrub::QSchedTarget& r)
+{
+  bool l_ripe = l.is_ripe(t);
+  bool r_ripe = r.is_ripe(t);
+  if (l_ripe) {
+    if (r_ripe) {
+      return cmp_ripe_entries(l, r);
+    }
+    return std::weak_ordering::less;
+  }
+  if (r_ripe) {
+    return std::weak_ordering::greater;
+  }
+  return cmp_future_entries(l, r);
+}
+
+
 
 // ////////////////////////////////////////////////////////////////////////// //
 // SchedTarget
@@ -64,111 +142,26 @@ utime_t add_double(utime_t t, double d)
 }
 }  // namespace
 
-/*
- *  NOTE: not used for deciding which target should be scrubbed! (as it does not
- *   take the 'ripeness' into account)
- */
-// std::partial_ordering SchedTarget::operator<=>(const SchedTarget& r) const
-// {
-//   // for 'higher is better' sub elements - the 'r.' is on the left
-//   if (auto cmp = r.urgency <=> urgency; cmp != 0) {
-//     return cmp;
-//   }
-//   // if both have deadline - use it. The earlier is better.
-//   if (deadline && r.deadline) {
-//     if (auto cmp = *deadline <=> *r.deadline; cmp != 0) {
-//       return cmp;
-//     }
-//   }
-//   if (auto cmp = target <=> r.target; cmp != 0) {
-//     return cmp;
-//   }
-//   if (auto cmp = r.auto_repairing <=> auto_repairing; cmp != 0) {
-//     return cmp;
-//   }
-//   if (auto cmp = r.is_deep() <=> is_deep(); cmp != 0) {
-//     return cmp;
-//   }
-//   return not_before <=> r.not_before;
-// }
 
-/*
- * The ordering is different for ripe and for future jobs. For the former, we
- * sort based on
- *       - urgency
- *       - deadline
- *       - target
- *       - auto-repair
- *       - deep over shallow
- *
- * For the targets that have not reached their not-before time, we sort
- * based on
- *       - not-before
- *       - urgency
- *       - deadline
- *       - target
- *       - auto-repair
- *       - deep over shallow
- *
- * But how do we know which targets are ripe? (without accessing the clock
- * multiple times each time we want to order the targets?)
- * We'd have to keep a separate ephemeral flag for each target, and update it
- * before sorting. And yes - this is not a perfect solution.
- */
-// std::partial_ordering Scrub::clock_based_cmp(
-//     const SchedTarget& l,
-//     const SchedTarget& r)
-// {
-//   // NOTE: it is assumed that the 'eph_ripe_for_sort' flag is already set for
-//   // both targets
-//
-//   // for 'higher is better' sub elements - the 'r.' is on the left
-//   if (auto cmp = r.eph_ripe_for_sort <=> l.eph_ripe_for_sort; cmp != 0) {
-//     return cmp;
-//   }
-//   if (l.eph_ripe_for_sort) {
-//     if (auto cmp = r.urgency <=> l.urgency; cmp != 0) {
-//       return cmp;
-//     }
-//     // if both have deadline - use it. The earlier is better.
-//     if (l.deadline && r.deadline) {
-//       if (auto cmp = *l.deadline <=> *r.deadline; cmp != 0) {
-// 	return cmp;
-//       }
-//     }
-//     if (auto cmp = l.target <=> r.target; cmp != 0) {
-//       return cmp;
-//     }
-//     if (auto cmp = r.auto_repairing <=> l.auto_repairing; cmp != 0) {
-//       return cmp;
-//     }
-//     if (auto cmp = r.is_deep() <=> l.is_deep(); cmp != 0) {
-//       return cmp;
-//     }
-//     return l.not_before <=> r.not_before;
-//   }
-//
-//   // none of the contestants is ripe for scrubbing
-//   if (auto cmp = l.not_before <=> r.not_before; cmp != 0) {
-//     return cmp;
-//   }
-//   if (auto cmp = r.urgency <=> l.urgency; cmp != 0) {
-//     return cmp;
-//   }
-//   // if both have deadline - use it. The earlier is better.
-//   if (l.deadline && r.deadline) {
-//     if (auto cmp = *l.deadline <=> *r.deadline; cmp != 0) {
-//       return cmp;
-//     }
-//   }
-//   if (auto cmp = l.target <=> r.target; cmp != 0) {
-//     return cmp;
-//   }
-//   if (auto cmp = r.auto_repairing <=> l.auto_repairing; cmp != 0) {
-//     return cmp;
-//   }
-//   return r.is_deep() <=> l.is_deep();
-// }
+// both targets compared are assumed to be 'ripe', i.e. not_before is in the past
+std::weak_ordering cmp_ripe_targets(const Scrub::SchedTarget& l,
+     const Scrub::SchedTarget& r)
+{
+  return cmp_ripe_entries(l.queued_element(), r.queued_element());
+}
+
+std::weak_ordering cmp_future_targets(const Scrub::SchedTarget& l,
+     const Scrub::SchedTarget& r)
+{
+  return cmp_ripe_entries(l.queued_element(), r.queued_element());
+}
+
+std::weak_ordering cmp_targets(utime_t t, const Scrub::SchedTarget& l,
+     const Scrub::SchedTarget& r)
+{
+  return cmp_entries(t, l.queued_element(), r.queued_element());
+}
+
 
 // 'dout' defs for SchedTarget & ScrubJob
 #define dout_context (cct)
@@ -381,7 +374,7 @@ void SchedTarget::push_nb_out(
   last_issue = delay_cause;
 }
 
-void SchedTarget::pg_state_failure(utime_t scrub_clock_now)
+void SchedTarget::delay_on_pg_state(utime_t scrub_clock_now)
 {
   // if not in a state to be scrubbed (active & clean) - we won't retry it
   // for some time
@@ -539,7 +532,7 @@ void SchedTarget::depenalize()
     sched_info.urgency = urgency_t::periodic_regular;
     // RRR not checking 'overdue'. Is it OK?
   }
-  sched_info.penalty_timeout = utime_t{0, 0};
+  penalty_timeout = utime_t{0, 0};
 }
 
 
@@ -578,6 +571,17 @@ std::ostream& ScrubJob::gen_prefix(std::ostream& out) const
 }
 
 
+
+SchedTarget& ScrubJob::closest_target(utime_t scrub_clock_now)
+{
+  if (cmp_targets(scrub_clock_now, shallow_target, deep_target) < 0) {
+    return shallow_target;
+  } else {
+    return deep_target;
+  }
+}
+
+
 // consider returning R-value reference
 SchedTarget ScrubJob::get_moved_target(scrub_level_t s_or_d)
 {
@@ -590,16 +594,16 @@ SchedTarget ScrubJob::get_moved_target(scrub_level_t s_or_d)
 
 void ScrubJob::dequeue_entry(scrub_level_t lvl)
 {
-  scrub_queue.white_out_entry(pgid, lvl);
+  scrub_queue.remove_entry(pgid, lvl);
 }
 
 int ScrubJob::dequeue_targets()
 {
   const int in_q_count =
       (shallow_target.in_queue ? 1 : 0) + (deep_target.in_queue ? 1 : 0);
-  scrub_queue.white_out_entry(pgid, scrub_level_t::shallow);
+  scrub_queue.remove_entry(pgid, scrub_level_t::shallow);
   shallow_target.clear_queued();
-  scrub_queue.white_out_entry(pgid, scrub_level_t::deep);
+  scrub_queue.remove_entry(pgid, scrub_level_t::deep);
   deep_target.clear_queued();
 
   return in_q_count;
@@ -609,7 +613,7 @@ SchedTarget& ScrubJob::dequeue_target(scrub_level_t lvl)
 {
   auto& target = (lvl == scrub_level_t::shallow) ? shallow_target : deep_target;
   //ceph_assert(target.in_queue);
-  scrub_queue.white_out_entry(pgid, lvl);
+  scrub_queue.remove_entry(pgid, lvl);
   target.clear_queued();
   return target;
 }
@@ -649,7 +653,7 @@ void ScrubJob::mark_for_after_repair()
   auto now_is = scrub_queue.scrub_clock_now();
 
   //dequeue, then manipulate the deep target
-  scrub_queue.white_out_entry(pgid, scrub_level_t::deep);
+  scrub_queue.remove_entry(pgid, scrub_level_t::deep);
   deep_target.sched_info.urgency = urgency_t::after_repair;
   deep_target.sched_info.target = {0, 0};
   deep_target.sched_info.not_before = now_is;
@@ -759,7 +763,7 @@ void ScrubJob::operator_periodic_targets(
     return;
   }
 
-  scrub_queue.white_out_entry(pgid, level);
+  scrub_queue.remove_entry(pgid, level);
   trgt.clear_queued();
 
   trgt.up_urgency_to(urgency_t::periodic_regular);
@@ -871,14 +875,18 @@ void ScrubJob::on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime
 
 /**
  * mark for a deep-scrub after the current scrub ended with errors.
+ * Note that no need to requeue the target, as it will be requeued
+ * when the scrub ends.
  */
 void ScrubJob::mark_for_rescrubbing()
 {
   ceph_assert(scrubbing);
   ceph_assert(!deep_target.in_queue);
   deep_target.auto_repairing = true;
-  deep_target.sched_info.target =
-      ceph_clock_now();	 // RRR replace with time_now()
+  // no need to take existing deep_target contents into account,
+  // as the only higher priority is 'after_repair', and we know no
+  // repair took place while we were scrubbing.
+  deep_target.sched_info.target = scrub_queue.scrub_clock_now();
   deep_target.sched_info.not_before = deep_target.sched_info.target;
   deep_target.sched_info.urgency =
       urgency_t::must;	// no need, I think, to use max(...)

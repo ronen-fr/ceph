@@ -663,50 +663,50 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
 	   << dendl;
   // if we encounter any error - we must requeue the target!
 
-  
+
   // mark our target as not-in-queue
   trgt.in_queue = false;
 
-  #ifdef canthappenRRR
+#ifdef canthappenRRR
   if (is_queued_or_active()) {
     return schedule_result_t::already_started;
   }
-  #endif
+#endif
   ceph_assert(!is_queued_or_active());
 
   auto failure_code = [&]() -> std::optional<Scrub::schedule_result_t> {
 
-  if (state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
-    // note that the trimmer checks scrub status when setting 'snaptrim_wait'
-    // (on the transition from NotTrimming to Trimming/WaitReservation),
-    // i.e. some time before setting 'snaptrim'.
-    dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
-	trgt.pg_state_failure(scrub_clock_now);
-    return schedule_result_t::bad_pg_state;
-  }
+    if (state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
+      // note that the trimmer checks scrub status when setting 'snaptrim_wait'
+      // (on the transition from NotTrimming to Trimming/WaitReservation),
+      // i.e. some time before setting 'snaptrim'.
+      dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
+      trgt.delay_on_pg_state(scrub_clock_now);
+      return schedule_result_t::bad_pg_state;
+    }
 
-  // a sanity-check for the target. Make sure we are in this OSD's queue
-  ceph_assert(trgt.sched_info.urgency > urgency_t::off);
+    // a sanity-check for the target. Make sure we are in this OSD's queue
+    ceph_assert(trgt.sched_info.urgency > urgency_t::off);
 
-  // analyze the combination of the requested scrub flags, the osd/pool
-  // configuration and the PG status to determine whether we should scrub now.
-  auto validation = validate_scrub_mode(scrub_clock_now, trgt, pg_cond);
-  if (validation) {
-    // the stars do not align for starting a scrub for this PG at this time
-    // (due to configuration or priority issues)
-    // The reason was already reported by the callee.
-    dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
-    return validation.value();
-  }
+    // analyze the combination of the requested scrub flags, the osd/pool
+    // configuration and the PG status to determine whether we should scrub now.
+    auto validation_err = validate_scrub_mode(scrub_clock_now, trgt, pg_cond);
+    if (validation_err) {
+      // the stars do not align for starting a scrub for this PG at this time
+      // (due to configuration or priority issues)
+      // The reason was already reported by the callee.
+      dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
+      return validation_err.value();
+    }
 
-  // try to reserve the local OSD resources. If failing: no harm. We will
-  // be retried by the OSD later on.
-  if (!reserve_local()) {
-    dout(10) << __func__ << ": failed to reserve locally" << dendl;
-    trgt.delay_on_no_local_resrc(scrub_clock_now);
-    return schedule_result_t::no_local_resources;
-  }
-  return std::nullopt;
+    // try to reserve the local OSD resources. If failing: no harm. We will
+    // be retried by the OSD later on.
+    if (!reserve_local()) {
+      dout(10) << __func__ << ": failed to reserve locally" << dendl;
+      trgt.delay_on_no_local_resrc(scrub_clock_now);
+      return schedule_result_t::no_local_resources;
+    }
+    return std::nullopt;
   }();
 
   // upon failure: we have already modified the NB of the target. Just push it
@@ -714,14 +714,6 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
   if (failure_code.has_value()) {
     m_scrub_job->requeue_entry(lvl);
     return failure_code.value();
-  }
-  
-
-  // An interrupted recovery repair could leave this set.
-  // RRR this is a 4 years old comment. Is it still relevant?
-  if (state_test(PG_STATE_REPAIR)) {
-    dout(1) << __func__ << ": clearing repair state" << dendl;
-    state_clear(PG_STATE_REPAIR);
   }
 
   // we are now committed to scrubbing this PG
@@ -2460,18 +2452,18 @@ void asok_response_section(
 void PgScrubber::on_operator_periodic_cmd(
     ceph::Formatter* f,
     scrub_level_t scrub_level,
-    int offset)
+    int64_t offset)
 {
-  auto cnf = qu.populate_config_params(m_pg->get_pgpool().info.opts);
+  auto cnf = m_scrub_queue.populate_config_params(m_pg->get_pgpool().info.opts);
   dout(10) << fmt::format(
 		  "{}: {} (cmd offset:{}) conf:{}", __func__,
-		  (lvl == scrub_level_t::deep ? "deep" : "shallow"), offset,
+		  (scrub_level == scrub_level_t::deep ? "deep" : "shallow"), offset,
 		  cnf)
 	   << dendl;
 
   // move the relevant time-stamp backwards - enough to trigger a scrub
 
-  utime_t now_is = ceph_clock_now();  /// \todo use u.test facilities!
+  utime_t now_is = m_scrub_queue.scrub_clock_now();
   utime_t stamp = now_is;
 
   if (offset > 0) {
@@ -2494,17 +2486,11 @@ void PgScrubber::on_operator_periodic_cmd(
   dout(10) << fmt::format("{}: stamp:{} ", __func__, stamp) << dendl;
   asok_response_section(f, true, scrub_level);
 
-//   f->open_object_section("result");
-//   if (scrub_level == scrub_level_t::deep) {
-//     m_pg->set_last_deep_scrub_stamp(stamp);
-//     f->dump_bool("deep", true);
-//   } else {
-//     m_pg->set_last_scrub_stamp(stamp);
-//     f->dump_bool("deep", false);
-//   }
-// 
-//   f->dump_bool("must", false);
-//   f->close_section();
+  if (scrub_level == scrub_level_t::deep) {
+    m_pg->set_last_deep_scrub_stamp(stamp);
+  } else {
+    m_pg->set_last_scrub_stamp(stamp);
+  }
 
   // use the newly-updated set of timestamps to schedule a scrub
   m_scrub_job->operator_periodic_targets(
@@ -2516,7 +2502,7 @@ void PgScrubber::on_operator_forced_scrub(
     ceph::Formatter* f,
     scrub_level_t scrub_level)
 {
-  auto deep_req = scrub_requested(lvl, scrub_type_t::not_repair);
+  auto deep_req = scrub_requested(scrub_level, scrub_type_t::not_repair);
   // RRR handle the deep_req usage instead of scrub_level in asok_response_section
   asok_response_section(f, false, scrub_level);
 }
@@ -2784,12 +2770,13 @@ void PgScrubber::cleanup_on_finish()
   // not sure about the following one (thus also keeping
   // the 'if' on m_active_target)
   ceph_assert(m_active_target);
-  if (m_active_target && !m_active_target->target().is_periodic()) {
-    // reset the urgency, as we have already scheduled the scrub
-    // related to this target
-    m_active_target->target().urgency = urgency_t::periodic_regular;
-    m_active_target->job->consec_aborts = 0;
-  }
+//   if (m_active_target && !m_active_target->target().is_periodic()) {
+//     // reset the urgency, as we have already scheduled the scrub
+//     // related to this target
+//     m_active_target->target().urgency = urgency_t::periodic_regular;
+//     m_active_target->job->consec_aborts = 0;
+//   }
+  m_scrub_job->consec_aborts = 0;
   m_pg->publish_stats_to_osd();
 
   clear_scrub_reservations();

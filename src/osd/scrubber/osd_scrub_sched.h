@@ -248,8 +248,8 @@ using ScrubJobRef = ceph::ref_t<ScrubJob>;
  * - 'white-outed' queue elements are never reported to the queue users.
  */
 struct QSchedTarget {
-  static const /*constexpr*/ auto eternity =
-      utime_t{std::numeric_limits<uint32_t>::max(), 0};
+  //static inline constexpr utime_t eternity{time_t{std::numeric_limits<int32_t>::max()}, 0};
+  static inline const utime_t eternity{9'999'999'999, 0};
 
   QSchedTarget(spg_t pgid, scrub_level_t level)
       : pgid{pgid}, level{level} {}
@@ -285,13 +285,10 @@ struct QSchedTarget {
    */
   utime_t target{eternity};
 
-  /*
-   * if the PG is 'penalized' (after failing to secure replicas), this is the
-   * time at which the penalty is lifted.. Note that must be copied here, as
-   * the periodic scanning of the whole queue by the OSD is the only (not
-   * prohibitive expensive) way to detect the end of the penalty.
-   */
-  utime_t penalty_timeout{0, 0};
+  bool is_ripe(utime_t now_is) const
+  {
+    return urgency > urgency_t::off && now_is >= not_before;
+  }
 };
 
 // an aggregate used for reporting the outcome of a scheduling attempt
@@ -333,6 +330,15 @@ private:
 
   /// the reason for the latest failure/delay (for logging/reporting purposes)
   delay_cause_t last_issue{delay_cause_t::none};
+
+
+  /*
+   * if the PG is 'penalized' (after failing to secure replicas), this is the
+   * time at which the penalty is lifted.. Note that must be copied here, as
+   * the periodic scanning of the whole queue by the OSD is the only (not
+   * prohibitive expensive) way to detect the end of the penalty.
+   */
+  utime_t penalty_timeout{0, 0};
 
   /**
    * the original scheduling object type. Note that for the shallow
@@ -407,7 +413,7 @@ public:
   bool is_viable() const { return sched_info.urgency > urgency_t::off; }
   bool is_queued() const { return in_queue; }
 
-  void depenalize() { sched_info.penalty_timeout = utime_t{0, 0}; }
+  void depenalize() { penalty_timeout = utime_t{0, 0}; }
 
   //bool is_scrubbing() const { return scrubbing; }
 
@@ -424,7 +430,7 @@ public:
    */
   //std::partial_ordering operator<=>(const SchedTarget&) const;
 
-  bool operator==(const SchedTarget& r) const { return (*this <=> r) == 0; }
+  //bool operator==(const SchedTarget& r) const { return (*this <=> r) == 0; }
 
   friend std::partial_ordering clock_based_cmp(
       const SchedTarget& l,
@@ -432,7 +438,7 @@ public:
 
   bool is_ripe(utime_t now_is) const
   {
-    return urgency > urgency_t::off && !scrubbing && now_is >= not_before;
+    return sched_info.urgency > urgency_t::off && now_is >= sched_info.not_before;
   }
 
 //   void update_ripe_for_sort(utime_t now_is)
@@ -442,7 +448,7 @@ public:
 
   bool over_deadline(utime_t now_is) const
   {
-    return urgency > urgency_t::off && now_is >= deadline;
+    return sched_info.urgency > urgency_t::off && now_is >= sched_info.deadline;
   }
 
   void up_urgency_to(urgency_t u)
@@ -464,7 +470,7 @@ public:
 
   // failures
   void push_nb_out(std::chrono::seconds delay, delay_cause_t delay_cause, utime_t scrub_clock_now);
-  void pg_state_failure(utime_t scrub_clock_now);
+  void delay_on_pg_state(utime_t scrub_clock_now);
   void delay_on_level_not_allowed(utime_t scrub_clock_now);
   void delay_on_wrong_time(utime_t scrub_clock_now);
   void delay_on_no_local_resrc(utime_t scrub_clock_now);
@@ -614,6 +620,8 @@ struct ScrubJob {
   void on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime_t now_is);
 
   void mark_for_after_repair();
+
+  SchedTarget& closest_target(utime_t scrub_clock_now);
 
 
  public:  // for now
@@ -1311,23 +1319,23 @@ struct fmt::formatter<Scrub::urgency_t>
 // clang-format on
 
 // clang-format off
-template <>
-struct fmt::formatter<Scrub::qu_state_t>
-    : fmt::formatter<std::string_view> {
-  template <typename FormatContext>
-  auto format(Scrub::qu_state_t qust, FormatContext& ctx)
-  {
-    using enum Scrub::qu_state_t;
-    std::string_view desc;
-    switch (qust) {
-    case not_registered:        desc = "not registered w/ OSD"; break;
-    case registered:            desc = "registered"; break;
-    case unregistering:         desc = "unregistering"; break;
-      // better to not have a default case, so that the compiler will warn
-    }
-    return formatter<string_view>::format(desc, ctx);
-  }
-};
+// template <>
+// struct fmt::formatter<Scrub::qu_state_t>
+//     : fmt::formatter<std::string_view> {
+//   template <typename FormatContext>
+//   auto format(Scrub::qu_state_t qust, FormatContext& ctx)
+//   {
+//     using enum Scrub::qu_state_t;
+//     std::string_view desc;
+//     switch (qust) {
+//     case not_registered:        desc = "not registered w/ OSD"; break;
+//     case registered:            desc = "registered"; break;
+//     case unregistering:         desc = "unregistering"; break;
+//       // better to not have a default case, so that the compiler will warn
+//     }
+//     return formatter<string_view>::format(desc, ctx);
+//   }
+// };
 // clang-format on
 
 // clang-format off

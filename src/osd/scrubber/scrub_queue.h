@@ -6,6 +6,7 @@
 #include "include/expected.hpp"
 #include "osd/osd_types.h"
 #include "osd/scrubber_common.h"
+#include "osd/scrubber/scrub_queue_if.h"
 #include "include/utime_fmt.h"
 #include "osd/osd_types_fmt.h"
 #include "utime.h"
@@ -16,39 +17,7 @@ class ScrubSchedListener;
 class ScrubJob;
 class ScrubJobRef;
 class QSchedTarget;
-class ScrubQueueOps;
 
-
-// RRR to move to scrub_common.h (or somewhere else)
-struct ScrubQueueOps {
-
-   // a mockable ceph_clock_now(), to allow unit-testing of the scrub scheduling
-   virtual utime_t scrub_clock_now() const = 0;
-
-   virtual sched_conf_t populate_config_params(const pool_opts_t& pool_conf) = 0;
-
-  //virtual SchedEntry extract_target(spg_t pgid, scrub_level_t s_or_d) = 0;
-
-  //virtual std::optional<SchedEntry> extract_target(TargetRef& t, TargetFilter cond) = 0;
-  //virtual bool white_out_target(const TargetRef& t, TargetFilter cond) = 0;
-
-  virtual void white_out_entry(spg_t pgid, scrub_level_t s_or_d) = 0;
-  virtual void white_out_entries(spg_t pgid, int known_cnt = 2) = 0;
-
-  // note: sets the 'in_queue' flag
-  //virtual void push_target(SchedEntry&& e) = 0;
-
-  virtual void queue_entries(
-      spg_t pgid,
-      const QSchedTarget& shallow,
-      const QSchedTarget& deep) = 0;
-
-  virtual void cp_and_queue_target(const QSchedTarget& t) = 0;
-
-  // note: sets the 'in_queue' flag
-  //virtual void push_both_targets(SchedEntry&& s, SchedEntry&& d) = 0;
-  virtual ~ScrubQueueOps() = default;
-};
 
 
 }  // namespace Scrub
@@ -105,10 +74,10 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   //   bool white_out_target(const TargetRef& t, TargetFilter cond) final {}
   //
 
-  void white_out_entry(spg_t pgid, scrub_level_t s_or_d) final;
-  void white_out_entries(spg_t pgid, int known_cnt = 2) final;
+  void remove_entry(spg_t pgid, scrub_level_t s_or_d) final;
+  void remove_entries(spg_t pgid, int known_cnt = 2) final;
 
-  void cp_and_queue_target(const QSchedTarget& t) final;
+  void cp_and_queue_target(QSchedTarget t) final;
 
   void queue_entries(
       spg_t pgid,
@@ -125,6 +94,10 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   //void push_target(SchedEntry&& e) override;
   //void push_both_targets(SchedEntry&& s, SchedEntry&& d) override;
+
+
+  // ///////////////////////////////////////////////////
+  // used by the OSD:
 
 
   /**
@@ -182,6 +155,8 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   void clear_reserving_now() { a_pg_is_reserving = false; }
   bool is_reserving_now() const { return a_pg_is_reserving; }
 
+  // resource reservation management
+
  private:
   bool can_inc_scrubs() const;
   bool inc_scrubs_local();
@@ -191,10 +166,12 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
  public:
   void dump_scrub_reservations(ceph::Formatter* f) const;
 
+
+
   /// counting the number of PGs stuck while scrubbing, waiting for objects
-  void mark_pg_scrub_blocked(spg_t blocked_pg);
-  void clear_pg_scrub_blocked(spg_t blocked_pg);
-  int get_blocked_pgs_count() const;
+  void mark_pg_scrub_blocked(spg_t blocked_pg) final;
+  void clear_pg_scrub_blocked(spg_t blocked_pg) final;
+  int get_blocked_pgs_count() const final;
 
   /**
    * Pacing the scrub operation by inserting delays (mostly between chunks)

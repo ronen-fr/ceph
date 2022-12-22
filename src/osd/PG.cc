@@ -1326,14 +1326,10 @@ Scrub::schedule_result_t PG::start_scrubbing(
   ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);
 
-  /*
-  as the handling of errors was made complicated - move the checks into the
-  scrubber, that performs some of them anyway.
-
   if (!is_primary() || !is_active() || !is_clean()) {
+    // RRR could we have targets queued for non-primary PGs?
     return schedule_result_t::bad_pg_state;
   }
-  */
 
   Scrub::ScrubPgPreconds pg_cond{};
   pg_cond.allow_shallow =
