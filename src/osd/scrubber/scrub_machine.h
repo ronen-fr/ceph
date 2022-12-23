@@ -65,6 +65,9 @@ MEV(RemotesReserved)
 /// a reservation request has failed
 MEV(ReservationFailure)
 
+/// possible timeout on a reservation failure penalty
+MEV(PenaltyTimeout)
+
 /// initiate a new scrubbing session (relevant if we are a Primary)
 MEV(StartScrub)
 

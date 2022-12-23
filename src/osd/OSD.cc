@@ -1734,6 +1734,12 @@ void OSDService::queue_for_scrub_denied(PG* pg, Scrub::scrub_prio_t with_priorit
   queue_scrub_event_msg<PGScrubDenied>(pg, with_priority);
 }
 
+void OSDService::queue_for_penalty_timeout(PG* pg, Scrub::scrub_prio_t with_priority)
+{
+  // Resulting scrub event: 'PenaltyTimeout'
+  queue_scrub_event_msg<PGScrubPenaltyTO>(pg, with_priority);
+}
+
 void OSDService::queue_for_scrub_resched(PG* pg, Scrub::scrub_prio_t with_priority)
 {
   // Resulting scrub event: 'InternalSchedScrub'

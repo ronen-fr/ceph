@@ -39,6 +39,7 @@ targets.
 // ////////////////////////////////////////////////////////////////////////// //
 // QSchedTarget
 
+namespace Scrub {
 
 std::weak_ordering cmp_ripe_entries(
     const Scrub::QSchedTarget& l,
@@ -113,7 +114,7 @@ std::weak_ordering cmp_entries(
   return cmp_future_entries(l, r);
 }
 
-
+}  // namespace Scrub
 
 // ////////////////////////////////////////////////////////////////////////// //
 // SchedTarget
@@ -142,7 +143,7 @@ utime_t add_double(utime_t t, double d)
 }
 }  // namespace
 
-
+namespace Scrub {
 // both targets compared are assumed to be 'ripe', i.e. not_before is in the past
 std::weak_ordering cmp_ripe_targets(const Scrub::SchedTarget& l,
      const Scrub::SchedTarget& r)
@@ -162,6 +163,7 @@ std::weak_ordering cmp_targets(utime_t t, const Scrub::SchedTarget& l,
   return cmp_entries(t, l.queued_element(), r.queued_element());
 }
 
+}  // namespace Scrub
 
 // 'dout' defs for SchedTarget & ScrubJob
 #define dout_context (cct)
@@ -203,6 +205,11 @@ void SchedTarget::reset()
   // a bit convoluted, but guarantees we keep the same set of member
   // defaults as the constructor
   *this = SchedTarget{sched_info.pgid, sched_info.level, whoami, cct};
+}
+
+utime_t SchedTarget::sched_time() const
+{
+  return sched_info.not_before;
 }
 
 

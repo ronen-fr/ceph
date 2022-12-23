@@ -560,6 +560,7 @@ class PgScrubber : public ScrubPgIF,
 
   void send_remotes_reserved(epoch_t epoch_queued) final;
   void send_reservation_failure(epoch_t epoch_queued) final;
+  void send_penalty_timeout(epoch_t epoch_queued) final;
 
   /**
    *  does the PG have newer updates than what we (the scrubber) know?

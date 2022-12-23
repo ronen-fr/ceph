@@ -31,13 +31,6 @@ struct TargetsContainerOps {
 
 /**
  * the queue of PGs waiting to be scrubbed.
- * Main operations are scheduling/unscheduling a PG to be scrubbed at a certain
- * time.
- *
- * A "penalty" queue maintains those PGs that have failed to reserve the
- * resources of their replicas. The PGs in this list will be reinstated into the
- * scrub queue when all eligible PGs were already handled, or after a timeout
- * (or if their deadline has passed [[disabled at this time]]).
  */
 class ScrubQueue : public Scrub::ScrubQueueOps {
  public:
@@ -50,11 +43,9 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   using QSchedTarget = Scrub::QSchedTarget;
   using SchedulingQueue = std::deque<QSchedTarget>;
 
-  //static std::string_view qu_state_text(Scrub::qu_state_t st);
-
-  Scrub::SchedOutcome get_top_candidate(
-      const ceph::common::ConfigProxy& config,
-      bool is_recovery_active);
+//   Scrub::SchedOutcome get_top_candidate(
+//       const ceph::common::ConfigProxy& config,
+//       bool is_recovery_active);
 
 
   // ///////////////////////////////////////////////////
@@ -63,16 +54,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   utime_t scrub_clock_now() const override;
 
   Scrub::sched_conf_t populate_config_params(const pool_opts_t& pool_conf) override;
-
-
-  //   SchedEntry extract_target(spg_t pgid, scrub_level_t s_or_d) final {}
-  //
-  //   std::optional<SchedEntry> extract_target(TargetRef& t, TargetFilter cond)
-  //       final
-  //   {}
-  //
-  //   bool white_out_target(const TargetRef& t, TargetFilter cond) final {}
-  //
 
   void remove_entry(spg_t pgid, scrub_level_t s_or_d) final;
   void remove_entries(spg_t pgid, int known_cnt = 2) final;
@@ -84,16 +65,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
       const QSchedTarget& shallow,
       const QSchedTarget& deep) final;
 
-  // note: sets the 'in_queue' flag
-  //void push_both_targets(SchedEntry&& s, SchedEntry&& d) final {}
-
-
-  // locks and removes from the queue
-  // (RRR may be implemented by a copy + marking the original as 'to be removed')
-  //SchedEntry extract_target(spg_t pgid, scrub_level_t s_or_d) override;
-
-  //void push_target(SchedEntry&& e) override;
-  //void push_both_targets(SchedEntry&& s, SchedEntry&& d) override;
 
 
   // ///////////////////////////////////////////////////
@@ -157,13 +128,12 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   // resource reservation management
 
- private:
+ public:
   bool can_inc_scrubs() const;
   bool inc_scrubs_local();
   void dec_scrubs_local();
   bool inc_scrubs_remote();
   void dec_scrubs_remote();
- public:
   void dump_scrub_reservations(ceph::Formatter* f) const;
 
 
@@ -207,14 +177,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   }
 #endif
 
-  /**
-   *  jobs_lock protects the job containers and the relevant scrub-jobs state
-   *  variables. Specifically, the following are guaranteed:
-   *  - 'in_queues' is asserted only if the PGs 'targets' are in the to_scrub queue;
-   *  - a job will only be in state 'registered' if in the queue;
-   *
-   *  Note that PG locks should not be acquired while holding jobs_lock.
-   */
   mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
 
   bool restore_penalized{false};
@@ -258,12 +220,12 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    *
    * locking: locks jobs_lock
    */
-  Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
+  //Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
 
   /**
    * Are there scrub jobs that should be reinstated?
    */
-  void scan_penalized(bool forgive_all, utime_t time_now);
+  //void scan_penalized(bool forgive_all, utime_t time_now);
 
   /**
    * clear dead entries (unregistered, or belonging to removed PGs) from a
@@ -275,7 +237,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    * sort the scrub queue, first updating the 'ripeness' of all
    * jobs, then using a comparator that takes the 'ripeness' into account.
    */
-  void clock_based_sort(utime_t now_is);
+  //void clock_based_sort(utime_t now_is);
 
   /**
    * the set of the first N scrub jobs in 'group' which are ready to be
@@ -286,7 +248,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    * Note that the returned container holds independent refs to the
    * scrub jobs.
    */
-  SchedulingQueue collect_ripe_jobs(SchedulingQueue& group, utime_t time_now);
+  //SchedulingQueue collect_ripe_jobs(SchedulingQueue& group, utime_t time_now);
 
   /// scrub resources management lock (guarding scrubs_local & scrubs_remote)
   mutable ceph::mutex resource_lock =

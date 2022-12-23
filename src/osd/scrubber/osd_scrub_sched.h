@@ -291,6 +291,15 @@ struct QSchedTarget {
   }
 };
 
+std::weak_ordering cmp_ripe_entries(
+    const Scrub::QSchedTarget& l,
+    const Scrub::QSchedTarget& r);
+
+std::weak_ordering cmp_future_entries(
+    const Scrub::QSchedTarget& l,
+    const Scrub::QSchedTarget& r);
+
+
 // an aggregate used for reporting the outcome of a scheduling attempt
 struct SchedOutcome {
   schedule_result_t result;
@@ -299,12 +308,11 @@ struct SchedOutcome {
 };
 
 class SchedTarget {
-public:
-
-   friend class ::PgScrubber;
-   friend ScrubJob;
-//   friend ScrubQueue;
-   friend struct fmt::formatter<Scrub::SchedTarget>;
+ public:
+  friend class ::PgScrubber;
+  friend ScrubJob;
+  //   friend ScrubQueue;
+  friend struct fmt::formatter<Scrub::SchedTarget>;
 
   SchedTarget(
       spg_t pg_id,
@@ -317,8 +325,9 @@ public:
 
   void reset();
 
-private:
+  utime_t sched_time() const;
 
+ private:
   /// our ID and scheduling parameters
   QSchedTarget sched_info;
 
@@ -339,25 +348,6 @@ private:
    * prohibitive expensive) way to detect the end of the penalty.
    */
   utime_t penalty_timeout{0, 0};
-
-  /**
-   * the original scheduling object type. Note that for the shallow
-   * scheduling target objects - overridden by 'deep_or_upgraded'
-   */
-  //scrub_level_t base_target_level;
-
-  /**
-   * 'randomly selected' for shallow->deep for our next scrub.
-   * "Freezing" the value of 'upgradable' when consulted.
-   * Always set for 'deep' objects.
-   */
-  //bool deep_or_upgraded{false};
-
-  /**
-   * the result of the a 'coin flip' for the next time we consider
-   * upgrading a shallow scrub to a deep scrub.
-   */
-  //bool upgradeable{false};
 
 
   // the flags affecting the scrub that will result from this target
@@ -389,17 +379,14 @@ private:
   int whoami;
 
 
-
   /// marked for de-queue, as the PG is no longer eligible for scrubbing
   //bool marked_for_dequeue{false};
 
-  //std::string dbg_val; // RRR remove, as adds 32B to the size of the object
-
-public:
+ public:
   const QSchedTarget& queued_element() const { return sched_info; }
 
-  //bool is_deep() const { return deep_or_upgraded; }
   bool is_deep() const { return sched_info.level == scrub_level_t::deep; }
+
   bool is_shallow() const { return sched_info.level == scrub_level_t::shallow; }
 
   scrub_level_t level() const
@@ -413,38 +400,15 @@ public:
   bool is_viable() const { return sched_info.urgency > urgency_t::off; }
   bool is_queued() const { return in_queue; }
 
+  bool was_delayed() const { return last_issue != delay_cause_t::none; }
+
   void depenalize() { penalty_timeout = utime_t{0, 0}; }
-
-  //bool is_scrubbing() const { return scrubbing; }
-
-  /**
-   * For sched-targets, lower is better.
-   * The <=> operator is used for "regular" comparisons.
-   * It assumes that both end of the comparison are not 'ripe'.
-   * But when sorting the scheduling queue - either for selecting the
-   * next job to be selected or for listing - we must take into account
-   * the 'ripeness' of the targets - which means we have to consult the
-   * clock. Do that efficiently - we use the 'eph_ripe_for_sort' flag.
-   *
-   * Note: 'partial order' due to strange utime_t::operator<=>()
-   */
-  //std::partial_ordering operator<=>(const SchedTarget&) const;
-
-  //bool operator==(const SchedTarget& r) const { return (*this <=> r) == 0; }
-
-  friend std::partial_ordering clock_based_cmp(
-      const SchedTarget& l,
-      const SchedTarget& r);
 
   bool is_ripe(utime_t now_is) const
   {
-    return sched_info.urgency > urgency_t::off && now_is >= sched_info.not_before;
+    return sched_info.urgency > urgency_t::off &&
+	   now_is >= sched_info.not_before;
   }
-
-//   void update_ripe_for_sort(utime_t now_is)
-//   {
-//     eph_ripe_for_sort = is_ripe(now_is);
-//   }
 
   bool over_deadline(utime_t now_is) const
   {
@@ -456,20 +420,18 @@ public:
     sched_info.urgency = std::max(sched_info.urgency, u);
   }
 
-  // status
-//   void set_scrubbing()
-//   {
-//     //scrubbing = true;
-//     push_nb_out(5s);
-//   }
-  //void clear_scrubbing() { scrubbing = false; }
+  urgency_t urgency() const { return sched_info.urgency; }
+
 
   void clear_queued();
-        void set_queued();
+  void set_queued();
   void disable() { sched_info.urgency = urgency_t::off; }
 
   // failures
-  void push_nb_out(std::chrono::seconds delay, delay_cause_t delay_cause, utime_t scrub_clock_now);
+  void push_nb_out(
+      std::chrono::seconds delay,
+      delay_cause_t delay_cause,
+      utime_t scrub_clock_now);
   void delay_on_pg_state(utime_t scrub_clock_now);
   void delay_on_level_not_allowed(utime_t scrub_clock_now);
   void delay_on_wrong_time(utime_t scrub_clock_now);
@@ -484,8 +446,7 @@ public:
   void set_oper_deep_target(scrub_type_t rpr, utime_t scrub_clock_now);
   void set_oper_shallow_target(scrub_type_t rpr, utime_t scrub_clock_now);
 
-private:
-
+ private:
   // updating periodic targets:
 
   void update_as_shallow(
@@ -1362,17 +1323,17 @@ struct fmt::formatter<Scrub::delay_cause_t> : fmt::formatter<std::string_view> {
 };
 // clang-format on
 
-template <>
-struct fmt::formatter<Scrub::target_id_t> {
-  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-  template <typename FormatContext>
-  auto format(const Scrub::target_id_t& trgtid, FormatContext& ctx)
-  {
-    return format_to(
-      ctx.out(), "<{}/{}>", trgtid.pgid,
-      (trgtid.id.level == scrub_level_t::deep ? "dp" : "sh"));
-  }
-};
+// template <>
+// struct fmt::formatter<Scrub::target_id_t> {
+//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+//   template <typename FormatContext>
+//   auto format(const Scrub::target_id_t& trgtid, FormatContext& ctx)
+//   {
+//     return format_to(
+//       ctx.out(), "<{}/{}>", trgtid.pgid,
+//       (trgtid.level == scrub_level_t::deep ? "dp" : "sh"));
+//   }
+// };
 
 template <>
 struct fmt::formatter<Scrub::QSchedTarget> {
@@ -1381,8 +1342,8 @@ struct fmt::formatter<Scrub::QSchedTarget> {
   auto format(const Scrub::QSchedTarget& st, FormatContext& ctx)
   {
     return format_to(
-	ctx.out(), "{}: {}nb:{:s},({},tr:{:s},dl:{:s})",
-	(st.id.level == scrub_level_t::deep ? "dp" : "sh"), st.not_before,
+	ctx.out(), "{}: nb:{:s},({},tr:{:s},dl:{:s})",
+	(st.level == scrub_level_t::deep ? "dp" : "sh"), st.not_before,
 	st.urgency, st.target, st.deadline);
   }
 };

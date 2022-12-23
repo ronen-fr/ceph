@@ -317,6 +317,13 @@ struct ScrubPgIF {
    */
   virtual void send_reservation_failure(epoch_t epoch_queued) = 0;
 
+  /**
+   * triggers the 'PenaltyTimeout' (time to check whether we are still penalized
+   * for a previous failed attempt to reserve remotes) state-machine event
+   */
+  virtual void send_penalty_timeout(epoch_t epoch_queued) = 0;
+
+
   virtual void cleanup_store(ObjectStore::Transaction* t) = 0;
 
   virtual bool get_store_errors(const scrub_ls_arg_t& arg,

@@ -318,9 +318,35 @@ Scrub::sched_conf_t ScrubQueue::populate_config_params(
 // ////////////////////////////////////////////////////////////////////////// //
 // container low-level operations. Will be extracted, and implemented by Sam's
 
+bool ScrubQueue::normalize_the_queue(utime_t scrub_clock_now)
+{
+  // erase all 'invalid' entries
+  to_scrub.erase(
+      std::remove_if(
+	  to_scrub.begin(), to_scrub.end(),
+	  [](const auto& sched_entry) { return !sched_entry.is_valid; }),
+      to_scrub.end());
 
+  // partition into 'ripe' and to those not eligible for scrubbing
+  auto not_ripe = std::stable_partition(
+      to_scrub.begin(), to_scrub.end(),
+      [scrub_clock_now](const auto& sched_entry) {
+	return sched_entry.is_ripe(scrub_clock_now);
+      });
 
+  // sort the 'ripe' entries by their specific criteria
+  std::sort(to_scrub.begin(), not_ripe, [](const auto& lhs, const auto& rhs) {
+    return cmp_ripe_entries(lhs, rhs) < 0;
+  });
 
+  // and those with not-before in the future - mostly by their 'not-before'
+  // time
+  std::sort(not_ripe, to_scrub.end(), [](const auto& lhs, const auto& rhs) {
+    return cmp_future_entries(lhs, rhs) < 0;
+  });
+
+  return not_ripe != to_scrub.begin();
+}
 
 
 // ////////////////////////////////////////////////////////////////////////// //

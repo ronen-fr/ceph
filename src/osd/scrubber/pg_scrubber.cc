@@ -374,6 +374,16 @@ void PgScrubber::send_reservation_failure(epoch_t epoch_queued)
   dout(10) << "scrubber event --<< " << __func__ << dendl;
 }
 
+void PgScrubber::send_penalty_timeout(epoch_t epoch_queued)
+{
+  dout(10) << "scrubber event -->> " << __func__ << " epoch: " << epoch_queued
+	   << dendl;
+  if (check_interval(epoch_queued)) {  // do not check for 'active'!
+    m_fsm->process_event(PenaltyTimeout{});
+  }
+  dout(10) << "scrubber event --<< " << __func__ << dendl;
+}
+
 void PgScrubber::send_full_reset(epoch_t epoch_queued)
 {
   dout(10) << "scrubber event -->> " << __func__ << " epoch: " << epoch_queued
@@ -2580,14 +2590,13 @@ void PgScrubber::dump_scrubber(ceph::Formatter* f) const
     dump_active_scrubber(f, state_test(PG_STATE_DEEP_SCRUB));
   } else {
     f->dump_bool("active", false);
-    auto now_is = ceph_clock_now();
-    m_scrub_job->determine_closest(now_is);
-    SchedTarget& closest = m_scrub_job->closest_target.get();
-    f->dump_bool("must_scrub", !closest.is_periodic());
-    f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time();
+    auto now_is = m_scrub_queue.scrub_clock_now();
+    auto& closest = m_scrub_job->closest_target(now_is);
+    f->dump_bool("must_scrub", closest.is_required());
+    f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time(now_is);
 
     auto sched_state =
-	m_scrub_job->scheduling_state(ceph_clock_now(), closest.is_deep());
+	m_scrub_job->scheduling_state(ceph_clock_now());
     m_scrub_job->dump(f);
     f->dump_string("schedule", sched_state);
   }
@@ -2645,14 +2654,14 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 		m_scrub_job->blocked)
 	   << dendl;
 
-  auto now_is = ceph_clock_now();
+  auto now_is = m_scrub_queue.scrub_clock_now();
 
   if (m_active) {
     // report current scrub info, including updated duration
     if (m_scrub_job->blocked) {
       // a bug. An object is held locked.
       int32_t blocked_for =
-	(utime_t{now_is} - m_scrub_job->blocked_since).sec();
+	(now_is - m_scrub_job->blocked_since).sec();
       return pg_scrubbing_status_t{
 	utime_t{},
 	blocked_for,
@@ -2662,7 +2671,7 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 	!m_flags.required};
 
     } else {
-      int32_t duration = (utime_t{now_is} - scrub_begin_stamp).sec();
+      int32_t duration = (now_is - scrub_begin_stamp).sec();
       return pg_scrubbing_status_t{
 	utime_t{},
 	duration,
@@ -2673,7 +2682,7 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
     }
   }
 
-  if (m_scrub_job->state != Scrub::qu_state_t::registered) {
+  if (!m_scrub_job->in_queue()) {
     return pg_scrubbing_status_t{
       utime_t{},
       0,
@@ -2685,14 +2694,14 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 
   // not active (i.e. - not scrubbing just now). Report the information
   // gleaned from the nearest scheduling target.
-  m_scrub_job->determine_closest(now_is);
-  SchedTarget& closest = m_scrub_job->closest_target.get();
+  SchedTarget& closest = m_scrub_job->closest_target(now_is);
+  auto sched_time = closest.sched_time();
 
   // are we ripe for scrubbing?
   if (closest.is_ripe(now_is)) {
     // we are waiting for our turn at the OSD.
     return pg_scrubbing_status_t{
-      m_scrub_job->get_sched_time(),
+      sched_time,
       0, // no relevant value for 'duration'
       pg_scrub_sched_status_t::queued,
       false, // not scrubbing at this time
@@ -2700,8 +2709,18 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
       closest.is_periodic()};
   }
 
+  // were we already delayed once (or more)?
+  if (closest.was_delayed()) {
+    return pg_scrubbing_status_t{
+      sched_time,
+      0, // no relevant value for 'duration'
+      pg_scrub_sched_status_t::delayed,
+      false, // not scrubbing at this time
+      closest.level(),
+      closest.is_periodic()};
+  }
   return pg_scrubbing_status_t{
-    m_scrub_job->get_sched_time(),
+    sched_time,
     0,
     pg_scrub_sched_status_t::scheduled,
     false,
@@ -2735,7 +2754,7 @@ PgScrubber::PgScrubber(PG* pg, ScrubQueue& osd_scrubq)
 
 void PgScrubber::set_scrub_begin_time()
 {
-  scrub_begin_stamp = ceph_clock_now();
+  scrub_begin_stamp = m_scrub_queue.scrub_clock_now();
   m_osds->clog->debug() << fmt::format(
     "{} {} starts",
     m_pg->info.pgid.pgid,
@@ -2744,7 +2763,7 @@ void PgScrubber::set_scrub_begin_time()
 
 void PgScrubber::set_scrub_duration()
 {
-  utime_t stamp = ceph_clock_now();
+  utime_t stamp = m_scrub_queue.scrub_clock_now();
   utime_t duration = stamp - scrub_begin_stamp;
   m_pg->recovery_state.update_stats([=](auto& history, auto& stats) {
     stats.last_scrub_duration = ceill(duration.to_msec() / 1000.0);
@@ -2866,11 +2885,8 @@ void PgScrubber::reset_internal_state()
   m_sleep_started_at = utime_t{};
 
   m_active = false;
-  if (m_active_target) {
-    m_active_target->target().clear_scrubbing();
-    m_active_target.reset();
-    dout(20) << "RRR m_active_trgt cleared" << dendl;
-  }
+  m_scrub_job->scrubbing = false;
+  m_active_target.reset();
   clear_queued_or_active();
   ++m_sessions_counter;
   m_be.reset();
@@ -2942,26 +2958,24 @@ ostream& PgScrubber::show_concise(ostream& out) const
       return out << fmt::format(
 		 "({},{}{:4.4}{})", m_is_deep ? "deep" : "shallow",
 		 (m_scrub_job->blocked ? "-*blocked*" : ""),
-		 (*m_active_target).target().urgency, m_flags);
+		 (*m_active_target).sched_info.urgency, m_flags);
     } else {
       return out << fmt::format(
 		 "({},{}{}-inac)", m_is_deep ? "deep" : "shallow",
 		 (m_scrub_job->blocked ? "-*blocked*" : ""), m_flags);
     }
   }
-  auto& nscrub = m_scrub_job->closest_target.get();
+
+  auto now_is = m_scrub_queue.scrub_clock_now();
+  auto& nscrub = m_scrub_job->closest_target(now_is);
   if (nscrub.is_periodic()) {
     // no interesting flags to be reported
     return out;
   }
-  const std::string_view effective_lvl =
-      (nscrub.base_target_level == scrub_level_t::shallow)
-	  ? (nscrub.deep_or_upgraded ? "up" : "sh")
-	  : "dp";
 
   return out << fmt::format(
-	     " [next-scrub:{},{:4.4}{}{}]", effective_lvl, nscrub.urgency,
-	     (nscrub.do_repair ? ",rpr" : ""),
+	     " [next-scrub:{},{:4.4}{}{}]", (nscrub.is_deep() ? "dp" : "sh"),
+	     nscrub.urgency(), (nscrub.do_repair ? ",rpr" : ""),
 	     (nscrub.auto_repairing ? ",auto" : ""));
 }
 

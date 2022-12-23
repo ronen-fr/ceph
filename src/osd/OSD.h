@@ -54,6 +54,7 @@
 #include "osd/osd_perf_counters.h"
 #include "common/Finisher.h"
 #include "scrubber/osd_scrub_sched.h"
+#include "scrubber/scrub_queue.h"
 
 #define CEPH_OSD_PROTOCOL    10 /* cluster internal */
 
@@ -535,6 +536,9 @@ public:
 
   /// queue the message (-> event) that some replicas denied our scrub resources request
   void queue_for_scrub_denied(PG* pg, Scrub::scrub_prio_t with_priority);
+
+  /// queue the message (-> event) that possibly our penalty period has ended
+  void queue_for_penalty_timeout(PG* pg, Scrub::scrub_prio_t with_priority);
 
   /// Signals either (a) the end of a sleep period, or (b) a recheck of the availability
   /// of the primary map being created by the backend.
