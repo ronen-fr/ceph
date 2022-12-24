@@ -111,7 +111,7 @@ class ReplicaReservations {
   bool m_had_rejections{false};
   int m_pending{-1};
   const pg_info_t& m_pg_info;
-  Scrub::ScrubJobRef m_scrub_job;	///< a ref to this PG's scrub job
+  Scrub::ScrubJob* m_scrub_job; // RRR guarantee lifetime!!
 
   void release_replica(pg_shard_t peer, epoch_t epoch);
 
@@ -134,7 +134,7 @@ class ReplicaReservations {
 
   ReplicaReservations(PG* pg,
 		      pg_shard_t whoami,
-		      Scrub::ScrubJobRef scrubjob);
+		      Scrub::ScrubJob* scrubjob);
 
   ~ReplicaReservations();
 
@@ -482,7 +482,8 @@ class PgScrubber : public ScrubPgIF,
   Scrub::schedule_result_t start_scrubbing(
       utime_t scrub_clock_now,
       scrub_level_t lvl,
-      const Scrub::ScrubPgPreconds& pg_cond) final;
+      const Scrub::ScrubPgPreconds& pg_cond,
+      const Scrub::ScrubPreconds& preconds) final;
 
   Scrub::schedule_result_t start_scrubbing(
       Scrub::SchedEntry trgt,
@@ -537,6 +538,12 @@ class PgScrubber : public ScrubPgIF,
   /// the version of 'scrub_clear_state()' that does not try to invoke FSM
   /// services (thus can be called from FSM reactions)
   void clear_pgscrub_state() final;
+
+  /**
+   *  will cause the scrub session to terminate, and for the next scrub to
+   *  be daleyed (the scrub job will be marked 'penalized').
+   */
+  void on_repl_reservation_failure() final;
 
   /*
    * Send an 'InternalSchedScrub' FSM event either immediately, or - if
@@ -624,11 +631,12 @@ class PgScrubber : public ScrubPgIF,
   virtual void _scrub_clear_state() {}
 
   utime_t m_scrub_reg_stamp;		///< stamp we registered for
-  Scrub::ScrubJobRef m_scrub_job;	///< the scrub-job used by the OSD to
-					///< schedule us
 
-  // specifically - we were scheduled thru this entry in the OSD queue:
-  //std::optional<Scrub::SchedEntry> m_active_target;
+  /// the object maintaining our scheduling information
+  std::unique_ptr<Scrub::ScrubJob> m_scrub_job;
+
+   // RRR fix the comment
+  /// specifically - we were scheduled thru this entry in the OSD queue:
   std::optional<Scrub::SchedTarget> m_active_target;
 
   ostream& show_concise(ostream& out) const override;
@@ -953,6 +961,15 @@ class PgScrubber : public ScrubPgIF,
    * priority when we wait for local updates
    */
   Scrub::scrub_prio_t m_replica_request_priority;
+
+  // managing a possible 'de-penalization' callback
+  struct timer_deleter_t {
+    OSDService* m_osds;
+    void operator()(Context* cb);
+  };
+  using timer_wrpr_t = std::unique_ptr<Context, timer_deleter_t>;
+  timer_wrpr_t m_depenalize_cb;
+
 
   /**
    * the 'preemption' "state-machine".

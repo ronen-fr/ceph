@@ -15,7 +15,6 @@
 namespace Scrub {
 class ScrubSchedListener;
 class ScrubJob;
-class ScrubJobRef;
 class QSchedTarget;
 
 
@@ -107,7 +106,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    *
    * locking: might lock jobs_lock
    */
-  void register_with_osd(Scrub::ScrubJobRef sjob);
+  //void register_with_osd(Scrub::ScrubJobRef sjob);
 
   /*
    * handles a change to the configuration parameters affecting the scheduling
@@ -185,13 +184,13 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   double daily_loadavg{0.0};
 
-  static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
-    return jobref->state == Scrub::qu_state_t::registered;
-  };
-
-  static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
-    return jobref->state == Scrub::qu_state_t::not_registered;
-  };
+//   static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
+//     return jobref->state == Scrub::qu_state_t::registered;
+//   };
+// 
+//   static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
+//     return jobref->state == Scrub::qu_state_t::not_registered;
+//   };
 
   tl::expected<Scrub::ScrubPreconds, Scrub::schedule_result_t>
   preconditions_to_scrubbing(

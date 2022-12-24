@@ -368,9 +368,9 @@ void PgScrubber::send_reservation_failure(epoch_t epoch_queued)
 {
   dout(10) << "scrubber event -->> " << __func__ << " epoch: " << epoch_queued
 	   << dendl;
-  if (check_interval(epoch_queued)) {  // do not check for 'active'!
+  //if (check_interval(epoch_queued)) {  // do not check for 'active'!
     m_fsm->process_event(ReservationFailure{});
-  }
+  //}
   dout(10) << "scrubber event --<< " << __func__ << dendl;
 }
 
@@ -662,7 +662,8 @@ bool PgScrubber::reserve_local()
 Scrub::schedule_result_t PgScrubber::start_scrubbing(
     utime_t scrub_clock_now,
     scrub_level_t lvl,
-    const Scrub::ScrubPgPreconds& pg_cond)
+    const Scrub::ScrubPgPreconds& pg_cond,
+    const Scrub::ScrubPreconds& preconds)
 {
   using Scrub::schedule_result_t;
   auto& trgt = m_scrub_job->get_trgt(lvl);
@@ -671,10 +672,9 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
 		  (m_pg->is_active() ? "<active>" : "<not-active>"),
 		  (m_pg->is_clean() ? "<clean>" : "<not-clean>"), trgt)
 	   << dendl;
-  // if we encounter any error - we must requeue the target!
 
-
-  // mark our target as not-in-queue
+  // mark our target as not-in-queue. If any error is encountered - we
+  // must requeue the target!
   trgt.in_queue = false;
 
 #ifdef canthappenRRR
@@ -685,6 +685,16 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
   ceph_assert(!is_queued_or_active());
 
   auto failure_code = [&]() -> std::optional<Scrub::schedule_result_t> {
+
+
+    if (preconds.only_deadlined && trgt.is_periodic() &&
+	!trgt.over_deadline(scrub_clock_now)) {
+      dout(15) << " not scheduling scrub for " << m_pg_id << " due to "
+	       << (preconds.time_permit ? "high load" : "time not permitting")
+	       << dendl;
+      trgt.delay_on_wrong_time(scrub_clock_now);
+      return schedule_result_t::preconditions;
+    }
 
     if (state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
       // note that the trimmer checks scrub status when setting 'snaptrim_wait'
@@ -1346,6 +1356,60 @@ void PgScrubber::on_init()
   ++m_sessions_counter;
   m_pg->publish_stats_to_osd();
 }
+
+// the deleter used to cancel a callback at the end of the penalty period
+void PgScrubber::timer_deleter_t::operator()(Context* cb)
+{
+  ceph_assert(m_osds);
+  std::lock_guard l(m_osds->sleep_lock);
+  m_osds->sleep_timer.cancel_event(cb);
+  m_osds = nullptr;
+  delete cb;
+}
+
+void PgScrubber::on_repl_reservation_failure()
+{
+  auto penalty_period =
+      m_pg->get_cct()->_conf.get_val<std::chrono::milliseconds>(
+	  "osd_scrub_reservation_timeout");
+  dout(10) << fmt::format(
+		  "{}: penalty period: {}", __func__, penalty_period.count())
+	   << dendl;
+
+  if (m_scrub_job->on_reservation_failure(
+	  penalty_period, std::move(*m_active_target))) {
+    // the scrub-job was demoted to 'penalized'. We should set a timer
+    // to undo that after a while
+    // set a wake-up call for when the penalty is over:
+    spg_t pgid = m_pg->get_pgid();
+    Context* cp = new LambdaContext([scrbr = this, osds = m_osds, pgid]([[maybe_unused]] int r) {
+      // send an event to the scrubber to handle the timeout
+      lgeneric_dout(scrbr->get_pg_cct(), 7)
+	<< "scrub_depen_callback: activated"
+	<< dendl;
+
+      PGRef pg = osds->osd->lookup_lock_pg(pgid);
+      if (!pg) {
+	lgeneric_subdout(g_ceph_context, osd, 10)
+	  << "scrub_depen_callback: Could not find "
+	  << "PG " << pgid
+	  << dendl;
+	return;
+      }
+      scrbr->m_scrub_job->un_penalize();
+      pg->unlock();
+    });
+
+    m_depenalize_cb =
+	std::unique_ptr<Context, timer_deleter_t>(cp, timer_deleter_t{m_osds});
+    std::lock_guard l(m_osds->sleep_lock);
+    m_osds->sleep_timer.add_event_after(penalty_period, m_depenalize_cb.get());
+  }
+  m_active_target.reset();
+
+  clear_pgscrub_state();
+}
+
 
 void PgScrubber::on_replica_init()
 {
@@ -2513,8 +2577,7 @@ void PgScrubber::on_operator_forced_scrub(
     scrub_level_t scrub_level)
 {
   auto deep_req = scrub_requested(scrub_level, scrub_type_t::not_repair);
-  // RRR handle the deep_req usage instead of scrub_level in asok_response_section
-  asok_response_section(f, false, scrub_level);
+  asok_response_section(f, false, deep_req);
 }
 
 
@@ -2748,8 +2811,8 @@ PgScrubber::PgScrubber(PG* pg, ScrubQueue& osd_scrubq)
   m_fsm = std::make_unique<ScrubMachine>(m_pg, this);
   m_fsm->initiate();
 
-  m_scrub_job = ceph::make_ref<Scrub::ScrubJob>(
-      m_osds->cct, m_pg->pg_id, m_osds->get_nodeid());
+  m_scrub_job = std::make_unique<Scrub::ScrubJob>(
+      m_scrub_queue, m_osds->cct, m_pg->pg_id, m_osds->get_nodeid());
 }
 
 void PgScrubber::set_scrub_begin_time()
@@ -2775,7 +2838,7 @@ void PgScrubber::set_scrub_duration()
 void PgScrubber::reserve_replicas()
 {
   dout(10) << __func__ << dendl;
-  m_reservations.emplace(m_pg, m_pg_whoami, m_scrub_job);
+  m_reservations.emplace(m_pg, m_pg_whoami, m_scrub_job.get());
 }
 
 // note: only called for successful scrubs
@@ -3102,7 +3165,7 @@ void ReplicaReservations::release_replica(pg_shard_t peer, epoch_t epoch)
 
 ReplicaReservations::ReplicaReservations(PG* pg,
 					 pg_shard_t whoami,
-					 Scrub::ScrubJobRef scrubjob)
+					 Scrub::ScrubJob* scrubjob)
     : m_pg{pg}
     , m_acting_set{pg->get_actingset()}
     , m_osds{m_pg->get_pg_osd(ScrubberPasskey())}
@@ -3147,7 +3210,7 @@ void ReplicaReservations::send_all_done()
 
 void ReplicaReservations::send_reject()
 {
-  m_scrub_job->resources_failure = true;
+  m_scrub_job->resources_failure = true; // better not use that anymore
   m_osds->queue_for_scrub_denied(m_pg, scrub_prio_t::low_priority);
 }
 

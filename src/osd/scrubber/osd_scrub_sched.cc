@@ -419,7 +419,6 @@ void SchedTarget::dump(std::string_view sect_name, ceph::Formatter* f) const
   f->dump_stream("pg") << sched_info.pgid;
   f->dump_stream("level")
       << (sched_info.level == scrub_level_t::deep ? "deep" : "shallow");
-  f->dump_stream("effective_level") << level;
   f->dump_stream("urgency") << fmt::format("{}", sched_info.urgency);
   f->dump_stream("target") << sched_info.target;
   f->dump_stream("not_before") << sched_info.not_before;
@@ -532,16 +531,16 @@ void SchedTarget::dump(std::string_view sect_name, ceph::Formatter* f) const
 //   deep_or_upgraded = true;
 // }
 
-void SchedTarget::depenalize()
-{
-  ceph_assert(!in_queue);
-  if (sched_info.urgency == urgency_t::penalized) {
-    sched_info.urgency = urgency_t::periodic_regular;
-    // RRR not checking 'overdue'. Is it OK?
-  }
-  penalty_timeout = utime_t{0, 0};
-}
-
+// void SchedTarget::depenalize()
+// {
+//   ceph_assert(!in_queue);
+//   if (sched_info.urgency == urgency_t::penalized) {
+//     sched_info.urgency = urgency_t::periodic_regular;
+//     // RRR not checking 'overdue'. Is it OK?
+//   }
+//   penalty_timeout = utime_t{0, 0};
+// }
+// 
 
 
 
@@ -597,6 +596,7 @@ SchedTarget ScrubJob::get_moved_target(scrub_level_t s_or_d)
   SchedTarget cp = moved_trgt;
   ceph_assert(!cp.in_queue);
   moved_trgt.reset();
+  return cp;
 }
 
 void ScrubJob::dequeue_entry(scrub_level_t lvl)
@@ -643,6 +643,10 @@ void ScrubJob::init_and_queue_targets(
       pgid, shallow_target.queued_element(), deep_target.queued_element());
   shallow_target.set_queued();
   deep_target.set_queued();
+  dout(15) << fmt::format(
+		  "{}: {} targets removed from queue, added {} & {}", __func__,
+		  in_q_count, shallow_target, deep_target)
+	   << dendl;
 }
 
 
@@ -653,6 +657,9 @@ void ScrubJob::remove_from_osd_queue()
   const int in_q_count = dequeue_targets();
   shallow_target.disable();
   deep_target.disable();
+  dout(15) << fmt::format(
+		  "{}: {} targets removed and disabled", __func__, in_q_count)
+	   << dendl;
 }
 
 void ScrubJob::mark_for_after_repair()
@@ -740,8 +747,7 @@ void ScrubJob::operator_forced_targets(
     scrub_type_t scrub_type,
     utime_t now_is)
 {
-  auto& trgt = dequeue_target(level);
-
+  dequeue_target(level);
   if (level == scrub_level_t::shallow) {
     shallow_target.set_oper_shallow_target(scrub_type, now_is);
   } else {
@@ -879,6 +885,82 @@ void ScrubJob::on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime
 		  5 * consec_aborts)
 	   << dendl;
 }
+
+/**
+ * Handle a failure to secure the replicas' scrub resources.
+ * State on entry:
+ * - no target is in the queue (both were dequeued when the scrub started);
+ * - both 'shallow' & 'deep' targets are valid - set for the next scrub;
+ */
+bool ScrubJob::on_reservation_failure(std::chrono::milliseconds period, SchedTarget&& aborted_target)
+{
+  bool trgts_demoted = false;
+
+  ceph_assert(scrubbing);
+  ceph_assert(!deep_target.in_queue);
+  ceph_assert(!shallow_target.in_queue);
+
+  scrubbing = false;
+  auto& nxt_target = get_trgt(aborted_target.level());
+  ++consec_aborts;
+
+  // merge the targets:
+  auto sched_to =
+      std::min(aborted_target.sched_info.target, nxt_target.sched_info.target);
+  auto now_is = scrub_queue.scrub_clock_now();
+  auto delay_to = now_is + utime_t{5s};	 // RRR conf
+
+  if (aborted_target.sched_info.urgency > nxt_target.sched_info.urgency) {
+    nxt_target = aborted_target;
+  }
+  nxt_target.sched_info.target = sched_to;
+  nxt_target.sched_info.not_before = delay_to;
+  nxt_target.last_issue = delay_cause_t::replicas;
+  ceph_assert(nxt_target.is_viable());
+
+  // now - if the (possibly updated) aborted target is a periodic one, the
+  // scrub_job will be penalized: its urgency will be demoted for a while.
+  if (period.count() > 0 && shallow_target.is_periodic() && deep_target.is_periodic()) {
+    shallow_target.sched_info.urgency = urgency_t::penalized;
+    deep_target.sched_info.urgency = urgency_t::penalized;
+    penalized = true;
+    penalty_timeout = now_is + utime_t{period};
+    trgts_demoted = true;
+  }
+  scrub_queue.queue_entries(
+      pgid, shallow_target.queued_element(), deep_target.queued_element());
+  shallow_target.set_queued();
+  deep_target.set_queued();
+  dout(10) << fmt::format(
+		  "{}: post [c.target/base:{}] [c.target/abrtd:{}] {}s delay",
+		  __func__, nxt_target, aborted_target, 5 * consec_aborts)
+	   << dendl;
+  return trgts_demoted;
+}
+
+void ScrubJob::un_penalize()
+{
+  if (!penalized) {
+    return;
+  }
+  // dequeue & requeue the targets:
+  const int in_q_count = dequeue_targets();
+  shallow_target.depenalize();
+  deep_target.depenalize();
+
+  scrub_queue.queue_entries(
+      pgid, shallow_target.queued_element(), deep_target.queued_element());
+  shallow_target.set_queued();
+  deep_target.set_queued();
+
+  penalized = false;
+  penalty_timeout = utime_t{0, 0};
+  dout(15) << fmt::format(
+		  "{}: {} targets dequeued. Now: {}", __func__, in_q_count,
+		  *this)
+	   << dendl;
+}
+
 
 /**
  * mark for a deep-scrub after the current scrub ended with errors.
@@ -1188,7 +1270,7 @@ void ScrubJob::on_periods_change(
     return;
   }
 
-  auto should_modify = [this](const SchedTarget& t) {
+  auto should_modify = [](const SchedTarget& t) {
     return (t.is_viable() && t.is_periodic());
   };
 

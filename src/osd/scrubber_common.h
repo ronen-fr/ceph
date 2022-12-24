@@ -206,7 +206,8 @@ struct ScrubPgIF {
   virtual Scrub::schedule_result_t start_scrubbing(
     utime_t scrub_clock_now,
     scrub_level_t level,
-    const Scrub::ScrubPgPreconds& pg_cond) = 0;
+    const Scrub::ScrubPgPreconds& pg_cond,
+    const Scrub::ScrubPreconds& preconds) = 0;
 
   virtual Scrub::schedule_result_t start_scrubbing(
     Scrub::SchedEntry trgt,

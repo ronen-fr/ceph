@@ -709,7 +709,8 @@ public:
 
   Scrub::schedule_result_t start_scrubbing(
       utime_t scrub_clock_now,
-      scrub_level_t level);
+      scrub_level_t level,
+      const Scrub::ScrubPreconds preconds);
 
   unsigned int scrub_requeue_priority(
     Scrub::scrub_prio_t with_priority,

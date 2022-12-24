@@ -221,8 +221,8 @@ struct sched_conf_t {
   bool mandatory_on_invalid{true};
 };
 
-struct ScrubJob;
-using ScrubJobRef = ceph::ref_t<ScrubJob>;
+class ScrubJob;
+//using ScrubJobRef = ceph::ref_t<ScrubJob>;
 
 /*
  * There are two versions of the "sched-target' - the object detailing one
@@ -347,7 +347,7 @@ class SchedTarget {
    * the periodic scanning of the whole queue by the OSD is the only (not
    * prohibitive expensive) way to detect the end of the penalty.
    */
-  utime_t penalty_timeout{0, 0};
+  //utime_t penalty_timeout{0, 0};
 
 
   // the flags affecting the scrub that will result from this target
@@ -402,7 +402,7 @@ class SchedTarget {
 
   bool was_delayed() const { return last_issue != delay_cause_t::none; }
 
-  void depenalize() { penalty_timeout = utime_t{0, 0}; }
+  void depenalize();
 
   bool is_ripe(utime_t now_is) const
   {
@@ -535,8 +535,16 @@ struct ScrubQueueOps;
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubJob -- scrub scheduling & parameters for a specific PG (PgScrubber)
 
-struct ScrubJob {
+class ScrubJob {
  public:
+
+  ScrubJob(
+      ScrubQueueOps& osd_queue,
+      CephContext* cct,
+      const spg_t& pg,
+      int node_id);
+
+
   static scrub_level_t the_other_level(scrub_level_t l)
   {
     return (l == scrub_level_t::deep) ? scrub_level_t::shallow
@@ -579,6 +587,8 @@ struct ScrubJob {
 
   //void on_abort(scrub_level_t lvl, delay_cause_t issue);
   void on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime_t now_is);
+
+  bool on_reservation_failure(std::chrono::milliseconds period, SchedTarget&& aborted_target);
 
   void mark_for_after_repair();
 
@@ -646,17 +656,12 @@ struct ScrubJob {
   bool blocked{false};
   utime_t blocked_since{};
 
-  utime_t penalty_timeout{0, 0};  // maybe not needed
+  utime_t penalty_timeout{0, 0};
 
   /// the more consecutive failures - the longer we will delay before
   /// retrying the scrub job
   int consec_aborts{0};
 
-  ScrubJob(
-      ScrubQueueOps& osd_queue,
-      CephContext* cct,
-      const spg_t& pg,
-      int node_id);
 
   utime_t get_sched_time(utime_t scrub_clock_now)
       const;  // { return closest_target.get().not_before; }
@@ -720,7 +725,7 @@ struct ScrubJob {
 
   void merge_targets(scrub_level_t lvl, std::chrono::seconds delay);
 
-  void un_penalize(utime_t now_is);
+  void un_penalize();
 
   void dump(ceph::Formatter* f) const;
 
@@ -746,6 +751,21 @@ private:
   int dequeue_targets();
 
   SchedTarget& dequeue_target(scrub_level_t lvl);
+
+//   // managing a possible 'de-penalization' callback
+//   struct timer_deleter {
+//     OSDService* m_osds;
+//     void operator()(Context* cb)
+//     {
+//       ceph_assert(m_osds);
+//       std::lock_guard l(m_osds->sleep_lock);
+//       m_osds->sleep_timer.cancel_event(cb);
+//       m_osds = nullptr;
+//       delete cb;
+//     }
+//   };
+//   using timer_wrpr_t = std::unique_ptr<Context, timer_deleter>;
+//   timer_wrpr_t m_depenalize_cb;
 };
 
 
@@ -1399,14 +1419,13 @@ struct fmt::formatter<Scrub::ScrubJob> {
   {
     if (shortened) {
       return fmt::format_to(
-	  ctx.out(), "pg[{}]:reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
-	  sjob.registration_state(), sjob.resources_failure,
-	  ScrubQueue::qu_state_text(sjob.state));
+	  ctx.out(), "pg[{}]:reg:{},rep-fail:{}", sjob.pgid,
+	  sjob.registration_state(), sjob.resources_failure);
     }
     return fmt::format_to(
-	ctx.out(), "pg[{}]:[t:{}],reg:{},rep-fail:{},queue-state:{}", sjob.pgid,
-	sjob.closest_target.get(), sjob.registration_state(),
-	sjob.resources_failure, ScrubQueue::qu_state_text(sjob.state));
+	ctx.out(), "pg[{}]:[t/s:{},t/d:{}],reg:{},rep-fail:{}", sjob.pgid,
+	sjob.shallow_target, sjob.deep_target, sjob.registration_state(),
+	sjob.resources_failure);
   }
   bool shortened{false};
 };

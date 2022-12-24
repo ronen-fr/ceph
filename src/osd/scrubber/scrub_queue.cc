@@ -34,7 +34,7 @@ ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
   }
 }
 
-utime_t scrub_clock_now()
+utime_t ScrubQueue::scrub_clock_now() const
 {
   return ceph_clock_now();
 }
@@ -190,12 +190,12 @@ void ScrubQueue::sched_scrub(
   PGRef pg = locked_g.m_pg;
   if (!pg) {
     // the PG was dequeued in the short time span between creating the
-    // candidates list (collect_ripe_jobs()) and here
+    // candidates list (collect_ripe_jobs()) and here RRR fix comment
     dout(5) << fmt::format("pg[{}] not found", cand.pgid) << dendl;
     return;  // SchedOutcome{schedule_result_t::no_such_pg, std::nullopt};
   }
 
-  pg->start_scrubbing(scrub_tick_time, cand.level);
+  pg->start_scrubbing(scrub_tick_time, cand.level, preconds);
 }
 
 

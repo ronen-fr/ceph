@@ -4220,7 +4220,7 @@ void OSD::final_init()
     "pg "			   \
     "name=pgid,type=CephPgid "	   \
     "name=cmd,type=CephChoices,strings=scrub " \
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
     "name=force,type=CephChoices,req=false,strings=force",
     asok_hook,
     "");
@@ -4229,7 +4229,7 @@ void OSD::final_init()
     "pg "			   \
     "name=pgid,type=CephPgid "	   \
     "name=cmd,type=CephChoices,strings=deep_scrub " \
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
     "name=force,type=CephChoices,req=false,strings=force",
     asok_hook,
     "");
@@ -4262,7 +4262,7 @@ void OSD::final_init()
   r = admin_socket->register_command(
     "scrub "				\
     "name=pgid,type=CephPgid,req=false "	\
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
     "name=force,type=CephChoices,req=false,strings=force",
     asok_hook,
     "Trigger a scheduled scrub ");
@@ -4270,7 +4270,7 @@ void OSD::final_init()
   r = admin_socket->register_command(
     "deep_scrub "			\
     "name=pgid,type=CephPgid,req=false "	\
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
     "name=force,type=CephChoices,req=false,strings=force",
     asok_hook,
     "Trigger a scheduled deep scrub ");
@@ -6171,7 +6171,6 @@ void OSD::tick_without_osd_lock()
 //   return scrub_attempt;
 // }
   
-}
 
 // Usage:
 //   setomapval <pool-id> [namespace/]<obj-name> <key> <val>

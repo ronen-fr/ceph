@@ -1740,7 +1740,7 @@ PrimaryLogPG::PrimaryLogPG(OSDService *o, OSDMapRef curmap,
     pgbackend->get_is_recoverable_predicate());
   snap_trimmer_machine.initiate();
 
-  m_scrubber = make_unique<PrimaryLogScrub>(this);
+  m_scrubber = make_unique<PrimaryLogScrub>(this, o->get_scrub_services());
 }
 
 PrimaryLogPG::~PrimaryLogPG()

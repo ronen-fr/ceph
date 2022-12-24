@@ -1315,7 +1315,8 @@ unsigned int PG::scrub_requeue_priority(
  */
 Scrub::schedule_result_t PG::start_scrubbing(
     utime_t scrub_clock_now,
-    scrub_level_t level)
+    scrub_level_t level,
+    const Scrub::ScrubPreconds preconds)
 {
   using Scrub::schedule_result_t;
   dout(10) << fmt::format(
@@ -1343,7 +1344,7 @@ Scrub::schedule_result_t PG::start_scrubbing(
       (cct->_conf->osd_scrub_auto_repair &&
        get_pgbackend()->auto_repair_supported());
 
-  return m_scrubber->start_scrubbing(scrub_clock_now, level, pg_cond);
+  return m_scrubber->start_scrubbing(scrub_clock_now, level, pg_cond, preconds);
 }
 
 // Scrub::schedule_result_t PG::start_scrubbing(Scrub::QSchedTarget trgt)
