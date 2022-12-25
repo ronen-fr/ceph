@@ -95,12 +95,12 @@ void PGScrubDenied::run(OSD* osd,
   pg->unlock();
 }
 
-void PGScrubPenaltyTO::run(OSD* osd,
+void PGScrubRecalcSchedule::run(OSD* osd,
 			OSDShard* sdata,
 			PGRef& pg,
 			ThreadPool::TPHandle& handle)
 {
-  pg->scrub_send_penalty_timeout(epoch_queued, handle);
+  pg->scrub_send_recalc_schedule(epoch_queued, handle);
   pg->unlock();
 }
 

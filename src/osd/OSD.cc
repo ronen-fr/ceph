@@ -1734,10 +1734,10 @@ void OSDService::queue_for_scrub_denied(PG* pg, Scrub::scrub_prio_t with_priorit
   queue_scrub_event_msg<PGScrubDenied>(pg, with_priority);
 }
 
-void OSDService::queue_for_penalty_timeout(PG* pg, Scrub::scrub_prio_t with_priority)
+void OSDService::queue_scrub_recalc_schedule(PG* pg, Scrub::scrub_prio_t with_priority)
 {
-  // Resulting scrub event: 'PenaltyTimeout'
-  queue_scrub_event_msg<PGScrubPenaltyTO>(pg, with_priority);
+  // Resulting scrub event: 'RecalcSchedule'
+  queue_scrub_event_msg<PGScrubRecalcSchedule>(pg, with_priority);
 }
 
 void OSDService::queue_for_scrub_resched(PG* pg, Scrub::scrub_prio_t with_priority)
@@ -7449,6 +7449,16 @@ PgLockWrapper OSDService::get_locked_pg(spg_t pgid)
   return locked_pg;
 }
 
+void OSDService::send_sched_recalc_to_pg(spg_t pgid)
+{
+  PGRef locked_pg = osd->lookup_lock_pg(pgid);
+  if (locked_pg) {
+    queue_scrub_recalc_schedule(
+	&(*locked_pg), Scrub::scrub_prio_t::low_priority);
+  }
+  locked_pg->unlock();
+}
+
 
 MPGStats* OSD::collect_pg_stats()
 {
@@ -9661,7 +9671,7 @@ void OSD::handle_conf_change(const ConfigProxy& conf,
       changed.count("osd_deep_scrub_interval")) {
     service.get_scrub_services().on_config_times_change();
     dout(0) << fmt::format(
-		   "{}:  scrub interval change (min:{} deep:{} max:{})",
+		   "{}: scrub interval change (min:{} deep:{} max:{})",
 		   __func__, cct->_conf->osd_scrub_min_interval,
 		   cct->_conf->osd_deep_scrub_interval,
 		   cct->_conf->osd_scrub_max_interval)

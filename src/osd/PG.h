@@ -455,10 +455,10 @@ public:
 			"ReservationFailure");
   }
 
-  void scrub_send_penalty_timeout(epoch_t queued, ThreadPool::TPHandle& handle)
+  void scrub_send_recalc_schedule(epoch_t queued, ThreadPool::TPHandle& handle)
   {
-    forward_scrub_event(&ScrubPgIF::send_penalty_timeout, queued,
-			"PenaltyTimeout");
+    forward_scrub_event(&ScrubPgIF::send_recalc_schedule, queued,
+			"RecalcSchedule");
   }
 
   void scrub_send_scrub_resched(epoch_t queued, ThreadPool::TPHandle& handle)

@@ -368,21 +368,27 @@ void PgScrubber::send_reservation_failure(epoch_t epoch_queued)
 {
   dout(10) << "scrubber event -->> " << __func__ << " epoch: " << epoch_queued
 	   << dendl;
-  //if (check_interval(epoch_queued)) {  // do not check for 'active'!
-    m_fsm->process_event(ReservationFailure{});
-  //}
+  m_fsm->process_event(ReservationFailure{});
   dout(10) << "scrubber event --<< " << __func__ << dendl;
 }
 
-void PgScrubber::send_penalty_timeout(epoch_t epoch_queued)
+void PgScrubber::send_recalc_schedule(epoch_t epoch_queued)
 {
   dout(10) << "scrubber event -->> " << __func__ << " epoch: " << epoch_queued
 	   << dendl;
-  if (check_interval(epoch_queued)) {  // do not check for 'active'!
-    m_fsm->process_event(PenaltyTimeout{});
-  }
+  m_fsm->process_event(RecalcSchedule{});
   dout(10) << "scrubber event --<< " << __func__ << dendl;
 }
+
+// void PgScrubber::send_penalty_timeout(epoch_t epoch_queued)
+// {
+//   dout(10) << "scrubber event -->> " << __func__ << " epoch: " << epoch_queued
+// 	   << dendl;
+//   if (check_interval(epoch_queued)) {  // do not check for 'active'!
+//     m_fsm->process_event(PenaltyTimeout{});
+//   }
+//   dout(10) << "scrubber event --<< " << __func__ << dendl;
+// }
 
 void PgScrubber::send_full_reset(epoch_t epoch_queued)
 {
@@ -1141,20 +1147,21 @@ void PgScrubber::add_delayed_scheduling()
 {
   m_end = m_start;  // not blocking any range now
 
-  milliseconds sleep_time{0ms};
-  if (m_needs_sleep) {
-    double scrub_sleep =
-      1000.0 * m_osds->get_scrub_services().scrub_sleep_time(m_flags.required);
-    sleep_time = milliseconds{int64_t(scrub_sleep)};
-  }
-  dout(15) << __func__ << " sleep: " << sleep_time.count() << "ms. needed? "
-	   << m_needs_sleep << dendl;
+  const milliseconds sleep_time{
+      m_needs_sleep
+	  ? m_osds->get_scrub_services().required_sleep_time(m_flags.required)
+	  : 0ms};
+  dout(15) << fmt::format("{} sleep: {}ms. needed? {}",
+                          __func__,
+                          sleep_time.count(),
+                          m_needs_sleep)
+           << dendl;
 
   if (sleep_time.count()) {
     // schedule a transition for some 'sleep_time' ms in the future
 
     m_needs_sleep = false;
-    m_sleep_started_at = ceph_clock_now();
+    m_sleep_started_at = m_scrub_queue.scrub_clock_now();
 
     // the following log line is used by osd-scrub-test.sh
     dout(20) << __func__ << " scrub state is PendingTimer, sleeping" << dendl;
@@ -1817,7 +1824,6 @@ void PgScrubber::replica_scrub_op(OpRequestRef op)
 			      m_current_token);
 }
 
-// is trgt const here? RRR
 void PgScrubber::set_op_parameters(
     Scrub::SchedTarget& trgt,
     const Scrub::ScrubPgPreconds& pg_cond)

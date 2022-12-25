@@ -485,9 +485,9 @@ class PgScrubber : public ScrubPgIF,
       const Scrub::ScrubPgPreconds& pg_cond,
       const Scrub::ScrubPreconds& preconds) final;
 
-  Scrub::schedule_result_t start_scrubbing(
-      Scrub::SchedEntry trgt,
-      const Scrub::ScrubPgPreconds& pg_cond);
+//   Scrub::schedule_result_t start_scrubbing(
+//       Scrub::SchedEntry trgt,
+//       const Scrub::ScrubPgPreconds& pg_cond);
 
   void mark_for_after_repair() final;
 
@@ -567,7 +567,7 @@ class PgScrubber : public ScrubPgIF,
 
   void send_remotes_reserved(epoch_t epoch_queued) final;
   void send_reservation_failure(epoch_t epoch_queued) final;
-  void send_penalty_timeout(epoch_t epoch_queued) final;
+  void send_recalc_schedule(epoch_t epoch_queued) final;
 
   /**
    *  does the PG have newer updates than what we (the scrubber) know?

@@ -209,9 +209,9 @@ struct ScrubPgIF {
     const Scrub::ScrubPgPreconds& pg_cond,
     const Scrub::ScrubPreconds& preconds) = 0;
 
-  virtual Scrub::schedule_result_t start_scrubbing(
-    Scrub::SchedEntry trgt,
-    const Scrub::ScrubPgPreconds& pg_cond) = 0;
+//   virtual Scrub::schedule_result_t start_scrubbing(
+//     Scrub::SchedEntry trgt,
+//     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual void mark_for_after_repair() = 0;
 
@@ -319,10 +319,10 @@ struct ScrubPgIF {
   virtual void send_reservation_failure(epoch_t epoch_queued) = 0;
 
   /**
-   * triggers the 'PenaltyTimeout' (time to check whether we are still penalized
-   * for a previous failed attempt to reserve remotes) state-machine event
+   * scrub scheduling configuration has changed. Update our scrub-queue
+   * entries accordingly.
    */
-  virtual void send_penalty_timeout(epoch_t epoch_queued) = 0;
+  virtual void send_recalc_schedule(epoch_t epoch_queued) = 0;
 
 
   virtual void cleanup_store(ObjectStore::Transaction* t) = 0;

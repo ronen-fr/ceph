@@ -150,8 +150,8 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    * (read - with higher value) configuration element
    * (osd_scrub_extended_sleep).
    */
-  double scrub_sleep_time(bool is_mandatory) const;  /// \todo (future) return
-						     /// milliseconds
+  double scrub_sleep_time(bool is_mandatory) const;
+  std::chrono::milliseconds required_sleep_time(bool high_priority_scrub) const;
 
   /**
    *  called every heartbeat to update the "daily" load average
@@ -272,7 +272,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   std::atomic_bool a_pg_is_reserving{false};
 
   [[nodiscard]] bool scrub_load_below_threshold() const;
-  [[nodiscard]] bool scrub_time_permit(utime_t now) const;
+  [[nodiscard]] bool scrub_time_permit() const;
 
   /**
    * Look for scrub jobs that have their 'resources_failure' set. These jobs

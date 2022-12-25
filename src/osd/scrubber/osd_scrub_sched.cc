@@ -165,6 +165,23 @@ std::weak_ordering cmp_targets(utime_t t, const Scrub::SchedTarget& l,
 
 }  // namespace Scrub
 
+
+void Scrub::QSchedTarget::dump(std::string_view sect_name, ceph::Formatter* f) const
+{
+  f->open_object_section(sect_name);
+  /// \todo improve the performance of u_time dumps here
+  f->dump_stream("pg") << pgid;
+  f->dump_stream("level")
+      << (level == scrub_level_t::deep ? "deep" : "shallow");
+  f->dump_stream("urgency") << fmt::format("{}", urgency);
+  f->dump_stream("target") << target;
+  f->dump_stream("not_before") << not_before;
+  f->dump_stream("deadline") << deadline;
+  f->close_section();
+}
+
+
+
 // 'dout' defs for SchedTarget & ScrubJob
 #define dout_context (cct)
 #define dout_subsys ceph_subsys_osd
@@ -210,6 +227,11 @@ void SchedTarget::reset()
 utime_t SchedTarget::sched_time() const
 {
   return sched_info.not_before;
+}
+
+void SchedTarget::depenalize()
+{
+  up_urgency_to(urgency_t::periodic_regular);
 }
 
 
@@ -576,9 +598,34 @@ std::ostream& ScrubJob::gen_prefix(std::ostream& out) const
   return out << m_log_msg_prefix;
 }
 
+void ScrubJob::dump(ceph::Formatter* f) const
+{
+  auto now_is = scrub_queue.scrub_clock_now();
+  f->open_object_section("scheduling");
+  f->dump_stream("pgid") << pgid;
+  f->dump_stream("sched_time") << get_sched_time(now_is);
+  auto& nearest = closest_target(now_is);
+  f->dump_stream("deadline") << nearest.sched_info.deadline;
+
+  nearest.dump("nearest", f);
+  shallow_target.dump("shallow_target", f);
+  deep_target.dump("deep_target", f);
+  f->dump_bool("forced", !nearest.is_periodic());
+  f->dump_bool("blocked", blocked);
+  f->close_section();
+}
 
 
 SchedTarget& ScrubJob::closest_target(utime_t scrub_clock_now)
+{
+  if (cmp_targets(scrub_clock_now, shallow_target, deep_target) < 0) {
+    return shallow_target;
+  } else {
+    return deep_target;
+  }
+}
+
+const SchedTarget& ScrubJob::closest_target(utime_t scrub_clock_now) const
 {
   if (cmp_targets(scrub_clock_now, shallow_target, deep_target) < 0) {
     return shallow_target;
@@ -2588,21 +2635,6 @@ bool ScrubQueue::scrub_time_permit(utime_t now) const
 }
 
 // part of the 'scrubber' section in the dump_scrubber()
-void ScrubJob::dump(ceph::Formatter* f) const
-{
-  f->open_object_section("scheduling");
-  f->dump_stream("pgid") << pgid;
-  f->dump_stream("sched_time") << get_sched_time();
-  auto& nearest = closest_target.get();
-  f->dump_stream("deadline") << nearest.deadline.value_or(utime_t{});
-  // the closest target, following by it and the 2'nd target (we
-  // do not bother to order those)
-  nearest.dump("nearest", f);
-  shallow_target.dump("shallow_target", f);
-  deep_target.dump("deep_target", f);
-  f->dump_bool("forced", !nearest.is_periodic());
-  f->close_section();
-}
 
 void ScrubQueue::dump_scrubs(ceph::Formatter* f)
 {

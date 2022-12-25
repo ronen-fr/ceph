@@ -65,8 +65,8 @@ MEV(RemotesReserved)
 /// a reservation request has failed
 MEV(ReservationFailure)
 
-/// possible timeout on a reservation failure penalty
-MEV(PenaltyTimeout)
+/// configuration changes might affect our scrub-queue entries
+MEV(RecalcSchedule)
 
 /// initiate a new scrubbing session (relevant if we are a Primary)
 MEV(StartScrub)

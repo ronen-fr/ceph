@@ -427,12 +427,12 @@ class PGScrubDenied : public PGScrubItem {
 };
 
 /**
- *  the penalty period for failing replica reservations has expired
+ *  should recompute scrub schedule following a configuration change
  */
-class PGScrubPenaltyTO : public PGScrubItem {
+class PGScrubRecalcSchedule : public PGScrubItem {
  public:
-  PGScrubPenaltyTO(spg_t pg, epoch_t epoch_queued)
-      : PGScrubItem{pg, epoch_queued, "PGScrubPenaltyTO"}
+  PGScrubRecalcSchedule(spg_t pg, epoch_t epoch_queued)
+      : PGScrubItem{pg, epoch_queued, "PGScrubRecalcSchedule"}
   {}
   void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
 };

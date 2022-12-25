@@ -282,6 +282,8 @@ public:
 
   PgLockWrapper get_locked_pg(spg_t pgid) final;
 
+  void send_sched_recalc_to_pg(spg_t pgid) final;
+
  private:
   // -- agent shared state --
   ceph::mutex agent_lock = ceph::make_mutex("OSDService::agent_lock");
@@ -537,8 +539,9 @@ public:
   /// queue the message (-> event) that some replicas denied our scrub resources request
   void queue_for_scrub_denied(PG* pg, Scrub::scrub_prio_t with_priority);
 
-  /// queue the message (-> event) that possibly our penalty period has ended
-  void queue_for_penalty_timeout(PG* pg, Scrub::scrub_prio_t with_priority);
+  /// queue the message (-> event) that notifies us that configuration items
+  /// affecting scrub scheduling have changed
+  void queue_scrub_recalc_schedule(PG* pg, Scrub::scrub_prio_t with_priority);
 
   /// Signals either (a) the end of a sleep period, or (b) a recheck of the availability
   /// of the primary map being created by the backend.

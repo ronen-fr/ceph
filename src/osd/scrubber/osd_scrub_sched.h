@@ -222,7 +222,6 @@ struct sched_conf_t {
 };
 
 class ScrubJob;
-//using ScrubJobRef = ceph::ref_t<ScrubJob>;
 
 /*
  * There are two versions of the "sched-target' - the object detailing one
@@ -233,10 +232,6 @@ class ScrubJob;
  * information.
  */
 
-// struct target_id_t {
-//   spg_t pgid;
-//   scrub_level_t level; // note: not handling 'upgrades' in this design RRR
-// };
 
 /*
  * the following invariants hold re the two 'SchedTarget' objects:
@@ -249,7 +244,8 @@ class ScrubJob;
  */
 struct QSchedTarget {
   //static inline constexpr utime_t eternity{time_t{std::numeric_limits<int32_t>::max()}, 0};
-  static inline const utime_t eternity{9'999'999'999, 0};
+  //static inline const utime_t eternity{9'999'999'999, 0};
+  static inline const utime_t eternity{time_t{std::numeric_limits<int32_t>::max()}, 0};
 
   QSchedTarget(spg_t pgid, scrub_level_t level)
       : pgid{pgid}, level{level} {}
@@ -289,6 +285,8 @@ struct QSchedTarget {
   {
     return urgency > urgency_t::off && now_is >= not_before;
   }
+
+  void dump(std::string_view sect_name, ceph::Formatter* f) const;
 };
 
 std::weak_ordering cmp_ripe_entries(
@@ -423,8 +421,8 @@ class SchedTarget {
   urgency_t urgency() const { return sched_info.urgency; }
 
 
-  void clear_queued();
-  void set_queued();
+  void clear_queued() { in_queue = false; }
+  void set_queued() { in_queue = true; }
   void disable() { sched_info.urgency = urgency_t::off; }
 
   // failures
@@ -593,6 +591,7 @@ class ScrubJob {
   void mark_for_after_repair();
 
   SchedTarget& closest_target(utime_t scrub_clock_now);
+  const SchedTarget& closest_target(utime_t scrub_clock_now) const;
 
 
  public:  // for now
@@ -664,12 +663,7 @@ class ScrubJob {
 
 
   utime_t get_sched_time(utime_t scrub_clock_now)
-      const;  // { return closest_target.get().not_before; }
-
-  //   bool is_ripe(utime_t now_is) const
-  //   {
-  //     return shallow_target->is_ripe(now_is) || deep_target->is_ripe(now_is);
-  //   }
+      const { return closest_target(scrub_clock_now).queued_element().not_before; }
 
   /**
    * the operator faked the timestamp. Reschedule the
@@ -751,21 +745,6 @@ private:
   int dequeue_targets();
 
   SchedTarget& dequeue_target(scrub_level_t lvl);
-
-//   // managing a possible 'de-penalization' callback
-//   struct timer_deleter {
-//     OSDService* m_osds;
-//     void operator()(Context* cb)
-//     {
-//       ceph_assert(m_osds);
-//       std::lock_guard l(m_osds->sleep_lock);
-//       m_osds->sleep_timer.cancel_event(cb);
-//       m_osds = nullptr;
-//       delete cb;
-//     }
-//   };
-//   using timer_wrpr_t = std::unique_ptr<Context, timer_deleter>;
-//   timer_wrpr_t m_depenalize_cb;
 };
 
 
@@ -1269,6 +1248,8 @@ class ScrubSchedListener {
   virtual int get_nodeid() const = 0;  // returns the OSD number ('whoami')
 
   virtual PgLockWrapper get_locked_pg(spg_t pgid) = 0;
+
+  virtual void send_sched_recalc_to_pg(spg_t pgid) = 0;
 
   virtual ~ScrubSchedListener() {}
 };

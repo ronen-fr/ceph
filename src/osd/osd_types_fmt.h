@@ -324,3 +324,16 @@ struct fmt::formatter<ScrubMap> {
 
   bool debug_log{false};
 };
+
+template <>
+struct fmt::formatter<scrub_level_t> : fmt::formatter<std::string_view> {
+  template <typename FormatContext>
+  auto format(scrub_level_t lvl, FormatContext& ctx)
+  {
+    if (lvl == scrub_level_t::shallow) {
+      return formatter<string_view>::format("shallow", ctx);
+    }
+    // else
+    return formatter<string_view>::format("deep", ctx);
+  }
+};
