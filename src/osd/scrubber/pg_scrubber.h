@@ -457,9 +457,6 @@ class PgScrubber : public ScrubPgIF,
   void set_op_parameters(
       Scrub::SchedTarget& target,
       const Scrub::ScrubPgPreconds& pg_cond);
-//   void set_op_parameters(
-//       const Scrub::SchedEntry& target,
-//       const Scrub::ScrubPgPreconds& pg_cond);
 
   void cleanup_store(ObjectStore::Transaction* t) final;
 
@@ -472,22 +469,20 @@ class PgScrubber : public ScrubPgIF,
   void update_scrub_stats(ceph::coarse_real_clock::time_point now_is) final;
 
   int asok_debug(
+      std::string_view prefix,
       std::string_view cmd,
-      std::string param,
+      std::string_view param,
       Formatter* f,
       std::stringstream& ss) override;
 
   int m_debug_blockrange{0};
+  bool m_debug_deny_replica{false};
 
   Scrub::schedule_result_t start_scrubbing(
       utime_t scrub_clock_now,
       scrub_level_t lvl,
       const Scrub::ScrubPgPreconds& pg_cond,
       const Scrub::ScrubPreconds& preconds) final;
-
-//   Scrub::schedule_result_t start_scrubbing(
-//       Scrub::SchedEntry trgt,
-//       const Scrub::ScrubPgPreconds& pg_cond);
 
   void mark_for_after_repair() final;
 
@@ -496,9 +491,6 @@ class PgScrubber : public ScrubPgIF,
       utime_t scrub_clock_now,
       Scrub::SchedTarget& sched_target,
       const Scrub::ScrubPgPreconds& pg_cond);
-//   std::optional<Scrub::schedule_result_t> validate_scrub_mode(
-//       Scrub::TargetRef sched_target,
-//       const Scrub::ScrubPgPreconds& pg_cond);
 
   // --------------------------------------------------------------------------
   // the I/F used by the state-machine (i.e. the implementation of
@@ -567,7 +559,7 @@ class PgScrubber : public ScrubPgIF,
 
   void send_remotes_reserved(epoch_t epoch_queued) final;
   void send_reservation_failure(epoch_t epoch_queued) final;
-  void send_recalc_schedule(epoch_t epoch_queued) final;
+  void recalc_schedule(epoch_t epoch_queued) final;
 
   /**
    *  does the PG have newer updates than what we (the scrubber) know?

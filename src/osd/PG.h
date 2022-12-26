@@ -457,7 +457,7 @@ public:
 
   void scrub_send_recalc_schedule(epoch_t queued, ThreadPool::TPHandle& handle)
   {
-    forward_scrub_event(&ScrubPgIF::send_recalc_schedule, queued,
+    forward_scrub_event(&ScrubPgIF::recalc_schedule, queued,
 			"RecalcSchedule");
   }
 
@@ -739,7 +739,7 @@ public:
 
   virtual void snap_trimmer(epoch_t epoch_queued) = 0;
   virtual void do_command(
-    const std::string_view& prefix,
+    std::string_view prefix,
     const cmdmap_t& cmdmap,
     const ceph::buffer::list& idata,
     std::function<void(int,const std::string&,ceph::buffer::list&)> on_finish) = 0;

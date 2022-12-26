@@ -42,10 +42,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   using QSchedTarget = Scrub::QSchedTarget;
   using SchedulingQueue = std::deque<QSchedTarget>;
 
-//   Scrub::SchedOutcome get_top_candidate(
-//       const ceph::common::ConfigProxy& config,
-//       bool is_recovery_active);
-
+  std::ostream& gen_prefix(std::ostream& out) const;
 
   // ///////////////////////////////////////////////////
   // the ScrubQueueOps interface:
@@ -181,13 +178,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   double daily_loadavg{0.0};
 
-//   static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
-//     return jobref->state == Scrub::qu_state_t::registered;
-//   };
-// 
-//   static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
-//     return jobref->state == Scrub::qu_state_t::not_registered;
-//   };
+  std::string log_prefix;
 
   tl::expected<Scrub::ScrubPreconds, Scrub::schedule_result_t>
   preconditions_to_scrubbing(
@@ -248,21 +239,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   [[nodiscard]] bool scrub_load_below_threshold() const;
   [[nodiscard]] bool scrub_time_permit() const;
-
-  /**
-   * Look for scrub jobs that have their 'resources_failure' set. These jobs
-   * have failed to acquire remote resources last time we've initiated a scrub
-   * session on them. They are now moved from the 'to_scrub' queue to the
-   * 'penalized' set.
-   *
-   * locking: called with job_lock held
-   */
-  void move_failed_pgs(utime_t now_is);
-
-  Scrub::schedule_result_t select_n_scrub(
-      SchedulingQueue& group,
-      const Scrub::ScrubPreconds& preconds,
-      utime_t now_is);
 
  public:  // used by the unit-tests
   /**

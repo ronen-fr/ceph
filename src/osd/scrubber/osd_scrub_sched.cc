@@ -940,7 +940,9 @@ void ScrubJob::on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime
  * - no target is in the queue (both were dequeued when the scrub started);
  * - both 'shallow' & 'deep' targets are valid - set for the next scrub;
  */
-bool ScrubJob::on_reservation_failure(std::chrono::milliseconds period, SchedTarget&& aborted_target)
+bool ScrubJob::on_reservation_failure(
+    std::chrono::milliseconds period,
+    SchedTarget&& aborted_target)
 {
   bool trgts_demoted = false;
 
@@ -966,9 +968,10 @@ bool ScrubJob::on_reservation_failure(std::chrono::milliseconds period, SchedTar
   nxt_target.last_issue = delay_cause_t::replicas;
   ceph_assert(nxt_target.is_viable());
 
-  // now - if the (possibly updated) aborted target is a periodic one, the
+  // now - if both targets are periodic, the
   // scrub_job will be penalized: its urgency will be demoted for a while.
-  if (period.count() > 0 && shallow_target.is_periodic() && deep_target.is_periodic()) {
+  if (period.count() > 0 && shallow_target.is_periodic() &&
+      deep_target.is_periodic()) {
     shallow_target.sched_info.urgency = urgency_t::penalized;
     deep_target.sched_info.urgency = urgency_t::penalized;
     penalized = true;
@@ -1306,14 +1309,18 @@ New design comments:
                  but only if a condition is met, or
                  - we allow the scrub-job to hold a lock on the queue. More efficient,
                          but more complex.
-
+// should also check for penalty timeout
 */
 void ScrubJob::on_periods_change(
     const pg_info_t& info,
     const Scrub::sched_conf_t& aconf,
     utime_t scrub_clock_now)
 {
-  if (scrubbing) {
+  dout(10) << fmt::format(
+		  "{}: before: {} and {}", __func__, shallow_target,
+		  deep_target)
+	   << dendl;
+  if (scrubbing && !penalized) {
     // both targets will be updated at the end of the scrub
     return;
   }
@@ -1322,96 +1329,35 @@ void ScrubJob::on_periods_change(
     return (t.is_viable() && t.is_periodic());
   };
 
+  bool should_unpenalize = penalized && (penalty_timeout < scrub_clock_now);
+
   if (should_modify(shallow_target)) {
     if (shallow_target.is_queued()) {
       dequeue_target(scrub_level_t::shallow);
     }
+    if (should_unpenalize) {
+      shallow_target.depenalize();
+    }
     shallow_target.update_as_shallow(info, aconf, scrub_clock_now);
     requeue_entry(scrub_level_t::shallow);
   }
+
   if (should_modify(deep_target)) {
     if (deep_target.is_queued()) {
       dequeue_target(scrub_level_t::deep);
     }
+    if (should_unpenalize) {
+      deep_target.depenalize();
+    }
     deep_target.update_as_deep(info, aconf, scrub_clock_now);
     requeue_entry(scrub_level_t::deep);
   }
-
+  dout(10) << fmt::format(
+		  "{}: after: {} and {}", __func__, shallow_target,
+		  deep_target)
+	   << dendl;
 }
- 
 
-// void ScrubJob::on_periods_change(
-//     const pg_info_t& info,
-//     const Scrub::sched_conf_t& aconf,
-//     utime_t scrub_clock_now)
-// {
-//   std::unique_lock l{targets_lock};
-//   // still true? RRR note: is_primary() was verified by the caller
-// 
-//   // bool something_changed{false};
-// 
-//   auto should_modify = [this](const SchedTarget& t) {
-//     return (t.is_viable() && t.is_periodic());
-//   };
-// 
-//   // the job's shallow target
-//   [[maybe_unused]] auto sh_in_q =
-//       scrub_queue.white_out_target(shallow_target, should_modify);
-//   // log the sh_in_q
-//   shallow_target->update_as_shallow(info, aconf, scrub_clock_now);
-//   scrub_queue.push_target(shallow_target);
-// 
-//   // the job's deep target
-//   [[maybe_unused]] auto dp_in_q =
-//       scrub_queue.white_out_target(deep_target, should_modify);
-//   // log the sh_in_q
-//   deep_target->update_as_deep(info, aconf, scrub_clock_now);
-//   scrub_queue.push_target(deep_target);
-// }
-// 
-// /*
-// Following a change in the 'scrub period' parameters -
-// recomputing the targets:
-// - won't affect 'must' targets;
-// - maybe: won't *delay* targets that were already tried and failed (have a
-// failure reason)
-// - should it affect ripe jobs?
-//
-//
-// */
-// bool ScrubJob::on_periods_change(
-//     const pg_info_t& info,
-//     const Scrub::sched_conf_t& aconf,
-//     utime_t now_is)
-// {
-//   std::unique_lock l{targets_lock};
-//   // note: is_primary() was verified by the caller
-//
-//   // we are not interested in currently running jobs. Those will either
-//   // have their targets updated based on up-to-date stamps and conf when
-//   done,
-//   // or already have a 'next' target with a higher urgency
-//   bool something_changed{false};
-//
-//   // the job's shallow target
-//   if (auto& trgt = get_modif_trgt(scrub_level_t::shallow);
-//       to_change_on_conf(trgt.urgency)) {
-//     trgt.update_as_shallow(info, aconf, now_is);
-//     something_changed = true;
-//   }
-//
-//   // the job's deep target
-//   if (auto& trgt = get_modif_trgt(scrub_level_t::deep);
-//       to_change_on_conf(trgt.urgency)) {
-//     trgt.update_as_deep(info, aconf, now_is);
-//     something_changed = true;
-//   }
-//
-//   if (something_changed) {
-//     determine_closest(now_is);
-//   }
-//   return something_changed;
-// }
 
 
 
