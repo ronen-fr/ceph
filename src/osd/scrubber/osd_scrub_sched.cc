@@ -649,6 +649,7 @@ SchedTarget ScrubJob::get_moved_target(scrub_level_t s_or_d)
 void ScrubJob::dequeue_entry(scrub_level_t lvl)
 {
   scrub_queue.remove_entry(pgid, lvl);
+  get_target(lvl).clear_queued();
 }
 
 int ScrubJob::dequeue_targets()
@@ -755,7 +756,7 @@ std::string ScrubJob::scheduling_state(utime_t now_is) const
 void ScrubJob::requeue_entry(scrub_level_t level)
 {
   if (!scrubbing) {
-    auto& target = get_trgt(level);
+    auto& target = get_target(level);
     scrub_queue.cp_and_queue_target(target.queued_element());
     target.in_queue = true;
   }
@@ -812,7 +813,7 @@ void ScrubJob::operator_periodic_targets(
     utime_t scrub_clock_now)
 {
   // the 'stamp' was "faked" to trigger a "periodic" scrub.
-  auto& trgt = get_trgt(level);
+  auto& trgt = get_target(level);
 
   // if the target is in the queue, and has 'must' urgency - we are done
   // (RRR verify that we have not created a race with a white-out triggered by
@@ -860,7 +861,7 @@ void ScrubJob::operator_periodic_targets(
 //   // recompute its target & n.b., based on the faked stamp;
 //   // push the updated target back;
 // 
-//   TargetRef trgt = get_trgt(level);
+//   TargetRef trgt = get_target(level);
 //   scrub_queue.white_out_target(trgt);
 // 
 //   // we are now allowed to modify the target
@@ -905,7 +906,7 @@ void ScrubJob::on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime
 	   << dendl;
 
   scrubbing = false;
-  auto& nxt_target = get_trgt(aborted_target.level());
+  auto& nxt_target = get_target(aborted_target.level());
   ++consec_aborts;
 
   // merge the targets:
@@ -948,7 +949,7 @@ bool ScrubJob::on_reservation_failure(std::chrono::milliseconds period, SchedTar
   ceph_assert(!shallow_target.in_queue);
 
   scrubbing = false;
-  auto& nxt_target = get_trgt(aborted_target.level());
+  auto& nxt_target = get_target(aborted_target.level());
   ++consec_aborts;
 
   // merge the targets:
@@ -1128,7 +1129,7 @@ void ScrubJob::at_scrub_completion(
 //   next_deep.marked_for_dequeue = false;
 // }
 
-SchedTarget& ScrubJob::get_trgt(scrub_level_t lvl)
+SchedTarget& ScrubJob::get_target(scrub_level_t lvl)
 {
   return (lvl == scrub_level_t::deep) ? deep_target : shallow_target;
 }

@@ -4221,7 +4221,7 @@ void OSD::final_init()
     "name=pgid,type=CephPgid "	   \
     "name=cmd,type=CephChoices,strings=scrub " \
     "name=time,type=CephInt,req=false "
-    "name=force,type=CephChoices,req=false,strings=force",
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "");
   ceph_assert(r == 0);
@@ -4230,7 +4230,7 @@ void OSD::final_init()
     "name=pgid,type=CephPgid "	   \
     "name=cmd,type=CephChoices,strings=deep_scrub " \
     "name=time,type=CephInt,req=false "
-    "name=force,type=CephChoices,req=false,strings=force",
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "");
   ceph_assert(r == 0);
@@ -4263,7 +4263,7 @@ void OSD::final_init()
     "scrub "				\
     "name=pgid,type=CephPgid,req=false "	\
     "name=time,type=CephInt,req=false "
-    "name=force,type=CephChoices,req=false,strings=force",
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "Trigger a scheduled scrub ");
   ceph_assert(r == 0);
@@ -4271,7 +4271,7 @@ void OSD::final_init()
     "deep_scrub "			\
     "name=pgid,type=CephPgid,req=false "	\
     "name=time,type=CephInt,req=false "
-    "name=force,type=CephChoices,req=false,strings=force",
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "Trigger a scheduled deep scrub ");
   ceph_assert(r == 0);

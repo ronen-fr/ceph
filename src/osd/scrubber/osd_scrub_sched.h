@@ -530,6 +530,19 @@ using TargetFilter = std::function<bool(const SchedTarget&)>;
 struct ScrubQueueOps;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubJob -- scrub scheduling & parameters for a specific PG (PgScrubber)
 
@@ -635,7 +648,7 @@ class ScrubJob {
 
   //SchedTarget& get_modif_trgt(scrub_level_t lvl);
   //TargetRef get_trgt(scrub_level_t lvl); // up the ref-count
-  SchedTarget& get_trgt(scrub_level_t lvl);  // up the ref-count
+  SchedTarget& get_target(scrub_level_t lvl);  // up the ref-count
 
 
   bool scrubbing{false}; // consider 'atomic'. Analyze who changes out of pg-lock
@@ -1281,26 +1294,6 @@ struct fmt::formatter<Scrub::urgency_t>
 // clang-format on
 
 // clang-format off
-// template <>
-// struct fmt::formatter<Scrub::qu_state_t>
-//     : fmt::formatter<std::string_view> {
-//   template <typename FormatContext>
-//   auto format(Scrub::qu_state_t qust, FormatContext& ctx)
-//   {
-//     using enum Scrub::qu_state_t;
-//     std::string_view desc;
-//     switch (qust) {
-//     case not_registered:        desc = "not registered w/ OSD"; break;
-//     case registered:            desc = "registered"; break;
-//     case unregistering:         desc = "unregistering"; break;
-//       // better to not have a default case, so that the compiler will warn
-//     }
-//     return formatter<string_view>::format(desc, ctx);
-//   }
-// };
-// clang-format on
-
-// clang-format off
 template <>
 struct fmt::formatter<Scrub::delay_cause_t> : fmt::formatter<std::string_view> {
   template <typename FormatContext>
@@ -1324,18 +1317,6 @@ struct fmt::formatter<Scrub::delay_cause_t> : fmt::formatter<std::string_view> {
 };
 // clang-format on
 
-// template <>
-// struct fmt::formatter<Scrub::target_id_t> {
-//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-//   template <typename FormatContext>
-//   auto format(const Scrub::target_id_t& trgtid, FormatContext& ctx)
-//   {
-//     return format_to(
-//       ctx.out(), "<{}/{}>", trgtid.pgid,
-//       (trgtid.level == scrub_level_t::deep ? "dp" : "sh"));
-//   }
-// };
-
 template <>
 struct fmt::formatter<Scrub::QSchedTarget> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
@@ -1358,7 +1339,6 @@ struct fmt::formatter<Scrub::SchedTarget> {
     return format_to(
 	ctx.out(), "{},ar:{},issue:{}", st.sched_info,
 	st.auto_repairing ? "+" : "-",
-	// st.marked_for_dequeue ? "XXX" : "",
 	st.last_issue);
   }
 };

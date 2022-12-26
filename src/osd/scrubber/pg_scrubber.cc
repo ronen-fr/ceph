@@ -39,6 +39,10 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 using namespace std::literals;
 
+using schedule_result_t = Scrub::schedule_result_t;
+using ScrubPgPreconds = Scrub::ScrubPgPreconds;
+using ScrubPreconds = Scrub::ScrubPreconds;
+
 #define dout_context (m_osds->cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
@@ -665,14 +669,13 @@ bool PgScrubber::reserve_local()
 }
 
 
-Scrub::schedule_result_t PgScrubber::start_scrubbing(
+schedule_result_t PgScrubber::start_scrubbing(
     utime_t scrub_clock_now,
     scrub_level_t lvl,
-    const Scrub::ScrubPgPreconds& pg_cond,
-    const Scrub::ScrubPreconds& preconds)
+    const ScrubPgPreconds& pg_cond,
+    const ScrubPreconds& preconds)
 {
-  using Scrub::schedule_result_t;
-  auto& trgt = m_scrub_job->get_trgt(lvl);
+  auto& trgt = m_scrub_job->get_target(lvl);
   dout(10) << fmt::format(
 		  "{}: pg[{}] {} {} target: {}", __func__, m_pg_id,
 		  (m_pg->is_active() ? "<active>" : "<not-active>"),
@@ -689,10 +692,10 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
   }
 #endif
   ceph_assert(!is_queued_or_active());
+  ceph_assert(trgt.is_viable());
 
+  // a few checks. If failed - we will requeue the target (modified)
   auto failure_code = [&]() -> std::optional<Scrub::schedule_result_t> {
-
-
     if (preconds.only_deadlined && trgt.is_periodic() &&
 	!trgt.over_deadline(scrub_clock_now)) {
       dout(15) << " not scheduling scrub for " << m_pg_id << " due to "
@@ -711,15 +714,12 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
       return schedule_result_t::bad_pg_state;
     }
 
-    // a sanity-check for the target. Make sure we are in this OSD's queue
-    ceph_assert(trgt.sched_info.urgency > urgency_t::off);
-
     // analyze the combination of the requested scrub flags, the osd/pool
     // configuration and the PG status to determine whether we should scrub now.
     auto validation_err = validate_scrub_mode(scrub_clock_now, trgt, pg_cond);
     if (validation_err) {
       // the stars do not align for starting a scrub for this PG at this time
-      // (due to configuration or priority issues)
+      // (due to configuration or priority issues).
       // The reason was already reported by the callee.
       dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
       return validation_err.value();
@@ -744,6 +744,7 @@ Scrub::schedule_result_t PgScrubber::start_scrubbing(
 
   // we are now committed to scrubbing this PG
   set_op_parameters(trgt, pg_cond);
+  m_scrub_job->scrubbing = true;
 
   dout(10) << __func__ << ": queueing" << dendl;
   m_osds->queue_for_scrub(m_pg, Scrub::scrub_prio_t::low_priority);
@@ -1837,7 +1838,6 @@ void PgScrubber::set_op_parameters(
   // and a new target object will be created in the ScrubJob, to be used for
   // scheduling the next scrub of this level.
   set_queued_or_active();
-  // trgt.set_scrubbing();
   m_active_target = m_scrub_job->get_moved_target(trgt.level());
   // remove our sister target from the queue
   m_scrub_job->dequeue_entry(ScrubJob::the_other_level(trgt.level()));

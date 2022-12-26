@@ -150,7 +150,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    * (read - with higher value) configuration element
    * (osd_scrub_extended_sleep).
    */
-  double scrub_sleep_time(bool is_mandatory) const;
   std::chrono::milliseconds required_sleep_time(bool high_priority_scrub) const;
 
   /**
@@ -177,8 +176,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 #endif
 
   mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
-
-  bool restore_penalized{false};
 
   SchedulingQueue to_scrub;
 
@@ -222,32 +219,10 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   //Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
 
   /**
-   * Are there scrub jobs that should be reinstated?
-   */
-  //void scan_penalized(bool forgive_all, utime_t time_now);
-
-  /**
    * clear dead entries (unregistered, or belonging to removed PGs) from a
    * queue. Job state is changed to match new status.
    */
   void rm_unregistered_jobs();
-
-  /**
-   * sort the scrub queue, first updating the 'ripeness' of all
-   * jobs, then using a comparator that takes the 'ripeness' into account.
-   */
-  //void clock_based_sort(utime_t now_is);
-
-  /**
-   * the set of the first N scrub jobs in 'group' which are ready to be
-   * scrubbed (ready = their scheduled time has passed).
-   * The scrub jobs in the new collection are sorted according to
-   * their urgency, not-before etc'.
-   *
-   * Note that the returned container holds independent refs to the
-   * scrub jobs.
-   */
-  //SchedulingQueue collect_ripe_jobs(SchedulingQueue& group, utime_t time_now);
 
   /// scrub resources management lock (guarding scrubs_local & scrubs_remote)
   mutable ceph::mutex resource_lock =
