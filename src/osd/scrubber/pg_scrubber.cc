@@ -376,13 +376,6 @@ void PgScrubber::send_reservation_failure(epoch_t epoch_queued)
   dout(10) << "scrubber event --<< " << __func__ << dendl;
 }
 
-void PgScrubber::send_recalc_schedule(epoch_t epoch_queued)
-{
-  dout(10) << "scrubber event -->> " << __func__ << " epoch: " << epoch_queued
-	   << dendl;
-  m_fsm->process_event(RecalcSchedule{});
-  dout(10) << "scrubber event --<< " << __func__ << dendl;
-}
 
 // void PgScrubber::send_penalty_timeout(epoch_t epoch_queued)
 // {
@@ -638,6 +631,14 @@ void PgScrubber::mark_for_after_repair()
   m_scrub_job->mark_for_after_repair();
 }
 
+void PgScrubber::recalc_schedule([[maybe_unused]] epoch_t epoch_queued)
+{
+  auto applicable_conf = m_osds->get_scrub_services().populate_config_params(
+      m_pg->get_pgpool().info.opts);
+
+  m_scrub_job->on_periods_change(
+      m_pg->info, applicable_conf, m_scrub_queue.scrub_clock_now());
+}
 
 void PgScrubber::at_scrub_failure(delay_cause_t issue)
 {
@@ -1377,9 +1378,9 @@ void PgScrubber::timer_deleter_t::operator()(Context* cb)
 
 void PgScrubber::on_repl_reservation_failure()
 {
-  auto penalty_period =
-      m_pg->get_cct()->_conf.get_val<std::chrono::milliseconds>(
-	  "osd_scrub_reservation_timeout");
+  auto penalty_period = 3'000ms;  // TODO: make it a config option
+//       m_pg->get_cct()->_conf.get_val<std::chrono::milliseconds>(
+// 	  "xx");
   dout(10) << fmt::format(
 		  "{}: penalty period: {}", __func__, penalty_period.count())
 	   << dendl;
@@ -1388,7 +1389,6 @@ void PgScrubber::on_repl_reservation_failure()
 	  penalty_period, std::move(*m_active_target))) {
     // the scrub-job was demoted to 'penalized'. We should set a timer
     // to undo that after a while
-    // set a wake-up call for when the penalty is over:
     spg_t pgid = m_pg->get_pgid();
     Context* cp = new LambdaContext([scrbr = this, osds = m_osds, pgid]([[maybe_unused]] int r) {
       // send an event to the scrubber to handle the timeout
@@ -2139,13 +2139,23 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
 void PgScrubber::handle_scrub_reserve_grant(OpRequestRef op, pg_shard_t from)
 {
   dout(10) << __func__ << " " << *op->get_req() << dendl;
+  {
+    if (m_debug_deny_replica) {
+      // debug/UT code
+      dout(10) << fmt::format("{}: debug_deny_replica set - denying", __func__)
+	       << dendl;
+      m_debug_deny_replica = false;
+      handle_scrub_reserve_reject(op, from);
+      return;
+    }
+  }
   op->mark_started();
 
   if (m_reservations.has_value()) {
     m_reservations->handle_reserve_grant(op, from);
   } else {
     dout(20) << __func__ << ": late/unsolicited reservation grant from osd "
-	 << from << " (" << op << ")" << dendl;
+	     << from << " (" << op << ")" << dendl;
   }
 }
 
@@ -3048,12 +3058,16 @@ ostream& PgScrubber::show_concise(ostream& out) const
 	     (nscrub.auto_repairing ? ",auto" : ""));
 }
 
-int PgScrubber::asok_debug(std::string_view cmd,
-			   std::string param,
-			   Formatter* f,
-			   stringstream& ss)
+int PgScrubber::asok_debug(
+    std::string_view prefix,
+    std::string_view cmd,
+    std::string_view param,
+    Formatter* f,
+    std::stringstream& ss)
 {
-  dout(10) << __func__ << " cmd: " << cmd << " param: " << param << dendl;
+  dout(10) << fmt::format(
+		  "asok_debug: prefix={}, cmd={}, param={}", prefix, cmd, param)
+	   << dendl;
 
   if (cmd == "block") {
     // 'm_debug_blockrange' causes the next 'select_range' to report a blocked
@@ -3081,7 +3095,13 @@ int PgScrubber::asok_debug(std::string_view cmd,
 	m_debug_blockrange = 0;
 	m_fsm->process_event(Unblocked{});
       }
+    } else if (param == "deny") {
+      // arrange to have the next replica scrub reservation request denied
+      m_debug_deny_replica = true;
     }
+    f->open_object_section("result");
+    f->dump_bool("success", true);
+    f->close_section();
   }
 
   return 0;

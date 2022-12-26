@@ -4265,7 +4265,7 @@ void OSD::final_init()
     "name=time,type=CephInt,req=false "
     "name=force,type=CephBool,req=false",
     asok_hook,
-    "Trigger a scheduled scrub ");
+    "Trigger a scrub ");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
     "deep_scrub "			\
@@ -4273,7 +4273,7 @@ void OSD::final_init()
     "name=time,type=CephInt,req=false "
     "name=force,type=CephBool,req=false",
     asok_hook,
-    "Trigger a scheduled deep scrub ");
+    "Trigger a deep scrub ");
   ceph_assert(r == 0);
 }
 

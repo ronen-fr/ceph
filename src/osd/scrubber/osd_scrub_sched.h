@@ -338,16 +338,6 @@ class SchedTarget {
   /// the reason for the latest failure/delay (for logging/reporting purposes)
   delay_cause_t last_issue{delay_cause_t::none};
 
-
-  /*
-   * if the PG is 'penalized' (after failing to secure replicas), this is the
-   * time at which the penalty is lifted.. Note that must be copied here, as
-   * the periodic scanning of the whole queue by the OSD is the only (not
-   * prohibitive expensive) way to detect the end of the penalty.
-   */
-  //utime_t penalty_timeout{0, 0};
-
-
   // the flags affecting the scrub that will result from this target
 
   /**
@@ -375,10 +365,6 @@ class SchedTarget {
 
   /// the OSD id
   int whoami;
-
-
-  /// marked for de-queue, as the PG is no longer eligible for scrubbing
-  //bool marked_for_dequeue{false};
 
  public:
   const QSchedTarget& queued_element() const { return sched_info; }
@@ -668,6 +654,10 @@ class ScrubJob {
   bool blocked{false};
   utime_t blocked_since{};
 
+  /*
+   * if the PG is 'penalized' (after failing to secure replicas), this is the
+   * time at which the penalty is lifted.
+   */
   utime_t penalty_timeout{0, 0};
 
   /// the more consecutive failures - the longer we will delay before
@@ -1324,7 +1314,7 @@ struct fmt::formatter<Scrub::QSchedTarget> {
   auto format(const Scrub::QSchedTarget& st, FormatContext& ctx)
   {
     return format_to(
-	ctx.out(), "{}: nb:{:s},({},tr:{:s},dl:{:s})",
+	ctx.out(), "{}/{},nb:{:s},({},tr:{:s},dl:{:s})", st.pgid,
 	(st.level == scrub_level_t::deep ? "dp" : "sh"), st.not_before,
 	st.urgency, st.target, st.deadline);
   }
@@ -1337,9 +1327,8 @@ struct fmt::formatter<Scrub::SchedTarget> {
   auto format(const Scrub::SchedTarget& st, FormatContext& ctx)
   {
     return format_to(
-	ctx.out(), "{},ar:{},issue:{}", st.sched_info,
-	st.auto_repairing ? "+" : "-",
-	st.last_issue);
+	ctx.out(), "{},q:{},ar:{},issue:{}", st.sched_info,
+	st.in_queue ? "+" : "-", st.auto_repairing ? "+" : "-", st.last_issue);
   }
 };
 

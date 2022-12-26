@@ -322,7 +322,7 @@ struct ScrubPgIF {
    * scrub scheduling configuration has changed. Update our scrub-queue
    * entries accordingly.
    */
-  virtual void send_recalc_schedule(epoch_t epoch_queued) = 0;
+  virtual void recalc_schedule(epoch_t epoch_queued) = 0;
 
 
   virtual void cleanup_store(ObjectStore::Transaction* t) = 0;
@@ -394,8 +394,10 @@ struct ScrubPgIF {
 
   // --------------- debugging via the asok ------------------------------
 
-  virtual int asok_debug(std::string_view cmd,
-			 std::string param,
-			 Formatter* f,
-			 std::stringstream& ss) = 0;
+  virtual int asok_debug(
+      std::string_view prefix,
+      std::string_view cmd,
+      std::string_view param,
+      Formatter* f,
+      std::stringstream& ss) = 0;
 };
