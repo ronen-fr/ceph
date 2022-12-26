@@ -530,6 +530,19 @@ using TargetFilter = std::function<bool(const SchedTarget&)>;
 struct ScrubQueueOps;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubJob -- scrub scheduling & parameters for a specific PG (PgScrubber)
 
@@ -635,7 +648,7 @@ class ScrubJob {
 
   //SchedTarget& get_modif_trgt(scrub_level_t lvl);
   //TargetRef get_trgt(scrub_level_t lvl); // up the ref-count
-  SchedTarget& get_trgt(scrub_level_t lvl);  // up the ref-count
+  SchedTarget& get_target(scrub_level_t lvl);  // up the ref-count
 
 
   bool scrubbing{false}; // consider 'atomic'. Analyze who changes out of pg-lock

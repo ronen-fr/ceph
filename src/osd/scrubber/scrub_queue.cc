@@ -136,21 +136,6 @@ bool ScrubQueue::scrub_time_permit() const
   return time_permit;
 }
 
-double ScrubQueue::scrub_sleep_time(bool is_mandatory) const
-{
-  double regular_sleep_period = conf()->osd_scrub_sleep;
-
-  if (is_mandatory || scrub_time_permit()) {
-    return regular_sleep_period;
-  }
-
-  // relevant if scrubbing started during allowed time, but continued into
-  // forbidden hours
-  double extended_sleep = conf()->osd_scrub_extended_sleep;
-  dout(20) << "w/ extended sleep (" << extended_sleep << ")" << dendl;
-  return std::max(extended_sleep, regular_sleep_period);
-}
-
 milliseconds ScrubQueue::required_sleep_time(bool high_priority_scrub) const
 {
   milliseconds regular_sleep_period =
@@ -280,22 +265,28 @@ void ScrubQueue::sched_scrub(
     bool is_recovery_active)
 {
   utime_t scrub_tick_time = scrub_clock_now();
+  dout(10) << fmt::format(
+		  "time now:{}, is_recovery_active:{}", scrub_tick_time,
+		  is_recovery_active)
+	   << dendl;
 
   // do the OSD-wide environment conditions, and the availability of scrub
   // resources, allow us to start a scrub?
-
   auto maybe_env_cond =
       preconditions_to_scrubbing(config, is_recovery_active, scrub_tick_time);
   if (!maybe_env_cond) {
-    return;  // SchedOutcome{maybe_env_cond.error(), std::nullopt};
+    return;
   }
   auto preconds = maybe_env_cond.value();
 
   std::unique_lock l{jobs_lock};
 
-  // normalize the queue
+  // partition and sort the queue
   if (bool not_empty = normalize_the_queue(scrub_tick_time); !not_empty) {
-    return;  // SchedOutcome{schedule_result_t::no_pg_ready, std::nullopt};
+    dout(10) << fmt::format(
+		  "no eligible scrub targets")
+	   << dendl;
+    return;
   }
 
   // pop the first job from the queue, as a candidate
@@ -307,10 +298,9 @@ void ScrubQueue::sched_scrub(
   PgLockWrapper locked_g = osd_service.get_locked_pg(cand.pgid);
   PGRef pg = locked_g.m_pg;
   if (!pg) {
-    // the PG was dequeued in the short time span between creating the
-    // candidates list (collect_ripe_jobs()) and here RRR fix comment
+    // the PG was deleted in the sort time since unlocking the queue
     dout(5) << fmt::format("pg[{}] not found", cand.pgid) << dendl;
-    return;  // SchedOutcome{schedule_result_t::no_such_pg, std::nullopt};
+    return;
   }
 
   pg->start_scrubbing(scrub_tick_time, cand.level, preconds);
