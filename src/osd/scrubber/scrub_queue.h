@@ -16,7 +16,7 @@
 namespace Scrub {
 class ScrubSchedListener;
 class ScrubJob;
-class QSchedTarget;
+class SchedEntry;
 
 
 }  // namespace Scrub
@@ -36,8 +36,8 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   friend class TestOSDScrub;
   friend class ScrubSchedTestWrapper;  ///< unit-tests structure
 
-  using QSchedTarget = Scrub::QSchedTarget;
-  using SchedulingQueue = std::deque<QSchedTarget>;
+  using SchedEntry = Scrub::SchedEntry;
+  using SchedulingQueue = std::deque<SchedEntry>;
 
   std::ostream& gen_prefix(std::ostream& out) const;
 
@@ -52,12 +52,12 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   void remove_entry(spg_t pgid, scrub_level_t s_or_d) final;
   void remove_entries(spg_t pgid, int known_cnt = 2) final;
 
-  void cp_and_queue_target(QSchedTarget t) final;
+  void cp_and_queue_target(SchedEntry t) final;
 
   void queue_entries(
       spg_t pgid,
-      const QSchedTarget& shallow,
-      const QSchedTarget& deep) final;
+      const SchedEntry& shallow,
+      const SchedEntry& deep) final;
 
 
   // ///////////////////////////////////////////////////

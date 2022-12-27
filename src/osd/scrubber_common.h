@@ -40,9 +40,6 @@ enum class schedule_result_t {
 
 class SchedTarget;
 struct SchedEntry;
-struct QSchedTarget;
-struct target_id_t;
-
 }  // namespace Scrub
 
 /// Facilitating scrub-related object access to private PG data
@@ -208,10 +205,6 @@ struct ScrubPgIF {
     scrub_level_t level,
     const Scrub::ScrubPgPreconds& pg_cond,
     const Scrub::ScrubPreconds& preconds) = 0;
-
-//   virtual Scrub::schedule_result_t start_scrubbing(
-//     Scrub::SchedEntry trgt,
-//     const Scrub::ScrubPgPreconds& pg_cond) = 0;
 
   virtual void mark_for_after_repair() = 0;
 

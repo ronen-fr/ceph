@@ -1318,7 +1318,7 @@ Scrub::schedule_result_t PG::start_scrubbing(
     scrub_level_t level,
     const Scrub::ScrubPreconds preconds)
 {
-  using Scrub::schedule_result_t;
+  using schedule_result_t = Scrub::schedule_result_t;
   dout(10) << fmt::format(
 		  "{}: pg[{}] {} {} target: {}", __func__, info.pgid,
 		  (is_active() ? "<active>" : "<not-active>"),

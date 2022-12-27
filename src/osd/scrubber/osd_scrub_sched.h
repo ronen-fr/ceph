@@ -4,105 +4,8 @@
 #pragma once
 // clang-format off
 /*
-┌───────────────────────┐
-│ OSD                   │
-│ OSDService           ─┼───┐
-│                       │   │
-│                       │   │
-└───────────────────────┘   │   Ownes & uses the following
-                            │   ScrubQueue interfaces:
-                            │
-                            │
-                            │   - resource management (*1)
-                            │
-                            │   - environment conditions (*2)
-                            │
-                            │   - scrub scheduling (*3)
-                            │
-                            │
-                            │
-                            │
-                            │
-                            │
- ScrubQueue                 │
-┌───────────────────────────▼────────────┐
-│                                        │
-│                                        │
-│  SchedulingQueue    to_scrub <>────────┼────────┐
-│                                        │        │
-│                                        │        │
-│                                        │        │
-│  OSD_wide resource counters            │        │
-│                                        │        │
-│                                        │        │
-│  "env scrub conditions" monitoring     │        │
-│                                        │        │
-│                                        │        │
-│                                        │        │
-│                                        │        │
-└─▲──────────────────────────────────────┘        │
-  │                                               │
-  │                                               │
-  │uses interface <4>                             │
-  │                                               │
-  │                                               │
-  │            ┌──────────────────────────────────┘
-  │            │                 shared ownership of jobs
-  │            │
-  │      ┌─────▼──────┐
-  │      │SchedEntry  │
-  │      │            ├┐
-  │      │- ScrubJob^ ││
-  │      │            │┼┐
-  │      │- deep?     │┼│
-  └──────┤            │┼┤◄──────┐
-         │            │┼│       │
-         │            │┼│       │
-         │            │┼│       │
-         └┬───────────┼┼│       │shared ownership
-          └─┼┼┼┼┼┼┼┼┼┼┼┼│       │
-            └───────────┘       │
-                                │
-                                │
-                                │
-                                │
-┌───────────────────────────────┼─┐
-│                               <>│
-│PgScrubber                       │
-│                                 │
-│                                 │
-│                                 │
-│                                 │
-│                                 │
-└─────────────────────────────────┘
-
-
-ScrubQueue interfaces (main functions):
-
-<1> - OSD/PG resources management:
-
-  - can_inc_scrubs()
-  - {inc/dec}_scrubs_{local/remote}()
-  - dump_scrub_reservations()
-  - {set/clear/is}_reserving_now()
-
-<2> - environment conditions:
-
-  - update_loadavg()
-
-  - scrub_load_below_threshold()
-  - scrub_time_permit()
-
-<3> - scheduling scrubs:
-
-  - select_pg_and_scrub()
-  - dump_scrubs()
-
-<4> - manipulating a job's state:
-
-  - register_with_osd()
-  - remove_from_osd_queue()
-  - ...
+┌
+ DIAGRAM REMOVED FROM DISPLAY DUE TO RESTORATION EFFORTS
 
  */
 // clang-format on
@@ -191,7 +94,7 @@ using namespace ::std::literals;
  */
 enum class urgency_t {
   off,
-  penalized,
+  penalized,  //< following replica reservation failure
   periodic_regular,
   overdue,
   operator_requested,
@@ -201,7 +104,6 @@ enum class urgency_t {
 
 // RRR 
 enum class delay_cause_t {
-//enum class delay_cause_t : uint_fast16_t{
   none,
   replicas,
   flags,
@@ -242,12 +144,10 @@ class ScrubJob;
  *   'not in the queue'.
  * - 'white-outed' queue elements are never reported to the queue users.
  */
-struct QSchedTarget {
-  //static inline constexpr utime_t eternity{time_t{std::numeric_limits<int32_t>::max()}, 0};
-  //static inline const utime_t eternity{9'999'999'999, 0};
+struct SchedEntry {
   static inline const utime_t eternity{time_t{std::numeric_limits<int32_t>::max()}, 0};
 
-  QSchedTarget(spg_t pgid, scrub_level_t level)
+  SchedEntry(spg_t pgid, scrub_level_t level)
       : pgid{pgid}, level{level} {}
 
   spg_t pgid;
@@ -290,19 +190,19 @@ struct QSchedTarget {
 };
 
 std::weak_ordering cmp_ripe_entries(
-    const Scrub::QSchedTarget& l,
-    const Scrub::QSchedTarget& r);
+    const Scrub::SchedEntry& l,
+    const Scrub::SchedEntry& r);
 
 std::weak_ordering cmp_future_entries(
-    const Scrub::QSchedTarget& l,
-    const Scrub::QSchedTarget& r);
+    const Scrub::SchedEntry& l,
+    const Scrub::SchedEntry& r);
 
 
 // an aggregate used for reporting the outcome of a scheduling attempt
 struct SchedOutcome {
   schedule_result_t result;
-  std::optional<QSchedTarget> entry;
-  SchedOutcome(schedule_result_t r, QSchedTarget e) : result(r), entry(e) {}
+  std::optional<SchedEntry> entry;
+  SchedOutcome(schedule_result_t r, SchedEntry e) : result(r), entry(e) {}
 };
 
 class SchedTarget {
@@ -327,7 +227,7 @@ class SchedTarget {
 
  private:
   /// our ID and scheduling parameters
-  QSchedTarget sched_info;
+  SchedEntry sched_info;
 
   /// is this target (meaning - a copy of his specific combination of
   /// PG and scrub type) currently in the queue?
@@ -367,7 +267,7 @@ class SchedTarget {
   int whoami;
 
  public:
-  const QSchedTarget& queued_element() const { return sched_info; }
+  const SchedEntry& queued_element() const { return sched_info; }
 
   bool is_deep() const { return sched_info.level == scrub_level_t::deep; }
 
@@ -423,10 +323,6 @@ class SchedTarget {
 
   void dump(std::string_view sect_name, ceph::Formatter* f) const;
 
-  // consult the current value of the 'random upgrade" flag, and
-  // redraw the 'deep_or_upgraded' flag for the next run.
-  //bool check_and_redraw_upgrade();
-
   void set_oper_deep_target(scrub_type_t rpr, utime_t scrub_clock_now);
   void set_oper_shallow_target(scrub_type_t rpr, utime_t scrub_clock_now);
 
@@ -446,80 +342,9 @@ class SchedTarget {
   std::string m_log_prefix;
 };
 
-#if 0
-// note: not a shared_ptr, as the statically-allocated target is owned by the
-// job
-using TargetRef = SchedTarget&;
-using TargetRefW = std::reference_wrapper<SchedTarget>;
-#endif
-
-//using TargetRef = std::shared_ptr<Scrub::SchedTarget>;
-
-// enum class qu_state_t {
-//   not_registered,  // not a primary, thus not considered for scrubbing by this
-// 		   // OSD (also the temporary state when just created)
-//   registered,	   // in either of the two queues ('to_scrub' or 'penalized')
-//   unregistering	   // in the process of being unregistered. Will be finalized
-// 		   // under lock
-// };
-
-// what the OSD is using to schedule scrubs:
-// struct SchedEntry {
-//   //ScrubJobRef job;
-//   spg_t pgid;
-//   scrub_level_t s_or_d;
-//   TargetRef sched_target;
-// 
-//   //SchedEntry(ScrubJobRef j, scrub_level_t s) : job(j), s_or_d(s) {}
-//   SchedEntry(const spg_t& pg, scrub_level_t s, TargetRef trgt)
-//       : pgid{pg}
-//       , s_or_d(s)
-//       , sched_target{trgt}
-//   {}
-// 
-//   TargetRef target()
-//   {
-//     return sched_target;
-//   }
-//   const TargetRef target() const
-//   {
-//     return sched_target;
-//   }
-// };
-// 
-
 // Queue-manipulation by a PG:
 using TargetFilter = std::function<bool(const SchedTarget&)>;
-// struct ScrubQueueOps {
-//   //virtual SchedEntry extract_target(spg_t pgid, scrub_level_t s_or_d) = 0;
-// 
-//   //virtual std::optional<SchedEntry> extract_target(TargetRef& t, TargetFilter cond) = 0;
-//   //virtual bool white_out_target(const TargetRef& t, TargetFilter cond) = 0;
-// 
-//   virtual void white_out_entry(spg_t pgid, scrub_level_t s_or_d) = 0;
-//   virtual void white_out_entries(spg_t pgid, int known_cnt = 2) = 0;
-// 
-//   // note: sets the 'in_queue' flag
-//   //virtual void push_target(SchedEntry&& e) = 0;
-// 
-//   virtual void queue_entries(
-//       spg_t pgid,
-//       const QSchedTarget& shallow,
-//       const QSchedTarget& deep) = 0;
-// 
-//   virtual void cp_and_queue_target(const QSchedTarget& t) = 0;
-// 
-//   // note: sets the 'in_queue' flag
-//   //virtual void push_both_targets(SchedEntry&& s, SchedEntry&& d) = 0;
-//   virtual ~ScrubQueueOps() = default;
-// };
 struct ScrubQueueOps;
-
-
-
-
-
-
 
 
 
@@ -547,11 +372,6 @@ class ScrubJob {
     return (l == scrub_level_t::deep) ? scrub_level_t::shallow
 				      : scrub_level_t::deep;
   }
-
-  //   // used by the PG to register itself for scrubbing with the OSD
-  //   void register_with_osd_queue(const pg_info_t& info,
-  //       const sched_conf_t& aconf,
-  //       utime_t now_is);
 
   /*
    Entering:
@@ -607,45 +427,13 @@ class ScrubJob {
   SchedTarget shallow_target;
   SchedTarget deep_target;
 
-  //   // and a 'current' target, pointing to one of the above:
-  //   // (mostly used for general schedule queries)
-  //   TargetRefW closest_target;  // always updated to the closest target
-  //
-  //   SchedTarget next_shallow;  // only used when currently s-scrubbing
-  //   SchedTarget next_deep;     // only used when currently d-scrubbing
 
-  //  TargetRef shallow_target;
-  //  TargetRef deep_target;
-
-  /**
-   * guarding the access to the four 'targets' above.
-   * All writes are done under this mutex. For reads - for some we
-   * may be able to get away with other locks and path analysis.
-   */
-  //  mutable ceph::mutex targets_lock{ceph::make_mutex("ScrubJob::targets_lock")};
-
-  //   /// update 'closest_target':
-  //  TargetRef determine_closest(utime_t now_is) const;
-
-  //   void mark_for_dequeue();
-  //   void clear_marked_for_dequeue();
-  //   bool verify_targets_disabled() const;
-
-
-  //SchedTarget& get_modif_trgt(scrub_level_t lvl);
-  //TargetRef get_trgt(scrub_level_t lvl); // up the ref-count
   SchedTarget& get_target(scrub_level_t lvl);  // up the ref-count
 
 
   bool scrubbing{false}; // consider 'atomic'. Analyze who changes out of pg-lock
 
-  // failures/aborts-related information
-
-  /// last scrub attempt failed to secure replica resources. A temporary
-  /// flag, signalling the need to modify both targets under lock.
-  bool resources_failure{false};
-
-  bool penalized{false};
+  // failures/issues/aborts-related information
 
   /**
    * the scrubber is waiting for locked objects to be unlocked.
@@ -654,14 +442,18 @@ class ScrubJob {
   bool blocked{false};
   utime_t blocked_since{};
 
+  bool penalized{false};
+
   /*
    * if the PG is 'penalized' (after failing to secure replicas), this is the
    * time at which the penalty is lifted.
    */
   utime_t penalty_timeout{0, 0};
 
-  /// the more consecutive failures - the longer we will delay before
-  /// retrying the scrub job
+  /**
+   * the more consecutive failures - the longer we will delay before
+   * retrying the scrub job
+   */
   int consec_aborts{0};
 
 
@@ -709,18 +501,12 @@ class ScrubJob {
 
   /**
    * Following a change in the 'scrub period' parameters -
-   * recomputing the targets:
-   * - won't affect 'must' targets;
-   * - maybe: won't *delay* targets that were already tried and failed (have a
-  failure reason)
-  - should it affect ripe jobs?
+   * recomputing the targets.
    */
   void on_periods_change(
       const pg_info_t& info,
       const sched_conf_t& aconf,
       utime_t now_is);
-
-  void merge_targets(scrub_level_t lvl, std::chrono::seconds delay);
 
   void un_penalize();
 
@@ -735,8 +521,7 @@ class ScrubJob {
    * a text description of the "scheduling intentions" of this PG:
    * are we already scheduled for a scrub/deep scrub? when?
    */
-  std::string scheduling_state(
-      utime_t now_is /*, bool is_deep_expected*/) const;
+  std::string scheduling_state() const;
 
   friend std::ostream& operator<<(std::ostream& out, const ScrubJob& pg);
   std::ostream& gen_prefix(std::ostream& out) const;
@@ -971,8 +756,8 @@ class ScrubSchedListener;
 //   friend class TestOSDScrub;
 //   friend class ScrubSchedTestWrapper;  ///< unit-tests structure
 // 
-//   using QSchedTarget = Scrub::QSchedTarget;
-//   using SchedulingQueue = std::deque<QSchedTarget>;
+//   using SchedEntry = Scrub::SchedEntry;
+//   using SchedulingQueue = std::deque<SchedEntry>;
 // 
 //   static std::string_view qu_state_text(Scrub::qu_state_t st);
 // 
@@ -995,12 +780,12 @@ class ScrubSchedListener;
 //   void white_out_entry(spg_t pgid, scrub_level_t s_or_d) final;
 //   void white_out_entries(spg_t pgid, int known_cnt = 2) final;
 // 
-//   void cp_and_queue_target(const QSchedTarget& t) final;
+//   void cp_and_queue_target(const SchedEntry& t) final;
 // 
 //   void queue_entries(
 //       spg_t pgid,
-//       const QSchedTarget& shallow,
-//       const QSchedTarget& deep) final;
+//       const SchedEntry& shallow,
+//       const SchedEntry& deep) final;
 // 
 //   // note: sets the 'in_queue' flag
 //   //void push_both_targets(SchedEntry&& s, SchedEntry&& d) final {}
@@ -1308,10 +1093,10 @@ struct fmt::formatter<Scrub::delay_cause_t> : fmt::formatter<std::string_view> {
 // clang-format on
 
 template <>
-struct fmt::formatter<Scrub::QSchedTarget> {
+struct fmt::formatter<Scrub::SchedEntry> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
   template <typename FormatContext>
-  auto format(const Scrub::QSchedTarget& st, FormatContext& ctx)
+  auto format(const Scrub::SchedEntry& st, FormatContext& ctx)
   {
     return format_to(
 	ctx.out(), "{}/{},nb:{:s},({},tr:{:s},dl:{:s})", st.pgid,
@@ -1332,25 +1117,6 @@ struct fmt::formatter<Scrub::SchedTarget> {
   }
 };
 
-// template <>
-// struct fmt::formatter<Scrub::SchedTarget> {
-//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-//   template <typename FormatContext>
-//   auto format(const Scrub::SchedTarget& st, FormatContext& ctx)
-//   {
-//     return format_to(
-//       ctx.out(), "{}/{}: {}nb:{:s},({},tr:{:s},dl:{:s},a-r:{}{}),issue:{}",
-//       (st.base_target_level == scrub_level_t::deep ? "dp" : "sh"),
-//       st.effective_lvl(),
-//       st.scrubbing ? "ACTIVE " : "",
-//       st.not_before,
-//       st.urgency, st.target, st.deadline.value_or(utime_t{}),
-//       st.auto_repairing ? "+" : "-",
-//       st.marked_for_dequeue ? "XXX" : "",
-//       st.last_issue);
-//   }
-// };
-
 template <>
 struct fmt::formatter<Scrub::ScrubJob> {
   template <typename ParseContext>
@@ -1369,13 +1135,12 @@ struct fmt::formatter<Scrub::ScrubJob> {
   {
     if (shortened) {
       return fmt::format_to(
-	  ctx.out(), "pg[{}]:reg:{},rep-fail:{}", sjob.pgid,
-	  sjob.registration_state(), sjob.resources_failure);
+	  ctx.out(), "pg[{}]:reg:{}", sjob.pgid,
+	  sjob.registration_state());
     }
     return fmt::format_to(
-	ctx.out(), "pg[{}]:[t/s:{},t/d:{}],reg:{},rep-fail:{}", sjob.pgid,
-	sjob.shallow_target, sjob.deep_target, sjob.registration_state(),
-	sjob.resources_failure);
+	ctx.out(), "pg[{}]:[t/s:{},t/d:{}],reg:{}", sjob.pgid,
+	sjob.shallow_target, sjob.deep_target, sjob.registration_state());
   }
   bool shortened{false};
 };

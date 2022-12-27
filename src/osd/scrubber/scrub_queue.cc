@@ -11,11 +11,16 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 using namespace std::literals;
 
-
 #define dout_context (cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
-#define dout_prefix gen_prefix(*_dout)
+#define dout_prefix _prefix_target(_dout, this)
+
+template <class T>
+static ostream& _prefix_target(std::ostream* _dout, T* t)
+{
+  return t->gen_prefix(*_dout);
+}
 
 ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
     : cct{cct}
@@ -167,7 +172,7 @@ milliseconds ScrubQueue::required_sleep_time(bool high_priority_scrub) const
 // ////////////////////////////////////////////////////////////////////////// //
 // queue manipulation - implementing the ScrubQueueOps interface
 
-using QSchedTarget = Scrub::QSchedTarget;
+using SchedEntry = Scrub::SchedEntry;
 using urgency_t = Scrub::urgency_t;
 
 namespace {
@@ -175,11 +180,11 @@ namespace {
 // the 'identification' function for the 'to_scrub' queue
 // (would have been a key in a map, where we not sorting the entries
 // by different fields)
-auto same_key(const QSchedTarget& t, spg_t pgid, scrub_level_t s_or_d)
+auto same_key(const SchedEntry& t, spg_t pgid, scrub_level_t s_or_d)
 {
   return t.is_valid && t.pgid == pgid && t.level == s_or_d;
 }
-auto same_pg(const QSchedTarget& t, spg_t pgid)
+auto same_pg(const SchedEntry& t, spg_t pgid)
 {
   return t.is_valid && t.pgid == pgid;
 }
@@ -188,8 +193,8 @@ auto same_pg(const QSchedTarget& t, spg_t pgid)
 
 void ScrubQueue::queue_entries(
     spg_t pgid,
-    const QSchedTarget& shallow,
-    const QSchedTarget& deep)
+    const SchedEntry& shallow,
+    const SchedEntry& deep)
 {
   dout(20) << fmt::format(
 		  "{}: pg[{}]: queuing <{}> & <{}>", __func__, pgid, shallow,
@@ -213,7 +218,7 @@ void ScrubQueue::remove_entry(spg_t pgid, scrub_level_t s_or_d)
 	   << dendl;
   std::unique_lock l{jobs_lock};
   auto i = std::find_if(
-      to_scrub.begin(), to_scrub.end(), [pgid, s_or_d](const QSchedTarget& t) {
+      to_scrub.begin(), to_scrub.end(), [pgid, s_or_d](const SchedEntry& t) {
 	return same_key(t, pgid, s_or_d);
       });
   if (i != to_scrub.end()) {
@@ -241,7 +246,7 @@ void ScrubQueue::remove_entries(spg_t pgid, int known_cnt)
   }
 }
 
-void ScrubQueue::cp_and_queue_target(QSchedTarget t)
+void ScrubQueue::cp_and_queue_target(SchedEntry t)
 {
   dout(20) << fmt::format("{}: restoring {} to the scrub-queue", __func__, t)
 	   << dendl;
@@ -300,7 +305,6 @@ void ScrubQueue::sched_scrub(
   // pop the first job from the queue, as a candidate
   auto cand = to_scrub.front();
   to_scrub.pop_front();
-
   l.unlock();
 
   PgLockWrapper locked_g = osd_service.get_locked_pg(cand.pgid);
@@ -311,7 +315,6 @@ void ScrubQueue::sched_scrub(
 	    << dendl;
     return;
   }
-
   pg->start_scrubbing(scrub_tick_time, cand.level, preconds);
 }
 
@@ -387,7 +390,7 @@ ScrubQueue::preconditions_to_scrubbing(
  *
  * Process:
  * - scan the queue for entries that are "periodic"
- * - notify the PGs of those entries, as they should recalculate their
+ * - notify the PGs named in those entries, as they should recalculate their
  *   scrub scheduling
  */
 void ScrubQueue::on_config_times_change()
@@ -431,14 +434,14 @@ Scrub::sched_conf_t ScrubQueue::populate_config_params(
     configs.shallow_interval = conf()->osd_scrub_min_interval;
   }
 
-  // the max allowed delay between scrubs
+  // the max allowed delay between scrubs.
   // For deep scrubs - there is no equivalent of scrub_max_interval. Per the
   // documentation, once deep_scrub_interval has passed, we are already
   // "overdue", at least as far as the "ignore allowed load" window is
   // concerned.
+  /// \todo consider using conf()->mon_warn_not_deep_scrubbed;
 
-  configs.max_deep =
-      configs.deep_interval;  // conf()->mon_warn_not_deep_scrubbed;
+  configs.max_deep = configs.deep_interval + configs.shallow_interval;
 
   auto max_shallow = pool_conf.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
   if (max_shallow <= 0.0) {
@@ -463,7 +466,8 @@ Scrub::sched_conf_t ScrubQueue::populate_config_params(
 
 
 // ////////////////////////////////////////////////////////////////////////// //
-// container low-level operations. Will be extracted, and implemented by Sam's
+// container low-level operations. Will be extracted, and implemented by a
+// dedicated container class
 
 // must be called under the lock
 bool ScrubQueue::normalize_the_queue(utime_t scrub_clock_now)
@@ -562,7 +566,6 @@ bool ScrubQueue::inc_scrubs_local()
 void ScrubQueue::dec_scrubs_local()
 {
   std::lock_guard lck{resource_lock};
-
   dout(20) << fmt::format(
 		  "{}: {} -> {} (max {}, remote {})", __func__, scrubs_local,
 		  (scrubs_local - 1), conf()->osd_max_scrubs, scrubs_remote)
@@ -574,7 +577,6 @@ void ScrubQueue::dec_scrubs_local()
 bool ScrubQueue::inc_scrubs_remote()
 {
   std::lock_guard lck{resource_lock};
-
   if (scrubs_local + scrubs_remote < conf()->osd_max_scrubs) {
     dout(20) << fmt::format(
 		    "{}: {} -> {} (max {}, local {})", __func__, scrubs_remote,

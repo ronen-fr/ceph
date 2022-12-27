@@ -12,7 +12,7 @@
 namespace Scrub {
 class ScrubSchedListener;
 class ScrubJob;
-class QSchedTarget;
+class SchedEntry;
 
 
 /**
@@ -36,10 +36,10 @@ struct ScrubQueueOps {
 
   virtual void queue_entries(
       spg_t pgid,
-      const QSchedTarget& shallow,
-      const QSchedTarget& deep) = 0;
+      const SchedEntry& shallow,
+      const SchedEntry& deep) = 0;
 
-  virtual void cp_and_queue_target(QSchedTarget t) = 0;
+  virtual void cp_and_queue_target(SchedEntry t) = 0;
 
   // setting/clearing OSD-wide state flags affecting scrub scheduling
 
