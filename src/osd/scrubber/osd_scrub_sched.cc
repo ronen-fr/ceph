@@ -584,7 +584,7 @@ ScrubJob::ScrubJob(
     , shallow_target{pg, scrub_level_t::shallow, node_id, cct}
     , deep_target{pg, scrub_level_t::deep, node_id, cct}
 {
-  m_log_msg_prefix = fmt::format("osd.{} pg[{}] ScrubJob: ", whoami, pgid.pgid);
+  m_log_msg_prefix = fmt::format("osd.{} pg[{}] ScrubJob:", whoami, pgid.pgid);
 }
 
 // debug usage only

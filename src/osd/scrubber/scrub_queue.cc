@@ -15,10 +15,6 @@ using namespace std::literals;
 #define dout_context (cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
-// #define dout_prefix                                                            \
-//   *_dout << "osd." << osd_service.get_nodeid() << " scrub-queue::" << __func__ \
-// 	 << " "
-
 #define dout_prefix gen_prefix(*_dout)
 
 ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
@@ -391,7 +387,7 @@ ScrubQueue::preconditions_to_scrubbing(
  *
  * Process:
  * - scan the queue for entries that are "periodic"
- * - notify the PGs of those entries, that they should recalculate their
+ * - notify the PGs of those entries, as they should recalculate their
  *   scrub scheduling
  */
 void ScrubQueue::on_config_times_change()
@@ -412,45 +408,6 @@ void ScrubQueue::on_config_times_change()
     }
   }
 }
-
-// void ScrubQueue::on_config_times_change()
-// {
-//   dout(10) << "starting" << dendl;
-//   auto all_jobs = list_registered_jobs();
-//   int modified_cnt{0};
-//   auto now_is = time_now();
-//
-//   for (const auto& [job, lvl] : all_jobs) {
-//     auto& trgt = job->get_current_trgt(lvl);
-//     dout(20) << fmt::format("examine {} ({})", job->pgid, trgt) << dendl;
-//
-//     PgLockWrapper locked_g = osd_service.get_locked_pg(job->pgid);
-//     PGRef pg = locked_g.m_pg;
-//     if (!pg)
-//       continue;
-//
-//     if (!pg->is_primary()) {
-//       dout(1) << fmt::format("{} is not primary", job->pgid) << dendl;
-//       continue;
-//     }
-//
-//     auto applicable_conf = populate_config_params(pg->get_pgpool().info.opts);
-//
-//     /// \todo consider sorting by pool, reducing the number of times we
-//     ///       call 'populate_config_params()'
-//
-//     if (job->on_periods_change(pg->info, applicable_conf, now_is); true) {
-//       dout(10) << fmt::format("{} ({}) - rescheduled", job->pgid, trgt)
-// 	       << dendl;
-//       ++modified_cnt;
-//     }
-//     // auto-unlocked as 'locked_g' gets out of scope
-//   }
-//
-//   dout(10) << fmt::format("{} planned scrubs rescheduled", modified_cnt)
-// 	   << dendl;
-// }
-
 
 // ////////////////////////////////////////////////////////////////////////// //
 // auxiliaries
@@ -580,8 +537,8 @@ bool ScrubQueue::can_inc_scrubs() const
   }
 
   dout(20) << fmt::format(
-		  "{}== false. {} (local) + {} (remote) >= max ({})",
-		  __func__, scrubs_local, scrubs_remote, conf()->osd_max_scrubs)
+		  "{}== false. {} (local) + {} (remote) >= max ({})", __func__,
+		  scrubs_local, scrubs_remote, conf()->osd_max_scrubs)
 	   << dendl;
   return false;
 }
@@ -595,9 +552,10 @@ bool ScrubQueue::inc_scrubs_local()
     return true;
   }
 
-  dout(20) << fmt::format("{}: {} (local) + {} (remote) >= max ({})", __func__,
-                          scrubs_local, scrubs_remote, conf()->osd_max_scrubs)
-           << dendl;
+  dout(20) << fmt::format(
+		  "{}: {} (local) + {} (remote) >= max ({})", __func__,
+		  scrubs_local, scrubs_remote, conf()->osd_max_scrubs)
+	   << dendl;
   return false;
 }
 
@@ -605,10 +563,10 @@ void ScrubQueue::dec_scrubs_local()
 {
   std::lock_guard lck{resource_lock};
 
-  dout(20) << fmt::format("{}: {} -> {} (max {}, remote {})", __func__,
-                          scrubs_local, (scrubs_local - 1),
-                          conf()->osd_max_scrubs, scrubs_remote)
-           << dendl;
+  dout(20) << fmt::format(
+		  "{}: {} -> {} (max {}, remote {})", __func__, scrubs_local,
+		  (scrubs_local - 1), conf()->osd_max_scrubs, scrubs_remote)
+	   << dendl;
   --scrubs_local;
   ceph_assert(scrubs_local >= 0);
 }

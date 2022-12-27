@@ -2957,7 +2957,7 @@ std::string pg_stat_t::dump_scrub_schedule() const
         ((scrub_sched_status.m_is_deep == scrub_level_t::deep) ? "deep " : ""));
     case pg_scrub_sched_status_t::scheduled:
       return fmt::format(
-        "{} {}scrub scheduled to not before {:s}",
+        "{} {}scrub scheduled to {:s}",
         (scrub_sched_status.m_is_periodic ? "periodic" : "priority"),
         ((scrub_sched_status.m_is_deep == scrub_level_t::deep) ? "deep " : ""),
         scrub_sched_status.m_scheduled_at);

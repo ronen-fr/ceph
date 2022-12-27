@@ -113,8 +113,6 @@ class ReplicaReservations {
   const pg_info_t& m_pg_info;
   Scrub::ScrubJob* m_scrub_job; // RRR guarantee lifetime!!
 
-  void release_replica(pg_shard_t peer, epoch_t epoch);
-
   void send_all_done();	 ///< all reservations are granted
 
   /// notify the scrubber that we have failed to reserve replicas' resources
@@ -141,6 +139,10 @@ class ReplicaReservations {
   void handle_reserve_grant(OpRequestRef op, pg_shard_t from);
 
   void handle_reserve_reject(OpRequestRef op, pg_shard_t from);
+
+  // release_replica() is made accessible for manual testing & ut (see
+  // 'm_debug_deny_replica'
+  void release_replica(pg_shard_t peer, epoch_t epoch);
 
   std::ostream& gen_prefix(std::ostream& out) const;
 };

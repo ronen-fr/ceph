@@ -676,6 +676,8 @@ schedule_result_t PgScrubber::start_scrubbing(
     const ScrubPgPreconds& pg_cond,
     const ScrubPreconds& preconds)
 {
+  m_depenalize_cb.reset();
+
   auto& trgt = m_scrub_job->get_target(lvl);
   dout(10) << fmt::format(
 		  "{}: pg[{}] {} {} target: {}", __func__, m_pg_id,
@@ -1369,7 +1371,10 @@ void PgScrubber::on_init()
 // the deleter used to cancel a callback at the end of the penalty period
 void PgScrubber::timer_deleter_t::operator()(Context* cb)
 {
-  ceph_assert(m_osds);
+  if (!m_osds) {
+    // already cancelled
+    return;
+  }
   std::lock_guard l(m_osds->sleep_lock);
   m_osds->sleep_timer.cancel_event(cb);
   m_osds = nullptr;
@@ -1379,8 +1384,8 @@ void PgScrubber::timer_deleter_t::operator()(Context* cb)
 void PgScrubber::on_repl_reservation_failure()
 {
   auto penalty_period = 3'000ms;  // TODO: make it a config option
-//       m_pg->get_cct()->_conf.get_val<std::chrono::milliseconds>(
-// 	  "xx");
+  //       m_pg->get_cct()->_conf.get_val<std::chrono::milliseconds>(
+  // 	  "xx");
   dout(10) << fmt::format(
 		  "{}: penalty period: {}", __func__, penalty_period.count())
 	   << dendl;
@@ -1390,24 +1395,25 @@ void PgScrubber::on_repl_reservation_failure()
     // the scrub-job was demoted to 'penalized'. We should set a timer
     // to undo that after a while
     spg_t pgid = m_pg->get_pgid();
-    Context* cp = new LambdaContext([scrbr = this, osds = m_osds, pgid]([[maybe_unused]] int r) {
-      // send an event to the scrubber to handle the timeout
-      lgeneric_dout(scrbr->get_pg_cct(), 7)
-	<< "scrub_depen_callback: activated"
-	<< dendl;
+    Context* cp = new LambdaContext(
+	[scrbr = this, osds = m_osds, pgid]([[maybe_unused]] int r) {
+	  // send an event to the scrubber to handle the timeout
+	  lgeneric_dout(scrbr->get_pg_cct(), 7)
+	      << "scrub_depen_callback: activated" << dendl;
 
-      PGRef pg = osds->osd->lookup_lock_pg(pgid);
-      if (!pg) {
-	lgeneric_subdout(g_ceph_context, osd, 10)
-	  << "scrub_depen_callback: Could not find "
-	  << "PG " << pgid
-	  << dendl;
-	return;
-      }
-      scrbr->m_scrub_job->un_penalize();
-      pg->unlock();
-    });
+	  PGRef pg = osds->osd->lookup_lock_pg(pgid);
+	  if (!pg) {
+	    lgeneric_subdout(g_ceph_context, osd, 10)
+		<< "scrub_depen_callback: Could not find PG " << pgid << dendl;
+	    return;
+	  }
+	  scrbr->m_scrub_job->un_penalize();
+          // prevent an attempt to "re-delete" the callback
+          scrbr->m_depenalize_cb.get_deleter().m_osds = nullptr;
+	  pg->unlock();
+	});
 
+    ceph_assert(!m_depenalize_cb);
     m_depenalize_cb =
 	std::unique_ptr<Context, timer_deleter_t>(cp, timer_deleter_t{m_osds});
     std::lock_guard l(m_osds->sleep_lock);
@@ -2145,6 +2151,7 @@ void PgScrubber::handle_scrub_reserve_grant(OpRequestRef op, pg_shard_t from)
       dout(10) << fmt::format("{}: debug_deny_replica set - denying", __func__)
 	       << dendl;
       m_debug_deny_replica = false;
+      m_reservations->release_replica(from, m_pg->get_osdmap_epoch());
       handle_scrub_reserve_reject(op, from);
       return;
     }

@@ -4,11 +4,12 @@
 #pragma once
 
 #include "include/expected.hpp"
-#include "osd/osd_types.h"
-#include "osd/scrubber_common.h"
-#include "osd/scrubber/scrub_queue_if.h"
 #include "include/utime_fmt.h"
+#include "osd/osd_types.h"
 #include "osd/osd_types_fmt.h"
+#include "osd/scrubber/scrub_queue_if.h"
+#include "osd/scrubber_common.h"
+
 #include "utime.h"
 
 
@@ -18,15 +19,11 @@ class ScrubJob;
 class QSchedTarget;
 
 
-
 }  // namespace Scrub
 
 // the interface between the OSD's queue management (i.e. ScrubQueue) and the
 // specialized container implementation (i.e. XXX)
-struct TargetsContainerOps {
-
-
-};
+struct TargetsContainerOps {};
 
 /**
  * the queue of PGs waiting to be scrubbed.
@@ -49,7 +46,8 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   utime_t scrub_clock_now() const override;
 
-  Scrub::sched_conf_t populate_config_params(const pool_opts_t& pool_conf) override;
+  Scrub::sched_conf_t populate_config_params(
+      const pool_opts_t& pool_conf) override;
 
   void remove_entry(spg_t pgid, scrub_level_t s_or_d) final;
   void remove_entries(spg_t pgid, int known_cnt = 2) final;
@@ -60,7 +58,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
       spg_t pgid,
       const QSchedTarget& shallow,
       const QSchedTarget& deep) final;
-
 
 
   // ///////////////////////////////////////////////////
@@ -131,7 +128,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   bool inc_scrubs_remote();
   void dec_scrubs_remote();
   void dump_scrub_reservations(ceph::Formatter* f) const;
-
 
 
   /// counting the number of PGs stuck while scrubbing, waiting for objects
