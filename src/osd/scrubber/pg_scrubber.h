@@ -390,12 +390,6 @@ class PgScrubber : public ScrubPgIF,
 
   pg_scrubbing_status_t get_schedule() const final;
 
-//   void on_operator_cmd(
-//     ceph::Formatter* f,
-//     scrub_level_t scrub_level,
-//     int offset,
-//     bool must) final;
-
   void on_operator_periodic_cmd(
     ceph::Formatter* f,
     scrub_level_t scrub_level,
@@ -534,7 +528,7 @@ class PgScrubber : public ScrubPgIF,
   void clear_pgscrub_state() final;
 
   /**
-   *  will cause the scrub session to terminate, and for the next scrub to
+   *  causes the scrub session to terminate, and for the next scrub to
    *  be daleyed (the scrub job will be marked 'penalized').
    */
   void on_repl_reservation_failure() final;
@@ -629,8 +623,8 @@ class PgScrubber : public ScrubPgIF,
   /// the object maintaining our scheduling information
   std::unique_ptr<Scrub::ScrubJob> m_scrub_job;
 
-   // RRR fix the comment
-  /// specifically - we were scheduled thru this entry in the OSD queue:
+  /// A copy of the specific scheduling target (either shallow_target or
+  /// deep_target in the scrub_job) that was selected for this active scrub
   std::optional<Scrub::SchedTarget> m_active_target;
 
   ostream& show_concise(ostream& out) const override;
@@ -896,8 +890,6 @@ class PgScrubber : public ScrubPgIF,
   void update_op_mode_text();
 
  private:
-  //void unregister_from_osd();
-
   /*
    * Select a range of objects to scrub.
    *

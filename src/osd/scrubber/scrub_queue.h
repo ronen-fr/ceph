@@ -65,7 +65,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   /**
    * the main entry point for the OSD. Called in OSD::tick_without_osd_lock()
    * to determine if there are PGs that are ready to be scrubbed, and to
-   * initiate a scrub of one of those ready.
+   * initiate a scrub of one of those that are ready.
    */
   void sched_scrub(
       const ceph::common::ConfigProxy& config,

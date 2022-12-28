@@ -197,13 +197,6 @@ std::weak_ordering cmp_future_entries(
     const Scrub::SchedEntry& r);
 
 
-// an aggregate used for reporting the outcome of a scheduling attempt
-struct SchedOutcome {
-  schedule_result_t result;
-  std::optional<SchedEntry> entry;
-  SchedOutcome(schedule_result_t r, SchedEntry e) : result(r), entry(e) {}
-};
-
 class SchedTarget {
  public:
   friend class ::PgScrubber;

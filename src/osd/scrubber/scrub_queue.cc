@@ -497,29 +497,34 @@ bool ScrubQueue::normalize_the_queue(utime_t scrub_clock_now)
     return cmp_future_entries(lhs, rhs) < 0;
   });
 
+  const int ready_cnt = std::distance(to_scrub.begin(), not_ripe);
+  const int future_cnt = std::distance(not_ripe, to_scrub.end());
+  dout(10) << fmt::format(
+		  "{}: ready: {}, future: {} total queue size: {}", __func__,
+		  ready_cnt, future_cnt, to_scrub.size())
+	   << dendl;
+
   // dump the queue
   {
     static const int max_to_log = 10;
 
     // top of the ready-queue
-    int ready_n =
-	std::min((int)std::distance(to_scrub.begin(), not_ripe), max_to_log);
+    int ready_n = std::min(ready_cnt, max_to_log);
     if (ready_n && g_conf()->subsys.should_gather<ceph_subsys_osd, 10>()) {
       dout(10) << fmt::format("{}: top of the ready-queue:", __func__) << dendl;
       for (int i = 0; i < ready_n; ++i) {
-	dout(10) << fmt::format("{}: -r- {}", __func__, to_scrub[i]) << dendl;
+	dout(10) << fmt::format(" ready:  {}", to_scrub[i]) << dendl;
       }
     }
 
     // and some of the targets with 'not-before' in the future
-    int future_n =
-	std::min((int)std::distance(not_ripe, to_scrub.end()), max_to_log);
+    int future_n = std::min(future_cnt, max_to_log);
     if (future_n && g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
       dout(10) << fmt::format("{}: top of the future targets:", __func__)
 	       << dendl;
       int k = future_n;
       for (auto e = not_ripe; k > 0; --k, ++e) {
-	dout(10) << fmt::format("{}: -f- {}", __func__, *e) << dendl;
+	dout(20) << fmt::format(" future: {}", *e) << dendl;
       }
     }
   }

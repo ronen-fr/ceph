@@ -485,7 +485,6 @@ unsigned int PgScrubber::scrub_requeue_priority(
 // ///////////////////////////////////////////////////////////////////// //
 // scrub-op registration handling
 
-
 bool PgScrubber::is_scrub_registered() const
 {
   return m_scrub_job && m_scrub_job->in_queue();
@@ -1073,11 +1072,10 @@ void PgScrubber::add_delayed_scheduling()
       m_needs_sleep
 	  ? m_osds->get_scrub_services().required_sleep_time(m_flags.required)
 	  : 0ms};
-  dout(15) << fmt::format("{} sleep: {}ms. needed? {}",
-                          __func__,
-                          sleep_time.count(),
-                          m_needs_sleep)
-           << dendl;
+  dout(15) << fmt::format(
+		  "{} sleep: {}ms. needed? {}", __func__, sleep_time.count(),
+		  m_needs_sleep)
+	   << dendl;
 
   if (sleep_time.count()) {
     // schedule a transition for some 'sleep_time' ms in the future
@@ -1092,20 +1090,20 @@ void PgScrubber::add_delayed_scheduling()
 
     spg_t pgid = m_pg->get_pgid();
     auto callbk = new LambdaContext([osds = m_osds, pgid, scrbr = this](
-				      [[maybe_unused]] int r) mutable {
+					[[maybe_unused]] int r) mutable {
       PGRef pg = osds->osd->lookup_lock_pg(pgid);
       if (!pg) {
 	lgeneric_subdout(g_ceph_context, osd, 10)
-	  << "scrub_requeue_callback: Could not find "
-	  << "PG " << pgid << " can't complete scrub requeue after sleep"
-	  << dendl;
+	    << "scrub_requeue_callback: Could not find "
+	    << "PG " << pgid << " can't complete scrub requeue after sleep"
+	    << dendl;
 	return;
       }
       scrbr->m_needs_sleep = true;
       lgeneric_dout(scrbr->get_pg_cct(), 7)
-	<< "scrub_requeue_callback: slept for "
-	<< ceph_clock_now() - scrbr->m_sleep_started_at << ", re-queuing scrub"
-	<< dendl;
+	  << "scrub_requeue_callback: slept for "
+	  << ceph_clock_now() - scrbr->m_sleep_started_at
+	  << ", re-queuing scrub" << dendl;
 
       scrbr->m_sleep_started_at = utime_t{};
       osds->queue_for_scrub_resched(&(*pg), Scrub::scrub_prio_t::low_priority);
@@ -3155,7 +3153,7 @@ std::ostream& ReplicaReservations::gen_prefix(std::ostream& out) const
 LocalReservation::LocalReservation(OSDService* osds) : m_osds{osds}
 {
   if (m_osds->get_scrub_services().inc_scrubs_local()) {
-    // the failure is signalled by not having m_holding_local_reservation set
+    // a failure is signalled by not having m_holding_local_reservation set
     m_holding_local_reservation = true;
   }
 }
