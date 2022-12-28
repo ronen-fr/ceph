@@ -376,17 +376,6 @@ void PgScrubber::send_reservation_failure(epoch_t epoch_queued)
   dout(10) << "scrubber event --<< " << __func__ << dendl;
 }
 
-
-// void PgScrubber::send_penalty_timeout(epoch_t epoch_queued)
-// {
-//   dout(10) << "scrubber event -->> " << __func__ << " epoch: " << epoch_queued
-// 	   << dendl;
-//   if (check_interval(epoch_queued)) {  // do not check for 'active'!
-//     m_fsm->process_event(PenaltyTimeout{});
-//   }
-//   dout(10) << "scrubber event --<< " << __func__ << dendl;
-// }
-
 void PgScrubber::send_full_reset(epoch_t epoch_queued)
 {
   dout(10) << "scrubber event -->> " << __func__ << " epoch: " << epoch_queued

@@ -96,10 +96,8 @@ std::weak_ordering cmp_future_entries(
   return std::weak_ordering::greater;
 }
 
-std::weak_ordering cmp_entries(
-    utime_t t,
-    const Scrub::SchedEntry& l,
-    const Scrub::SchedEntry& r)
+std::weak_ordering
+cmp_entries(utime_t t, const Scrub::SchedEntry& l, const Scrub::SchedEntry& r)
 {
   bool l_ripe = l.is_ripe(t);
   bool r_ripe = r.is_ripe(t);
@@ -229,12 +227,28 @@ void SchedTarget::depenalize()
 }
 
 
+void SchedTarget::set_oper_shallow_target(
+    scrub_type_t rpr,
+    utime_t scrub_clock_now)
+{
+  ceph_assert(sched_info.level == scrub_level_t::shallow);
+  ceph_assert(rpr != scrub_type_t::do_repair);
+  ceph_assert(!in_queue);
+
+  up_urgency_to(urgency_t::operator_requested);
+  sched_info.target = std::min(scrub_clock_now, sched_info.target);
+  sched_info.not_before = std::min(sched_info.not_before, scrub_clock_now);
+  auto_repairing = false;
+  last_issue = delay_cause_t::none;
+}
+
 void SchedTarget::set_oper_deep_target(
     scrub_type_t rpr,
     utime_t scrub_clock_now)
 {
   ceph_assert(sched_info.level == scrub_level_t::deep);
   ceph_assert(!in_queue);
+
   if (rpr == scrub_type_t::do_repair) {
     up_urgency_to(urgency_t::must);
     do_repair = true;
@@ -251,61 +265,6 @@ void SchedTarget::set_oper_deep_target(
 	   << dendl;
 }
 
-
-void SchedTarget::set_oper_shallow_target(
-    scrub_type_t rpr,
-    utime_t scrub_clock_now)
-{
-  ceph_assert(sched_info.level == scrub_level_t::shallow);
-  ceph_assert(rpr != scrub_type_t::do_repair);
-  ceph_assert(!in_queue);
-
-  up_urgency_to(urgency_t::operator_requested);
-  sched_info.target = std::min(scrub_clock_now, sched_info.target);
-  sched_info.not_before = std::min(sched_info.not_before, scrub_clock_now);
-  auto_repairing = false;
-  last_issue = delay_cause_t::none;
-}
-
-// void SchedTarget::set_oper_deep_target(
-//     scrub_type_t rpr,
-//     utime_t scrub_clock_now)
-// {
-//   ceph_assert(base_target_level == scrub_level_t::deep);
-//   // ceph_assert(!scrubbing);
-//   if (rpr == scrub_type_t::do_repair) {
-//     urgency = std::max(urgency_t::must, urgency);
-//     do_repair = true;
-//   } else {
-//     urgency = std::max(urgency_t::operator_requested, urgency);
-//   }
-//   target = std::min(scrub_clock_now, target);
-//   not_before = std::min(not_before, scrub_clock_now);
-//   auto_repairing = false;
-//   last_issue = delay_cause_t::none;
-//   dout(20) << fmt::format(
-// 		  "{}: repair?{} final:{}", __func__,
-// 		  ((rpr == scrub_type_t::do_repair) ? "+" : "-"), *this)
-// 	   << dendl;
-// }
-
-// void SchedTarget::set_oper_shallow_target(
-//     scrub_type_t rpr,
-//     utime_t scrub_clock_now)
-// {
-//   ceph_assert(base_target_level == scrub_level_t::shallow);
-//   // ceph_assert(!scrubbing);
-//   ceph_assert(rpr != scrub_type_t::do_repair);
-//
-//   urgency = std::max(urgency_t::operator_requested, urgency);
-//   target = std::min(scrub_clock_now, target);
-//   not_before = std::min(not_before, scrub_clock_now);
-//   auto_repairing = false;
-//   last_issue = delay_cause_t::none;
-// }
-
-
-//using TargetRef = Scrub::TargetRef;
 
 // RRR make sure we always set 'deadline' to something
 void SchedTarget::update_as_shallow(
@@ -349,7 +308,6 @@ void SchedTarget::update_as_shallow(
       }
     }
   }
-  //last_issue = delay_cause_t::none;
 
   // does not match the original logic, but seems to be required
   // for testing (standalone/scrub-test):
@@ -696,8 +654,6 @@ void ScrubJob::init_and_queue_targets(
 
 void ScrubJob::remove_from_osd_queue()
 {
-  dout(10) << __func__ << dendl;
-
   const int in_q_count = dequeue_targets();
   shallow_target.disable();
   deep_target.disable();
@@ -710,7 +666,7 @@ void ScrubJob::mark_for_after_repair()
 {
   auto now_is = scrub_queue.scrub_clock_now();
 
-  //dequeue, then manipulate the deep target
+  //dequeue, then manipulate, the deep target
   scrub_queue.remove_entry(pgid, scrub_level_t::deep);
   deep_target.sched_info.urgency = urgency_t::after_repair;
   deep_target.sched_info.target = {0, 0};

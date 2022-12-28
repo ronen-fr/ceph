@@ -26,6 +26,7 @@
 #include "include/types.h"
 #include "include/stringify.h"
 #include "osd_types.h"
+#include "osd_types_fmt.h"
 #include "include/xlist.h"
 #include "SnapMapper.h"
 #include "Session.h"
@@ -72,7 +73,6 @@ namespace Scrub {
   class LocalReservation;
   class ReservedByRemotePrimary;
   enum class schedule_result_t;
-  struct target_id_t;
 }
 
 #ifdef PG_DEBUG_REFS

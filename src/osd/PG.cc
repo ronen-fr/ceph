@@ -1305,13 +1305,10 @@ unsigned int PG::scrub_requeue_priority(
  *  Implementation note:
  *  PG::start_scrubbing() is called only once per a specific scrub session.
  *  That call commits us to the whatever choices are made (deep/shallow, etc').
- *  We do know, entering this function, what type of scrub we are to perform -
- *  as we have the specific SchedTarget.
- */
-/*
-18.12.2022: the target mentioned was now removed from the OSD's queue.
- If we fail to start the scrub, we will need to requeue it.
-
+ *
+ *  The scrub-queue entry corresponding to the 'level' parameter was already
+ *  removed from the OSD's queue. If we fail to start the scrub, we will need
+ *  to requeue it.
  */
 Scrub::schedule_result_t PG::start_scrubbing(
     utime_t scrub_clock_now,
@@ -1322,13 +1319,12 @@ Scrub::schedule_result_t PG::start_scrubbing(
   dout(10) << fmt::format(
 		  "{}: pg[{}] {} {} target: {}", __func__, info.pgid,
 		  (is_active() ? "<active>" : "<not-active>"),
-		  (is_clean() ? "<clean>" : "<not-clean>"), 17/*level*/)
+		  (is_clean() ? "<clean>" : "<not-clean>"), level)
 	   << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);
 
   if (!is_primary() || !is_active() || !is_clean()) {
-    // RRR could we have targets queued for non-primary PGs?
     return schedule_result_t::bad_pg_state;
   }
 
@@ -1397,7 +1393,7 @@ void PG::on_new_interval()
   projected_last_update = eversion_t();
   cancel_recovery();
 
-  assert(m_scrubber);
+  ceph_assert(m_scrubber);
   // log some scrub data before we react to the interval
   dout(20) << __func__ << (is_scrub_queued_or_active() ? " scrubbing " : " ")
 	   << dendl;

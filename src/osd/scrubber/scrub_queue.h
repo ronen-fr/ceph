@@ -17,8 +17,6 @@ namespace Scrub {
 class ScrubSchedListener;
 class ScrubJob;
 class SchedEntry;
-
-
 }  // namespace Scrub
 
 // the interface between the OSD's queue management (i.e. ScrubQueue) and the
@@ -67,7 +65,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   /**
    * the main entry point for the OSD. Called in OSD::tick_without_osd_lock()
    * to determine if there are PGs that are ready to be scrubbed, and to
-   * initiate a scrub session on one of them.
+   * initiate a scrub of one of those ready.
    */
   void sched_scrub(
       const ceph::common::ConfigProxy& config,
@@ -77,30 +75,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    * Translate attempt_ values into readable text
    */
   static std::string_view attempt_res_text(Scrub::schedule_result_t v);
-
-  /**
-   * remove the pg from set of PGs to be scanned for scrubbing.
-   * To be used if we are no longer the PG's primary, or if the PG is removed.
-   */
-  //void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
-
-  /**
-   * @return the list (not std::list!) of all scrub jobs registered
-   *   (apart from PGs in the process of being removed)
-   */
-  SchedulingQueue list_registered_jobs() const;
-
-  /**
-   * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
-   * scrubbed by the OSD.
-   * The registration is active as long as the PG exists and the OSD is its
-   * primary.
-   *
-   * See update_job() for the handling of the 'suggested' parameter.
-   *
-   * locking: might lock jobs_lock
-   */
-  //void register_with_osd(Scrub::ScrubJobRef sjob);
 
   /*
    * handles a change to the configuration parameters affecting the scheduling
@@ -183,33 +157,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
       utime_t scrub_clock_now);
 
   bool normalize_the_queue(utime_t scrub_clock_now);
-
-  /**
-   * called periodically(*) to select the first scrub-eligible PG
-   * and scrub it.
-   *
-   * (*) by the OSD's tick_without_osd_lock() method, indirectly via
-   *    sched_scrub();
-   *
-   * Selection is affected by:
-   * - time of day: scheduled scrubbing might be configured to only happen
-   *   during certain hours;
-   * - same for days of the week, and for the system load;
-   *
-   * @param preconds: what types of scrub are allowed, given system status &
-   *                  config. Some of the preconditions are calculated here.
-   * @return Scrub::schedule_result_t::scrub_initiated if a scrub session was
-   *                  successfully initiated. Otherwise - the failure cause.
-   *
-   * locking: locks jobs_lock
-   */
-  //Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
-
-  /**
-   * clear dead entries (unregistered, or belonging to removed PGs) from a
-   * queue. Job state is changed to match new status.
-   */
-  void rm_unregistered_jobs();
 
   /// scrub resources management lock (guarding scrubs_local & scrubs_remote)
   mutable ceph::mutex resource_lock =
