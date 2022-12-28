@@ -429,8 +429,7 @@ void PG::start_after_repair_scrub()
   dout(10) << __func__ << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
   // manipulate the job's schedule-targets
-  auto deep_job = m_scrubber->mark_for_after_repair();
-  start_scrubbing(deep_job);
+  m_scrubber->mark_for_after_repair();
 }
 
 unsigned PG::get_scrub_priority()
@@ -1306,16 +1305,21 @@ unsigned int PG::scrub_requeue_priority(
  *  Implementation note:
  *  PG::start_scrubbing() is called only once per a specific scrub session.
  *  That call commits us to the whatever choices are made (deep/shallow, etc').
- *  We do know, entering this function, what type of scrub we are to perform -
- *  as we have the specific SchedTarget.
+ *
+ *  The scrub-queue entry corresponding to the 'level' parameter was already
+ *  removed from the OSD's queue. If we fail to start the scrub, we will need
+ *  to requeue it.
  */
-Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedEntry trgt)
+Scrub::schedule_result_t PG::start_scrubbing(
+    utime_t scrub_clock_now,
+    scrub_level_t level,
+    const Scrub::ScrubPreconds preconds)
 {
-  using Scrub::schedule_result_t;
+  using schedule_result_t = Scrub::schedule_result_t;
   dout(10) << fmt::format(
-		"{}: pg[{}] {} {} target: {}", __func__, info.pgid,
-		(is_active() ? "<active>" : "<not-active>"),
-		(is_clean() ? "<clean>" : "<not-clean>"), trgt.target())
+		  "{}: pg[{}] {} {} target: {}", __func__, info.pgid,
+		  (is_active() ? "<active>" : "<not-active>"),
+		  (is_clean() ? "<clean>" : "<not-clean>"), level)
 	   << dendl;
   ceph_assert(ceph_mutex_is_locked(_lock));
   ceph_assert(m_scrubber);
@@ -1325,15 +1329,18 @@ Scrub::schedule_result_t PG::start_scrubbing(Scrub::SchedEntry trgt)
   }
 
   Scrub::ScrubPgPreconds pg_cond{};
-  pg_cond.allow_shallow = !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
-      pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
-  pg_cond.allow_deep = !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
-      pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
+  pg_cond.allow_shallow =
+      !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
+	pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
+  pg_cond.allow_deep =
+      !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
+	pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
   pg_cond.has_deep_errors = (info.stats.stats.sum.num_deep_scrub_errors > 0);
-  pg_cond.can_autorepair = (cct->_conf->osd_scrub_auto_repair &&
-				   get_pgbackend()->auto_repair_supported());
+  pg_cond.can_autorepair =
+      (cct->_conf->osd_scrub_auto_repair &&
+       get_pgbackend()->auto_repair_supported());
 
-  return m_scrubber->start_scrubbing(trgt, pg_cond);
+  return m_scrubber->start_scrubbing(scrub_clock_now, level, pg_cond, preconds);
 }
 
 /*

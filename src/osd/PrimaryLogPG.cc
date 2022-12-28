@@ -994,7 +994,7 @@ PrimaryLogPG::get_pgls_filter(bufferlist::const_iterator& iter)
 // ==========================================================
 
 void PrimaryLogPG::do_command(
-  const string_view& orig_prefix,
+  string_view orig_prefix,
   const cmdmap_t& cmdmap,
   const bufferlist& idata,
   std::function<void(int,const std::string&,bufferlist&)> on_finish)
@@ -1156,15 +1156,17 @@ void PrimaryLogPG::do_command(
 
   else if (prefix == "scrub" || prefix == "deep_scrub") {
 
-    bool deep = (prefix == "deep_scrub");
+    scrub_level_t deep =
+	(prefix == "deep_scrub") ? scrub_level_t::deep : scrub_level_t::shallow;
     int64_t time = cmd_getval_or<int64_t>(cmdmap, "time", 0);
-    // bool as_must = cmd_getval_or<bool>(cmdmap, "must", false);
+    bool as_must = cmd_getval_or<bool>(cmdmap, "force", false);
 
     if (is_primary()) {
-      // the '999' to signal a 'must scrub' is an ugly hack. To fix.
-      m_scrubber->on_operator_cmd(
-	  f.get(), deep ? scrub_level_t::deep : scrub_level_t::shallow, time,
-	  (time == 999));
+      if (as_must) {
+	m_scrubber->on_operator_forced_scrub(f.get(), deep);
+      } else {
+        m_scrubber->on_operator_periodic_cmd(f.get(), deep, time);
+      }
     } else {
       ss << "Not primary";
       ret = -EPERM;
@@ -1172,20 +1174,14 @@ void PrimaryLogPG::do_command(
     outbl.append(ss.str());
   }
 
-  else if (
+  else if (orig_prefix == "scrubdebug" ||
       prefix == "block" || prefix == "unblock" || prefix == "set" ||
       prefix == "unset") {
     string value;
     cmd_getval(cmdmap, "value", value);
-
-    if (is_primary()) {
-      ret = m_scrubber->asok_debug(prefix, value, f.get(), ss);
-      f->open_object_section("result");
-      f->dump_bool("success", true);
-      f->close_section();
-    } else {
-      ss << "Not primary";
-      ret = -EPERM;
+    ret = do_scrub_debug(f.get(), orig_prefix, prefix, value);
+    if (ret) {
+      ss << "do_scrub_debug returned " << ret;
     }
     outbl.append(ss.str());
   } else {
@@ -1198,6 +1194,23 @@ void PrimaryLogPG::do_command(
     f->flush(outbl);
   }
   on_finish(ret, ss.str(), outbl);
+}
+
+int PrimaryLogPG::do_scrub_debug(
+    Formatter *f,
+    std::string_view prefix,
+    std::string_view cmd,
+    std::string_view val)
+{
+  dout(10) << fmt::format("do_scrub_debug: {} / {} / {}", prefix, cmd, val)
+	   << dendl;
+  if (!m_scrubber) {
+    dout(10) << "do_scrub_debug: no scrubber object" << dendl;
+    return -EPERM;
+  }
+
+  stringstream ss;
+  return m_scrubber->asok_debug(prefix, cmd, val, f, ss);
 }
 
 
@@ -1738,11 +1751,13 @@ PrimaryLogPG::PrimaryLogPG(OSDService *o, OSDMapRef curmap,
     pgbackend->get_is_recoverable_predicate());
   snap_trimmer_machine.initiate();
 
-  m_scrubber = make_unique<PrimaryLogScrub>(this);
+  m_scrubber = make_unique<PrimaryLogScrub>(this, o->get_scrub_services());
 }
 
 PrimaryLogPG::~PrimaryLogPG()
 {
+  // making sure the scrubber is deleted here, in the 'derived' class, and not
+  // in the PG destructor:
   m_scrubber.reset();
 }
 

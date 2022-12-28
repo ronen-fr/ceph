@@ -54,6 +54,7 @@
 #include "osd/osd_perf_counters.h"
 #include "common/Finisher.h"
 #include "scrubber/osd_scrub_sched.h"
+#include "scrubber/scrub_queue.h"
 
 #define CEPH_OSD_PROTOCOL    10 /* cluster internal */
 
@@ -280,6 +281,8 @@ public:
   ScrubQueue& get_scrub_services() { return m_scrub_queue; }
 
   PgLockWrapper get_locked_pg(spg_t pgid) final;
+
+  void send_sched_recalc_to_pg(spg_t pgid) final;
 
  private:
   // -- agent shared state --
@@ -535,6 +538,10 @@ public:
 
   /// queue the message (-> event) that some replicas denied our scrub resources request
   void queue_for_scrub_denied(PG* pg, Scrub::scrub_prio_t with_priority);
+
+  /// queue the message (-> event) that notifies us that configuration items
+  /// affecting scrub scheduling have changed
+  void queue_scrub_recalc_schedule(PG* pg, Scrub::scrub_prio_t with_priority);
 
   /// Signals either (a) the end of a sleep period, or (b) a recheck of the availability
   /// of the primary map being created by the backend.

@@ -1734,6 +1734,12 @@ void OSDService::queue_for_scrub_denied(PG* pg, Scrub::scrub_prio_t with_priorit
   queue_scrub_event_msg<PGScrubDenied>(pg, with_priority);
 }
 
+void OSDService::queue_scrub_recalc_schedule(PG* pg, Scrub::scrub_prio_t with_priority)
+{
+  // Resulting scrub event: 'RecalcSchedule'
+  queue_scrub_event_msg<PGScrubRecalcSchedule>(pg, with_priority);
+}
+
 void OSDService::queue_for_scrub_resched(PG* pg, Scrub::scrub_prio_t with_priority)
 {
   // Resulting scrub event: 'InternalSchedScrub'
@@ -4241,7 +4247,8 @@ void OSD::final_init()
     "pg "			   \
     "name=pgid,type=CephPgid "	   \
     "name=cmd,type=CephChoices,strings=scrub " \
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "");
   ceph_assert(r == 0);
@@ -4249,7 +4256,8 @@ void OSD::final_init()
     "pg "			   \
     "name=pgid,type=CephPgid "	   \
     "name=cmd,type=CephChoices,strings=deep_scrub " \
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "");
   ceph_assert(r == 0);
@@ -4281,16 +4289,18 @@ void OSD::final_init()
   r = admin_socket->register_command(
     "scrub "				\
     "name=pgid,type=CephPgid,req=false "	\
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
-    "Trigger a scheduled scrub ");
+    "Trigger a scrub ");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
     "deep_scrub "			\
     "name=pgid,type=CephPgid,req=false "	\
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
-    "Trigger a scheduled deep scrub ");
+    "Trigger a deep scrub ");
   ceph_assert(r == 0);
 }
 
@@ -7436,6 +7446,16 @@ PgLockWrapper OSDService::get_locked_pg(spg_t pgid)
   return locked_pg;
 }
 
+void OSDService::send_sched_recalc_to_pg(spg_t pgid)
+{
+  PGRef locked_pg = osd->lookup_lock_pg(pgid);
+  if (locked_pg) {
+    queue_scrub_recalc_schedule(
+	&(*locked_pg), Scrub::scrub_prio_t::low_priority);
+  }
+  locked_pg->unlock();
+}
+
 
 MPGStats* OSD::collect_pg_stats()
 {
@@ -9634,7 +9654,7 @@ void OSD::handle_conf_change(const ConfigProxy& conf,
       changed.count("osd_deep_scrub_interval")) {
     service.get_scrub_services().on_config_times_change();
     dout(0) << fmt::format(
-		   "{}:  scrub interval change (min:{} deep:{} max:{})",
+		   "{}: scrub interval change (min:{} deep:{} max:{})",
 		   __func__, cct->_conf->osd_scrub_min_interval,
 		   cct->_conf->osd_deep_scrub_interval,
 		   cct->_conf->osd_scrub_max_interval)

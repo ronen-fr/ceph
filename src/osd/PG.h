@@ -72,7 +72,6 @@ namespace Scrub {
   class LocalReservation;
   class ReservedByRemotePrimary;
   enum class schedule_result_t;
-  class SchedTarget;
 }
 
 #ifdef PG_DEBUG_REFS
@@ -455,6 +454,12 @@ public:
 			"ReservationFailure");
   }
 
+  void scrub_send_recalc_schedule(epoch_t queued, ThreadPool::TPHandle& handle)
+  {
+    forward_scrub_event(&ScrubPgIF::recalc_schedule, queued,
+			"RecalcSchedule");
+  }
+
   void scrub_send_scrub_resched(epoch_t queued, ThreadPool::TPHandle& handle)
   {
     forward_scrub_event(&ScrubPgIF::send_scrub_resched, queued, "InternalSchedScrub");
@@ -701,7 +706,10 @@ public:
   void shutdown();
   virtual void on_shutdown() = 0;
 
-  Scrub::schedule_result_t start_scrubbing(Scrub::SchedEntry trgt);
+  Scrub::schedule_result_t start_scrubbing(
+      utime_t scrub_clock_now,
+      scrub_level_t level,
+      const Scrub::ScrubPreconds preconds);
 
   unsigned int scrub_requeue_priority(
     Scrub::scrub_prio_t with_priority,
@@ -730,7 +738,7 @@ public:
 
   virtual void snap_trimmer(epoch_t epoch_queued) = 0;
   virtual void do_command(
-    const std::string_view& prefix,
+    std::string_view prefix,
     const cmdmap_t& cmdmap,
     const ceph::buffer::list& idata,
     std::function<void(int,const std::string&,ceph::buffer::list&)> on_finish) = 0;
