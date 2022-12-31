@@ -500,6 +500,71 @@ options:
   see_also:
   - osd_scrub_slow_reservation_response
   with_legacy: false
+# the 'penalty' period (in seconds) after a failed attempt to secure replicas
+# for scrub
+# Note: disable by setting to 0
+- name: osd_scrub_busy_replicas_penalty
+  type: int
+  level: advanced
+  desc: Period (in seconds) of low scrub priority following a replica denial
+  long_desc: The period for which a PG that failed to secure replica scrub resources will
+    be given a low scrub priority.
+  default: 300
+  min: 0
+  with_legacy: false
+# minimal delay after a failed attempt to secure replicas for scrub
+- name: osd_scrub_retry_busy_replicas
+  type: int
+  level: advanced
+  desc: Period (in seconds) before retrying scrub after a replica reservation failure
+  long_desc: Minimal delay after a failed attempt to secure the replicas' scrub resources.
+  default: 5
+  min: 1
+  see_also:
+  - osd_scrub_retry_wrong_time
+  - osd_scrub_busy_replicas_penalty
+  with_legacy: false
+# minimal delay after a failed attempt to initiate a periodic scrub at the wrong time
+- name: osd_scrub_retry_wrong_time
+  type: int
+  level: advanced
+  desc: Period (in seconds) before retrying periodic scrub after a badly-timed attempt
+  long_desc: Minimal delay after a failed attempt to initiate a periodic
+    scrub at the wrong time.
+  default: 300
+  min: 1
+  see_also:
+  - osd_scrub_begin_hour
+  - osd_scrub_end_hour
+  - osd_scrub_begin_week_day
+  - osd_scrub_end_week_day
+  with_legacy: false
+# minimal delay after a failed attempt to scrub a non-active or not clean PG
+- name: osd_scrub_retry_pg_state
+  type: int
+  level: advanced
+  desc: Period (in seconds) before retrying to scrub a previously inactive/not-clean PG
+  long_desc: Minimal delay after a failed attempt to scrub a PG that was not
+    active and clean.
+  default: 60
+  min: 1
+  see_also:
+  - osd_scrub_retry_wrong_time
+  with_legacy: false
+# minimal delay after a failed attempt to initiate a scrub
+# See the 'see also' for the configuration options for some specific delay reasons
+- name: osd_scrub_retry_delay
+  type: int
+  level: advanced
+  desc: Period (in seconds) before retrying to scrub a specific PG after a failure
+  long_desc: Minimal delay after a failed attempt to scrub a PG
+  default: 3
+  min: 1
+  see_also:
+  - osd_scrub_retry_wrong_time
+  - osd_scrub_retry_busy_replicas
+  - osd_scrub_retry_pg_state
+  with_legacy: false
 # where rados plugins are stored
 - name: osd_class_dir
   type: str

@@ -116,33 +116,40 @@ enum class delay_cause_t {
 };
 
 struct sched_conf_t {
+  /// the desired interval between shallow scrubs
   double shallow_interval{0.0};
+
+  /// the desired interval between deep scrubs
   double deep_interval{0.0};
+
+  /// the maximum interval between shallow scrubs, as determined by either the
+  /// OSD or the pool configuration
   std::optional<double> max_shallow;
+
   double max_deep{0.0};
+
+  /// a randomization factor for the scrub intervals: the relevant interval,
+  /// multiplied by this and a random number between 0 and 1, will be the
+  /// added to the target time.
   double interval_randomize_ratio{0.0};
+
+  /// must we schedule a scrub with high urgency if we do not have a valid
+  /// last scrub stamp?
   bool mandatory_on_invalid{true};
 };
 
 class ScrubJob;
 
 /*
- * There are two versions of the "sched-target' - the object detailing one
- * of the two scrub types (deep or shallow) for a specific PG:
+ * There are two versions of the scheduling-target (the object detailing one
+ * of the two scrub types (deep or shallow) for a specific PG):
  * 'SchedEntry' is maintained by the ScrubQueue, and holds just
- * the scheduling details.
+ *   the scheduling details.
  * 'SchedTarget' is maintained by the PgScrubber, and
- * holds the same set of scheduling details, plus additional information
- * about the scrub to be performed.
- *
- * the following invariants hold re the two 'SchedTarget' objects:
- * - there are at most two objects for each PG (one for each scrub type) in
- *   the queue.
- * - if a queue element is removed or white-out, the corresponding object held
- *   by the PgScrubber will (not necessarily immediately) be marked as
- *   'not in the queue'.
- * - 'white-out' queue elements are never reported to the queue users.
+ *   holds the same set of scheduling details plus additional information
+ *   about the scrub to be performed.
  */
+
 struct SchedEntry {
   static inline const utime_t eternity{
       time_t{std::numeric_limits<int32_t>::max()}, 0};
@@ -152,7 +159,8 @@ struct SchedEntry {
   spg_t pgid;
   scrub_level_t level;
 
-  /// 'white-out' support: if false, the target was removed from the queue
+  /// 'white-out' support: if false, the entry was logically removed from
+  /// the queue
   bool is_valid{true};
 
   urgency_t urgency{urgency_t::off};
@@ -201,7 +209,6 @@ class SchedTarget {
  public:
   friend class ::PgScrubber;
   friend ScrubJob;
-  //   friend ScrubQueue;
   friend struct fmt::formatter<Scrub::SchedTarget>;
 
   SchedTarget(
@@ -238,7 +245,6 @@ class SchedTarget {
    * - performing a deep scrub (taken care of by raising the priority of the
    *   deep target);
    * - marking that scrub as 'do_repair' (the next flag here);
-   * - no random delays (RRR - does the 'urgency' field cover this?)
    */
   bool auto_repairing{false};
 
@@ -250,13 +256,11 @@ class SchedTarget {
    */
   bool do_repair{false};
 
-
-  // logging support
+  // -----       logging support
 
   CephContext* cct;
 
-  /// the OSD id
-  int whoami;
+  int whoami;  ///< the OSD id
 
  public:
   const SchedEntry& queued_element() const { return sched_info; }
@@ -335,7 +339,6 @@ class SchedTarget {
 };
 
 // Queue-manipulation by a PG:
-using TargetFilter = std::function<bool(const SchedTarget&)>;
 struct ScrubQueueOps;
 
 
@@ -394,7 +397,7 @@ class ScrubJob {
   on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime_t now_is);
 
   bool on_reservation_failure(
-      std::chrono::milliseconds period,
+      std::chrono::seconds period,
       SchedTarget&& aborted_target);
 
   void mark_for_after_repair();
@@ -529,496 +532,9 @@ class ScrubJob {
 };
 
 
-// struct ScrubJob final : public RefCountedObject {
-// public:
-//
-//   // used by the PG to register itself for scrubbing with the OSD
-//   void register_with_osd_queue(const pg_info_t& info,
-//       const sched_conf_t& aconf,
-//       utime_t now_is);
-//
-//   /*
-//    Entering:
-//    - we are not scrubbing
-//
-//    Locks:
-//    - will take targets_lock;
-//    - the white-out operations - should we make them atomic? for now - let's take the
-//      jobs_lock
-//
-//    Post:
-//    - our targets in the scrub-queue are white-outed;
-//    - urgency is off?
-//    - no target is marked as "in queue"
-//    - we are not scrubbing!
-//
-//   */
-//   void remove_from_osd_queue();
-//
-//
-//
-// public: // for now
-//   /// pg to be scrubbed
-//   spg_t pgid;
-//
-//   /// the OSD id (for the log)
-//   int whoami;
-//
-//   CephContext* cct;
-//
-//   ScrubQueueOps& scrub_queue;
-//
-//   //ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
-//
-// //   SchedTarget shallow_target;
-// //   SchedTarget deep_target;
-// //   // and a 'current' target, pointing to one of the above:
-// //   // (mostly used for general schedule queries)
-// //   TargetRefW closest_target;  // always updated to the closest target
-// //
-// //   SchedTarget next_shallow;  // only used when currently s-scrubbing
-// //   SchedTarget next_deep;     // only used when currently d-scrubbing
-//
-//   TargetRef shallow_target;
-//   TargetRef deep_target;
-//
-//   /**
-//    * guarding the access to the four 'targets' above.
-//    * All writes are done under this mutex. For reads - for some we
-//    * may be able to get away with other locks and path analysis.
-//    */
-//   mutable ceph::mutex targets_lock{ceph::make_mutex("ScrubJob::targets_lock")};
-//
-// //   /// update 'closest_target':
-// //   void determine_closest();
-//   TargetRef determine_closest(utime_t now_is) const;
-//
-//   void mark_for_dequeue();
-//   void clear_marked_for_dequeue();
-//   bool verify_targets_disabled() const;
-//
-//   // note: guaranteed to return the entry that's possibly in the to_scrub queue
-// //   TargetRef get_current_trgt(scrub_level_t lvl);
-// //   TargetRef get_modif_trgt(scrub_level_t lvl);
-// //   TargetRef get_next_trgt(scrub_level_t lvl);
-//
-//   SchedTarget& get_modif_trgt(scrub_level_t lvl);
-//   TargetRef get_trgt(scrub_level_t lvl); // up the ref-count
-//
-//   // RRR
-//   std::atomic_bool in_queues{false};
-//
-//   // failures/aborts-related information
-//
-//   /// last scrub attempt failed to secure replica resources. A temporary
-//   /// flag, signalling the need to modify both targets under lock.
-//   bool resources_failure{false};  // atomic?
-//
-//   bool penalized{false};
-//
-//   /**
-//    * the scrubber is waiting for locked objects to be unlocked.
-//    * Set after a grace period has passed.
-//    */
-//   bool blocked{false};
-//   utime_t blocked_since{};
-//
-//   utime_t penalty_timeout{0, 0};
-//
-//   /// the more consecutive failures - the longer we will delay before
-//   /// re-queueing the scrub job
-//   int consec_aborts{0};
-//
-//   ScrubJob(ScrubQueueOps& osd_queue, CephContext* cct, const spg_t& pg, int node_id);
-//
-//   utime_t get_sched_time(utime_t scrub_clock_now) const; // { return closest_target.get().not_before; }
-//
-//   bool is_ripe(utime_t now_is) const
-//   {
-//     return shallow_target->is_ripe(now_is) || deep_target->is_ripe(now_is);
-//   }
-//
-//   /**
-//    * the operator faked the timestamp. Reschedule the
-//    * relevant target.
-//    *
-//    * Locks the 'targets_lock' mutex.
-//    */
-//   void operator_periodic_targets(
-//       scrub_level_t level,
-//       utime_t upd_stamp,
-//       const pg_info_t& pg_info,
-//       const sched_conf_t& sched_configs,
-//       utime_t now_is);
-//
-//   /**
-//    * the operator instructed us to scrub. The urgency is set to (at least)
-//    * 'operator_requested', or (if the request is for a repair-scrub) - to
-//    * 'must'
-//    *
-//    * Locks the 'targets_lock' mutex.
-//    */
-//   void operator_forced_targets(
-//       scrub_level_t level,
-//       scrub_type_t scrub_type,
-//       utime_t now_is);
-//
-//   // deep scrub is marked for the next scrub cycle for this PG
-//   // The equivalent of must_scrub & must_deep_scrub
-//   void mark_for_rescrubbing();
-//
-//   void set_initial_targets(
-//       const pg_info_t& info,
-//       const sched_conf_t& aconf,
-//       utime_t now_is);
-//
-//   void at_scrub_completion(
-//       const pg_info_t& info,
-//       const sched_conf_t& aconf,
-//       utime_t now_is);
-//
-//   /**
-//    * Following a change in the 'scrub period' parameters -
-//    * recomputing the targets:
-//    * - won't affect 'must' targets;
-//    * - maybe: won't *delay* targets that were already tried and failed (have a
-//   failure reason)
-//   - should it affect ripe jobs?
-//    */
-//   void on_periods_change(
-//       const pg_info_t& info,
-//       const sched_conf_t& aconf,
-//       utime_t now_is);
-//
-//   void merge_targets(scrub_level_t lvl, std::chrono::seconds delay);
-//
-//   void un_penalize(utime_t now_is);
-//
-//   void at_failure(scrub_level_t lvl, delay_cause_t issue);
-//
-//   /**
-//    * relatively low-cost(*) access to the scrub job's state, to be used in
-//    * logging.
-//    *  (*) not a low-cost access on x64 architecture
-//    */
-//   std::string_view state_desc() const;
-//
-//   void dump(ceph::Formatter* f) const;
-//
-//   /*
-//    * as the atomic 'in_queues' appears in many log prints, accessing it for
-//    * display-only should be made less expensive (on ARM. On x86 the _relaxed
-//    * produces the same code as '_cs')
-//    */
-//   std::string_view registration_state() const
-//   {
-//     return in_queues.load(std::memory_order_relaxed) ? "in-queue"
-// 						     : "not-queued";
-//   }
-//
-//   /**
-//    * a text description of the "scheduling intentions" of this PG:
-//    * are we already scheduled for a scrub/deep scrub? when?
-//    */
-//   std::string scheduling_state(utime_t now_is/*, bool is_deep_expected*/) const;
-//
-//   friend std::ostream& operator<<(std::ostream& out, const ScrubJob& pg);
-//   std::ostream& gen_prefix(std::ostream& out) const;
-//   std::string m_log_msg_prefix;
-// };
-
-
 class ScrubSchedListener;
 }  // namespace Scrub
 
-// /**
-//  * the queue of PGs waiting to be scrubbed.
-//  * Main operations are scheduling/unscheduling a PG to be scrubbed at a certain
-//  * time.
-//  *
-//  * A "penalty" queue maintains those PGs that have failed to reserve the
-//  * resources of their replicas. The PGs in this list will be reinstated into the
-//  * scrub queue when all eligible PGs were already handled, or after a timeout
-//  * (or if their deadline has passed [[disabled at this time]]).
-//  */
-// class ScrubQueue : public Scrub::ScrubQueueOps {
-//  public:
-//   ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds);
-//   virtual ~ScrubQueue() = default;
-//
-//   friend class TestOSDScrub;
-//   friend class ScrubSchedTestWrapper;  ///< unit-tests structure
-//
-//   using SchedEntry = Scrub::SchedEntry;
-//   using SchedulingQueue = std::deque<SchedEntry>;
-//
-//   static std::string_view qu_state_text(Scrub::qu_state_t st);
-//
-//   Scrub::SchedOutcome get_top_candidate(const ceph::common::ConfigProxy& config,
-//      bool is_recovery_active);
-//
-//
-//   // ///////////////////////////////////////////////////
-//   // the ScrubQueueOps interface:
-//
-// //   SchedEntry extract_target(spg_t pgid, scrub_level_t s_or_d) final {}
-// //
-// //   std::optional<SchedEntry> extract_target(TargetRef& t, TargetFilter cond)
-// //       final
-// //   {}
-// //
-// //   bool white_out_target(const TargetRef& t, TargetFilter cond) final {}
-// //
-//
-//   void white_out_entry(spg_t pgid, scrub_level_t s_or_d) final;
-//   void white_out_entries(spg_t pgid, int known_cnt = 2) final;
-//
-//   void cp_and_queue_target(const SchedEntry& t) final;
-//
-//   void queue_entries(
-//       spg_t pgid,
-//       const SchedEntry& shallow,
-//       const SchedEntry& deep) final;
-//
-//   // note: sets the 'in_queue' flag
-//   //void push_both_targets(SchedEntry&& s, SchedEntry&& d) final {}
-//
-//
-//   // locks and removes from the queue
-//   // (RRR may be implemented by a copy + marking the original as 'to be removed')
-//   //SchedEntry extract_target(spg_t pgid, scrub_level_t s_or_d) override;
-//
-//   //void push_target(SchedEntry&& e) override;
-//   //void push_both_targets(SchedEntry&& s, SchedEntry&& d) override;
-//
-//
-//
-//   /**
-//    * the main entry point for the OSD. Called in OSD::tick_without_osd_lock()
-//    * to determine if there are PGs that are ready to be scrubbed, and to
-//    * initiate a scrub session on one of them.
-//    */
-//   void sched_scrub(
-//       const ceph::common::ConfigProxy& config,
-//       bool is_recovery_active);
-//
-//   /**
-//    * Translate attempt_ values into readable text
-//    */
-//   static std::string_view attempt_res_text(Scrub::schedule_result_t v);
-//
-//   /**
-//    * remove the pg from set of PGs to be scanned for scrubbing.
-//    * To be used if we are no longer the PG's primary, or if the PG is removed.
-//    */
-//   //void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
-//
-//   /**
-//    * @return the list (not std::list!) of all scrub jobs registered
-//    *   (apart from PGs in the process of being removed)
-//    */
-//   SchedulingQueue list_registered_jobs() const;
-//
-//   /**
-//    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
-//    * scrubbed by the OSD.
-//    * The registration is active as long as the PG exists and the OSD is its
-//    * primary.
-//    *
-//    * See update_job() for the handling of the 'suggested' parameter.
-//    *
-//    * locking: might lock jobs_lock
-//    */
-//   void register_with_osd(Scrub::ScrubJobRef sjob);
-//
-//   /*
-//    * handles a change to the configuration parameters affecting the scheduling
-//    * of scrubs.
-//    */
-//   void on_config_times_change();
-//
-//  public:
-//   void dump_scrubs(ceph::Formatter* f);
-//
-//   /**
-//    * No new scrub session will start while a scrub was initiated on a PG,
-//    * and that PG is trying to acquire replica resources.
-//    */
-//   void set_reserving_now() { a_pg_is_reserving = true; }
-//   void clear_reserving_now() { a_pg_is_reserving = false; }
-//   bool is_reserving_now() const { return a_pg_is_reserving; }
-//
-// private:
-//   bool can_inc_scrubs() const;
-//   bool inc_scrubs_local();
-//   void dec_scrubs_local();
-//   bool inc_scrubs_remote();
-//   void dec_scrubs_remote();
-// public:
-//   void dump_scrub_reservations(ceph::Formatter* f) const;
-//
-//   /// counting the number of PGs stuck while scrubbing, waiting for objects
-//   void mark_pg_scrub_blocked(spg_t blocked_pg);
-//   void clear_pg_scrub_blocked(spg_t blocked_pg);
-//   int get_blocked_pgs_count() const;
-//
-//   /**
-//    * Pacing the scrub operation by inserting delays (mostly between chunks)
-//    *
-//    * Special handling for regular scrubs that continued into "no scrub" times.
-//    * Scrubbing will continue, but the delays will be controlled by a separate
-//    * (read - with higher value) configuration element
-//    * (osd_scrub_extended_sleep).
-//    */
-//   double scrub_sleep_time(bool is_mandatory) const;  /// \todo (future) return
-// 						     /// milliseconds
-//
-//   /**
-//    *  called every heartbeat to update the "daily" load average
-//    *
-//    *  @returns a load value for the logger
-//    */
-//   [[nodiscard]] std::optional<double> update_load_average();
-//
-//   Scrub::sched_conf_t populate_config_params(const pool_opts_t& pool_conf);
-//
-//  private:
-//   CephContext* cct;
-//   Scrub::ScrubSchedListener& osd_service;
-//
-// #ifdef WITH_SEASTAR
-//   auto& conf() const { return local_conf(); }
-// #else
-//   auto& conf() const { return cct->_conf; }
-// #endif
-//
-//   /**
-//    *  jobs_lock protects the job containers and the relevant scrub-jobs state
-//    *  variables. Specifically, the following are guaranteed:
-//    *  - 'in_queues' is asserted only if the PGs 'targets' are in the to_scrub queue;
-//    *  - a job will only be in state 'registered' if in the queue;
-//    *
-//    *  Note that PG locks should not be acquired while holding jobs_lock.
-//    */
-//   mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
-//
-//   bool restore_penalized{false};
-//
-//   SchedulingQueue to_scrub;
-//
-//   double daily_loadavg{0.0};
-//
-//   static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
-//     return jobref->state == Scrub::qu_state_t::registered;
-//   };
-//
-//   static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
-//     return jobref->state == Scrub::qu_state_t::not_registered;
-//   };
-//
-//   tl::expected<Scrub::ScrubPreconds, Scrub::schedule_result_t>
-//   preconditions_to_scrubbing(
-//       const ceph::common::ConfigProxy& config,
-//       bool is_recovery_active,
-//       utime_t scrub_clock_now);
-//
-//   bool normalize_the_queue(utime_t scrub_clock_now);
-//
-//   /**
-//    * called periodically(*) to select the first scrub-eligible PG
-//    * and scrub it.
-//    *
-//    * (*) by the OSD's tick_without_osd_lock() method, indirectly via
-//    *    sched_scrub();
-//    *
-//    * Selection is affected by:
-//    * - time of day: scheduled scrubbing might be configured to only happen
-//    *   during certain hours;
-//    * - same for days of the week, and for the system load;
-//    *
-//    * @param preconds: what types of scrub are allowed, given system status &
-//    *                  config. Some of the preconditions are calculated here.
-//    * @return Scrub::schedule_result_t::scrub_initiated if a scrub session was
-//    *                  successfully initiated. Otherwise - the failure cause.
-//    *
-//    * locking: locks jobs_lock
-//    */
-//   Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
-//
-//   /**
-//    * Are there scrub jobs that should be reinstated?
-//    */
-//   void scan_penalized(bool forgive_all, utime_t time_now);
-//
-//   /**
-//    * clear dead entries (unregistered, or belonging to removed PGs) from a
-//    * queue. Job state is changed to match new status.
-//    */
-//   void rm_unregistered_jobs();
-//
-//   /**
-//    * sort the scrub queue, first updating the 'ripeness' of all
-//    * jobs, then using a comparator that takes the 'ripeness' into account.
-//    */
-//   void clock_based_sort(utime_t now_is);
-//
-//   /**
-//    * the set of the first N scrub jobs in 'group' which are ready to be
-//    * scrubbed (ready = their scheduled time has passed).
-//    * The scrub jobs in the new collection are sorted according to
-//    * their urgency, not-before etc'.
-//    *
-//    * Note that the returned container holds independent refs to the
-//    * scrub jobs.
-//    */
-//   SchedulingQueue collect_ripe_jobs(SchedulingQueue& group, utime_t time_now);
-//
-//   /// scrub resources management lock (guarding scrubs_local & scrubs_remote)
-//   mutable ceph::mutex resource_lock =
-//       ceph::make_mutex("ScrubQueue::resource_lock");
-//
-//   /// the counters used to manage scrub activity parallelism:
-//   int scrubs_local{0};
-//   int scrubs_remote{0};
-//
-//   /**
-//    * The scrubbing of PGs might be delayed if the scrubbed chunk of objects is
-//    * locked by some other operation. A bug might cause this to be an infinite
-//    * delay. If that happens, the OSDs "scrub resources" (i.e. the
-//    * counters that limit the number of concurrent scrub operations) might
-//    * be exhausted.
-//    * We do issue a cluster-log warning in such occasions, but that message is
-//    * easy to miss. The 'some pg is blocked' global flag is used to note the
-//    * existence of such a situation in the scrub-queue log messages.
-//    */
-//   std::atomic_int_fast16_t blocked_scrubs_cnt{0};
-//
-//   std::atomic_bool a_pg_is_reserving{false};
-//
-//   [[nodiscard]] bool scrub_load_below_threshold() const;
-//   [[nodiscard]] bool scrub_time_permit(utime_t now) const;
-//
-//   /**
-//    * Look for scrub jobs that have their 'resources_failure' set. These jobs
-//    * have failed to acquire remote resources last time we've initiated a scrub
-//    * session on them. They are now moved from the 'to_scrub' queue to the
-//    * 'penalized' set.
-//    *
-//    * locking: called with job_lock held
-//    */
-//   void move_failed_pgs(utime_t now_is);
-//
-//   Scrub::schedule_result_t select_n_scrub(
-//       SchedulingQueue& group,
-//       const Scrub::ScrubPreconds& preconds,
-//       utime_t now_is);
-//
-//  public:  // used by the unit-tests
-//   /**
-//    * unit-tests will override this function to return a mock time
-//    */
-//   virtual utime_t time_now() const { return ceph_clock_now(); }
-// };
 
 class PgLockWrapper;
 

@@ -125,9 +125,9 @@ public:
   }
 
   // accessors
-  time_t        sec()  const { return tv.tv_sec; }
-  long          usec() const { return tv.tv_nsec/1000; }
-  int           nsec() const { return tv.tv_nsec; }
+  constexpr time_t        sec()  const { return tv.tv_sec; }
+  constexpr long          usec() const { return tv.tv_nsec/1000; }
+  constexpr int           nsec() const { return tv.tv_nsec; }
 
   // ref accessors/modifiers
   __u32&         sec_ref()  { return tv.tv_sec; }
@@ -187,7 +187,7 @@ public:
     t->tv_sec = tv.tv_sec;
     t->tv_nsec = tv.tv_nsec;
   }
-  void decode_timeval(const struct ceph_timespec *t) {
+  constexpr void decode_timeval(const struct ceph_timespec *t) {
     tv.tv_sec = t->tv_sec;
     tv.tv_nsec = t->tv_nsec;
   }

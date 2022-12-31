@@ -25,6 +25,14 @@ struct TargetsContainerOps {};
 
 /**
  * the queue of PGs waiting to be scrubbed.
+ *
+ * the following invariants hold:
+ * - there are at most two objects for each PG (one for each scrub type) in
+ *   the queue.
+ * - if a queue element is removed or white-out, the corresponding object held
+ *   by the PgScrubber will (not necessarily immediately) be marked as
+ *   'not in the queue'.
+ * - 'white-out' queue elements are never reported to the queue users.
  */
 class ScrubQueue : public Scrub::ScrubQueueOps {
  public:
@@ -48,14 +56,13 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
       const pool_opts_t& pool_conf) override;
 
   void remove_entry(spg_t pgid, scrub_level_t s_or_d) final;
-  void remove_entries(spg_t pgid, int known_cnt = 2) final;
 
   void cp_and_queue_target(SchedEntry t) final;
 
   void queue_entries(
       spg_t pgid,
-      const SchedEntry& shallow,
-      const SchedEntry& deep) final;
+      SchedEntry shallow,
+      SchedEntry deep) final;
 
 
   // ///////////////////////////////////////////////////
@@ -95,8 +102,10 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   // resource reservation management
 
- public:
+ private:
   bool can_inc_scrubs() const;
+
+ public:
   bool inc_scrubs_local();
   void dec_scrubs_local();
   bool inc_scrubs_remote();

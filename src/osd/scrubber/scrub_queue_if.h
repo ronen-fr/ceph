@@ -14,14 +14,10 @@ class ScrubSchedListener;
 class ScrubJob;
 class SchedEntry;
 
-
-/**
- *  the interface used by all but the OSD itself to access the scrub scheduling
- *  functionality.
- */
 /**
  *  the interface used by ScrubJob (a component of the PgScrubber) to access
  *  the scrub scheduling functionality.
+ *  Separated from the actual implementation mostly due to cyclic dependencies.
  */
 struct ScrubQueueOps {
 
@@ -32,12 +28,14 @@ struct ScrubQueueOps {
 
   virtual void remove_entry(spg_t pgid, scrub_level_t s_or_d) = 0;
 
-  virtual void remove_entries(spg_t pgid, int known_cnt = 2) = 0;
-
-  virtual void queue_entries(
-      spg_t pgid,
-      const SchedEntry& shallow,
-      const SchedEntry& deep) = 0;
+  /**
+   * add both targets to the queue (but only if urgency>off)
+   * Note: modifies the entries (setting 'is_valid') before queuing them.
+   * \todo when implementing a queue w/o the need for white-out support -
+   * restore to const&.
+   */
+  virtual void
+  queue_entries(spg_t pgid, SchedEntry shallow, SchedEntry deep) = 0;
 
   virtual void cp_and_queue_target(SchedEntry t) = 0;
 

@@ -1315,7 +1315,6 @@ Scrub::schedule_result_t PG::start_scrubbing(
     scrub_level_t level,
     const Scrub::ScrubPreconds preconds)
 {
-  using schedule_result_t = Scrub::schedule_result_t;
   dout(10) << fmt::format(
 		  "{}: pg[{}] {} {} target: {}", __func__, info.pgid,
 		  (is_active() ? "<active>" : "<not-active>"),
@@ -1325,7 +1324,7 @@ Scrub::schedule_result_t PG::start_scrubbing(
   ceph_assert(m_scrubber);
 
   if (!is_primary() || !is_active() || !is_clean()) {
-    return schedule_result_t::bad_pg_state;
+    return Scrub::schedule_result_t::failure;
   }
 
   Scrub::ScrubPgPreconds pg_cond{};

@@ -24,18 +24,19 @@ class ReplicaReservations;
 enum class schedule_result_t {
   scrub_initiated,     // successfully started a scrub
   none_ready,	       // no pg to scrub
-  no_local_resources,  // failure to secure local OSD scrub resource
-  already_started,     // failed, as already started scrubbing this pg
-  no_such_pg,	       // can't find this pg
-  bad_pg_state,	       // pg state (clean, active, etc.)
-  preconditions,       // time, configuration, etc.
-  // and some errors that may be returned if the OSD won't even be
-  // attempting to scrub:
-  // RRR (we do not really care about the difference
-  // between the following three. Consider unifying them)
-  lost_coin_flip,
-  repl_reservation_in_progress,
-  recovery_is_active,
+  failure,
+//   no_local_resources,  // failure to secure local OSD scrub resource
+//   already_started,     // failed, as already started scrubbing this pg
+//   no_such_pg,	       // can't find this pg
+//   bad_pg_state,	       // pg state (clean, active, etc.)
+//   preconditions,       // time, configuration, etc.
+//   // and some errors that may be returned if the OSD won't even be
+//   // attempting to scrub:
+//   // RRR (we do not really care about the difference
+//   // between the following three. Consider unifying them)
+//   lost_coin_flip,
+//   repl_reservation_in_progress,
+//   recovery_is_active,
 };
 
 class SchedTarget;

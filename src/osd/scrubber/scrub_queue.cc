@@ -191,20 +191,26 @@ auto same_pg(const SchedEntry& t, spg_t pgid)
 }  // namespace
 
 
-void ScrubQueue::queue_entries(
-    spg_t pgid,
-    const SchedEntry& shallow,
-    const SchedEntry& deep)
+void ScrubQueue::queue_entries(spg_t pgid, SchedEntry shallow, SchedEntry deep)
 {
   dout(20) << fmt::format(
 		  "{}: pg[{}]: queuing <{}> & <{}>", __func__, pgid, shallow,
 		  deep)
 	   << dendl;
   ceph_assert(shallow.pgid == pgid && deep.pgid == pgid);
-  ceph_assert(shallow.is_valid && deep.is_valid);
+
+  if (shallow.urgency == urgency_t::off || deep.urgency == urgency_t::off) {
+    dout(20) << fmt::format(
+		    "{}: pg[{}]: one of the entries is 'off' - not queuing",
+		    __func__, pgid)
+	     << dendl;
+    return;
+  }
+
+  shallow.is_valid = true;
+  deep.is_valid = true;
 
   std::unique_lock l{jobs_lock};
-
   // now - add the new targets
   to_scrub.push_back(shallow);
   to_scrub.push_back(deep);
@@ -226,25 +232,6 @@ void ScrubQueue::remove_entry(spg_t pgid, scrub_level_t s_or_d)
   }
 }
 
-void ScrubQueue::remove_entries(spg_t pgid, int known_cnt)
-{
-  dout(20) << fmt::format(
-		  "{}: dequeuing pg[{}] ({} entries)", __func__, pgid,
-		  known_cnt)
-	   << dendl;
-
-  std::unique_lock l{jobs_lock};
-  if (known_cnt) {
-    for (auto& e : to_scrub) {
-      if (same_pg(e, pgid)) {
-	e.is_valid = false;
-	if (--known_cnt <= 0) {
-	  break;
-	}
-      }
-    }
-  }
-}
 
 void ScrubQueue::cp_and_queue_target(SchedEntry t)
 {
@@ -341,13 +328,13 @@ ScrubQueue::preconditions_to_scrubbing(
 		    "{}: lost coin flip, randomly backing off (ratio: {:f})",
 		    __func__, config->osd_scrub_backoff_ratio)
 	     << dendl;
-    return tl::unexpected(schedule_result_t::lost_coin_flip);
+    return tl::unexpected(schedule_result_t::failure);
   }
 
   // fail fast if no resources are available
   if (!can_inc_scrubs()) {
     dout(10) << fmt::format("{}: OSD cannot inc scrubs", __func__) << dendl;
-    return tl::unexpected(schedule_result_t::no_local_resources);
+    return tl::unexpected(schedule_result_t::failure);
   }
 
   // if there is a PG that is just now trying to reserve scrub replica resources
@@ -356,7 +343,7 @@ ScrubQueue::preconditions_to_scrubbing(
     dout(10) << fmt::format(
 		    "{}: scrub resources reservation in progress", __func__)
 	     << dendl;
-    return tl::unexpected(schedule_result_t::repl_reservation_in_progress);
+    return tl::unexpected(schedule_result_t::failure);
   }
 
   Scrub::ScrubPreconds env_conditions;
@@ -371,7 +358,7 @@ ScrubQueue::preconditions_to_scrubbing(
 		      "{}: not scheduling scrubs due to active recovery",
 		      __func__)
 	       << dendl;
-      return tl::unexpected(schedule_result_t::recovery_is_active);
+      return tl::unexpected(schedule_result_t::failure);
     }
 
     dout(10) << fmt::format(
@@ -388,27 +375,25 @@ ScrubQueue::preconditions_to_scrubbing(
 /**
  * the refactored "OSD::sched_all_scrubs()"
  *
- * Process:
- * - scan the queue for entries that are "periodic"
- * - notify the PGs named in those entries, as they should recalculate their
- *   scrub scheduling
+ * Scans the queue for entries that are "periodic", and messages the PGs
+ * named in those entries to recalculate their scrub scheduling
  */
 void ScrubQueue::on_config_times_change()
 {
-  std::set<spg_t> handled;
+  std::set<spg_t> to_notify;
   std::unique_lock l{jobs_lock};
-
   for (const auto& e : to_scrub) {
     if (e.is_valid && e.urgency == urgency_t::periodic_regular) {
-      if (handled.count(e.pgid))
-	continue;
-
-      handled.insert(e.pgid);
-      dout(15) << fmt::format(
-		      "{}: rescheduling {}({})", __func__, e.pgid, e.level)
-	       << dendl;
-      osd_service.send_sched_recalc_to_pg(e.pgid);
+      to_notify.insert(e.pgid);
     }
+  }
+  l.unlock();
+
+  for (const auto& p : to_notify) {
+      dout(15) << fmt::format(
+		      "{}: rescheduling {}", __func__, p)
+	       << dendl;
+    osd_service.send_sched_recalc_to_pg(p);
   }
 }
 
@@ -511,7 +496,10 @@ bool ScrubQueue::normalize_the_queue(utime_t scrub_clock_now)
     // top of the ready-queue
     int ready_n = std::min(ready_cnt, max_to_log);
     if (ready_n && g_conf()->subsys.should_gather<ceph_subsys_osd, 10>()) {
-      dout(10) << fmt::format("{}: top of the ready-queue:", __func__) << dendl;
+      dout(10) << fmt::format(
+		      "{}: top ({} of {}) of the ready-queue:", __func__,
+		      ready_n, ready_cnt)
+	       << dendl;
       for (int i = 0; i < ready_n; ++i) {
 	dout(10) << fmt::format(" ready:  {}", to_scrub[i]) << dendl;
       }
@@ -520,7 +508,9 @@ bool ScrubQueue::normalize_the_queue(utime_t scrub_clock_now)
     // and some of the targets with 'not-before' in the future
     int future_n = std::min(future_cnt, max_to_log);
     if (future_n && g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
-      dout(10) << fmt::format("{}: top of the future targets:", __func__)
+      dout(10) << fmt::format(
+		      "{}: top ({} of {}) of the future targets:", __func__,
+		      future_n, future_cnt)
 	       << dendl;
       int k = future_n;
       for (auto e = not_ripe; k > 0; --k, ++e) {
