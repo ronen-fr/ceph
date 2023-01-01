@@ -3,6 +3,8 @@
 
 /// \file testing the scrub scheduling algorithm
 
+#include "./test_scrub_sched.h"
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -20,48 +22,79 @@
 #include "osd/osd_types.h"
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber/osd_scrub_sched.h"
+#include "osd/scrubber/scrub_queue.h"
 #include "osd/scrubber_common.h"
+
+using namespace std::chrono;
+using namespace std::chrono_literals;
+using namespace std::literals;
+
 
 int main(int argc, char** argv)
 {
   std::map<std::string, std::string> defaults = {
-    // make sure we have 3 copies, or some tests won't work
-    {"osd_pool_default_size", "3"},
-    // our map is flat, so just try and split across OSDs, not hosts or whatever
-    {"osd_crush_chooseleaf_type", "0"},
+      // make sure we have 3 copies, or some tests won't work
+      {"osd_pool_default_size", "3"},
+      // our map is flat, so just try and split across OSDs, not hosts or
+      // whatever
+      {"osd_crush_chooseleaf_type", "0"},
+      {"osd_scrub_retry_busy_replicas", "10"},
   };
   std::vector<const char*> args(argv, argv + argc);
-  auto cct = global_init(&defaults,
-			 args,
-			 CEPH_ENTITY_TYPE_CLIENT,
-			 CODE_ENVIRONMENT_UTILITY,
-			 CINIT_FLAG_NO_DEFAULT_CONFIG_FILE);
+  auto cct = global_init(
+      &defaults, args, CEPH_ENTITY_TYPE_CLIENT, CODE_ENVIRONMENT_UTILITY,
+      CINIT_FLAG_NO_DEFAULT_CONFIG_FILE);
   common_init_finish(g_ceph_context);
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
 
-using schedule_result_t = Scrub::schedule_result_t;
-using ScrubJobRef = ScrubQueue::ScrubJobRef;
-using qu_state_t = ScrubQueue::qu_state_t;
+using sched_conf_t = Scrub::sched_conf_t;
+// using SchedEntry = Scrub::SchedEntry;
+using ScrubJob = Scrub::ScrubJob;
+using urgency_t = Scrub::urgency_t;
+using delay_cause_t = Scrub::delay_cause_t;
 
-/// enabling access into ScrubQueue internals
-class ScrubSchedTestWrapper : public ScrubQueue {
+
+/**
+ * providing the small number of OSD services used when scheduling
+ * a scrub
+ */
+class FakeOsd : public Scrub::ScrubSchedListener {
  public:
-  ScrubSchedTestWrapper(Scrub::ScrubSchedListener& osds)
+  constexpr explicit FakeOsd(int osd_num) : m_osd_num(osd_num) {}
+
+  int get_nodeid() const final { return m_osd_num; }
+
+  PgLockWrapper get_locked_pg(spg_t pgid) final
+  {
+    return PgLockWrapper{nullptr};  // not very useful
+  }
+
+  void send_sched_recalc_to_pg(spg_t pgid) final { std::ignore = pgid; }
+
+  ~FakeOsd() override = default;
+
+ private:
+  int m_osd_num;
+};
+
+struct qu_entries_dt_t {
+  spg_t pg_id;
+  Scrub::SchedEntry shallow;
+  Scrub::SchedEntry deep;
+};
+
+
+// ///////////////////////////////////////////////////
+// ScrubQueue
+
+class ScrubQueueTestWrapper : public ScrubQueue {
+ public:
+  ScrubQueueTestWrapper(Scrub::ScrubSchedListener& osds)
       : ScrubQueue(g_ceph_context, osds)
   {}
 
-  void rm_unregistered_jobs()
-  {
-    ScrubQueue::rm_unregistered_jobs(to_scrub);
-    ScrubQueue::rm_unregistered_jobs(penalized);
-  }
-
-  ScrubQContainer collect_ripe_jobs()
-  {
-    return ScrubQueue::collect_ripe_jobs(to_scrub, time_now());
-  }
 
   /**
    * unit-test support for faking the current time. When
@@ -82,7 +115,204 @@ class ScrubSchedTestWrapper : public ScrubQueue {
     return m_time_for_testing.value_or(ceph_clock_now());
   }
 
-  ~ScrubSchedTestWrapper() override = default;
+  // note: copies the top element, then removes it
+  std::optional<Scrub::SchedEntry> popped_front()
+  {
+    if (to_scrub.empty()) {
+      return std::nullopt;
+    }
+    auto ret = to_scrub.front();
+    to_scrub.pop_front();
+    return ret;
+  }
+
+  int get_queue_size() const { return to_scrub.size(); }
+
+  bool normalize_the_queue()
+  {
+    return ScrubQueue::normalize_the_queue(scrub_clock_now());
+  }
+
+  void cout_queue(std::string_view title, int cnt) const
+  {
+    int i = 0;
+    for (const auto& e : to_scrub) {
+      std::cout << fmt::format(
+	  "\t{} {}: {} {}\n", title, i, (e.is_ripe(scrub_clock_now())?"<+>":"<->"),
+	  e);
+      if (++i == cnt) {
+	break;
+      }
+    }
+  }
+
+
+  ~ScrubQueueTestWrapper() override = default;
+};
+
+
+class TestScrubQueue : public ::testing::Test {
+ public:
+  TestScrubQueue() = default;
+
+  void init(utime_t starting_at, std::vector<qu_entries_dt_t> dt)
+  {
+    m_queue = std::make_unique<ScrubQueueTestWrapper>(m_osd);
+    m_queue->set_time_for_testing(starting_at.sec());
+    for (auto& [pgid, shallow, deep] : dt) {
+      m_queue->queue_entries(pgid, shallow, deep);
+    }
+  }
+
+ protected:
+  FakeOsd m_osd{1};
+  std::unique_ptr<ScrubQueueTestWrapper> m_queue;
+};
+
+// ///////////////////////////////////////////////////////////////////////////
+// test data.
+
+
+namespace {
+
+// the times used during the tests are offset to 1.1.2000, so that
+// utime_t formatting will treat them as absolute (not as a relative time)
+static const auto epoch_2000 = 946'684'800;
+
+spg_t pg_tst1_a{pg_t{1, 1}};
+
+// a regular-periodic target
+schedentry_blueprint_t tst1_a_shallow{
+    pg_tst1_a,
+    scrub_level_t::shallow,
+    urgency_t::periodic_regular,
+    utime_t{epoch_2000 + 1'000'000, 0},	  // not-before
+    utime_t{epoch_2000 + 11'000'000, 0},  // deadline
+    utime_t{epoch_2000 + 1'000'000, 0}	  // target
+};
+schedentry_blueprint_t tst1_a_deep{
+    pg_tst1_a,
+    scrub_level_t::deep,
+    urgency_t::periodic_regular,
+    utime_t{epoch_2000 + 1'000'000 + 3 * 24 * 3600, 0},	   // not-before
+    utime_t{epoch_2000 + 11'000'000 + 10 * 24 * 3600, 0},  // deadline
+    utime_t{epoch_2000 + 1'000'000 + 3 * 24 * 3600, 0}	   // target
+};
+
+qu_entries_dt_t tst1_a{
+    pg_tst1_a, tst1_a_shallow.make_entry(), tst1_a_deep.make_entry()};
+
+// a 2'nd regular-periodic target
+spg_t pg_tst1_b{pg_t{3, 3}};
+
+schedentry_blueprint_t tst1_b_shallow{
+    pg_tst1_b,
+    scrub_level_t::shallow,
+    urgency_t::periodic_regular,
+    utime_t{epoch_2000 + 1'000'000, 0},	  // not-before
+    utime_t{epoch_2000 + 11'000'000, 0},  // deadline
+    utime_t{epoch_2000 + 1'000'000, 0}	  // target
+};
+schedentry_blueprint_t tst1_b_deep{
+    pg_tst1_b,
+    scrub_level_t::deep,
+    urgency_t::periodic_regular,
+    utime_t{epoch_2000 + 500'000, 0},			   // not-before
+    utime_t{epoch_2000 + 11'000'000 + 10 * 24 * 3600, 0},  // deadline
+    utime_t{epoch_2000 + 500'000 + 3 * 24 * 3600, 0}	   // target
+};
+
+qu_entries_dt_t tst1_b{
+    pg_tst1_b, tst1_b_shallow.make_entry(), tst1_b_deep.make_entry()};
+
+// a high-priority target
+spg_t pg_tst1_c{pg_t{3, 3}};
+
+schedentry_blueprint_t tst1_c_shallow{
+    pg_tst1_c,
+    scrub_level_t::shallow,
+    urgency_t::periodic_regular,
+    utime_t{epoch_2000 + 1'000'000, 0},	  // not-before
+    utime_t{epoch_2000 + 11'000'000, 0},  // deadline
+    utime_t{epoch_2000 + 1'000'000, 0}	  // target
+};
+schedentry_blueprint_t tst1_c_deep{
+    pg_tst1_c,
+    scrub_level_t::deep,
+    urgency_t::periodic_regular,
+    utime_t{epoch_2000 + 500'000, 0},			   // not-before
+    utime_t{epoch_2000 + 11'000'000 + 10 * 24 * 3600, 0},  // deadline
+    utime_t{epoch_2000 + 500'000 + 3 * 24 * 3600, 0}	   // target
+};
+
+qu_entries_dt_t tst1_c{
+    pg_tst1_c, tst1_c_shallow.make_entry(), tst1_c_deep.make_entry()};
+
+}  // namespace
+
+
+// //////////////////////////// tests ////////////////////////////////////////
+
+
+TEST_F(TestScrubQueue, test_queueing)
+{
+  std::vector<qu_entries_dt_t> dt{tst1_a, tst1_b};
+  init(utime_t{epoch_2000 + 36'000, 0}, dt);
+  std::cout << fmt::format("\ntime is now: {}\n", m_queue->scrub_clock_now());
+  m_queue->normalize_the_queue();
+  m_queue->cout_queue("test_queueing A", 6);
+  EXPECT_EQ(m_queue->get_queue_size(), 4);
+  auto top1 = m_queue->popped_front();
+  EXPECT_TRUE(top1);
+  if (tst1_b_deep.is_equiv(top1)) {
+    std::cout << "match";
+  }
+  EXPECT_TRUE(tst1_b_deep.is_equiv(top1));
+}
+
+
+#if 0
+/// enabling access into ScrubQueue internals
+class ScrubSchedTestWrapper : public ScrubQueue {
+   public:
+    ScrubSchedTestWrapper(Scrub::ScrubSchedListener & osds)
+	: ScrubQueue(g_ceph_context, osds)
+    {}
+
+    //   void rm_unregistered_jobs()
+    //   {
+    //     ScrubQueue::rm_unregistered_jobs(to_scrub);
+    //     ScrubQueue::rm_unregistered_jobs(penalized);
+    //   }
+
+    //   ScrubQContainer collect_ripe_jobs()
+    //   {
+    //     return ScrubQueue::collect_ripe_jobs(to_scrub, time_now());
+    //   }
+
+    /**
+     * unit-test support for faking the current time. When
+     * not activated specifically - the default is to use ceph_clock_now()
+     */
+    void set_time_for_testing(long faked_now)
+    {
+      m_time_for_testing = utime_t{timeval{faked_now}};
+    }
+    void clear_time_for_testing()
+    {
+      m_time_for_testing.reset();
+    }
+    mutable std::optional<utime_t> m_time_for_testing;
+
+    utime_t time_now() const final
+    {
+      if (m_time_for_testing) {
+	m_time_for_testing->tv.tv_nsec += 1'000'000;
+      }
+      return m_time_for_testing.value_or(ceph_clock_now());
+    }
+
+    ~ScrubSchedTestWrapper() override = default;
 };
 
 
@@ -91,32 +321,49 @@ class ScrubSchedTestWrapper : public ScrubQueue {
  * a scrub
  */
 class FakeOsd : public Scrub::ScrubSchedListener {
- public:
-  FakeOsd(int osd_num) : m_osd_num(osd_num) {}
+   public:
+    FakeOsd(int osd_num) : m_osd_num(osd_num) {}
 
-  int get_nodeid() const final { return m_osd_num; }
-
-  schedule_result_t initiate_a_scrub(spg_t pgid,
-				     bool allow_requested_repair_only) final
-  {
-    std::ignore = allow_requested_repair_only;
-    auto res = m_next_response.find(pgid);
-    if (res == m_next_response.end()) {
-      return schedule_result_t::no_such_pg;
+    int get_nodeid() const final
+    {
+      return m_osd_num;
     }
-    return m_next_response[pgid];
-  }
 
-  void set_initiation_response(spg_t pgid, schedule_result_t result)
-  {
-    m_next_response[pgid] = result;
-  }
+    PgLockWrapper get_locked_pg(spg_t pgid) final
+    {
+      return PgLockWrapper{nullptr};  // not very useful
+    }
 
- private:
-  int m_osd_num;
-  std::map<spg_t, schedule_result_t> m_next_response;
+    void send_sched_recalc_to_pg(spg_t pgid) final
+    {
+      std::ignore = pgid;
+    }
+
+    //   schedule_result_t initiate_a_scrub(spg_t pgid,
+    // 				     bool allow_requested_repair_only) final
+    //   {
+    //     std::ignore = allow_requested_repair_only;
+    //     auto res = m_next_response.find(pgid);
+    //     if (res == m_next_response.end()) {
+    //       return schedule_result_t::no_such_pg;
+    //     }
+    //     return m_next_response[pgid];
+    //   }
+
+    //   void set_initiation_response(spg_t pgid, schedule_result_t result)
+    //   {
+    //     m_next_response[pgid] = result;
+    //   }
+
+   private:
+    int m_osd_num;
+    //  std::map<spg_t, schedule_result_t> m_next_response;
 };
 
+  /// enabling access into ScrubTarget internals
+
+
+#if 0
 
 /// the static blueprint for creating a scrub job in the scrub queue
 struct sjob_config_t {
@@ -128,20 +375,20 @@ struct sjob_config_t {
   std::optional<double> pool_conf_max;
   bool is_must;
   bool is_need_auto;
-  ScrubQueue::scrub_schedule_t initial_schedule;
+  //ScrubQueue::scrub_schedule_t initial_schedule;
 };
 
 
 /**
- * the runtime configuration for a scrub job. Created basde on the blueprint
+ * the runtime configuration for a scrub job. Created based on the blueprint
  * above (sjob_config_t)
  */
 struct sjob_dynamic_data_t {
-  sjob_config_t initial_config;
-  pg_info_t mocked_pg_info;
-  pool_opts_t mocked_pool_opts;
-  requested_scrub_t request_flags;
-  ScrubQueue::ScrubJobRef job;
+//   sjob_config_t initial_config;
+//   pg_info_t mocked_pg_info;
+//   pool_opts_t mocked_pool_opts;
+//   requested_scrub_t request_flags;
+//   ScrubQueue::ScrubJobRef job;
 };
 
 class TestScrubSched : public ::testing::Test {
@@ -190,7 +437,7 @@ class TestScrubSched : public ::testing::Test {
       sjob_data.history_scrub_stamp;
     dyn_data.mocked_pg_info.stats.stats_invalid = !sjob_data.are_stats_valid;
 
-    // fake hust the required 'requested-scrub' flags
+    // fake hust RRR the required 'requested-scrub' flags
     std::cout << "request_flags: sjob_data.is_must " << sjob_data.is_must
 	      << std::endl;
     dyn_data.request_flags.must_scrub = sjob_data.is_must;
@@ -322,6 +569,9 @@ std::vector<sjob_config_t> sjob_configs = {
 // //////////////////////////// tests ////////////////////////////////////////
 
 /// basic test: scheduling simple jobs, validating their calculated schedule
+
+
+/// basic test: scheduling simple jobs, validating their calculated schedule
 TEST_F(TestScrubSched, populate_queue)
 {
   ASSERT_EQ(0, m_sched->list_registered_jobs().size());
@@ -400,3 +650,5 @@ TEST_F(TestScrubSched, ready_list)
   EXPECT_EQ(4, ripe_jobs.size());
   debug_print_jobs("ready_list", ripe_jobs);
 }
+#endif
+#endif
