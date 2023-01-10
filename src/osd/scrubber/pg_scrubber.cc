@@ -2560,11 +2560,12 @@ ReplicaReservations::ReplicaReservations(
     , m_conf{conf}
 {
   epoch_t epoch = m_pg->get_osdmap_epoch();
-  m_timeout = conf.get_val<std::chrono::milliseconds>(
-    "osd_scrub_slow_reservation_response");
   m_log_msg_prefix = fmt::format(
-    "osd.{} ep: {} scrubber::ReplicaReservations pg[{}]: ", m_osds->whoami,
-    epoch, pg->pg_id);
+      "osd.{} ep: {} scrubber::ReplicaReservations pg[{}]: ", m_osds->whoami,
+      epoch, pg->pg_id);
+
+  m_timeout = conf.get_val<std::chrono::milliseconds>(
+      "osd_scrub_slow_reservation_response");
 
   if (m_pending <= 0) {
     // A special case of no replicas.
@@ -2776,24 +2777,38 @@ ReplicaReservations::no_reply_t::no_reply_t(
   ReplicaReservations& parent,
   std::string_view log_prfx)
     : m_osds{osds}
-    , m_conf{conf}
     , m_parent{parent}
     , m_log_prfx{log_prfx}
 {
-  using namespace std::chrono;
   auto now_is = clock::now();
-  auto timeout =
-    conf.get_val<std::chrono::milliseconds>("osd_scrub_reservation_timeout");
+  auto timeout = conf.get_val<milliseconds>("osd_scrub_reservation_timeout");
 
-  m_abort_callback = new LambdaContext([this, now_is]([[maybe_unused]] int r) {
-    // behave as if a REJECT was received
-    m_osds->clog->warn() << fmt::format(
-      "{} timeout on replica reservations (since {})", m_log_prfx, now_is);
-    m_parent.handle_no_reply_timeout();
-  });
+  m_abort_callback = new LambdaContext(
+      [this, now_is, pgid = m_parent.m_pg->pg_id]([[maybe_unused]] int r) {
+	// behave as if a REJECT was received
+	if (!m_abort_callback) {
+	  // already cancelled
+	  return;
+	}
+	m_abort_callback = nullptr;
+	m_osds->clog->warn() << fmt::format(
+	    "{} timeout on replica reservations (since {})", m_log_prfx,
+	    now_is);
+	PGRef pg = m_osds->osd->lookup_lock_pg(pgid);
+	if (!pg) {
+	  lgeneric_subdout(g_ceph_context, osd, 10)
+	      << "scrub_noreply_callback: Could not find PG " << pgid << dendl;
+	  return;
+	}
+	m_parent.handle_no_reply_timeout();
+	pg->unlock();
+      });
 
   std::lock_guard l(m_osds->sleep_lock);
-  m_osds->sleep_timer.add_event_after(timeout, m_abort_callback);
+  // add_event_after() deletes the callback if fails to add (and returns
+  // nullptr)
+  m_abort_callback =
+      m_osds->sleep_timer.add_event_after(timeout, m_abort_callback);
 }
 
 ReplicaReservations::no_reply_t::~no_reply_t()

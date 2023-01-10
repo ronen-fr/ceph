@@ -133,7 +133,6 @@ class ReplicaReservations {
 
     ~no_reply_t();
     OSDService* m_osds;
-    const ConfigProxy& m_conf;
     ReplicaReservations& m_parent;
     std::string m_log_prfx;
     Context* m_abort_callback{nullptr};
