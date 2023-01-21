@@ -131,7 +131,7 @@ std::partial_ordering Scrub::clock_based_cmp(
   return r.is_deep() <=> l.is_deep();
 }
 
-// 'dout' defs for SchedTarget
+// 'dout' defs for SchedTarget & ScrubJob
 #define dout_context (cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
@@ -281,7 +281,7 @@ void SchedTarget::pg_state_failure()
 {
   // if not in a state to be scrubbed (active & clean) - we won't retry it
   // for some time
-  push_nb_out(10s, delay_cause_t::pg_state);
+  push_nb_out(retry_on_pg_state, delay_cause_t::pg_state);
 }
 
 void SchedTarget::level_not_allowed()
@@ -294,9 +294,9 @@ void SchedTarget::level_not_allowed()
 void SchedTarget::wrong_time()
 {
   // wrong time / day / load
-  // should be 60s: push_nb_out(60s, delay_cause_t::time);
-  // but until we fix the tests (that expect immediate retry) - we'll use 3s
-  push_nb_out(3s, delay_cause_t::time);
+  auto as_secs = std::chrono::duration_cast<std::chrono::seconds>(conf.get_val<std::chrono::milliseconds>(
+    "osd_scrub_retry_wrong_time"));
+  push_nb_out(as_secs, delay_cause_t::time);
 }
 
 void SchedTarget::on_local_resources()
@@ -882,6 +882,12 @@ Scrub::sched_conf_t ScrubQueue::populate_config_params(
 
   configs.interval_randomize_ratio = conf()->osd_scrub_interval_randomize_ratio;
   configs.mandatory_on_invalid = conf()->osd_scrub_invalid_stats;
+
+  // delays after a failed attempt to scrub
+  configs.retry_on_wrong_time =  std::chrono::seconds(conf().get_val<int64_t>(
+      "osd_scrub_retry_wrong_time"));
+  configs.retry_on_pg_state =  std::chrono::seconds(conf().get_val<int64_t>(
+      "osd_scrub_retry_pg_state"));
 
   dout(15) << fmt::format("updated config:{}", configs) << dendl;
   return configs;

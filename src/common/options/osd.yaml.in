@@ -512,13 +512,13 @@ options:
   with_legacy: false
 # minimal delay after a failed attempt to initiate a periodic scrub at the wrong time
 - name: osd_scrub_retry_wrong_time
-  type: millisecs
+  type: int
   level: advanced
   desc: Period before retrying periodic scrub after a badly-timed attempt
   long_desc: Minimal delay after a failed attempt to initiate a periodic
     scrub at the wrong time.
-  default: 300000
-  min: 1000
+  default: 300
+  min: 1
   see_also:
   - osd_scrub_begin_hour
   - osd_scrub_end_hour
@@ -527,13 +527,13 @@ options:
   with_legacy: false
 # minimal delay after a failed attempt to scrub a non-active or not clean PG
 - name: osd_scrub_retry_pg_state
-  type: millisecs
+  type: int
   level: advanced
   desc: Period before retrying to scrub a previously inactive/not-clean PG
   long_desc: Minimal delay after a failed attempt to scrub a PG that was not
     active and clean.
-  default: 10000
-  min: 1000
+  default: 10
+  min: 1
   see_also:
   - osd_scrub_retry_wrong_time
   with_legacy: false

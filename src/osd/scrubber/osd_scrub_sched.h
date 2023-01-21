@@ -164,6 +164,8 @@ struct sched_conf_t {
   std::optional<double> max_shallow;
   double max_deep{0.0};
   double interval_randomize_ratio{0.0};
+  std::chrono::seconds retry_on_wrong_time{3s};
+  std::chrono::seconds retry_on_pg_state{10s};
   bool mandatory_on_invalid{true};
 };
 
@@ -948,8 +950,10 @@ struct fmt::formatter<Scrub::sched_conf_t> {
   auto format(const Scrub::sched_conf_t& cf, FormatContext& ctx)
   {
     return format_to(
-	ctx.out(), "periods: s:{}/{} d:{}/{} iv-ratio:{} on-inv:{}",
+	ctx.out(),
+	"periods: s:{}/{},d:{}/{},iv-ratio:{};on-inv:{};delays: pg:{}s tm:{}s",
 	cf.shallow_interval, cf.max_shallow.value_or(-1.0), cf.deep_interval,
-	cf.max_deep, cf.interval_randomize_ratio, cf.mandatory_on_invalid);
+	cf.max_deep, cf.interval_randomize_ratio, cf.mandatory_on_invalid,
+	cf.retry_on_pg_state.count(), cf.retry_on_wrong_time.count());
   }
 };
