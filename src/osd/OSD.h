@@ -529,6 +529,13 @@ public:
   AsyncReserver<spg_t, Finisher> snap_reserver;
   void queue_recovery_context(PG *pg, GenContext<ThreadPool::TPHandle&> *c);
   void queue_for_snap_trim(PG *pg);
+
+  void queue_for_scrub_initiation(
+      spg_t pg,
+      scrub_level_t scrub_level,
+      utime_t loop_id,
+      Scrub::ScrubPreconds env_conditions) override;
+
   void queue_for_scrub(PG* pg, Scrub::scrub_prio_t with_priority);
 
   void queue_scrub_after_repair(PG* pg, Scrub::scrub_prio_t with_priority);

@@ -44,8 +44,8 @@ class ScrubResources {
       const ceph::common::ConfigProxy& config);
 
   /**
-   * \returns true if the number of concurrent scrubs is
-   *  below osd_scrub_load_threshold
+   * \returns true if the number of concurrent scrubs (local plus when
+   *  acting as a replica) is below osd_scrub_load_threshold
    */
   bool can_inc_scrubs() const;
 

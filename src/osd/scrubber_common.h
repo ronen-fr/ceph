@@ -22,8 +22,13 @@ class ReplicaReservations;
 
 // possible outcome when trying to select a PG and scrub it
 enum class schedule_result_t {
-  scrub_initiated,     // successfully started a scrub
-  none_ready,	       // no pg to scrub
+  // an internal, temporary, state:
+  ok_thus_far,
+
+  /// for a failure of a specific combination of PG & level:
+  target_failure,
+
+  /// for failure modes that are not related to a specific scrub target
   failure,
 };
 
@@ -52,6 +57,18 @@ enum class scrub_prio_t : bool { low_priority = false, high_priority = true };
 /// Identifies a specific scrub activation within an interval,
 /// see ScrubPGgIF::m_current_token
 using act_token_t = uint32_t;
+
+/*
+ * Identifying an instance of a 'scrub scheduling loop' - the
+ * OSD tick-initiated traversing the scrub queue, trying to start a scrub
+ * session on each one in turn. Note that a common failure mode is the
+ * failure to secure replicas reservations. The failure in that case is
+ * asynchronous. For the 'scheduling loop' to continue, the failing PG
+ * must notify the ScrubQueue. The token is used to identify the specific
+ * scheduling loop instance, but is also (in the ScrubQueue code,
+ * where it is not 'opaque') to note that start time of the loop.
+ */
+using loop_token_t = utime_t;
 
 /// "environment" preconditions affecting which PGs are eligible for scrubbing
 struct ScrubPreconds {
@@ -198,11 +215,21 @@ struct ScrubPgIF {
    *       conditions (time & load) that might restrict scrub's level/urgency
    * @returns either 'scrub_initiated' or 'failure'
    */
-  virtual Scrub::schedule_result_t start_scrubbing(
-    utime_t scrub_clock_now,
-    scrub_level_t level,
-    const Scrub::ScrubPGPreconds& pg_cond,
-    const Scrub::ScrubPreconds& preconds) = 0;
+//   virtual Scrub::schedule_result_t start_scrubbing(
+//     utime_t scrub_clock_now,
+//     scrub_level_t level,
+//     Scrub::ScrubPGPreconds pg_cond,
+//     Scrub::ScrubPreconds preconds) = 0;
+
+  virtual void start_scrubbing(
+      scrub_level_t lvl,
+      Scrub::loop_token_t loop_id,
+      Scrub::ScrubPreconds preconds,
+      Scrub::ScrubPGPreconds pg_cond) = 0;
+
+//   virtual Scrub::schedule_result_t initiation_loop_trigger_next(
+//       utime_t token,
+//       int retries_budget) = 0;
 
   /**
    * let the scrubber know that a recovery operation has completed.

@@ -604,6 +604,29 @@ void PgScrubber::recovery_completed()
   }
 }
 
+// Scrub::schedule_result_t PgScrubber::initiation_loop_trigger_next(
+//     utime_t token,
+//     int retries_budget)
+// {
+//   dout(10) << fmt::format(
+// 		  "{}: Cannot scrub. PGs left to try: {}. Loop token: {:s}",
+// 		  __func__, retries_budget, token)
+// 	   << dendl;
+//   if (--retries_budget <= 0) {
+//     dout(10) << fmt::format(
+// 		    "{}: Scrub initiation failure. No additional PGs will be "
+// 		    "tried. Loop token: {:s}",
+// 		    __func__, token)
+// 	     << dendl;
+//     return Scrub::schedule_result_t::failure;
+//   }
+// 
+//   // ask the OSD for the next PG to try, and send that one a 'start scrubbing' event
+//   auto next_pg = m_osds->get_scrub_services().get_next_ready_pg(token);
+//   m_scrub_job->schedule_next_scrub(token, retries_budget);
+// }
+
+
 void PgScrubber::recalc_schedule([[maybe_unused]] epoch_t epoch_queued)
 {
   auto applicable_conf = m_osds->get_scrub_services().populate_config_params(
@@ -642,7 +665,7 @@ bool PgScrubber::reserve_local()
   return false;
 }
 
-
+#if 0
 /**
  * A note re the possible error values:
  * As it happens - we do not care about the exact error value. Thus, the
@@ -652,8 +675,8 @@ bool PgScrubber::reserve_local()
 schedule_result_t PgScrubber::start_scrubbing(
     utime_t scrub_clock_now,
     scrub_level_t lvl,
-    const ScrubPGPreconds& pg_cond,
-    const ScrubPreconds& preconds)
+    ScrubPGPreconds pg_cond,
+    ScrubPreconds preconds)
 {
   m_depenalize_timer.reset();
 
@@ -729,13 +752,207 @@ schedule_result_t PgScrubber::start_scrubbing(
   m_osds->queue_for_scrub(m_pg, Scrub::scrub_prio_t::low_priority);
   return schedule_result_t::scrub_initiated;
 }
+#endif
+
+void PgScrubber::start_scrubbing(
+    scrub_level_t lvl,
+    Scrub::loop_token_t loop_id,
+    ScrubPreconds env_restrictions,
+    ScrubPGPreconds pg_cond)
+{
+  auto& trgt = m_scrub_job->get_target(lvl);
+  dout(10) << fmt::format(
+		  "{}: pg[{}] {} {} target: {}", __func__, m_pg_id,
+		  (m_pg->is_active() ? "<active>" : "<not-active>"),
+		  (m_pg->is_clean() ? "<clean>" : "<not-clean>"), trgt)
+	   << dendl;
+
+  // mark our target as not-in-queue. If any error is encountered - that
+  // target must be requeued!
+  trgt.clear_queued();
+
+  ceph_assert(!is_queued_or_active());
+  ceph_assert(!trgt.is_off());
+
+  m_depenalize_timer.reset();
+
+  m_schedloop_step.emplace(m_scrub_queue, loop_id);
+
+  auto clock_now = m_scrub_queue.scrub_clock_now();
+
+  // a few checks. If failing - the 'not-before' is modified, and the target
+  // is requeued.
+  // We then either instruct the ScrubQueue to try the next ready PG, or -
+  // for some failure modes - to stop attempting to scrub any more PGs in the
+  // OSD tick.
+
+  auto res_code = schedule_result_t::ok_thus_far;
+
+  if (env_restrictions.only_deadlined && trgt.is_periodic() &&
+      !trgt.over_deadline(clock_now)) {
+    dout(15) << fmt::format(
+		    "not scheduling scrub for pg[{}] due to {}", m_pg_id,
+		    (env_restrictions.time_permit ? "high load"
+						  : "time not permitting"))
+	     << dendl;
+    trgt.delay_on_wrong_time(clock_now);
+    res_code = schedule_result_t::failure;
+
+  } else if (
+      state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
+    // note that the trimmer checks scrub status when setting 'snaptrim_wait'
+    // (on the transition from NotTrimming to Trimming/WaitReservation),
+    // i.e. some time before setting 'snaptrim'.
+    dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
+    trgt.delay_on_pg_state(clock_now);
+    res_code = schedule_result_t::target_failure;
+
+  } else if (auto validation_err =
+		 validate_scrub_mode(clock_now, trgt, pg_cond);
+	     validation_err) {
+
+    // based on the combination of the requested scrub flags, the osd/pool
+    // configuration and the PG status -
+    // the stars do not align for starting a scrub for this PG at this time.
+    // The reason was already reported by validate_scrub_mode().
+    dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
+    res_code = validation_err.value();
+
+  } else if (!reserve_local()) {
+
+    // Failed in reserving the local OSD resources (i.e. this OSD is already
+    // performing osd_max_scrubs concurrent scrubs).
+    // No point in trying any other PG at this tick.
+    dout(10) << __func__ << ": failed to reserve locally" << dendl;
+    trgt.delay_on_no_local_resrc(clock_now); // RRR doc the fact that we are not trying to re-sort
+    res_code = schedule_result_t::failure;
+  }
+
+  switch (res_code) {
+    case schedule_result_t::target_failure:
+      m_scrub_job->requeue_entry(lvl);
+      // go on to try some other ready-to-scrub PG
+      m_schedloop_step->go_for_next_in_queue();
+      break;
+    case schedule_result_t::failure:
+    default:
+      m_scrub_job->requeue_entry(lvl);
+      m_schedloop_step->conclude_candidates_selection();
+      break;
+    case schedule_result_t::ok_thus_far:
+      // go on and scrub this PG
+      break;
+  }
+
+  // we are now committed to scrubbing this PG
+  set_op_parameters(trgt, pg_cond);
+  m_scrub_job->scrubbing = true;
+
+  dout(10) << __func__ << ": queueing" << dendl;
+  m_osds->queue_for_scrub(m_pg, Scrub::scrub_prio_t::low_priority);
+}
+
+
+// void PgScrubber::start_scrubbing(
+//     scrub_level_t lvl,
+//     Scrub::loop_token_t loop_id,
+//     ScrubPreconds env_restrictions,
+//     ScrubPGPreconds pg_cond)
+// {
+//   m_depenalize_timer.reset();
+// 
+//   auto& trgt = m_scrub_job->get_target(lvl);
+//   dout(10) << fmt::format(
+// 		  "{}: pg[{}] {} {} target: {}", __func__, m_pg_id,
+// 		  (m_pg->is_active() ? "<active>" : "<not-active>"),
+// 		  (m_pg->is_clean() ? "<clean>" : "<not-clean>"), trgt)
+// 	   << dendl;
+// 
+//   // mark our target as not-in-queue. If any error is encountered - that
+//   // target must be requeued!
+//   trgt.clear_queued();
+// 
+//   ceph_assert(!is_queued_or_active());
+//   ceph_assert(!trgt.is_off());
+// 
+//   m_schedloop_step.emplace(m_scrub_queue, loop_id);
+// 
+//   auto clock_now = m_scrub_queue.scrub_clock_now();
+// 
+// 
+//   // 3 possible return values:
+//   // - OK; - kill the loop (inc failure); 3 - try next PG
+// 
+//   // a few checks. If failed - we will requeue the (modified) target
+//   auto failure_code = [&]() -> std::optional<Scrub::schedule_result_t> {
+//     if (env_restrictions.only_deadlined && trgt.is_periodic() &&
+// 	!trgt.over_deadline(clock_now)) {
+//       dout(15) << fmt::format(
+// 		      "not scheduling scrub for pg[{}] due to {}", m_pg_id,
+// 		      (env_restrictions.time_permit ? "high load"
+// 					    : "time not permitting"))
+// 	       << dendl;
+//       trgt.delay_on_wrong_time(clock_now);
+//       return schedule_result_t::failure;
+//     }
+// 
+//     if (state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
+//       // note that the trimmer checks scrub status when setting 'snaptrim_wait'
+//       // (on the transition from NotTrimming to Trimming/WaitReservation),
+//       // i.e. some time before setting 'snaptrim'.
+//       dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
+//       trgt.delay_on_pg_state(clock_now);
+//       return schedule_result_t::target_failure;
+//     }
+// 
+//     // analyze the combination of the requested scrub flags, the osd/pool
+//     // configuration and the PG status to determine whether we should scrub now.
+//     auto validation_err = validate_scrub_mode(clock_now, trgt, pg_cond);
+//     if (validation_err) {
+//       // the stars do not align for starting a scrub for this PG at this time
+//       // (due to configuration or priority issues).
+//       // The reason was already reported by the callee.
+//       dout(10) << __func__ << ": failed to initiate a scrub" << dendl;
+//       return validation_err.value();
+//     }
+// 
+//     // try to reserve the local OSD resources. If failing: no harm. We will
+//     // be retried by the OSD later on.
+//     if (!reserve_local()) {
+//       dout(10) << __func__ << ": failed to reserve locally" << dendl;
+//       trgt.delay_on_no_local_resrc(clock_now);
+//       return schedule_result_t::failure;
+//     }
+//     return std::nullopt;
+//   }();
+// 
+//   // upon failure: we have already modified the NB of the target. Just push it
+//   // back to the queue
+//   if (failure_code.has_value()) {
+//     m_scrub_job->requeue_entry(lvl);
+//     if (failure_code.value() == schedule_result_t::target_failure) {
+//      // there is a point in trying some other ready-to-scrub PG
+//       m_schedloop_step->go_for_next_in_queue();
+//     } else {
+//       m_schedloop_step->conclude_candidates_selection();
+//     }
+//     return;
+//   }
+// 
+//   // we are now committed to scrubbing this PG
+//   set_op_parameters(trgt, pg_cond);
+//   m_scrub_job->scrubbing = true;
+// 
+//   dout(10) << __func__ << ": queueing" << dendl;
+//   m_osds->queue_for_scrub(m_pg, Scrub::scrub_prio_t::low_priority);
+// }
 
 
 /*
  * We are presented with the specific scheduling target that was chosen by the
  * OSD - i.e., we have a specific PG to scrub and the presumed type of scrub
  * (remember that each PG has two entries - deep and shallow - in the scrubbing
- * queue.
+ * queue).
  *
  * Are we prevented from going on with this specific level of scrub?
  * If so, we will return a 'failure' result, and will modify the target's
@@ -752,11 +969,11 @@ std::optional<Scrub::schedule_result_t> PgScrubber::validate_scrub_mode(
     dout(10) << __func__ << ": initiated (\"must\") scrub" << dendl;
 
     if (trgt.is_shallow() && pg_cond.has_deep_errors) {
+      // we will honor the request anyway, but will report the issue
       m_osds->clog->error() << fmt::format(
 	  "osd.{} pg {} Regular scrub request, deep-scrub details will be lost",
 	  m_osds->whoami, m_pg_id);
     }
-    // but we will honor the request
     return std::nullopt;  // no error
   }
 
@@ -768,7 +985,7 @@ std::optional<Scrub::schedule_result_t> PgScrubber::validate_scrub_mode(
       // can't scrub at all
       dout(10) << __func__ << ": shallow not allowed" << dendl;
       trgt.delay_on_level_not_allowed(scrub_clock_now);
-      return schedule_result_t::failure;
+      return schedule_result_t::target_failure;
     }
 
     return std::nullopt;  // no error;
@@ -778,7 +995,7 @@ std::optional<Scrub::schedule_result_t> PgScrubber::validate_scrub_mode(
   if (!pg_cond.allow_deep) {
     dout(10) << __func__ << ": deep not allowed" << dendl;
     trgt.delay_on_level_not_allowed(scrub_clock_now);
-    return schedule_result_t::failure;
+    return schedule_result_t::target_failure;
   }
   return std::nullopt;
 }
@@ -1184,8 +1401,14 @@ void PgScrubber::on_init()
   preemption_data.reset();
   m_pg->publish_stats_to_osd();
   m_interval_start = m_pg->get_history().same_interval_since;
-
   dout(10) << __func__ << " start same_interval:" << m_interval_start << dendl;
+
+  // as this PG has managed to secure replica-scrub resources, we can let the
+  // OSD know that the 'scrub-initiation loop' can be stopped
+  if (m_schedloop_step) {
+    m_schedloop_step->conclude_candidates_selection();
+    m_schedloop_step.reset();
+  }
 
   m_be = std::make_unique<ScrubBackend>(
     *this,
@@ -1230,6 +1453,12 @@ void PgScrubber::on_repl_reservation_failure()
   }
 
   m_active_target.reset();
+  // trigger the next attempt by the OSD to select a PG to scrub:
+  if (m_schedloop_step) {
+    m_schedloop_step->go_for_next_in_queue();
+    m_schedloop_step.reset();
+  }
+
   clear_pgscrub_state();
 }
 
@@ -2702,6 +2931,8 @@ void PgScrubber::reset_internal_state()
   m_active = false;
   m_scrub_job->scrubbing = false;
   m_active_target.reset();
+  m_schedloop_step.reset();
+
   clear_queued_or_active();
   ++m_sessions_counter;
   m_be.reset();
