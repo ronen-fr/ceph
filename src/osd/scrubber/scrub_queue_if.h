@@ -80,10 +80,14 @@ class SchedLoopHolder {
    */
   ~SchedLoopHolder();
 
-  void success();
+  /*
+   * The loop should be discontinued. Either because of a success
+   * (the PG is now scrubbing) or because of a failure that would
+   * prevent us from trying more targets
+   */
+  void conclude_candidates_selection();
 
-  // a convenient way to schedule failure w/o using the dtor
-  void failure();
+  void go_for_next_in_queue();
 
   /// mostly for debugging
   std::optional<utime_t> loop_id() const { return m_loop_id; }

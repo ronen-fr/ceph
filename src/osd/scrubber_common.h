@@ -23,8 +23,15 @@ class ReplicaReservations;
 // possible outcome when trying to select a PG and scrub it
 enum class schedule_result_t {
   scrub_initiated,     // successfully started a scrub
-  none_ready,	       // no pg to scrub
+  ok_thus_far,  // an internal, temporary, state.
+
+  /// for a failure of a specific PG X level:
+  target_failure,
+
+  /// for failure modes that are not related to a specific scrub target
   failure,
+
+  none_ready,	       // no pg to scrub
 };
 
 class SchedTarget;
@@ -198,11 +205,11 @@ struct ScrubPgIF {
    *       conditions (time & load) that might restrict scrub's level/urgency
    * @returns either 'scrub_initiated' or 'failure'
    */
-  virtual Scrub::schedule_result_t start_scrubbing(
-    utime_t scrub_clock_now,
-    scrub_level_t level,
-    Scrub::ScrubPGPreconds pg_cond,
-    Scrub::ScrubPreconds preconds) = 0;
+//   virtual Scrub::schedule_result_t start_scrubbing(
+//     utime_t scrub_clock_now,
+//     scrub_level_t level,
+//     Scrub::ScrubPGPreconds pg_cond,
+//     Scrub::ScrubPreconds preconds) = 0;
 
   virtual void start_scrubbing(
       scrub_level_t lvl,

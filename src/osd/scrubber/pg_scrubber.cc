@@ -665,7 +665,7 @@ bool PgScrubber::reserve_local()
   return false;
 }
 
-
+#if 0
 /**
  * A note re the possible error values:
  * As it happens - we do not care about the exact error value. Thus, the
@@ -752,6 +752,7 @@ schedule_result_t PgScrubber::start_scrubbing(
   m_osds->queue_for_scrub(m_pg, Scrub::scrub_prio_t::low_priority);
   return schedule_result_t::scrub_initiated;
 }
+#endif
 
 void PgScrubber::start_scrubbing(
     scrub_level_t lvl,
@@ -779,6 +780,10 @@ void PgScrubber::start_scrubbing(
 
   auto clock_now = m_scrub_queue.scrub_clock_now();
 
+
+  // 3 possible return values:
+  // - OK; - kill the loop (inc failure); 3 - try next PG
+
   // a few checks. If failed - we will requeue the (modified) target
   auto failure_code = [&]() -> std::optional<Scrub::schedule_result_t> {
     if (preconds.only_deadlined && trgt.is_periodic() &&
@@ -798,7 +803,7 @@ void PgScrubber::start_scrubbing(
       // i.e. some time before setting 'snaptrim'.
       dout(10) << __func__ << ": cannot scrub while snap-trimming" << dendl;
       trgt.delay_on_pg_state(clock_now);
-      return schedule_result_t::failure;
+      return schedule_result_t::target_failure;
     }
 
     // analyze the combination of the requested scrub flags, the osd/pool
@@ -826,8 +831,11 @@ void PgScrubber::start_scrubbing(
   // back to the queue
   if (failure_code.has_value()) {
     m_scrub_job->requeue_entry(lvl);
-    if (m_schedloop_step) {
-      m_schedloop_step->failure();
+    if (failure_code.value() == schedule_result_t::target_failure) {
+     // there is a point in trying some other ready-to-scrub PG
+      m_schedloop_step->go_for_next_in_queue();
+    } else {
+      m_schedloop_step->conclude_candidates_selection();
     }
     return;
   }
@@ -878,7 +886,7 @@ std::optional<Scrub::schedule_result_t> PgScrubber::validate_scrub_mode(
       // can't scrub at all
       dout(10) << __func__ << ": shallow not allowed" << dendl;
       trgt.delay_on_level_not_allowed(scrub_clock_now);
-      return schedule_result_t::failure;
+      return schedule_result_t::target_failure;
     }
 
     return std::nullopt;  // no error;
@@ -888,7 +896,7 @@ std::optional<Scrub::schedule_result_t> PgScrubber::validate_scrub_mode(
   if (!pg_cond.allow_deep) {
     dout(10) << __func__ << ": deep not allowed" << dendl;
     trgt.delay_on_level_not_allowed(scrub_clock_now);
-    return schedule_result_t::failure;
+    return schedule_result_t::target_failure;
   }
   return std::nullopt;
 }
@@ -1299,7 +1307,7 @@ void PgScrubber::on_init()
   // as this PG has managed to secure replica-scrub resources, we can let the
   // OSD know that the 'scrub-initiation loop' can be stopped
   if (m_schedloop_step) {
-    m_schedloop_step->success();
+    m_schedloop_step->conclude_candidates_selection();
     m_schedloop_step.reset();
   }
 
@@ -1348,7 +1356,7 @@ void PgScrubber::on_repl_reservation_failure()
   m_active_target.reset();
   // trigger the next attempt by the OSD to select a PG to scrub:
   if (m_schedloop_step) {
-    m_schedloop_step->failure();
+    m_schedloop_step->go_for_next_in_queue();
     m_schedloop_step.reset();
   }
 

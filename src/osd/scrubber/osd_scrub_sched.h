@@ -234,7 +234,7 @@ struct SchedEntry {
    * 'white-out' support: if false, the entry was logically removed from
    * the queue
    */
-  bool is_valid{true};
+  bool is_valid{true}; // RRR delete
 
   urgency_t urgency{urgency_t::off};
 

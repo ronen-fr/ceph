@@ -116,11 +116,31 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    * loop' (see full description above).
    */
   struct ScrubStartLoop {
-    utime_t loop_id;	 // and its start time
-    int retries_budget;	 // how many retries are left
+    ScrubStartLoop(
+	utime_t now,
+	int budget,
+	Scrub::ScrubPreconds preconds,
+	spg_t first_tried,
+	scrub_level_t first_level_tried)
+	: loop_id{now}
+	, retries_budget{budget}
+	, env_restrictions{preconds}
+	, first_pg_tried{first_tried}
+	, first_level_tried{first_level_tried}
+    {}
+
+    utime_t loop_id;  // its ID - and its start time
+
+    /// how many scrub queue entries would we try at most
+    int retries_budget;
 
     /// restrictions on the next scrub imposed by OSD environment
     Scrub::ScrubPreconds env_restrictions;
+
+    /// noting the 1'st entry tried in this loop, to avoid looping on the same
+    /// sched target
+    spg_t first_pg_tried;
+    scrub_level_t first_level_tried;
 
     int retries_done{0};  // how many retries were done
 

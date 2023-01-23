@@ -720,10 +720,10 @@ add missing
    * @returns either 'scrub_initiated' or 'failure'
    * @note 'preconds' is only 4B in size; moved around by copying
    */
-  Scrub::schedule_result_t start_scrubbing(
-      utime_t scrub_clock_now,
-      scrub_level_t level,
-      Scrub::ScrubPreconds preconds);
+//   Scrub::schedule_result_t start_scrubbing(
+//       utime_t scrub_clock_now,
+//       scrub_level_t level,
+//       Scrub::ScrubPreconds preconds);
   void start_scrubbing(
       scrub_level_t level,
       utime_t loop_id,
