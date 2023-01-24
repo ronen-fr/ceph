@@ -184,12 +184,15 @@ namespace {
 // by different fields)
 auto same_key(const SchedEntry& t, spg_t pgid, scrub_level_t s_or_d)
 {
-  return t.is_valid && t.pgid == pgid && t.level == s_or_d;
+  return t.pgid == pgid && t.level == s_or_d;
 }
 }  // namespace
 
 
-bool ScrubQueue::queue_entries(spg_t pgid, SchedEntry shallow, SchedEntry deep)
+bool ScrubQueue::queue_entries(
+    spg_t pgid,
+    const SchedEntry& shallow,
+    const SchedEntry& deep)
 {
   dout(20) << fmt::format(
 		  "{}: pg[{}]: queuing <{}> & <{}>", __func__, pgid, shallow,
@@ -204,9 +207,6 @@ bool ScrubQueue::queue_entries(spg_t pgid, SchedEntry shallow, SchedEntry deep)
 	     << dendl;
     return false;
   }
-
-  shallow.is_valid = true;
-  deep.is_valid = true;
 
   std::unique_lock l{jobs_lock};
   // now - add the new targets
@@ -232,7 +232,6 @@ void ScrubQueue::cp_and_queue_target(SchedEntry t)
 	   << dendl;
   ceph_assert(t.urgency > urgency_t::off);
   std::unique_lock l{jobs_lock};
-  t.is_valid = true;
   m_queue_impl->push_entry(t);
 }
 
@@ -647,9 +646,9 @@ constexpr int ordering_as_int(std::weak_ordering cmp) noexcept
 }
 
 // must be called under the lock
-bool ScrubQueue::normalize_the_queue()
-{
-  return true;
+// bool ScrubQueue::normalize_the_queue()
+// {
+//  return true;
   //   // erase all 'invalid' entries
   //   to_scrub.erase(
   //       std::remove_if(
@@ -721,7 +720,7 @@ bool ScrubQueue::normalize_the_queue()
   //     }
   //   }
   //   return not_ripe != to_scrub.begin();
-}
+//}
 
 
 void ScrubQueue::clear_pg_scrub_blocked(spg_t blocked_pg)
@@ -758,8 +757,6 @@ SchedLoopHolder::~SchedLoopHolder()
   conclude_candidates_selection();
 }
 
-/// tell the ScrubQueue to terminate the sched-loop (the process of trying
-/// to schedule the queue elements for scrubbing)
 void SchedLoopHolder::conclude_candidates_selection()
 {
   if (m_loop_id) {
@@ -856,7 +853,7 @@ std::vector<SchedEntry> ScrubQueueImp::get_entries(
   return res;
 }
 
-std::deque<SchedEntry>::iterator ScrubQueueImp::normalize_queue(utime_t nowis)
+void ScrubQueueImp::normalize_queue(utime_t nowis)
 {
   // partition into 'ripe' and to those not eligible for scrubbing
   auto not_ripe = std::stable_partition(
@@ -922,5 +919,4 @@ std::deque<SchedEntry>::iterator ScrubQueueImp::normalize_queue(utime_t nowis)
       }
     }
 #endif
-  return not_ripe;
 }

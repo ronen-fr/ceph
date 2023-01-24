@@ -209,7 +209,7 @@ struct sched_conf_t {
   bool mandatory_on_invalid{true};
 };
 
-class ScrubJob;
+//class ScrubJob;
 
 /*
  * There are two versions of the scheduling-target (the object detailing one
@@ -229,12 +229,6 @@ struct SchedEntry {
 
   spg_t pgid;
   scrub_level_t level;
-
-  /**
-   * 'white-out' support: if false, the entry was logically removed from
-   * the queue
-   */
-  bool is_valid{true}; // RRR delete
 
   urgency_t urgency{urgency_t::off};
 
@@ -287,7 +281,7 @@ std::weak_ordering cmp_future_entries(
 
 class SchedTarget {
  public:
-  friend ScrubJob;
+  friend class ScrubJob;
   friend struct fmt::formatter<Scrub::SchedTarget>;
 
   SchedTarget(

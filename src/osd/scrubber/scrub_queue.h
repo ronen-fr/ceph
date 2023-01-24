@@ -68,13 +68,12 @@ class ScrubQueueImp : public ScrubQueueImp_IF {
 
   std::vector<SchedEntry> get_entries(EntryPred) const override;
 
-  // very temporary:
-
-  std::deque<SchedEntry>::iterator normalize_queue(utime_t scrub_clock_now);
-
  private:
   SchedulingQueue to_scrub;
   Scrub::ScrubQueueOps& parent_queue;
+
+  // very temporary:
+  void normalize_queue(utime_t scrub_clock_now);
 };
 
 
@@ -171,7 +170,10 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   void cp_and_queue_target(SchedEntry t) final;
 
-  bool queue_entries(spg_t pgid, SchedEntry shallow, SchedEntry deep) final;
+  bool queue_entries(
+      spg_t pgid,
+      const SchedEntry& shallow,
+      const SchedEntry& deep) final;
 
   void scrub_next_in_queue(utime_t loop_id) final;
 
@@ -292,7 +294,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    *  in the past) and the future entries separately.
    *  \returns true if there are eligible entries in the 'ripe' list
    */
-  bool normalize_the_queue();
+  //bool normalize_the_queue();
 
   /**
    * The scrubbing of PGs might be delayed if the scrubbed chunk of objects is

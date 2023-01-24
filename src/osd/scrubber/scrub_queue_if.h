@@ -41,15 +41,14 @@ struct ScrubQueueOps {
   virtual void remove_entry(spg_t pgid, scrub_level_t s_or_d) = 0;
 
   /**
-   * add both targets to the queue (but only if urgency>off)
-   * Note: modifies the entries (setting 'is_valid') before queuing them.
+   * Insert both targets into the queue (but only if urgency>off)
    * \retval false if the targets were disabled (and were not added to
    * the queue)
-   * \todo when implementing a queue w/o the need for white-out support -
-   * restore to const&.
    */
-  virtual bool
-  queue_entries(spg_t pgid, SchedEntry shallow, SchedEntry deep) = 0;
+  virtual bool queue_entries(
+      spg_t pgid,
+      const SchedEntry& shallow,
+      const SchedEntry& deep) = 0;
 
   virtual void cp_and_queue_target(SchedEntry t) = 0;
 
@@ -61,9 +60,9 @@ struct ScrubQueueOps {
  * A scrubber holding this object is the one currently selected by the OSD
  * (i.e. by the ScrubQueue object) to scrub. The ScrubQueue will not try
  * the next PG in the queue, until and if the current PG releases the object
- * with a 'failure' indication.
- * A success indication as the wrapper object is release will complete
- * the scheduling loop.
+ * with a failure indication (via go_for_next_in_queue()).
+ * conclude_candidates_selection() (a success indication) or a destruction of
+ * the wrapper object will stop the scrub-scheduling loop.
  */
 class SchedLoopHolder {
  public:
@@ -74,8 +73,8 @@ class SchedLoopHolder {
 
   /*
    * the dtor will indicate 'success', as in 'do not continue the loop'.
-   * It is assumed to all relevant failures call 'failure()' explicitly,
-   * and the destruction of a 'loaded' object is a bug. Treating that
+   * It is assumed that all relevant failures call 'failure()' explicitly,
+   * and that the destruction of a 'loaded' object is a bug. Treating that
    * as a 'do not continue' limits the damage.
    */
   ~SchedLoopHolder();
