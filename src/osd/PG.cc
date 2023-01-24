@@ -1329,25 +1329,24 @@ unsigned int PG::scrub_requeue_priority(
 
 
 /*
- *  Implementation note:
- *  PG::start_scrubbing() is called only once per a specific scrub session.
+ *  Implementation notes:
+ * 
+ * - PG::start_scrubbing() is called only once per a specific scrub session.
  *  That call commits us to the whatever choices are made (deep/shallow, etc').
- *
  *  The scrub-queue entry corresponding to the 'level' parameter was already
  *  removed from the OSD's queue. If we fail to start the scrub, we will need
  *  to requeue it.
- */
-/*
- * Note: start_scrubbing() does not just fail quietly if the scrub cannot
- * be started. Instead it will prod the OSD's scrub-queue to try the next
- * PG in the queue.
- * While most of the failures are expected to be detected only later,
- * in m_scrubber->start_scrubbing(), we do have a few preconditions that are
- * checked here.
+ *
+ * - start_scrubbing() does not just fail quietly if the scrub cannot
+ *  be started. Instead, it prods the OSD's scrub-queue to try the next
+ *  PG in the queue.
+ *  While most of the failures are expected to be detected only later,
+ *  in m_scrubber->start_scrubbing(), we do have a few preconditions that are
+ *  checked here.
  */
 void PG::start_scrubbing(
     scrub_level_t level,
-    utime_t loop_id,
+    Scrub::loop_token_t loop_id,
     Scrub::ScrubPreconds preconds)
 
 {

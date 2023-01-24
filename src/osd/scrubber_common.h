@@ -60,6 +60,18 @@ enum class scrub_prio_t : bool { low_priority = false, high_priority = true };
 /// see ScrubPGgIF::m_current_token
 using act_token_t = uint32_t;
 
+/*
+ * Identifying an instance of a 'scrub scheduling loop' - the
+ * OSD tick-initiated traversing the scrub queue, trying to start a scrub
+ * session on each one in turn. Note that a common failure mode is the
+ * failure to secure replicas reservations. The failure in that case is
+ * asynchronous. For the 'scheduling loop' to continue, the failing PG
+ * must notify the ScrubQueue. The token is used to identify the specific
+ * scheduling loop instance, but is also (in the ScrubQueue code,
+ * where it is not 'opaque') to note that start time of the loop.
+ */
+using loop_token_t = utime_t;
+
 /// "environment" preconditions affecting which PGs are eligible for scrubbing
 struct ScrubPreconds {
   bool allow_requested_repair_only{false};
@@ -213,8 +225,7 @@ struct ScrubPgIF {
 
   virtual void start_scrubbing(
       scrub_level_t lvl,
-      utime_t loop_id,
-      //int retries_budget,
+      Scrub::loop_token_t loop_id,
       Scrub::ScrubPreconds preconds,
       Scrub::ScrubPGPreconds pg_cond) = 0;
 

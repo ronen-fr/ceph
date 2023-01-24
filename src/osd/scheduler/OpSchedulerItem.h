@@ -405,31 +405,24 @@ class PGScrubItem : public PGOpQueueable {
 
 
 /**
- *  Try to initiate a scrub. If we can't, cause the next ready sched job
+ *  Try to initiate a scrub. If we can't, cause the next ready scrub-sched job
  *  to be tried.
- *
- *  Part of the "initiate a scrub loop" starting from ScrubQueue::sched_scrub()
  */
 class PGScrubTryInitiating : public PGScrubItem {
-  using ScrubLoopToken = utime_t;
  private:
   scrub_level_t m_level;
-  utime_t /*ScrubLoopToken*/ m_token;  // identifying the specific "scrub
+  utime_t m_token;  // identifying the specific "scrub
 				       // initiating loop"
- // int m_retries_budget;	 // how many more PGs have we to try before giving up
   Scrub::ScrubPreconds m_env_conditions;  // note - only 1L in size
  public:
   PGScrubTryInitiating(
       spg_t pg,
-      //epoch_t epoch_queued,
       scrub_level_t level,
       utime_t token,
-      //int retries_budget,
       Scrub::ScrubPreconds env_conditions)
       : PGScrubItem{pg, 0/*epoch_queued*/, "PGScrubTryInitiating"}
       , m_level{level}
       , m_token{token}
-      //, m_retries_budget{retries_budget}
       , m_env_conditions{env_conditions}
   {}
   void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle)

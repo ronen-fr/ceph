@@ -756,7 +756,7 @@ schedule_result_t PgScrubber::start_scrubbing(
 
 void PgScrubber::start_scrubbing(
     scrub_level_t lvl,
-    utime_t loop_id,
+    Scrub::loop_token_t loop_id,
     ScrubPreconds preconds,
     ScrubPGPreconds pg_cond)
 {

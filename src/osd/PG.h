@@ -72,7 +72,6 @@ namespace Scrub {
   class ReplicaReservations;
   class LocalReservation;
   class ReservedByRemotePrimary;
-  enum class schedule_result_t;
 }
 
 #ifdef PG_DEBUG_REFS
@@ -710,23 +709,16 @@ public:
   /**
    * Start a scrub operation.
    *
-   * @param [in] scrub_clock_now time now (unless under unit-test)
    * @param [in] level Level of scrub (deep or shallow)
-
-add missing
-
-   * @param [in] preconds a set of flags determined based on environment
-   *       conditions (time & load) that might restrict some scrubs
-   * @returns either 'scrub_initiated' or 'failure'
+   * @param [in] loop_id a token that identifies the scheduling loop that
+   *             initiated this scrub.
+   * @param [in] preconds a set of flags, determined based on environment
+   *       conditions (time & load), that might restrict some scrubs
    * @note 'preconds' is only 4B in size; moved around by copying
    */
-//   Scrub::schedule_result_t start_scrubbing(
-//       utime_t scrub_clock_now,
-//       scrub_level_t level,
-//       Scrub::ScrubPreconds preconds);
   void start_scrubbing(
       scrub_level_t level,
-      utime_t loop_id,
+      Scrub::loop_token_t loop_id,
       Scrub::ScrubPreconds preconds);
 
   unsigned int scrub_requeue_priority(

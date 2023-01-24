@@ -525,15 +525,9 @@ class PgScrubber : public ScrubPgIF,
   int m_debug_blockrange{0};
   bool m_debug_deny_replica{false};
 
-//   Scrub::schedule_result_t start_scrubbing(
-//       utime_t scrub_clock_now,
-//       scrub_level_t lvl,
-//       Scrub::ScrubPGPreconds pg_cond,
-//       Scrub::ScrubPreconds preconds) final;
-
   void start_scrubbing(
       scrub_level_t lvl,
-      utime_t loop_id,
+      Scrub::loop_token_t loop_id,
       Scrub::ScrubPreconds preconds,
       Scrub::ScrubPGPreconds pg_cond) final;
 
@@ -591,7 +585,7 @@ class PgScrubber : public ScrubPgIF,
 
   /**
    *  causes the scrub session to terminate, and for the next scrub to
-   *  be daleyed (the scrub job will be marked 'penalized').
+   *  be delayed (the scrub job will be marked 'penalized').
    */
   void on_repl_reservation_failure() final;
 

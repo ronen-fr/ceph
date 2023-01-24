@@ -414,7 +414,7 @@ void ScrubQueue::scrub_next_in_queue(utime_t loop_id)
       m_initiation_loop->env_restrictions);
 }
 
-void ScrubQueue::initiation_loop_done(utime_t loop_id)
+void ScrubQueue::initiation_loop_done(Scrub::loop_token_t loop_id)
 {
   std::scoped_lock lock(m_loop_lock);
 
@@ -434,48 +434,6 @@ void ScrubQueue::initiation_loop_done(utime_t loop_id)
   }
 
   m_initiation_loop.reset();
-}
-
-void ScrubQueue::sched_scrub(
-    const ceph::common::ConfigProxy& config,
-    bool is_recovery_active)
-{
-  //   utime_t scrub_tick_time = scrub_clock_now();
-  //   dout(10) << fmt::format(
-  // 		  "time now:{}, is_recovery_active:{}", scrub_tick_time,
-  // 		  is_recovery_active)
-  // 	   << dendl;
-  //
-  //   // do the OSD-wide environment conditions, and the availability of scrub
-  //   // resources, allow us to start a scrub?
-  //   auto maybe_env_cond =
-  //       preconditions_to_scrubbing(config, is_recovery_active, scrub_tick_time);
-  //   if (!maybe_env_cond) {
-  //     return;
-  //   }
-  //   auto preconds = maybe_env_cond.value();
-  //
-  //   std::unique_lock l{jobs_lock};
-  //
-  //   // partition and sort the queue
-  //   if (bool not_empty = normalize_the_queue(); !not_empty) {
-  //     dout(10) << fmt::format("{}: no eligible scrub targets", __func__) << dendl;
-  //     return;
-  //   }
-  //
-  //   // pop the first job from the queue, as a candidate
-  //   auto cand = to_scrub.front();
-  //   to_scrub.pop_front();
-  //   l.unlock();
-  //
-  //   auto locked_g = osd_service.get_locked_pg(cand.pgid);
-  //   if (!locked_g) {
-  //     // the PG was deleted in the short time since unlocking the queue
-  //     dout(5) << fmt::format("{}: pg[{}] not found", __func__, cand.pgid)
-  // 	    << dendl;
-  //     return;
-  //   }
-  //   locked_g->pg()->start_scrubbing(scrub_tick_time, cand.level, preconds);
 }
 
 

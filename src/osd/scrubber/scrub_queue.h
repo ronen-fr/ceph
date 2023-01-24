@@ -73,6 +73,8 @@ class ScrubQueueImp : public ScrubQueueImp_IF {
   Scrub::ScrubQueueOps& parent_queue;
 
   // very temporary:
+  // sorts the 'ripe' entries (those with 'not earlier than' time
+  // in the past) and the future entries separately.
   void normalize_queue(utime_t scrub_clock_now);
 };
 
@@ -128,7 +130,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 	, first_level_tried{first_level_tried}
     {}
 
-    utime_t loop_id;  // its ID - and its start time
+    Scrub::loop_token_t loop_id;  // its ID - and its start time
 
     /// how many scrub queue entries would we try at most
     int retries_budget;
@@ -175,9 +177,9 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
       const SchedEntry& shallow,
       const SchedEntry& deep) final;
 
-  void scrub_next_in_queue(utime_t loop_id) final;
+  void scrub_next_in_queue(Scrub::loop_token_t loop_id) final;
 
-  void initiation_loop_done(utime_t loop_id) final;
+  void initiation_loop_done(Scrub::loop_token_t loop_id) final;
 
   // ///////////////////////////////////////////////////////////////
   // outside the scope of the I/F used by the ScrubJob:
@@ -187,10 +189,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    * to determine if there are PGs that are ready to be scrubbed, and to
    * initiate a scrub of one of those that are ready.
    */
-  void sched_scrub(
-      const ceph::common::ConfigProxy& config,
-      bool is_recovery_active);
-
   void initiate_a_scrub(
       const ceph::common::ConfigProxy& config,
       bool is_recovery_active);
@@ -263,12 +261,14 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
 
-  //SchedulingQueue to_scrub;
+  // the underlying implementation of the scrub queue
   std::unique_ptr<ScrubQueueImp_IF> m_queue_impl;
 
-  /// m_initiation_loop, when set, indicates that we are traversing the scrub
-  /// queue looking for a PG to scrub. It also maintains the look ID (its start
-  /// time) and the number of retries left.
+  /**
+   * m_initiation_loop, when set, indicates that we are traversing the scrub
+   * queue looking for a PG to scrub. It also maintains the look ID (its start
+   * time) and the number of retries left.
+   */
   std::optional<ScrubStartLoop> m_initiation_loop;
 
   /**
@@ -282,19 +282,21 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   std::string log_prefix;
 
+  /**
+   * \returns a set of "environmental" preconditions that may affect the
+   * scheduling of scrubs, e.g. preventing some non-urgent scrubs from being
+   * scheduled.
+   *
+   * If preconditions_to_scrubbing() determines that no scrubbing is possible,
+   * an error value is returned. For now - the only possible error code is
+   * schedule_result_t::failure, which should result in no more scrub
+   * scheduling targets being attempted at this tick (this 'scheduling loop').
+   */
   tl::expected<Scrub::ScrubPreconds, Scrub::schedule_result_t>
   preconditions_to_scrubbing(
       const ceph::common::ConfigProxy& config,
       bool is_recovery_active,
       utime_t scrub_clock_now) const;
-
-  /**
-   *  Clean up the queue from entries that are no longer relevant.
-   *  Then - sort the 'ripe' entries (those with 'not earlier than' time
-   *  in the past) and the future entries separately.
-   *  \returns true if there are eligible entries in the 'ripe' list
-   */
-  //bool normalize_the_queue();
 
   /**
    * The scrubbing of PGs might be delayed if the scrubbed chunk of objects is
