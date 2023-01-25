@@ -242,18 +242,6 @@ void ScrubQueue::dump_scrubs(ceph::Formatter* f)
 }
 
 
-// void ScrubQueue::dump_scrubs(ceph::Formatter* f)
-// {
-//   std::lock_guard lck(jobs_lock);
-//   normalize_the_queue();
-//
-//   f->open_array_section("scrubs");
-//   std::for_each(to_scrub.cbegin(), to_scrub.cend(), [&f](const auto& j) {
-//     j.dump("sched-target", f);
-//   });
-//   f->close_section();
-// }
-
 Scrub::ScrubResources& ScrubQueue::resource_bookkeeper()
 {
   return m_osd_resources;
@@ -273,7 +261,7 @@ void ScrubQueue::log_fwd(std::string_view text)
 // ////////////////////////////////////////////////////////////////////////// //
 // initiating a scrub
 
-using ScrubPreconds = Scrub::ScrubPreconds;
+using OSDRestrictions = Scrub::OSDRestrictions;
 using schedule_result_t = Scrub::schedule_result_t;
 
 
@@ -324,8 +312,10 @@ void ScrubQueue::initiate_a_scrub(
   auto candidate = m_queue_impl->pop_ready_pg(scrub_tick_time);
   ceph_assert(candidate);  // we did check that the queue is not empty
   dout(10) << fmt::format(
-		  "{}: scrub candidate is {}. {} still in the queue", __func__,
-		  candidate->pgid, queue_stats.num_total - 1)
+		  "{}: scrub candidate is pg[{}] ({}). There are {} behind it "
+		  "in the queue",
+		  __func__, candidate->pgid, *candidate,
+		  queue_stats.num_total - 1)
 	   << dendl;
 
   // as we will be (asynchronously) going over the ready-to-scrub PGs, let us
@@ -382,8 +372,8 @@ void ScrubQueue::scrub_next_in_queue(utime_t loop_id)
   auto queue_stats = m_queue_impl->get_stats(scrub_tick_time);
   if (queue_stats.num_ready == 0) {
     dout(10) << fmt::format(
-		    "{}: no eligible scrub targets in the {} entries", __func__,
-		    queue_stats.num_total)
+		    "{}: no eligible scrub targets among the {} queued",
+		    __func__, queue_stats.num_total)
 	     << dendl;
     m_initiation_loop.reset();
     return;
@@ -439,7 +429,7 @@ void ScrubQueue::initiation_loop_done(Scrub::loop_token_t loop_id)
 }
 
 
-std::optional<Scrub::ScrubPreconds> ScrubQueue::restrictions_on_scrubbing(
+std::optional<Scrub::OSDRestrictions> ScrubQueue::restrictions_on_scrubbing(
     const ceph::common::ConfigProxy& config,
     bool is_recovery_active,
     utime_t scrub_clock_now) const
@@ -478,7 +468,7 @@ std::optional<Scrub::ScrubPreconds> ScrubQueue::restrictions_on_scrubbing(
     return std::nullopt;
   }
 
-  Scrub::ScrubPreconds env_conditions;
+  Scrub::OSDRestrictions env_conditions;
   env_conditions.time_permit = scrub_time_permit();
   env_conditions.load_is_low = scrub_load_below_threshold();
   env_conditions.only_deadlined =
@@ -695,8 +685,8 @@ using SchedLoopHolder = Scrub::SchedLoopHolder;
 
 SchedLoopHolder::~SchedLoopHolder()
 {
-  // we may have failed without handling the sched-loop
-  // state. Let's just ignore it ('success()' does not cause any harm)
+  // we may have failed without explicitly handling the sched-loop
+  // state. Let's just ignore it (without trying the next in queue)
   conclude_candidates_selection();
 }
 
@@ -768,7 +758,14 @@ std::optional<SchedEntry> ScrubQueueImp::pop_ready_pg(utime_t scrub_clock_now)
 }
 
 
-void ScrubQueueImp::dump_scrubs(ceph::Formatter* f) const {}
+void ScrubQueueImp::dump_scrubs(ceph::Formatter* f) const
+{
+  f->open_array_section("scrubs");
+  std::for_each(to_scrub.cbegin(), to_scrub.cend(), [&f](const auto& j) {
+    j.dump("sched-target", f);
+  });
+  f->close_section();
+}
 
 std::set<spg_t> ScrubQueueImp::get_pgs(ScrubQueueImp_IF::EntryPred pred) const
 {

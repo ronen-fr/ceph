@@ -88,17 +88,22 @@ cmp_entries(utime_t t, const Scrub::SchedEntry& l, const Scrub::SchedEntry& r)
 using SchedTarget = Scrub::SchedTarget;
 using urgency_t = Scrub::urgency_t;
 using delay_cause_t = Scrub::delay_cause_t;
-using ScrubPreconds = Scrub::ScrubPreconds;
+using OSDRestrictions = Scrub::OSDRestrictions;
 
 namespace {
 utime_t add_double(utime_t t, double d)
 {
-  return utime_t{t.sec() + static_cast<int>(d), t.nsec()};
+  double int_part;
+  double frac_as_ns = 1'000'000'000 * std::modf(d, &int_part);
+  return utime_t{
+      t.sec() + static_cast<int>(int_part),
+      static_cast<int>(t.nsec() + frac_as_ns)};
 }
 }  // namespace
 
 namespace Scrub {
-// both targets compared are assumed to be 'ripe', i.e. not_before is in the past
+// both targets compared are assumed to be 'ripe', i.e. their not_before is
+// in the past
 std::weak_ordering cmp_ripe_targets(
     const Scrub::SchedTarget& l,
     const Scrub::SchedTarget& r)
@@ -373,14 +378,14 @@ void SchedTarget::delay_on_wrong_time(utime_t scrub_clock_now)
   push_nb_out(delay, delay_cause_t::time, scrub_clock_now);
 }
 
-void SchedTarget::delay_on_no_local_resrc(utime_t scrub_clock_now)
-{
-  // too many scrubs on our own OSD. The delay we introduce should be
-  // minimal: after all, we expect all other PG tried to fail as well.
-  // This should be revisited once we separate the resource-counters for
-  // deep and shallow scrubs.
-  push_nb_out(2s, delay_cause_t::local_resources, scrub_clock_now);
-}
+// void SchedTarget::delay_on_no_local_resrc(utime_t scrub_clock_now)
+// {
+//   // too many scrubs on our own OSD. The delay we introduce should be
+//   // minimal: after all, we expect all other PG tried to fail as well.
+//   // This should be revisited once we separate the resource-counters for
+//   // deep and shallow scrubs.
+//   push_nb_out(2s, delay_cause_t::local_resources, scrub_clock_now);
+// }
 
 void SchedTarget::dump(std::string_view sect_name, ceph::Formatter* f) const
 {
@@ -881,7 +886,7 @@ void ScrubJob::at_scrub_completion(
     shallow_target.set_queued();
     deep_target.set_queued();
     dout(10) << fmt::format(
-		    "{}: requeued {} and {}", __func__, shallow_target,
+		    "{}: requeued {{{}}} and {{{}}}", __func__, shallow_target,
 		    deep_target)
 	     << dendl;
   }

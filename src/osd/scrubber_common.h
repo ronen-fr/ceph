@@ -71,7 +71,7 @@ using act_token_t = uint32_t;
 using loop_token_t = utime_t;
 
 /// "environment" preconditions affecting which PGs are eligible for scrubbing
-struct ScrubPreconds {
+struct OSDRestrictions {
   bool allow_requested_repair_only{false};
   bool load_is_low{true};
   bool time_permit{true};
@@ -89,11 +89,11 @@ struct ScrubPGPreconds {
 }
 
 template <>
-struct fmt::formatter<Scrub::ScrubPreconds> {
+struct fmt::formatter<Scrub::OSDRestrictions> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
   template <typename FormatContext>
-  auto format(const Scrub::ScrubPreconds& conds, FormatContext& ctx)
+  auto format(const Scrub::OSDRestrictions& conds, FormatContext& ctx)
   {
     return fmt::format_to(
       ctx.out(),
@@ -219,12 +219,12 @@ struct ScrubPgIF {
 //     utime_t scrub_clock_now,
 //     scrub_level_t level,
 //     Scrub::ScrubPGPreconds pg_cond,
-//     Scrub::ScrubPreconds preconds) = 0;
+//     Scrub::OSDRestrictions preconds) = 0;
 
   virtual void start_scrubbing(
       scrub_level_t lvl,
       Scrub::loop_token_t loop_id,
-      Scrub::ScrubPreconds preconds,
+      Scrub::OSDRestrictions preconds,
       Scrub::ScrubPGPreconds pg_cond) = 0;
 
 //   virtual Scrub::schedule_result_t initiation_loop_trigger_next(

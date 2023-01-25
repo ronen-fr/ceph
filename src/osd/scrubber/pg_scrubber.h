@@ -528,7 +528,7 @@ class PgScrubber : public ScrubPgIF,
   void start_scrubbing(
       scrub_level_t lvl,
       Scrub::loop_token_t loop_id,
-      Scrub::ScrubPreconds preconds,
+      Scrub::OSDRestrictions preconds,
       Scrub::ScrubPGPreconds pg_cond) final;
 
   void recovery_completed() final;
