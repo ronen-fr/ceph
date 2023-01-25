@@ -534,7 +534,7 @@ public:
       spg_t pg,
       scrub_level_t scrub_level,
       utime_t loop_id,
-      Scrub::ScrubPreconds env_conditions) override;
+      Scrub::OSDRestrictions env_conditions) override;
 
   void queue_for_scrub(PG* pg, Scrub::scrub_prio_t with_priority);
 

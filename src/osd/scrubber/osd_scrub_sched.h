@@ -622,7 +622,7 @@ class ScrubSchedListener {
       spg_t pg,
       scrub_level_t scrub_level,
       utime_t loop_id,
-      Scrub::ScrubPreconds env_conditions) = 0;
+      Scrub::OSDRestrictions env_conditions) = 0;
 
   virtual ~ScrubSchedListener() {}
 };

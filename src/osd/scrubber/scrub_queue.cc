@@ -273,7 +273,7 @@ void ScrubQueue::log_fwd(std::string_view text)
 // ////////////////////////////////////////////////////////////////////////// //
 // initiating a scrub
 
-using ScrubPreconds = Scrub::ScrubPreconds;
+using OSDRestrictions = Scrub::OSDRestrictions;
 using schedule_result_t = Scrub::schedule_result_t;
 
 
@@ -439,7 +439,7 @@ void ScrubQueue::initiation_loop_done(Scrub::loop_token_t loop_id)
 }
 
 
-std::optional<Scrub::ScrubPreconds> ScrubQueue::restrictions_on_scrubbing(
+std::optional<Scrub::OSDRestrictions> ScrubQueue::restrictions_on_scrubbing(
     const ceph::common::ConfigProxy& config,
     bool is_recovery_active,
     utime_t scrub_clock_now) const
@@ -478,7 +478,7 @@ std::optional<Scrub::ScrubPreconds> ScrubQueue::restrictions_on_scrubbing(
     return std::nullopt;
   }
 
-  Scrub::ScrubPreconds env_conditions;
+  Scrub::OSDRestrictions env_conditions;
   env_conditions.time_permit = scrub_time_permit();
   env_conditions.load_is_low = scrub_load_below_threshold();
   env_conditions.only_deadlined =
@@ -696,7 +696,7 @@ using SchedLoopHolder = Scrub::SchedLoopHolder;
 SchedLoopHolder::~SchedLoopHolder()
 {
   // we may have failed without handling the sched-loop
-  // state. Let's just ignore it ('success()' does not cause any harm)
+  // state. Let's just ignore it (without trying the next in queue)
   conclude_candidates_selection();
 }
 

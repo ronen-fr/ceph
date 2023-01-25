@@ -88,7 +88,7 @@ cmp_entries(utime_t t, const Scrub::SchedEntry& l, const Scrub::SchedEntry& r)
 using SchedTarget = Scrub::SchedTarget;
 using urgency_t = Scrub::urgency_t;
 using delay_cause_t = Scrub::delay_cause_t;
-using ScrubPreconds = Scrub::ScrubPreconds;
+using OSDRestrictions = Scrub::OSDRestrictions;
 
 namespace {
 utime_t add_double(utime_t t, double d)

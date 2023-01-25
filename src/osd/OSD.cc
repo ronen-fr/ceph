@@ -1670,7 +1670,7 @@ void OSDService::queue_for_scrub_initiation(
 spg_t pg,
 scrub_level_t scrub_level,
 utime_t loop_id,
-Scrub::ScrubPreconds env_conditions)
+Scrub::OSDRestrictions env_conditions)
 {
   dout(10) << "queueing " << pg << " for scrub initiation" << dendl;
   enqueue_back(
