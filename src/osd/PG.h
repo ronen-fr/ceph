@@ -712,18 +712,20 @@ public:
    * @param [in] level Level of scrub (deep or shallow)
    * @param [in] loop_id a token that identifies the scheduling loop that
    *             initiated this scrub.
-   * @param [in] preconds a set of flags, determined based on environment
-   *       conditions (time & load), that might restrict some scrubs
-   * @note 'preconds' is only 4B in size; moved around by copying
+   * @param [in] osd_restrictions a set of flags, determined based on
+   *       environment conditions (time & load), that might restrict some
+   *       scrubs
+   * @note 'osd_restrictions' is only 4B in size; moved around by copying
    */
   void start_scrubbing(
       scrub_level_t level,
       Scrub::loop_token_t loop_id,
-      Scrub::ScrubPreconds preconds);
+      Scrub::OSDRestrictions preconds);
 
   unsigned int scrub_requeue_priority(
     Scrub::scrub_prio_t with_priority,
     unsigned int suggested_priority) const;
+
   /// the version that refers to flags_.priority
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority) const;
 

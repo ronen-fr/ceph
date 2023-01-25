@@ -85,27 +85,26 @@ class ScrubQueueImp : public ScrubQueueImp_IF {
 
 /**
  * The 'ScrubQueue' is a "sub-component" of the OSD. It is responsible (mainly)
- * for selecting the PGs to be scrubbed, and initiating the scrub operation.
+ * for selecting the PGs to be scrubbed and initiating the scrub operation.
  * 
  * Other responsibilities "traditionally" associated with the scrub-queue are:
  * - monitoring system load, and
- * - monitoring the number of scrubs performed by the OSD, as either a
- *   primary or replica.
+ * - monitoring the number of scrubs performed by the OSD, as either
+ *   primary or replica roles.
  * 
- * The object's main functionality is implemented inn two layers:
- * - an upper layer (the 'ScrubQueue' class) is responsible for initiating a
+ * The main functionality is implemented in two layers:
+ * - an upper layer (the 'ScrubQueue' class) responsible for initiating a
  *   scrub on the top-most (priority-wise) eligible PG;
- * - a prioritized container of "scrub targets". A target conveys both the
+ * - a prioritized container of "scheduling targets". A target conveys both the
  *   PG to be scrubbed, and the scrub type (deep or shallow). It contains the
- *   information required in order to prioritize the specific scrub request
- *   compared to all other requests.
+ *   information required for prioritizing a specific scrub request
+ *   compared to all other queued requests.
  *
  * \note: the following invariants hold:
- * - there are at most two objects for each PG (one for each scrub level) in
- *   the queue.
+ * - there are at most two objects queued for each PG (one for each scrub
+ *   level).
  * - when a queue element is removed, the corresponding object held by the
  *   PgScrubber is (not necessarily immediately) marked as 'not in the queue'.
- * - 'white-out' queue elements are never reported to the queue users.
  */
 class ScrubQueue : public Scrub::ScrubQueueOps {
 
@@ -117,7 +116,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
     ScrubStartLoop(
 	utime_t now,
 	int budget,
-	Scrub::ScrubPreconds preconds,
+	Scrub::OSDRestrictions preconds,
 	spg_t first_tried,
 	scrub_level_t first_level_tried)
 	: loop_id{now}
@@ -133,7 +132,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
     int retries_budget;
 
     /// restrictions on the next scrub imposed by OSD environment
-    Scrub::ScrubPreconds env_restrictions;
+    Scrub::OSDRestrictions env_restrictions;
 
     /// noting the 1'st entry tried in this loop, to avoid looping on the same
     /// sched target
@@ -287,7 +286,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    * std::nullopt is returned, which should result in no more attempted scrubs
    * at this tick (this 'scheduling loop').
    */
-  std::optional<Scrub::ScrubPreconds> restrictions_on_scrubbing(
+  std::optional<Scrub::OSDRestrictions> restrictions_on_scrubbing(
       const ceph::common::ConfigProxy& config,
       bool is_recovery_active,
       utime_t scrub_clock_now) const;

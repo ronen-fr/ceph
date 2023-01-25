@@ -72,10 +72,10 @@ class SchedLoopHolder {
   {}
 
   /*
-   * the dtor will indicate 'success', as in 'do not continue the loop'.
-   * It is assumed that all relevant failures call 'failure()' explicitly,
-   * and that the destruction of a 'loaded' object is a bug. Treating that
-   * as a 'do not continue' limits the damage.
+   * the dtor will signal 'success', as in 'do not continue the loop'.
+   * It is assumed that all relevant failures call 'go_for_next_in_queue()'
+   * explicitly, and that the destruction of a 'loaded' object is a bug.
+   * Treating that as a 'do not continue' limits the possible damage.
    */
   ~SchedLoopHolder();
 
@@ -92,7 +92,10 @@ class SchedLoopHolder {
   std::optional<utime_t> loop_id() const { return m_loop_id; }
 
  private:
-  // the ID of the loop (which is also the loop's original creation time)
+  /**
+   * the ID of the loop (which is also the loop's original creation time)
+   * Reset to 'nullopt' when the loop is concluded.
+   */
   std::optional<utime_t> m_loop_id;
 
   ScrubQueueOps& m_queue;

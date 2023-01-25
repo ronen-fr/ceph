@@ -353,7 +353,7 @@ class SchedTarget {
   /// push_nb_out() w/ delay=osd_scrub_retry_wrong_time
   void delay_on_wrong_time(utime_t scrub_clock_now);
 
-  void delay_on_no_local_resrc(utime_t scrub_clock_now);
+  //void delay_on_no_local_resrc(utime_t scrub_clock_now);
 
   void dump(std::string_view sect_name, ceph::Formatter* f) const;
 
@@ -622,7 +622,7 @@ class ScrubSchedListener {
       spg_t pg,
       scrub_level_t scrub_level,
       utime_t loop_id,
-      Scrub::ScrubPreconds env_conditions) = 0;
+      Scrub::OSDRestrictions env_conditions) = 0;
 
   virtual ~ScrubSchedListener() {}
 };

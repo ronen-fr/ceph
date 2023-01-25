@@ -27,7 +27,7 @@
 class OSD;
 struct OSDShard;
 namespace Scrub {
-  struct ScrubPreconds;
+  struct OSDRestrictions;
 }
 
 namespace ceph::osd::scheduler {
@@ -413,13 +413,13 @@ class PGScrubTryInitiating : public PGScrubItem {
   scrub_level_t m_level;
   utime_t m_token;  // identifying the specific "scrub
 				       // initiating loop"
-  Scrub::ScrubPreconds m_env_conditions;  // note - only 1L in size
+  Scrub::OSDRestrictions m_env_conditions;  // note - only 1L in size
  public:
   PGScrubTryInitiating(
       spg_t pg,
       scrub_level_t level,
       utime_t token,
-      Scrub::ScrubPreconds env_conditions)
+      Scrub::OSDRestrictions env_conditions)
       : PGScrubItem{pg, 0/*epoch_queued*/, "PGScrubTryInitiating"}
       , m_level{level}
       , m_token{token}

@@ -41,7 +41,7 @@ using namespace std::literals;
 
 using schedule_result_t = Scrub::schedule_result_t;
 using ScrubPGPreconds = Scrub::ScrubPGPreconds;
-using ScrubPreconds = Scrub::ScrubPreconds;
+using OSDRestrictions = Scrub::OSDRestrictions;
 
 #define dout_context (m_osds->cct)
 #define dout_subsys ceph_subsys_osd
@@ -676,7 +676,7 @@ schedule_result_t PgScrubber::start_scrubbing(
     utime_t scrub_clock_now,
     scrub_level_t lvl,
     ScrubPGPreconds pg_cond,
-    ScrubPreconds preconds)
+    OSDRestrictions preconds)
 {
   m_depenalize_timer.reset();
 
@@ -757,7 +757,7 @@ schedule_result_t PgScrubber::start_scrubbing(
 void PgScrubber::start_scrubbing(
     scrub_level_t lvl,
     Scrub::loop_token_t loop_id,
-    ScrubPreconds env_restrictions,
+    OSDRestrictions env_restrictions,
     ScrubPGPreconds pg_cond)
 {
   auto& trgt = m_scrub_job->get_target(lvl);
@@ -796,7 +796,7 @@ void PgScrubber::start_scrubbing(
 						  : "time not permitting"))
 	     << dendl;
     trgt.delay_on_wrong_time(clock_now);
-    res_code = schedule_result_t::failure;
+    res_code = schedule_result_t::target_failure;
 
   } else if (
       state_test(PG_STATE_SNAPTRIM) || state_test(PG_STATE_SNAPTRIM_WAIT)) {
@@ -824,7 +824,9 @@ void PgScrubber::start_scrubbing(
     // performing osd_max_scrubs concurrent scrubs).
     // No point in trying any other PG at this tick.
     dout(10) << __func__ << ": failed to reserve locally" << dendl;
-    trgt.delay_on_no_local_resrc(clock_now); // RRR doc the fact that we are not trying to re-sort
+    // note that we are not trying to re-sort (i.e. - not changing the
+    // 'not-before')
+    //trgt.delay_on_no_local_resrc(clock_now); // RRR doc the fact that we are not trying to re-sort
     res_code = schedule_result_t::failure;
   }
 
@@ -833,12 +835,12 @@ void PgScrubber::start_scrubbing(
       m_scrub_job->requeue_entry(lvl);
       // go on to try some other ready-to-scrub PG
       m_schedloop_step->go_for_next_in_queue();
-      break;
+      return;
     case schedule_result_t::failure:
     default:
       m_scrub_job->requeue_entry(lvl);
       m_schedloop_step->conclude_candidates_selection();
-      break;
+      return;
     case schedule_result_t::ok_thus_far:
       // go on and scrub this PG
       break;
@@ -848,7 +850,7 @@ void PgScrubber::start_scrubbing(
   set_op_parameters(trgt, pg_cond);
   m_scrub_job->scrubbing = true;
 
-  dout(10) << __func__ << ": queueing" << dendl;
+  dout(10) << fmt::format("{}: queuing target {}", __func__, trgt) << dendl;
   m_osds->queue_for_scrub(m_pg, Scrub::scrub_prio_t::low_priority);
 }
 
@@ -856,7 +858,7 @@ void PgScrubber::start_scrubbing(
 // void PgScrubber::start_scrubbing(
 //     scrub_level_t lvl,
 //     Scrub::loop_token_t loop_id,
-//     ScrubPreconds env_restrictions,
+//     OSDRestrictions env_restrictions,
 //     ScrubPGPreconds pg_cond)
 // {
 //   m_depenalize_timer.reset();
