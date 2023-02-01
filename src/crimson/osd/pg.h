@@ -185,6 +185,8 @@ public:
     (void)shard_services.send_pg_created(pgid);
   }
 
+  void stop_active_scrubs() final {}
+
   bool try_flush_or_schedule_async() final;
 
   void start_flush_on_transaction(
