@@ -430,6 +430,13 @@ unsigned PG::get_scrub_priority()
   return pool_scrub_priority > 0 ? pool_scrub_priority : cct->_conf->osd_scrub_priority;
 }
 
+void PG::stop_active_scrubs()
+{
+  if (m_scrubber) {
+    m_scrubber->stop_active_scrubs();
+  }
+}
+
 Context *PG::finish_recovery()
 {
   dout(10) << "finish_recovery" << dendl;
@@ -1347,18 +1354,25 @@ void PG::start_scrubbing(
  */
 void PG::on_info_history_change()
 {
-  dout(20) << __func__ << " for a "
-	   << (is_primary() ? "Primary" : "non-primary") << dendl;
   ceph_assert(m_scrubber);
-  m_scrubber->on_maybe_registration_change();
+  dout(20) << fmt::format(
+		  "{} for a {}", __func__,
+		  (is_primary() ? "Primary" : "non-primary"))
+	   << dendl;
+  reschedule_scrub();
 }
 
-void PG::on_primary_status_change(bool was_primary, bool now_primary)
+void PG::reschedule_scrub()
 {
-  // make sure we have a working scrubber when becoming a primary
-  if (was_primary != now_primary) {
+  dout(20) << fmt::format(
+		  "{} for a {}", __func__,
+		  (is_primary() ? "Primary" : "non-primary"))
+	   << dendl;
+
+  // we are assuming no change in primary status
+  if (is_primary()) {
     ceph_assert(m_scrubber);
-    m_scrubber->on_primary_change(__func__);
+    m_scrubber->update_scrub_job();
   }
 }
 
@@ -1389,52 +1403,11 @@ void PG::on_new_interval()
 {
   projected_last_update = eversion_t();
   cancel_recovery();
-
-  ceph_assert(m_scrubber);
-  // log some scrub data before we react to the interval
-  dout(20) << __func__ << (is_scrub_queued_or_active() ? " scrubbing " : " ")
-	   << dendl;
-  m_scrubber->on_maybe_registration_change();
+  m_scrubber->stop_active_scrubs();
 }
 
 epoch_t PG::oldest_stored_osdmap() {
   return osd->get_superblock().oldest_map;
-}
-
-OstreamTemp PG::get_clog_info() {
-  return osd->clog->info();
-}
-
-OstreamTemp PG::get_clog_debug() {
-  return osd->clog->debug();
-}
-
-OstreamTemp PG::get_clog_error() {
-  return osd->clog->error();
-}
-
-void PG::schedule_event_after(
-  PGPeeringEventRef event,
-  float delay) {
-  std::lock_guard lock(osd->recovery_request_lock);
-  osd->recovery_request_timer.add_event_after(
-    delay,
-    new QueuePeeringEvt(
-      this,
-      std::move(event)));
-}
-
-void PG::request_local_background_io_reservation(
-  unsigned priority,
-  PGPeeringEventURef on_grant,
-  PGPeeringEventURef on_preempt) {
-  osd->local_reserver.request_reservation(
-    pg_id,
-    on_grant ? new QueuePeeringEvt(
-      this, std::move(on_grant)) : nullptr,
-    priority,
-    on_preempt ? new QueuePeeringEvt(
-      this, std::move(on_preempt)) : nullptr);
 }
 
 void PG::update_local_background_io_priority(
@@ -1481,6 +1454,7 @@ void PG::on_activate(interval_set<snapid_t> snaps)
   snap_trimq = snaps;
   release_pg_backoffs();
   projected_last_update = info.last_update;
+  m_scrubber->on_pg_activate();
 }
 
 void PG::on_active_exit()

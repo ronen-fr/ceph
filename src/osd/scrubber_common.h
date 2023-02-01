@@ -70,6 +70,17 @@ using act_token_t = uint32_t;
  */
 using loop_token_t = utime_t;
 
+/**
+ * The possible values of m_queued_or_active, the flag used to prevent
+ * a second scrub being initiated on a PG before the first one has been
+ * fully initialized or fully terminated. See the description of
+ * 'm_queued_or_active' for details.
+ * It is also used to identify the role this PG is to play when queued for
+ * scrubbing (as the actual state-machine state transition, whether to a
+ * Primary or to a replica related state, might not have happened yet).
+ */
+enum class QueuedForRole { none, primary, replica };
+
 /// "environment" preconditions affecting which PGs are eligible for scrubbing
 struct OSDRestrictions {
   bool allow_requested_repair_only{false};
@@ -264,7 +275,7 @@ struct ScrubPgIF {
    *
    * clear_queued_or_active() will also restart any blocked snaptrimming.
    */
-  virtual void set_queued_or_active() = 0;
+  virtual void set_queued_or_active(Scrub::QueuedForRole role_queued) = 0;
   virtual void clear_queued_or_active() = 0;
 
   /// are we waiting for resource reservation grants form our replicas?
@@ -274,6 +285,10 @@ struct ScrubPgIF {
   virtual void map_from_replica(OpRequestRef op) = 0;
 
   virtual void replica_scrub_op(OpRequestRef op) = 0;
+
+  /// stop any active scrubbing (on interval end) and unregister from
+  /// the OSD scrub queue
+  virtual void stop_active_scrubs() = 0;
 
   virtual void scrub_clear_state() = 0;
 
@@ -390,13 +405,18 @@ struct ScrubPgIF {
   virtual bool reserve_local() = 0;
 
   /**
-   * Register/de-register with the OSD scrub queue
-   *
-   * Following our status as Primary or replica.
+   * if activated as a Primary - register the scrub job with the OSD
+   * scrub queue
    */
-  virtual void on_primary_change(std::string_view caller) = 0;
+  virtual void on_pg_activate() = 0;
 
-  virtual void on_maybe_registration_change() = 0;
+  /**
+   * Recalculate the required scrub time.
+   *
+   * This function assumes that the queue registration status is up-to-date,
+   * i.e. the OSD "knows our name" if-f we are the Primary.
+   */
+  virtual void update_scrub_job() = 0;
 
   // on the replica:
   virtual void handle_scrub_reserve_request(OpRequestRef op) = 0;

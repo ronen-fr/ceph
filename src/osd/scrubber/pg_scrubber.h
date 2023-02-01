@@ -423,9 +423,7 @@ class PgScrubber : public ScrubPgIF,
 
   void rm_from_osd_scrubbing() final;
 
-  void on_primary_change(std::string_view caller) final;
-
-  void on_maybe_registration_change() final;
+  void on_pg_activate() final;
 
   scrub_level_t scrub_requested(
       scrub_level_t scrub_level,
@@ -460,7 +458,7 @@ class PgScrubber : public ScrubPgIF,
   Scrub::scrub_prio_t replica_op_priority() const final
   {
     return m_replica_request_priority;
-  };
+  }
 
   unsigned int scrub_requeue_priority(
     Scrub::scrub_prio_t with_priority,
@@ -479,6 +477,8 @@ class PgScrubber : public ScrubPgIF,
 
   /// handle a message carrying a replica map
   void map_from_replica(OpRequestRef op) final;
+
+  void stop_active_scrubs() final;
 
   void scrub_clear_state() final;
 
@@ -635,7 +635,8 @@ class PgScrubber : public ScrubPgIF,
 
   [[nodiscard]] bool was_epoch_changed() const final;
 
-  void set_queued_or_active() final;
+  void set_queued_or_active(Scrub::QueuedForRole role_queued) final;
+
   /// Clears `m_queued_or_active` and restarts snaptrimming
   void clear_queued_or_active() final;
 
@@ -897,8 +898,9 @@ class PgScrubber : public ScrubPgIF,
    * Compared with 'm_active', this flag is asserted earlier and remains ON for
    * longer.
    */
-  bool m_queued_or_active{false};
+  Scrub::QueuedForRole m_queued_or_active{Scrub::QueuedForRole::none};
 
+  Scrub::QueuedForRole queued_for_role() const;
 
   eversion_t m_subset_last_update{};
 

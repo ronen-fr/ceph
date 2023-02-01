@@ -542,7 +542,7 @@ public:
 
   void on_info_history_change() override;
 
-  void on_primary_status_change(bool was_primary, bool now_primary) override;
+  void reschedule_scrub() override;
 
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) override;
 
@@ -1356,6 +1356,8 @@ protected:
   void queue_recovery();
   void notify_scrub_on_recovery_finish();
   unsigned int get_scrub_priority();
+
+  void stop_active_scrubs() override;
 
   bool try_flush_or_schedule_async() override;
   void start_flush_on_transaction(

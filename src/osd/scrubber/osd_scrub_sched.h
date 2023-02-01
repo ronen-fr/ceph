@@ -232,6 +232,12 @@ struct SchedEntry {
 
   urgency_t urgency{urgency_t::off};
 
+    /**
+     * access the 'state' directly, for when a distinction between 'registered'
+     * and 'unregistering' is needed (both have in_queues() == true)
+     */
+    bool is_state_registered() const { return state == qu_state_t::registered; }
+
   /**
    * the time at which we are allowed to start the scrub. Never
    * decreasing after 'target' is set.

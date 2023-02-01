@@ -711,8 +711,6 @@ void PeeringState::start_peering_interval(
     // did primary change?
     if (was_old_primary != is_primary()) {
       state_clear(PG_STATE_CLEAN);
-      // queue/dequeue the scrubber
-      pl->on_primary_status_change(was_old_primary, is_primary());
     }
 
     pl->on_role_change();
@@ -735,6 +733,10 @@ void PeeringState::start_peering_interval(
       }
     }
   }
+
+  //if (is_primary() && was_old_primary) {
+  //  pl->reschedule_scrub();
+  //}
 
   if (acting.empty() && !up.empty() && up_primary == pg_whoami) {
     psdout(10) << " acting empty, but i am up[0], clearing pg_temp" << dendl;
