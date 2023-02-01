@@ -407,13 +407,12 @@ class PgScrubber : public ScrubPgIF,
 
   void rm_from_osd_scrubbing() final;
 
-  void on_primary_change(
-    std::string_view caller,
-    const requested_scrub_t& request_flags) final;
+  void on_pg_activate(const requested_scrub_t& request_flags) final;
 
-  void scrub_requested(scrub_level_t scrub_level,
-		       scrub_type_t scrub_type,
-		       requested_scrub_t& req_flags) final;
+  void scrub_requested(
+      scrub_level_t scrub_level,
+      scrub_type_t scrub_type,
+      requested_scrub_t& req_flags) final;
 
   /**
    * Reserve local scrub resources (managed by the OSD)
@@ -458,6 +457,8 @@ class PgScrubber : public ScrubPgIF,
   /// handle a message carrying a replica map
   void map_from_replica(OpRequestRef op) final;
 
+  void stop_active_scrubs() final;
+
   void scrub_clear_state() final;
 
   bool is_queued_or_active() const final;
@@ -494,6 +495,7 @@ class PgScrubber : public ScrubPgIF,
 		 std::string param,
 		 Formatter* f,
 		 std::stringstream& ss) override;
+
   int m_debug_blockrange{0};
 
   // --------------------------------------------------------------------------
@@ -892,8 +894,6 @@ class PgScrubber : public ScrubPgIF,
    * initiate a deep-scrub after the current scrub ended with errors.
    */
   void request_rescrubbing(requested_scrub_t& req_flags);
-
-  void unregister_from_osd();
 
   /*
    * Select a range of objects to scrub.

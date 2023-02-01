@@ -465,11 +465,54 @@ unsigned int PgScrubber::scrub_requeue_priority(
 // ///////////////////////////////////////////////////////////////////// //
 // scrub-op registration handling
 
-void PgScrubber::unregister_from_osd()
+
+/*
+ * implementation notes:
+ * =====================
+ * If a scrub is active, it is stopped (whether performed
+ * as a Primary or as a Replica).
+ * If we were a Primary - we unregister from the OSD.
+ *
+ * But what if we are queued, but not yet active?
+ * For a primary with a queued scrub-initiation event: both
+ * initiate_regular_scrub() & initiate_scrub_after_repair() would
+ * notice an interval change and abort the scrub. No special handling
+ * here is required.
+ *
+ * As for replicas:
+ * While we would notice becoming a Primary, that would be too late.
+ * But as the token is checked also, there is no reason not to fail that
+ * test. See replica_scrub_op() for how the sequence of messages
+ * initiating a replica scrub is handled.
+ */
+void PgScrubber::stop_active_scrubs()
 {
-  if (m_scrub_job) {
-    dout(15) << __func__ << " prev. state: " << registration_state() << dendl;
-    m_osds->get_scrub_services().remove_from_osd_queue(m_scrub_job);
+  dout(10) << fmt::format(
+		  "{}: current role:{} active?{} q/a:{}", __func__,
+		  (is_primary() ? "Primary" : "Replica/other"),
+		  is_scrub_active(), is_queued_or_active())
+	   << dendl;
+
+  // 'active_role' catches 'event is in the mail' cases, too (matching
+  // 'is_queued_or_active()' lifetime)
+  const auto active_role = queued_for_role();
+
+  if (m_remote_osd_resource) {
+    dout(10) << fmt::format(
+		    "{}: discarding reservation by remote primary", __func__)
+	     << dendl;
+    m_remote_osd_resource.reset();
+    // advance_token() also full-resets the FSM (if 'active replica')
+    advance_token();
+
+  } else {
+
+    // we may be the primary
+    if (active_role == QueuedForRole::primary) {
+      m_fsm->process_event(FullReset{});
+      clear_pgscrub_state();
+    }
+    rm_from_osd_scrubbing();
   }
 }
 
@@ -488,53 +531,41 @@ std::string_view PgScrubber::registration_state() const
 
 void PgScrubber::rm_from_osd_scrubbing()
 {
-  // make sure the OSD won't try to scrub this one just now
-  unregister_from_osd();
+  if (m_scrub_job && m_scrub_job->is_state_registered()) {
+    dout(15) << fmt::format(
+		    "{}: prev. state: {}", __func__, registration_state())
+	     << dendl;
+    m_osds->get_scrub_services().remove_from_osd_queue(m_scrub_job);
+  }
 }
 
-void PgScrubber::on_primary_change(
-  std::string_view caller,
-  const requested_scrub_t& request_flags)
+void PgScrubber::on_pg_activate(const requested_scrub_t& request_flags)
 {
+  ceph_assert(is_primary());
   if (!m_scrub_job) {
     // we won't have a chance to see more logs from this function, thus:
-    dout(10) << fmt::format(
-		  "{}: (from {}& w/{}) {}.Reg-state:{:.7}. No scrub-job",
-		  __func__, caller, request_flags,
-		  (is_primary() ? "Primary" : "Replica/other"),
-		  registration_state())
-	     << dendl;
+    dout(2) << fmt::format(
+		   "{}: flags:<{}> {}.Reg-state:{:.7}. No scrub-job", __func__,
+		   request_flags, (is_primary() ? "Primary" : "Replica/other"),
+		   registration_state())
+	    << dendl;
     return;
   }
 
+  ceph_assert(!is_queued_or_active());
   auto pre_state = m_scrub_job->state_desc();
   auto pre_reg = registration_state();
-  if (is_primary()) {
-    auto suggested = m_osds->get_scrub_services().determine_scrub_time(
+
+  auto suggested = m_osds->get_scrub_services().determine_scrub_time(
       request_flags, m_pg->info, m_pg->get_pgpool().info.opts);
-    m_osds->get_scrub_services().register_with_osd(m_scrub_job, suggested);
-  } else {
-    m_osds->get_scrub_services().remove_from_osd_queue(m_scrub_job);
-  }
+  m_osds->get_scrub_services().register_with_osd(m_scrub_job, suggested);
 
-  // is there an interval change we should respond to?
-  if (is_primary() && is_scrub_active()) {
-    if (m_interval_start < m_pg->get_same_interval_since()) {
-      dout(10) << fmt::format(
-		    "{}: interval changed ({} -> {}). Aborting active scrub.",
-		    __func__, m_interval_start, m_pg->get_same_interval_since())
-	       << dendl;
-      scrub_clear_state();
-    }
-  }
-
-  dout(10)
-    << fmt::format(
-	 "{} (from {} {}): {}. <{:.5}>&<{:.10}> --> <{:.5}>&<{:.14}>",
-	 __func__, caller, request_flags,
-	 (is_primary() ? "Primary" : "Replica/other"), pre_reg, pre_state,
-	 registration_state(), m_scrub_job->state_desc())
-    << dendl;
+  dout(10) << fmt::format(
+		  "{}: <flags:{}> {} <{:.5}>&<{:.10}> --> <{:.5}>&<{:.14}>",
+		  __func__, request_flags,
+		  (is_primary() ? "Primary" : "Replica/other"), pre_reg,
+		  pre_state, registration_state(), m_scrub_job->state_desc())
+	   << dendl;
 }
 
 void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
@@ -542,15 +573,14 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
   dout(10) << fmt::format("{}: flags:<{}>", __func__, request_flags) << dendl;
   // verify that the 'in_q' status matches our "Primariority"
   if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) {
-    dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
+    dout(10) << __func__ << " !!! primary but not scheduled! " << dendl;
   }
 
   if (is_primary() && m_scrub_job) {
     ceph_assert(m_pg->is_locked());
     auto suggested = m_osds->get_scrub_services().determine_scrub_time(
-      request_flags, m_pg->info, m_pg->get_pgpool().info.opts);
+	request_flags, m_pg->info, m_pg->get_pgpool().info.opts);
     m_osds->get_scrub_services().update_job(m_scrub_job, suggested);
-    m_pg->publish_stats_to_osd();
   }
 
   dout(15) << __func__ << ": done " << registration_state() << dendl;
@@ -2320,7 +2350,6 @@ void PgScrubber::clear_pgscrub_state()
   state_clear(PG_STATE_REPAIR);
 
   clear_scrub_reservations();
-  m_pg->publish_stats_to_osd();
 
   requeue_waiting();
 
@@ -2329,7 +2358,6 @@ void PgScrubber::clear_pgscrub_state()
 
   // type-specific state clear
   _scrub_clear_state();
-  m_pg->publish_stats_to_osd();
 }
 
 void PgScrubber::replica_handling_done()
@@ -2379,15 +2407,16 @@ void PgScrubber::reset_internal_state()
 // note that only applicable to the Replica:
 void PgScrubber::advance_token()
 {
-  dout(10) << __func__ << " was: " << m_current_token << dendl;
+  dout(10) << fmt::format("{}: prev. token:{}", __func__, m_current_token)
+	   << dendl;
+
   m_current_token++;
 
   // when advance_token() is called, it is assumed that no scrubbing takes
   // place. We will, though, verify that. And if we are actually still handling
   // a stale request - both our internal state and the FSM state will be
   // cleared.
-  replica_handling_done();
-  m_fsm->process_event(FullReset{});
+  m_fsm->process_event(IntervalEnded{});
 }
 
 bool PgScrubber::is_token_current(Scrub::act_token_t received_token)
@@ -2565,11 +2594,12 @@ ReplicaReservations::ReplicaReservations(
     , m_conf{conf}
 {
   epoch_t epoch = m_pg->get_osdmap_epoch();
-  m_timeout = conf.get_val<std::chrono::milliseconds>(
-    "osd_scrub_slow_reservation_response");
   m_log_msg_prefix = fmt::format(
-    "osd.{} ep: {} scrubber::ReplicaReservations pg[{}]: ", m_osds->whoami,
-    epoch, pg->pg_id);
+      "osd.{} ep: {} scrubber::ReplicaReservations pg[{}]: ", m_osds->whoami,
+      epoch, pg->pg_id);
+
+  m_timeout = conf.get_val<std::chrono::milliseconds>(
+      "osd_scrub_slow_reservation_response");
 
   if (m_pending <= 0) {
     // A special case of no replicas.
@@ -2604,8 +2634,6 @@ void ReplicaReservations::send_all_done()
 
 void ReplicaReservations::send_reject()
 {
-  // stop any pending timeout timer
-  m_no_reply.reset();
   m_scrub_job->resources_failure = true;
   m_osds->queue_for_scrub_denied(m_pg, scrub_prio_t::low_priority);
 }
@@ -2756,6 +2784,8 @@ void ReplicaReservations::handle_reserve_reject(OpRequestRef op,
     dout(10) << __func__ << ": osd." << from << " scrub reserve = fail"
 	     << dendl;
     m_had_rejections = true;  // preventing any additional notifications
+    // stop any pending timeout timer
+    m_no_reply.reset();
     send_reject();
   }
 }
