@@ -573,13 +573,13 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
   dout(10) << fmt::format("{}: flags:<{}>", __func__, request_flags) << dendl;
   // verify that the 'in_q' status matches our "Primariority"
   if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) {
-    dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
+    dout(10) << __func__ << " !!! primary but not scheduled! " << dendl;
   }
 
   if (is_primary() && m_scrub_job) {
     ceph_assert(m_pg->is_locked());
     auto suggested = m_osds->get_scrub_services().determine_scrub_time(
-      request_flags, m_pg->info, m_pg->get_pgpool().info.opts);
+	request_flags, m_pg->info, m_pg->get_pgpool().info.opts);
     m_osds->get_scrub_services().update_job(m_scrub_job, suggested);
   }
 
