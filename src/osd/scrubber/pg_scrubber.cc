@@ -495,7 +495,7 @@ void PgScrubber::stop_active_scrubs()
 
   // 'active_role' catches 'event is in the mail' cases, too (matching
   // 'is_queued_or_active()' lifetime)
-  auto active_role = queued_for_role();
+  const auto active_role = queued_for_role();
 
   if (m_remote_osd_resource) {
     dout(10) << fmt::format(
@@ -2407,9 +2407,7 @@ void PgScrubber::reset_internal_state()
 // note that only applicable to the Replica:
 void PgScrubber::advance_token()
 {
-  dout(10) << fmt::format(
-		  "{}: prev. token:{}", __func__,
-		  m_current_token)
+  dout(10) << fmt::format("{}: prev. token:{}", __func__, m_current_token)
 	   << dendl;
 
   m_current_token++;
@@ -2418,11 +2416,7 @@ void PgScrubber::advance_token()
   // place. We will, though, verify that. And if we are actually still handling
   // a stale request - both our internal state and the FSM state will be
   // cleared.
-  if (m_fsm->is_active_replica()) {
-    dout(10) << fmt::format("{}: clearing stale replica state", __func__) << dendl;
-    m_fsm->process_event(FullReset{});
-    replica_handling_done();
-  }
+  m_fsm->process_event(IntervalEnded{});
 }
 
 bool PgScrubber::is_token_current(Scrub::act_token_t received_token)
