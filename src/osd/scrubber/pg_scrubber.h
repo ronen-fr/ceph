@@ -490,10 +490,12 @@ class PgScrubber : public ScrubPgIF,
 
   void update_scrub_stats(ceph::coarse_real_clock::time_point now_is) final;
 
-  int asok_debug(std::string_view cmd,
-		 std::string param,
-		 Formatter* f,
-		 std::stringstream& ss) override;
+  int asok_debug(Formatter *f,
+    std::string_view prefix,
+    std::string_view cmd,
+    std::string_view param,
+    std::string_view value) override;
+
   int m_debug_blockrange{0};
 
   // --------------------------------------------------------------------------
@@ -749,6 +751,78 @@ class PgScrubber : public ScrubPgIF,
 
   void cleanup_on_finish();  // scrub_clear_state() as called for a Primary when
 			     // Active->NotActive
+
+  // some asok/debug commands and their helpers
+  using asok_fn_t = int (PgScrubber::*)(
+      Formatter* f,
+      std::string_view param,
+      std::string_view value,
+      int generated_param);
+
+  int dbg_block_range(
+      Formatter* f,
+      std::string_view param,
+      std::string_view value,
+      int generated_param);
+
+  int dbg_unblock_range(
+      Formatter* f,
+      std::string_view param,
+      std::string_view value,
+      int generated_param);
+
+  int dbg_set_sessions(
+      Formatter* f,
+      std::string_view param,
+      std::string_view value,
+      int generated_param);
+
+  int dbg_clear_sessions(
+      Formatter* f,
+      std::string_view param,
+      std::string_view value,
+      int generated_param);
+
+  int dbg_reserv_deny(
+      Formatter* f,
+      std::string_view param,
+      std::string_view value,
+      int generated_param);
+
+  int dbg_reserv_delay(
+      Formatter* f,
+      std::string_view param,
+      std::string_view value,
+      int generated_param);
+
+  enum class asok_op_cmd_t {
+    set,
+    clear,
+    unspecified
+  };
+
+  struct AskDispatchEntry {
+    asok_op_cmd_t op_cmd;
+    uint32_t cmd_hash;
+    uint32_t param_hash;  // or 0 for catch-all
+    PgScrubber::asok_fn_t fn;
+    int generated_param{0};
+  };
+
+  static inline const std::vector<AskDispatchEntry> asok_dispatch_tbl{
+      {asok_op_cmd_t::set,  "block"_xhash, 0, &PgScrubber::dbg_block_range, 1},
+      {asok_op_cmd_t::set,  "sessions"_xhash, 0, &PgScrubber::dbg_set_sessions, 1},
+      {asok_op_cmd_t::set,  "repdeny"_xhash, 0, &PgScrubber::dbg_reserv_deny, 1},
+      {asok_op_cmd_t::set,  "repdelay"_xhash, 0, &PgScrubber::dbg_reserv_delay, 1},
+
+      {asok_op_cmd_t::clear,  "block"_xhash, 0, &PgScrubber::dbg_block_range, 0},
+      {asok_op_cmd_t::clear,  "sessions"_xhash, 0, &PgScrubber::dbg_set_sessions, 0},
+
+      {asok_op_cmd_t::unspecified,  "block"_xhash, 0, &PgScrubber::dbg_block_range, 1},
+      {asok_op_cmd_t::unspecified,  "unblock"_xhash, 0, &PgScrubber::dbg_block_range, 0},
+      {asok_op_cmd_t::unspecified,  "sessions"_xhash, 0, &PgScrubber::dbg_set_sessions, 1}
+
+  };
 
  protected:
   PG* const m_pg;

@@ -2426,44 +2426,124 @@ ostream& PgScrubber::show(ostream& out) const
   return out << " [ " << m_pg_id << ": " << m_flags << " ] ";
 }
 
-int PgScrubber::asok_debug(std::string_view cmd,
-			   std::string param,
-			   Formatter* f,
-			   stringstream& ss)
+
+int PgScrubber::asok_debug(
+    Formatter* f,
+    std::string_view prefix,
+    std::string_view cmd,
+    std::string_view param,
+    std::string_view arg1)
 {
-  dout(10) << __func__ << " cmd: " << cmd << " param: " << param << dendl;
+  dout(10) << fmt::format(
+		  "asok_debug: pr={} cmd={}, param={}, val={}", prefix, cmd,
+		  param, arg1)
+	   << dendl;
 
-  if (cmd == "block") {
-    // 'm_debug_blockrange' causes the next 'select_range' to report a blocked
-    // object
-    m_debug_blockrange = 10;  // >1, so that will trigger fast state reports
+  auto prfx_hash = cx_hash(prefix);
+  auto cmd_hash = cx_hash(cmd);
+  auto param_hash = cx_hash(param);
 
-  } else if (cmd == "unblock") {
-    // send an 'unblock' event, as if a blocked range was freed
-    m_debug_blockrange = 0;
-    m_fsm->process_event(Unblocked{});
+  asok_op_cmd_t op_cmd = asok_op_cmd_t::unspecified;
 
-  } else if ((cmd == "set") || (cmd == "unset")) {
-
-    if (param == "sessions") {
-      // set/reset the inclusion of the scrub sessions counter in 'query' output
-      m_publish_sessions = (cmd == "set");
-
-    } else if (param == "block") {
-      if (cmd == "set") {
-	// set a flag that will cause the next 'select_range' to report a
-	// blocked object
-	m_debug_blockrange = 10;  // >1, so that will trigger fast state reports
-      } else {
-	// send an 'unblock' event, as if a blocked range was freed
-	m_debug_blockrange = 0;
-	m_fsm->process_event(Unblocked{});
-      }
-    }
+  // "normalize" the command parts
+  switch (prfx_hash) {
+    case cx_hash("scrubdebug_set"):
+      op_cmd = asok_op_cmd_t::set;
+      break;
+    case cx_hash("scrubdebug_clr"):
+      op_cmd = asok_op_cmd_t::clear;
+      break;
+    default:
+      break;
   }
 
+  for (auto& e : PgScrubber::asok_dispatch_tbl) {
+    if (e.op_cmd != op_cmd) {
+      continue;
+    }
+    if (e.cmd_hash != cmd_hash) {
+      continue;
+    }
+    if (e.param_hash && e.param_hash != param_hash) {
+      continue;
+    }
+    return (this->*(e.fn))(f, param, arg1, e.generated_param);
+  }
+  return -EINVAL;
+}
+
+int PgScrubber::dbg_block_range(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value,
+    [[maybe_unused]] int gen_param)
+{
+  // 'm_debug_blockrange' causes the next 'select_range' to report a blocked
+  // object
+  if (gen_param) {
+    m_debug_blockrange = 10;  // >1, so that will trigger fast state reports
+    f->dump_string("op", "blocking scrub range");
+  } else {
+    m_debug_blockrange = 0;
+    m_fsm->process_event(Unblocked{});
+    f->dump_string("op", "scrub range unblocked");
+  }
   return 0;
 }
+
+int PgScrubber::dbg_unblock_range(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value,
+    [[maybe_unused]] int gen_param)
+{
+  m_debug_blockrange = 0;
+  m_fsm->process_event(Unblocked{});
+  f->dump_string("op", "scrub range unblocked");
+  return 0;
+}
+
+int PgScrubber::dbg_set_sessions(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value,
+    [[maybe_unused]] int gen_param)
+{
+  m_publish_sessions = gen_param ? true : false;
+  f->dump_string("op", "ok");
+  return 0;
+}
+
+int PgScrubber::dbg_clear_sessions(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value,
+    [[maybe_unused]] int gen_param)
+{
+  m_publish_sessions = false;
+  f->dump_string("op", "ok");
+  return 0;
+}
+
+/// \todo add timeout value
+std::optional<std::string> PgScrubber::dbg_reserv_delay(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view cmd,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value)
+{
+  return "not yet";
+}
+
+std::optional<std::string> PgScrubber::dbg_reserv_deny(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view cmd,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value)
+{
+  return "not yet";
+}
+
 
 /*
  * Note: under PG lock

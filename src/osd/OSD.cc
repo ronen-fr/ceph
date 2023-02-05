@@ -2590,7 +2590,9 @@ void OSD::asok_command(
 
   // --- PG commands that will be answered even if !primary ---
 
-  else if (prefix == "scrubdebug") {
+  else if (
+      prefix == "scrubdebug" || prefix == "scrubdebug_clr" ||
+      prefix == "scrubdebug_set") {
     asok_route_to_pg(false, prefix, cmdmap, f, ss, inbl, outbl, on_finish);
     return;
   }
@@ -2610,13 +2612,12 @@ void OSD::asok_command(
     f->close_section();
   } else if (prefix == "flush_journal") {
     store->flush_journal();
-  } else if (prefix == "dump_ops_in_flight" ||
-             prefix == "ops" ||
-             prefix == "dump_blocked_ops" ||
-             prefix == "dump_blocked_ops_count" ||
-             prefix == "dump_historic_ops" ||
-             prefix == "dump_historic_ops_by_duration" ||
-             prefix == "dump_historic_slow_ops") {
+  } else if (
+      prefix == "dump_ops_in_flight" || prefix == "ops" ||
+      prefix == "dump_blocked_ops" || prefix == "dump_blocked_ops_count" ||
+      prefix == "dump_historic_ops" ||
+      prefix == "dump_historic_ops_by_duration" ||
+      prefix == "dump_historic_slow_ops") {
 
     const string error_str = "op_tracker tracking is not enabled now, so no ops are tracked currently, \
 even those get stuck. Please enable \"osd_enable_op_tracker\", and the tracker \
@@ -4197,12 +4198,33 @@ void OSD::final_init()
     "Scrub purged_snaps vs snapmapper index");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
-    "scrubdebug "						\
-    "name=pgid,type=CephPgid "	                                \
-    "name=cmd,type=CephChoices,strings=block|unblock|set|unset " \
+    "scrubdebug "
+    "name=pgid,type=CephPgid "
+    "name=cmd,type=CephChoices,strings=block|unblock"
+    "|sessions "
     "name=value,type=CephString,req=false",
     asok_hook,
-    "debug the scrubber");
+    "debug the scrubber - legacy form");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "scrubdebug_set "
+    "name=pgid,type=CephPgid "
+    "name=cmd,type=CephChoices,strings=block"
+    "|repdelay|repdeny|sessions "
+    "name=value,type=CephString,req=false "
+    "name=arg1,type=CephString,req=false",
+    asok_hook,
+    "debug the scrubber - setting an option");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "scrubdebug_clr "
+    "name=pgid,type=CephPgid "
+    "name=cmd,type=CephChoices,strings=block|"
+    "sessions "
+    "name=value,type=CephString,req=false "
+    "name=arg1,type=CephString,req=false",
+    asok_hook,
+    "debug the scrubber - clearing an option");
   ceph_assert(r == 0);
 
   // -- pg commands --
