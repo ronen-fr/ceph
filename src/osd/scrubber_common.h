@@ -415,8 +415,33 @@ struct ScrubPgIF {
 
   // --------------- debugging via the asok ------------------------------
 
-  virtual int asok_debug(std::string_view cmd,
-			 std::string param,
-			 Formatter* f,
-			 std::stringstream& ss) = 0;
+  virtual int asok_debug(
+      Formatter* f,
+      std::string_view prefix,
+      std::string_view cmd,
+      std::string_view param,
+      std::string_view val) = 0;
 };
+
+
+// compile-time hashing of strings for fast compare
+constexpr inline uint32_t cx_hash(std::string_view str )
+{
+    uint32_t hash = 0;
+    for (auto c : str)
+    {
+        hash += c;
+        hash += (hash << 10);
+        hash ^= (hash >> 6);
+    }
+
+    hash += (hash << 3);
+    hash ^= (hash >> 11);
+    hash += (hash << 15);
+
+    return hash;
+}
+
+constexpr unsigned operator ""_xhash(const char* s, size_t) {
+    return cx_hash(s);
+}
