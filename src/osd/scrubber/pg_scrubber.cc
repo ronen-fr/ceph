@@ -2426,44 +2426,93 @@ ostream& PgScrubber::show(ostream& out) const
   return out << " [ " << m_pg_id << ": " << m_flags << " ] ";
 }
 
-int PgScrubber::asok_debug(std::string_view cmd,
-			   std::string param,
-			   Formatter* f,
-			   stringstream& ss)
+
+std::optional<std::string> PgScrubber::asok_debug(Formatter *f,
+    std::string_view cmd,
+    std::string_view param,
+    std::string_view val)
 {
-  dout(10) << __func__ << " cmd: " << cmd << " param: " << param << dendl;
+  dout(10) << fmt::format(
+		  "asok_debug: cmd={}, param={}, val={}", cmd, param, val)
+	   << dendl;
 
-  if (cmd == "block") {
-    // 'm_debug_blockrange' causes the next 'select_range' to report a blocked
-    // object
-    m_debug_blockrange = 10;  // >1, so that will trigger fast state reports
+  auto cmd_hash = cx_hash(cmd);
+  auto param_hash = cx_hash(param);
 
-  } else if (cmd == "unblock") {
-    // send an 'unblock' event, as if a blocked range was freed
-    m_debug_blockrange = 0;
-    m_fsm->process_event(Unblocked{});
-
-  } else if ((cmd == "set") || (cmd == "unset")) {
-
-    if (param == "sessions") {
-      // set/reset the inclusion of the scrub sessions counter in 'query' output
-      m_publish_sessions = (cmd == "set");
-
-    } else if (param == "block") {
-      if (cmd == "set") {
-	// set a flag that will cause the next 'select_range' to report a
-	// blocked object
-	m_debug_blockrange = 10;  // >1, so that will trigger fast state reports
-      } else {
-	// send an 'unblock' event, as if a blocked range was freed
-	m_debug_blockrange = 0;
-	m_fsm->process_event(Unblocked{});
-      }
+  for (auto& e : PgScrubber::asok_dispatch_tbl) {
+    if (e.cmd_hash != cmd_hash) {
+      continue;
     }
+    if (e.param_hash && e.param_hash != param_hash) {
+      continue;
+    }
+    return (this->*(e.fn))(f, cmd, param, val);
   }
-
-  return 0;
+  return "unknown command";
 }
+
+std::optional<std::string> PgScrubber::dbg_block_range(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view cmd,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value)
+{
+  // 'm_debug_blockrange' causes the next 'select_range' to report a blocked
+  // object
+  m_debug_blockrange = 10;  // >1, so that will trigger fast state reports
+  return "blocking scrub range";
+}
+
+std::optional<std::string> PgScrubber::dbg_unblock_range(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view cmd,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value)
+{
+  m_debug_blockrange = 0;  // >1, so that will trigger fast state reports
+  m_fsm->process_event(Unblocked{});
+  return "scrub range unblocked";
+}
+
+std::optional<std::string> PgScrubber::dbg_set_sessions(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view cmd,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value)
+{
+  m_publish_sessions = true;
+  return "ok";
+}
+
+std::optional<std::string> PgScrubber::dbg_clear_sessions(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view cmd,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value)
+{
+  m_publish_sessions = false;
+  return "ok";
+}
+
+/// \todo add timeout value
+std::optional<std::string> PgScrubber::dbg_reserv_delay(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view cmd,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value)
+{
+  return "not yet";
+}
+
+std::optional<std::string> PgScrubber::dbg_reserv_deny(
+    [[maybe_unused]] Formatter* f,
+    [[maybe_unused]] std::string_view cmd,
+    [[maybe_unused]] std::string_view param,
+    [[maybe_unused]] std::string_view value)
+{
+  return "not yet";
+}
+
 
 /*
  * Note: under PG lock

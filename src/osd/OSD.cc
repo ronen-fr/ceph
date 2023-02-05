@@ -4197,9 +4197,10 @@ void OSD::final_init()
     "Scrub purged_snaps vs snapmapper index");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
-    "scrubdebug "						\
-    "name=pgid,type=CephPgid "	                                \
-    "name=cmd,type=CephChoices,strings=block|unblock|set|unset " \
+    "scrubdebug "
+    "name=pgid,type=CephPgid "
+    "name=cmd,type=CephChoices,strings=block|unblock|set"
+    "|unset|repdelay|repdeny "
     "name=value,type=CephString,req=false",
     asok_hook,
     "debug the scrubber");

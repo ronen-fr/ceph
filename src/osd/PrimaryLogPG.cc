@@ -994,7 +994,7 @@ PrimaryLogPG::get_pgls_filter(bufferlist::const_iterator& iter)
 // ==========================================================
 
 void PrimaryLogPG::do_command(
-  const string_view& orig_prefix,
+  string_view orig_prefix,
   const cmdmap_t& cmdmap,
   const bufferlist& idata,
   std::function<void(int,const std::string&,bufferlist&)> on_finish)
@@ -1194,21 +1194,18 @@ void PrimaryLogPG::do_command(
     outbl.append(ss.str());
   }
 
-  else if (prefix == "block" || prefix == "unblock" || prefix == "set" ||
-           prefix == "unset") {
+  else if (orig_prefix == "scrubdebug" ||
+      prefix == "block" || prefix == "unblock" || prefix == "set" ||
+      prefix == "unset" || prefix == "repdeny" || prefix == "repdelay") {
     string value;
     cmd_getval(cmdmap, "value", value);
-
-    if (is_primary()) {
-      ret = m_scrubber->asok_debug(prefix, value, f.get(), ss);
-      f->open_object_section("result");
-      f->dump_bool("success", true);
-      f->close_section();
+    auto maybe_ret_text = do_scrub_debug(f.get(), orig_prefix, prefix, value);
+    if (maybe_ret_text) {
+      outbl.append(*maybe_ret_text);
+      ret = 0;
     } else {
-      ss << "Not primary";
-      ret = -EPERM;
+      ret = -EINVAL;
     }
-    outbl.append(ss.str());
   }
   else {
     ret = -ENOSYS;
@@ -1220,6 +1217,29 @@ void PrimaryLogPG::do_command(
     f->flush(outbl);
   }
   on_finish(ret, ss.str(), outbl);
+}
+
+std::optional<std::string> PrimaryLogPG::do_scrub_debug(
+    Formatter *f,
+    std::string_view prefix,
+    std::string_view cmd,
+    std::string_view val)
+{
+  dout(20) << fmt::format("do_scrub_debug: {} / {} / {}", prefix, cmd, val)
+	   << dendl;
+  if (!m_scrubber) {
+    return "do_scrub_debug: no scrubber object";
+  }
+
+  auto maybe_ret_text = m_scrubber->asok_debug(f, prefix, cmd, val);
+  f->open_object_section("result");
+
+  if (maybe_ret_text) {
+    f->dump_string("result", *maybe_ret_text);
+  }
+  f->dump_bool("success", true);
+  f->close_section();
+  return maybe_ret_text;
 }
 
 
