@@ -828,7 +828,7 @@ class PgScrubber : public ScrubPgIF,
     no_error_injection,
     drop_reservation,
     pre_reservation_delay,
-    post_reservation_delay
+    post_reservation_delay /// \todo not implemented
   };
   struct InjectedReservationErr {
     ReservationErr response{ReservationErr::no_error_injection};
@@ -844,6 +844,16 @@ class PgScrubber : public ScrubPgIF,
    */
   InjectedReservationErr should_inject_reservation_err(int num_replicas);
   InjectedReservationErr debug_inject_reservation_err{};
+
+  Context* m_debug_reservation_cb{nullptr};
+
+  void reserve_at_remote_request(
+      const Message::ConnectionFRef& conn,
+      epoch_t request_ep,
+      Scrub::act_token_t token,
+      bool not_prohibited,
+      bool was_debug_delayed,
+      ReservationErr delay_type);
 
  protected:
   PG* const m_pg;
