@@ -2645,11 +2645,8 @@ void OSD::asok_command(
       ss << "i don't have pgid " << pgid;
       ret = -ENOENT;
     }
-  }
-
-  // --- PG commands that will be answered even if !primary ---
-
-  else if (prefix == "scrubdebug") {
+  } else if (prefix.starts_with("scrubdebug")) {
+    // --- PG commands that will be answered even if !primary ---
     asok_route_to_pg(false, prefix, cmdmap, f, ss, inbl, outbl, on_finish);
     return;
   }
@@ -4256,12 +4253,33 @@ void OSD::final_init()
     "Scrub purged_snaps vs snapmapper index");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
-    "scrubdebug "						\
-    "name=pgid,type=CephPgid "	                                \
-    "name=cmd,type=CephChoices,strings=block|unblock|set|unset " \
+    "scrubdebug "
+    "name=pgid,type=CephPgid "
+    "name=cmd,type=CephChoices,strings=block|unblock"
+    "|sessions "
     "name=value,type=CephString,req=false",
     asok_hook,
-    "debug the scrubber");
+    "debug the scrubber - legacy form");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "scrubdebug_set "
+    "name=pgid,type=CephPgid "
+    "name=cmd,type=CephChoices,strings=block"
+    "|repdelay|repdeny|sessions "
+    "name=value,type=CephString,req=false "
+    "name=arg1,type=CephString,req=false",
+    asok_hook,
+    "debug the scrubber - setting an option");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "scrubdebug_clr "
+    "name=pgid,type=CephPgid "
+    "name=cmd,type=CephChoices,strings=block|"
+    "sessions "
+    "name=value,type=CephString,req=false "
+    "name=arg1,type=CephString,req=false",
+    asok_hook,
+    "debug the scrubber - clearing an option");
   ceph_assert(r == 0);
 
   // -- pg commands --
