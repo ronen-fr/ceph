@@ -1585,15 +1585,65 @@ void PgScrubber::map_from_replica(OpRequestRef op)
   }
 }
 
+// separated from handle_scrub_reserve_request() to allow testing
+// with injected delays
+void PgScrubber::reserve_at_remote_request(
+    const Message::ConnectionFRef& conn,
+    epoch_t request_ep,
+    Scrub::act_token_t token,
+    bool not_prohibited,
+    bool was_debug_delayed,
+    ReservationErr delay_type)
+{
+  dout(20) << fmt::format(
+		  "{}: {} call with ep:{} token:{}", __func__,
+		  was_debug_delayed ? "delayed" : "immediate", request_ep,
+		  token)
+	   << dendl;
+  // if delayed as part of a debug session: verify that nothing has changed
+  if (was_debug_delayed) {
+    ;
+  }
+
+  // try to reserve. All other checks already performed by the caller
+  m_remote_osd_resource.emplace(this, m_pg, m_osds, request_ep);
+
+  bool granted;
+  if (not_prohibited) {
+
+    // OSD resources allocated?
+    granted = m_remote_osd_resource->is_reserved();
+    if (!granted) {
+      // just forget it
+      m_remote_osd_resource.reset();
+      dout(20) << fmt::format(
+		      "{}: failed to reserve remotely (ep:{} token:{})",
+		      __func__, request_ep, token)
+	       << dendl;
+    }
+  } else {
+    granted = false;
+  }
+
+  Message* reply = new MOSDScrubReserve(
+      spg_t(m_pg->info.pgid.pgid, m_pg->get_primary().shard), request_ep,
+      granted ? MOSDScrubReserve::GRANT : MOSDScrubReserve::REJECT,
+      m_pg_whoami);
+  m_osds->send_message_osd_cluster(reply, conn);
+  dout(10) << fmt::format(
+		  "{}: reserved? {}", __func__, (granted ? "yes" : "no"))
+	   << dendl;
+}
+
+
 void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
 {
   dout(10) << __func__ << " " << *op->get_req() << dendl;
   op->mark_started();
   auto request_ep = op->get_req<MOSDScrubReserve>()->get_map_epoch();
-  dout(20) << fmt::format("{}: request_ep:{} recovery:{}",
-			  __func__,
-			  request_ep,
-			  m_osds->is_recovery_active())
+  dout(20) << fmt::format(
+		  "{}: request_ep:{} recovery:{}", __func__, request_ep,
+		  m_osds->is_recovery_active())
 	   << dendl;
 
   /*
@@ -1622,17 +1672,16 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
 
   if (request_ep < m_pg->get_same_interval_since()) {
     // will not ack stale requests
-    dout(10) << fmt::format("{}: stale reservation (request ep{} < {}) denied",
-			    __func__,
-			    request_ep,
-			    m_pg->get_same_interval_since())
+    dout(10) << fmt::format(
+		    "{}: stale reservation (request ep{} < {}) denied",
+		    __func__, request_ep, m_pg->get_same_interval_since())
 	     << dendl;
     return;
   }
 
+  InjectedReservationErr injected_dbg;	// initialized to 'none'
   bool granted{false};
   if (m_remote_osd_resource.has_value()) {
-
     dout(10) << __func__ << " already reserved. Reassigned." << dendl;
 
     /*
@@ -1646,30 +1695,73 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
     advance_token();
     granted = true;
 
-  } else if (m_pg->cct->_conf->osd_scrub_during_recovery ||
-	     !m_osds->is_recovery_active()) {
-    m_remote_osd_resource.emplace(this, m_pg, m_osds, request_ep);
-    // OSD resources allocated?
-    granted = m_remote_osd_resource->is_reserved();
-    if (!granted) {
-      // just forget it
-      m_remote_osd_resource.reset();
-      dout(20) << __func__ << ": failed to reserve remotely" << dendl;
-    }
-  } else {
+  } else if (
+      m_osds->is_recovery_active() &&
+      !m_pg->cct->_conf->osd_scrub_during_recovery) {
+
     dout(10) << __func__ << ": recovery is active; not granting" << dendl;
+  } else {
+
+    // should we inject an error here? or a delay in answering?
+    injected_dbg = should_inject_reservation_err(
+	static_cast<int>(m_pg->get_actingset().size()) - 1);
+    if (injected_dbg.response == ReservationErr::drop_reservation) {
+      dout(5) << __func__ << " debug-dropping the reservation request" << dendl;
+      return;  // note: without sending a reply. Debug only!
+    }
+    granted = true;
   }
 
-  dout(10) << __func__ << " reserved? " << (granted ? "yes" : "no") << dendl;
+  switch (injected_dbg.response) {
 
-  Message* reply = new MOSDScrubReserve(
-    spg_t(m_pg->info.pgid.pgid, m_pg->get_primary().shard),
-    request_ep,
-    granted ? MOSDScrubReserve::GRANT : MOSDScrubReserve::REJECT,
-    m_pg_whoami);
+    case ReservationErr::drop_reservation:
+      // already handled
+      break;
+    case ReservationErr::no_error_injection:
+      // and the TBD post-delay:
+    case ReservationErr::post_reservation_delay:
+      // send an immediate reply
+      reserve_at_remote_request(
+	  op->get_req()->get_connection(), request_ep, m_current_token, granted,
+	  false, ReservationErr::no_error_injection);
+      break;
 
-  m_osds->send_message_osd_cluster(reply, op->get_req()->get_connection());
+    case ReservationErr::pre_reservation_delay:
+      // send a delayed reply
+      dout(1) << fmt::format(
+		     "{}: injecting {} delay in replica-reservation reply",
+		     __func__, injected_dbg.delay.count())
+	      << dendl;
+
+      m_debug_reservation_cb = new LambdaContext(
+	  [this, granted, request_ep, injected_dbg, tkn = m_current_token,
+	   conn = op->get_req()->get_connection(), pgid = m_pg_id,
+	   osds = m_osds]([[maybe_unused]] int r) {
+	    lgeneric_subdout(g_ceph_context, osd, 1)
+		<< fmt::format(
+		       "handle_scrub_reserve_request: pg[{}] executing the "
+		       "debug-delayed reservation ack",
+		       pgid)
+		<< dendl;
+	    PGRef pg = osds->osd->lookup_lock_pg(pgid);
+	    if (!pg) {
+	      lgeneric_subdout(g_ceph_context, osd, 10)
+		  << "handle_scrub_reserve_request: Could not find PG " << pgid
+		  << dendl;
+	      return;
+	    }
+	    reserve_at_remote_request(
+		conn, request_ep, tkn, granted, true, injected_dbg.response);
+	    pg->unlock();
+	  });
+
+      std::lock_guard l(m_osds->sleep_lock);
+      m_debug_reservation_cb = m_osds->sleep_timer.add_event_after(
+	  injected_dbg.delay, m_debug_reservation_cb);
+      break;
+  }
 }
+
 
 void PgScrubber::handle_scrub_reserve_grant(OpRequestRef op, pg_shard_t from)
 {
