@@ -824,6 +824,27 @@ class PgScrubber : public ScrubPgIF,
 
   };
 
+  enum class ReservationErr {
+    no_error_injection,
+    drop_reservation,
+    pre_reservation_delay,
+    post_reservation_delay
+  };
+  struct InjectedReservationErr {
+    ReservationErr response{ReservationErr::no_error_injection};
+    std::chrono::milliseconds delay;
+  };
+
+  /**
+   *  Supports error injection for reservation requests. A decision is made
+   *  based on relevant debug configuration options, and on direct requests
+   *  made via the asok.
+   *
+   *  \returns the error injection parameters, if any
+   */
+  InjectedReservationErr should_inject_reservation_err(int num_replicas);
+  InjectedReservationErr debug_inject_reservation_err{};
+
  protected:
   PG* const m_pg;
 
