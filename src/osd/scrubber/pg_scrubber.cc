@@ -2525,25 +2525,86 @@ int PgScrubber::dbg_clear_sessions(
   return 0;
 }
 
-/// \todo add timeout value
-std::optional<std::string> PgScrubber::dbg_reserv_delay(
+int PgScrubber::dbg_reserv_delay(
     [[maybe_unused]] Formatter* f,
-    [[maybe_unused]] std::string_view cmd,
     [[maybe_unused]] std::string_view param,
-    [[maybe_unused]] std::string_view value)
+    [[maybe_unused]] std::string_view value,
+    [[maybe_unused]] int gen_param)
 {
-  return "not yet";
+  milliseconds delay{4s};
+  if (!value.empty()) {
+    try {
+      delay = milliseconds{std::stol(std::string{value})};
+    } catch (const std::invalid_argument& e) {
+      f->dump_string("error", fmt::format("invalid delay value: {}", e.what()));
+      return -EINVAL;
+    }
+  }
+  debug_inject_reservation_err.delay = delay;
+  debug_inject_reservation_err.response =
+      ReservationErr::post_reservation_delay;
+  f->dump_string(
+      "op",
+      fmt::format("delaying next reservation request by {}ms", delay.count()));
+  return 0;
 }
 
-std::optional<std::string> PgScrubber::dbg_reserv_deny(
+int PgScrubber::dbg_reserv_deny(
     [[maybe_unused]] Formatter* f,
-    [[maybe_unused]] std::string_view cmd,
     [[maybe_unused]] std::string_view param,
-    [[maybe_unused]] std::string_view value)
+    [[maybe_unused]] std::string_view value,
+    [[maybe_unused]] int gen_param)
 {
-  return "not yet";
+  debug_inject_reservation_err.response = ReservationErr::drop_reservation;
+  f->dump_string("op", "dropping next reservation request");
+  return 0;
 }
 
+PgScrubber::InjectedReservationErr PgScrubber::should_inject_reservation_err(
+    int num_replicas)
+{
+  // do we already have debug flags set (by a direct asok command)?
+  if (debug_inject_reservation_err.response !=
+      ReservationErr::no_error_injection) {
+    // the debug flags are already set for this request. Clear them and return
+    auto this_run = debug_inject_reservation_err;
+    debug_inject_reservation_err = {};
+    return this_run;
+  }
+
+  // only call the random generator if we have a chance to inject an error
+  auto drop_probability = get_pg_cct()->_conf.get_val<double>(
+			      "osd_debug_scrub_reserve_drop_probability") /
+			  num_replicas;
+  auto delay_probability = get_pg_cct()->_conf.get_val<double>(
+			       "osd_debug_scrub_reserve_delay_probability") /
+			   num_replicas;
+  if (drop_probability <= 0.0001f && delay_probability <= 0.0001f) {
+    return {ReservationErr::no_error_injection, 0s};
+  }
+
+  auto rnd = std::rand() % 10'000;
+  if (rnd < drop_probability * 10'000) {
+    return {ReservationErr::drop_reservation, 0s};
+  }
+  if (rnd < delay_probability * 10'000) {
+    // we should be delaying for a random amount of time in the range
+    // osd_scrub_slow_reservation_response..osd_scrub_reservation_timeout
+    rnd /= 100;
+    auto slow_rep = get_pg_cct()->_conf.get_val<std::chrono::milliseconds>(
+	"osd_scrub_slow_reservation_response");
+    auto timeout = get_pg_cct()->_conf.get_val<std::chrono::milliseconds>(
+	"osd_scrub_reservation_timeout");
+    auto calc_delay = slow_rep + rnd * (timeout - slow_rep) / 100;
+
+    // should the delay before the replica reserves the scrub resources?
+    if (rnd & 0x01) {
+      return {ReservationErr::pre_reservation_delay, calc_delay};
+    }
+    return {ReservationErr::post_reservation_delay, calc_delay};
+  }
+  return {ReservationErr::no_error_injection, 0s};
+}
 
 /*
  * Note: under PG lock
