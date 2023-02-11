@@ -790,20 +790,19 @@ Scrub::BlockedRangeWarning PgScrubber::acquire_blocked_alarm()
   int grace = get_pg_cct()->_conf->osd_blocked_scrub_grace_period;
   if (grace == 0) {
     // we will not be sending any alarms re the blocked object
-    dout(10)
-      << __func__
-      << ": blocked-alarm disabled ('osd_blocked_scrub_grace_period' set to 0)"
-      << dendl;
+    dout(10) << __func__
+	     << ": blocked-alarm disabled ('osd_blocked_scrub_grace_period' "
+		"set to 0)"
+	     << dendl;
     return nullptr;
   }
   ceph::timespan grace_period{m_debug_blockrange ? 4s : seconds{grace}};
-  dout(20) << fmt::format(": timeout:{}",
-			  std::chrono::duration_cast<seconds>(grace_period))
+  dout(20) << fmt::format(
+		  ": timeout:{}",
+		  std::chrono::duration_cast<seconds>(grace_period))
 	   << dendl;
-  return std::make_unique<blocked_range_t>(m_osds,
-					   grace_period,
-					   *this,
-					   m_pg_id);
+  return std::make_unique<blocked_range_t>(
+      m_pg, m_osds, grace_period, *this, m_epoch_start, m_pg_id);
 }
 
 /**
@@ -1367,6 +1366,8 @@ void PgScrubber::maps_compare_n_cleanup()
 
   m_start = m_end;
   run_callbacks();
+
+  // requeue the writes from the chunk that just finished
   requeue_waiting();
   m_osds->queue_scrub_maps_compared(m_pg, Scrub::scrub_prio_t::low_priority);
 }
@@ -1790,23 +1791,24 @@ bool PgScrubber::is_queued_or_active() const
 void PgScrubber::set_scrub_blocked(utime_t since)
 {
   ceph_assert(!m_scrub_job->blocked);
-  // we are called from a time-triggered lambda,
-  // thus - not under PG-lock
-  PGRef pg = m_osds->osd->lookup_lock_pg(m_pg_id);
-  ceph_assert(pg); // 'this' here should not exist if the PG was removed
+
+  // note: the PG is locked by the caller
   m_osds->get_scrub_services().mark_pg_scrub_blocked(m_pg_id);
   m_scrub_job->blocked_since = since;
   m_scrub_job->blocked = true;
+  // caller has verified that the PG was not reset
   m_pg->publish_stats_to_osd();
-  pg->unlock();
 }
 
 void PgScrubber::clear_scrub_blocked()
 {
+  ceph_assert(m_pg->is_locked());
   ceph_assert(m_scrub_job->blocked);
   m_osds->get_scrub_services().clear_pg_scrub_blocked(m_pg_id);
   m_scrub_job->blocked = false;
-  m_pg->publish_stats_to_osd();
+  if (m_pg->is_primary() && m_pg->is_active()) {
+    m_pg->publish_stats_to_osd();
+  }
 }
 
 /*
@@ -2277,11 +2279,8 @@ void PgScrubber::cleanup_on_finish()
 
   state_clear(PG_STATE_SCRUBBING);
   state_clear(PG_STATE_DEEP_SCRUB);
-  m_pg->publish_stats_to_osd();
 
   clear_scrub_reservations();
-  m_pg->publish_stats_to_osd();
-
   requeue_waiting();
 
   reset_internal_state();
@@ -2299,6 +2298,7 @@ void PgScrubber::scrub_clear_state()
 
   clear_pgscrub_state();
   m_fsm->process_event(FullReset{});
+  m_pg->publish_stats_to_osd();
 }
 
 /*
@@ -2315,8 +2315,6 @@ void PgScrubber::clear_pgscrub_state()
   state_clear(PG_STATE_REPAIR);
 
   clear_scrub_reservations();
-  m_pg->publish_stats_to_osd();
-
   requeue_waiting();
 
   reset_internal_state();
@@ -2324,7 +2322,6 @@ void PgScrubber::clear_pgscrub_state()
 
   // type-specific state clear
   _scrub_clear_state();
-  m_pg->publish_stats_to_osd();
 }
 
 void PgScrubber::replica_handling_done()
@@ -2907,43 +2904,85 @@ ostream& operator<<(ostream& out, const MapsCollectionStatus& sf)
 
 // ///////////////////// blocked_range_t ///////////////////////////////
 
-blocked_range_t::blocked_range_t(OSDService* osds,
-				 ceph::timespan waittime,
-				 ScrubMachineListener& scrubber,
-				 spg_t pg_id)
-    : m_osds{osds}
+blocked_range_t::blocked_range_t(
+    PGRef pg,
+    OSDService* osds,
+    ceph::timespan waittime,
+    ScrubMachineListener& scrubber,
+    epoch_t epoch,
+    spg_t pg_id)
+    : m_pg{pg}
+    , m_osds{osds}
     , m_scrubber{scrubber}
+    , m_epoch{epoch}
     , m_pgid{pg_id}
 {
   auto now_is = std::chrono::system_clock::now();
-  m_callbk = new LambdaContext([this, now_is]([[maybe_unused]] int r) {
-    std::time_t now_c = std::chrono::system_clock::to_time_t(now_is);
-    char buf[50];
-    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&now_c));
-    lgeneric_subdout(g_ceph_context, osd, 10)
-      << "PgScrubber: " << m_pgid
-      << " blocked on an object for too long (since " << buf << ")" << dendl;
-    m_osds->clog->warn() << "osd." << m_osds->whoami
-			 << " PgScrubber: " << m_pgid
-			 << " blocked on an object for too long (since " << buf
-			 << ")";
+  m_callbk = new LambdaContext([=, this]([[maybe_unused]] int r) {
+    if (m_was_deleted) {
+      return;
+    }
+    pg->lock();
+    if (!pg->pg_has_reset_since(epoch)) {
+      std::time_t now_c = std::chrono::system_clock::to_time_t(now_is);
+      char buf[50];
+      strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&now_c));
+      lgeneric_subdout(g_ceph_context, osd, 10)
+	  << "PgScrubber: " << m_pgid
+	  << " blocked on an object for too long (since " << buf << ")"
+	  << dendl;
+      m_osds->clog->warn() << "osd." << m_osds->whoami
+			   << " PgScrubber: " << m_pgid
+			   << " blocked on an object for too long (since "
+			   << buf << ")";
 
-    m_warning_issued = true;
-    m_scrubber.set_scrub_blocked(utime_t{now_c,0});
+      m_warning_issued = true;
+      m_scrubber.set_scrub_blocked(utime_t{now_c, 0});
+    }
+    pg->unlock();
     return;
   });
 
   std::lock_guard l(m_osds->sleep_lock);
-  m_osds->sleep_timer.add_event_after(waittime, m_callbk);
+  m_callbk = m_osds->sleep_timer.add_event_after(waittime, m_callbk);
 }
 
+/**
+ * \attn must hold the PG lock
+ * \attn must *not* be holding the sleep_lock
+ */
+void blocked_range_t::cancel_future_alarm()
+{
+  if (!m_callbk) {
+    return;
+  }
+  if (m_warning_issued) {
+    // too late. The dtor will clear the OSD-wide flag
+    return;
+  }
+  std::lock_guard l(m_osds->sleep_lock);
+  if (m_callbk) {
+    m_osds->sleep_timer.cancel_event(m_callbk);
+    m_callbk = nullptr;
+  }
+  // we could call m_pg.reset() here (the PGRef is not needed anymore),
+  // but - as we know that the RangeBlocked state is exiting - there is
+  // no need.
+}
+
+/*
+ * we are only discarded when the RangeBlocked state is exited. Which means
+ * that we are under the PG lock.
+ */
 blocked_range_t::~blocked_range_t()
 {
+  if (!m_callbk) {
+    return;
+  }
+  m_was_deleted = true;	 // instead of accessing the sleep_timer
   if (m_warning_issued) {
     m_scrubber.clear_scrub_blocked();
   }
-  std::lock_guard l(m_osds->sleep_lock);
-  m_osds->sleep_timer.cancel_event(m_callbk);
 }
 
 }  // namespace Scrub
