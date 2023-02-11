@@ -1367,6 +1367,8 @@ void PgScrubber::maps_compare_n_cleanup()
 
   m_start = m_end;
   run_callbacks();
+
+  // requeue the writes from the chunk that just finished
   requeue_waiting();
   m_osds->queue_scrub_maps_compared(m_pg, Scrub::scrub_prio_t::low_priority);
 }
@@ -1803,10 +1805,13 @@ void PgScrubber::set_scrub_blocked(utime_t since)
 
 void PgScrubber::clear_scrub_blocked()
 {
+  ceph_assert(m_pg->is_locked());
   ceph_assert(m_scrub_job->blocked);
   m_osds->get_scrub_services().clear_pg_scrub_blocked(m_pg_id);
   m_scrub_job->blocked = false;
-  m_pg->publish_stats_to_osd();
+  if (m_pg->is_primary() && m_pg->is_active()) {
+    m_pg->publish_stats_to_osd();
+  }
 }
 
 /*
@@ -2277,10 +2282,9 @@ void PgScrubber::cleanup_on_finish()
 
   state_clear(PG_STATE_SCRUBBING);
   state_clear(PG_STATE_DEEP_SCRUB);
-  m_pg->publish_stats_to_osd();
 
   clear_scrub_reservations();
-  m_pg->publish_stats_to_osd();
+  //m_pg->publish_stats_to_osd();
 
   requeue_waiting();
 
@@ -2299,6 +2303,7 @@ void PgScrubber::scrub_clear_state()
 
   clear_pgscrub_state();
   m_fsm->process_event(FullReset{});
+  m_pg->publish_stats_to_osd();
 }
 
 /*
@@ -2315,8 +2320,10 @@ void PgScrubber::clear_pgscrub_state()
   state_clear(PG_STATE_REPAIR);
 
   clear_scrub_reservations();
-  m_pg->publish_stats_to_osd();
+  //m_pg->publish_stats_to_osd();
 
+  // shouldn't the order be: reset_internal_state() (which clears the
+  // blocked range), and then requeue_waiting()? RRR
   requeue_waiting();
 
   reset_internal_state();
@@ -2324,7 +2331,7 @@ void PgScrubber::clear_pgscrub_state()
 
   // type-specific state clear
   _scrub_clear_state();
-  m_pg->publish_stats_to_osd();
+  //m_pg->publish_stats_to_osd();
 }
 
 void PgScrubber::replica_handling_done()
@@ -2934,16 +2941,31 @@ blocked_range_t::blocked_range_t(OSDService* osds,
   });
 
   std::lock_guard l(m_osds->sleep_lock);
-  m_osds->sleep_timer.add_event_after(waittime, m_callbk);
+  m_callbk = m_osds->sleep_timer.add_event_after(waittime, m_callbk);
 }
 
 blocked_range_t::~blocked_range_t()
 {
-  if (m_warning_issued) {
-    m_scrubber.clear_scrub_blocked();
+  // a note re lifetimes:
+  // - we know that the Scrubber object is still alive, as it owns the FSM
+  //   that owns this object;
+  // - thus - we know that the PG object is still alive, as it owns the
+  //   Scrubber.
+  // But we do not know if the PG is still the active primary.
+
+  if (!m_callbk) {
+    return;
   }
   std::lock_guard l(m_osds->sleep_lock);
-  m_osds->sleep_timer.cancel_event(m_callbk);
+  if (m_warning_issued) {
+    PGRef pg = m_osds->osd->lookup_lock_pg(m_pgid);
+    if (pg) {
+      m_scrubber.clear_scrub_blocked();
+      pg->unlock();
+    }
+  } else {
+    m_osds->sleep_timer.cancel_event(m_callbk);
+  }
 }
 
 }  // namespace Scrub
