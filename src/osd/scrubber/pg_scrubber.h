@@ -751,7 +751,7 @@ class PgScrubber : public ScrubPgIF,
 			     // Active->NotActive
 
  protected:
-  PG* const m_pg;
+  PG* /*const*/ m_pg;
 
   /**
    * the derivative-specific scrub-finishing touches:

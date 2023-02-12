@@ -790,20 +790,19 @@ Scrub::BlockedRangeWarning PgScrubber::acquire_blocked_alarm()
   int grace = get_pg_cct()->_conf->osd_blocked_scrub_grace_period;
   if (grace == 0) {
     // we will not be sending any alarms re the blocked object
-    dout(10)
-      << __func__
-      << ": blocked-alarm disabled ('osd_blocked_scrub_grace_period' set to 0)"
-      << dendl;
+    dout(10) << __func__
+	     << ": blocked-alarm disabled ('osd_blocked_scrub_grace_period' "
+		"set to 0)"
+	     << dendl;
     return nullptr;
   }
   ceph::timespan grace_period{m_debug_blockrange ? 4s : seconds{grace}};
-  dout(20) << fmt::format(": timeout:{}",
-			  std::chrono::duration_cast<seconds>(grace_period))
+  dout(20) << fmt::format(
+		  ": timeout:{}",
+		  std::chrono::duration_cast<seconds>(grace_period))
 	   << dendl;
-  return std::make_unique<blocked_range_t>(m_osds,
-					   grace_period,
-					   *this,
-					   m_pg_id);
+  return std::make_unique<blocked_range_t>(
+      m_pg, m_osds, grace_period, *this, m_epoch_start, m_pg_id);
 }
 
 /**
@@ -2914,6 +2913,91 @@ ostream& operator<<(ostream& out, const MapsCollectionStatus& sf)
 
 // ///////////////////// blocked_range_t ///////////////////////////////
 
+blocked_range_t::blocked_range_t(
+    PGRef pg,
+    OSDService* osds,
+    ceph::timespan waittime,
+    ScrubMachineListener& scrubber,
+    epoch_t epoch,
+    spg_t pg_id)
+    : m_pg{pg}
+    , m_osds{osds}
+    , m_scrubber{scrubber}
+    , m_epoch{epoch}
+    , m_pgid{pg_id}
+{
+  auto now_is = std::chrono::system_clock::now();
+  m_callbk =
+      new LambdaContext([=, this]([[maybe_unused]] int r) -> void {
+	if (m_was_deleted) {
+	  return;
+	}
+	pg->lock();
+	if (!pg->pg_has_reset_since(epoch)) {
+	  std::time_t now_c = std::chrono::system_clock::to_time_t(now_is);
+	  char buf[50];
+	  strftime(
+	      buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&now_c));
+	  lgeneric_subdout(g_ceph_context, osd, 10)
+	      << "PgScrubber: " << m_pgid
+	      << " blocked on an object for too long (since " << buf << ")"
+	      << dendl;
+	  m_osds->clog->warn()
+	      << "osd." << m_osds->whoami << " PgScrubber: " << m_pgid
+	      << " blocked on an object for too long (since " << buf << ")";
+
+	  m_warning_issued = true;
+	  m_scrubber.set_scrub_blocked(utime_t{now_c, 0});
+	}
+	pg->unlock();
+	return;
+      });
+
+  std::lock_guard l(m_osds->sleep_lock);
+  m_callbk = m_osds->sleep_timer.add_event_after(waittime, m_callbk);
+}
+
+/**
+ * \attn must hold the PG lock
+ * \attn must *not* be holding the sleep_lock
+ */
+void blocked_range_t::cancel_future_alarm()
+{
+  if (!m_callbk) {
+    return;
+  }
+  if (m_warning_issued) {
+    // too late
+    return;
+  }
+  std::lock_guard l(m_osds->sleep_lock);
+  if (m_callbk) {
+    m_osds->sleep_timer.cancel_event(m_callbk);
+    m_callbk = nullptr;
+  }
+}
+
+blocked_range_t::~blocked_range_t()
+{
+  // a note re lifetimes:
+  // - we know that the Scrubber object is still alive, as it owns the FSM
+  //   that owns this object;
+  // - thus - we know that the PG object is still alive, as it owns the
+  //   Scrubber (but maybe not a primary anymore).
+  if (!m_callbk) {
+    return;
+  }
+  m_was_deleted = true;	 ///< instead of accessing the sleep_timer
+  if (m_warning_issued) {
+    m_pg->lock();
+    if (!m_pg->pg_has_reset_since(m_epoch)) {
+      m_scrubber.clear_scrub_blocked();
+    }
+    m_pg->unlock();
+  }
+}
+
+#if 0
 blocked_range_t::blocked_range_t(OSDService* osds,
 				 ceph::timespan waittime,
 				 ScrubMachineListener& scrubber,
@@ -2967,5 +3051,6 @@ blocked_range_t::~blocked_range_t()
     m_osds->sleep_timer.cancel_event(m_callbk);
   }
 }
+#endif
 
 }  // namespace Scrub
