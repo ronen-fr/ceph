@@ -1791,16 +1791,28 @@ bool PgScrubber::is_queued_or_active() const
 void PgScrubber::set_scrub_blocked(utime_t since)
 {
   ceph_assert(!m_scrub_job->blocked);
-  // we are called from a time-triggered lambda,
-  // thus - not under PG-lock
-  PGRef pg = m_osds->osd->lookup_lock_pg(m_pg_id);
-  ceph_assert(pg); // 'this' here should not exist if the PG was removed
+
+  // note: the PG is locked by the caller
   m_osds->get_scrub_services().mark_pg_scrub_blocked(m_pg_id);
   m_scrub_job->blocked_since = since;
   m_scrub_job->blocked = true;
+  // caller has verified that the PG was not reset
   m_pg->publish_stats_to_osd();
-  pg->unlock();
 }
+
+// void PgScrubber::set_scrub_blocked(utime_t since)
+// {
+//   ceph_assert(!m_scrub_job->blocked);
+//   // we are called from a time-triggered lambda,
+//   // thus - not under PG-lock
+//   PGRef pg = m_osds->osd->lookup_lock_pg(m_pg_id);
+//   ceph_assert(pg); // 'this' here should not exist if the PG was removed
+//   m_osds->get_scrub_services().mark_pg_scrub_blocked(m_pg_id);
+//   m_scrub_job->blocked_since = since;
+//   m_scrub_job->blocked = true;
+//   m_pg->publish_stats_to_osd();
+//   pg->unlock();
+// }
 
 void PgScrubber::clear_scrub_blocked()
 {
@@ -2968,6 +2980,7 @@ void blocked_range_t::cancel_future_alarm()
   }
   if (m_warning_issued) {
     // too late
+    //m_scrubber.clear_scrub_blocked();
     return;
   }
   std::lock_guard l(m_osds->sleep_lock);
@@ -2975,8 +2988,15 @@ void blocked_range_t::cancel_future_alarm()
     m_osds->sleep_timer.cancel_event(m_callbk);
     m_callbk = nullptr;
   }
+
+  // and we will never need the PG reference again
+  m_pg.reset();
 }
 
+/*
+ * we are only discarded when the RangeBlocked state is exited. Which means
+ * that we are under the PG lock.
+ */
 blocked_range_t::~blocked_range_t()
 {
   // a note re lifetimes:
@@ -2989,11 +3009,11 @@ blocked_range_t::~blocked_range_t()
   }
   m_was_deleted = true;	 ///< instead of accessing the sleep_timer
   if (m_warning_issued) {
-    m_pg->lock();
-    if (!m_pg->pg_has_reset_since(m_epoch)) {
+    //m_pg->lock();
+    //if (!m_pg->pg_has_reset_since(m_epoch)) {
       m_scrubber.clear_scrub_blocked();
-    }
-    m_pg->unlock();
+    //}
+    //m_pg->unlock();
   }
 }
 

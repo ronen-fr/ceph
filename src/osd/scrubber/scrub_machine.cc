@@ -218,7 +218,9 @@ sc::result RangeBlocked::react(const Unblocked&)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "RangeBlocked::react(const Unblocked&)" << dendl;
 
-  m_timeout->cancel_future_alarm();
+  if (m_timeout) {
+    m_timeout->cancel_future_alarm();
+  }
   return transit<PendingTimer>();
 }
 
