@@ -68,6 +68,16 @@ void PGScrubAfterRepair::run(OSD* osd,
   pg->unlock();
 }
 
+void PGScrubTryInitiating::run(
+    [[maybe_unused]] OSD* osd,
+    [[maybe_unused]] OSDShard* sdata,
+    PGRef& pg,
+    [[maybe_unused]] ThreadPool::TPHandle& handle)
+{
+  pg->start_scrubbing(m_level, m_token, m_env_conditions);
+  pg->unlock();
+}
+
 void PGScrubResched::run(OSD* osd,
 			 OSDShard* sdata,
 			 PGRef& pg,
@@ -94,6 +104,15 @@ void PGScrubDenied::run(OSD* osd,
   pg->scrub_send_resources_denied(epoch_queued, handle);
   pg->unlock();
 }
+
+// void PGScrubRecalcSchedule::run(OSD* osd,
+// 			OSDShard* sdata,
+// 			PGRef& pg,
+// 			ThreadPool::TPHandle& handle)
+// {
+//   pg->scrub_send_recalc_schedule(epoch_queued, handle);
+//   pg->unlock();
+// }
 
 void PGScrubPushesUpdate::run(OSD* osd,
 			      OSDShard* sdata,
