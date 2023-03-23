@@ -1724,6 +1724,25 @@ void OSDService::queue_for_snap_trim(PG *pg)
       pg->get_osdmap_epoch()));
 }
 
+// no PG lock, thus no PG object
+void OSDService::queue_for_scrub_initiation(
+  spg_t pg,
+  scrub_level_t scrub_level,
+  utime_t loop_id,
+  Scrub::OSDRestrictions env_conditions)
+{
+  dout(10) << "queueing " << pg << " for scrub initiation" << dendl;
+  enqueue_back(
+    OpSchedulerItem(
+      unique_ptr<OpSchedulerItem::OpQueueable>(
+        new PGScrubTryInitiating(pg, scrub_level, loop_id, env_conditions)),
+      cct->_conf->osd_scrub_cost,
+      cct->_conf->osd_scrub_priority,
+      ceph_clock_now(),
+      0,
+      get_osdmap_epoch()));
+}
+
 template <class MSG_TYPE>
 void OSDService::queue_scrub_event_msg(PG* pg,
 				       Scrub::scrub_prio_t with_priority,
@@ -1792,6 +1811,12 @@ void OSDService::queue_for_scrub_denied(PG* pg, Scrub::scrub_prio_t with_priorit
   // Resulting scrub event: 'ReservationFailure'
   queue_scrub_event_msg<PGScrubDenied>(pg, with_priority);
 }
+
+// void OSDService::queue_scrub_recalc_schedule(PG* pg, Scrub::scrub_prio_t with_priority)
+// {
+//  // Resulting scrub event: 'RecalcSchedule'
+//  queue_scrub_event_msg<PGScrubRecalcSchedule>(pg, with_priority);
+// }
 
 void OSDService::queue_for_scrub_resched(PG* pg, Scrub::scrub_prio_t with_priority)
 {
@@ -2812,7 +2837,7 @@ will start to track new ops received afterwards.";
     f->close_section();
   } else if (prefix == "dump_scrub_reservations") {
     f->open_object_section("scrub_reservations");
-    service.get_scrub_services().dump_scrub_reservations(f);
+    service.get_scrub_services().resource_bookkeeper().dump_scrub_reservations(f);
     f->close_section();
   } else if (prefix == "get_latest_osdmap") {
     get_latest_osdmap();
@@ -4308,7 +4333,8 @@ void OSD::final_init()
     "pg "			   \
     "name=pgid,type=CephPgid "	   \
     "name=cmd,type=CephChoices,strings=scrub " \
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "");
   ceph_assert(r == 0);
@@ -4316,7 +4342,8 @@ void OSD::final_init()
     "pg "			   \
     "name=pgid,type=CephPgid "	   \
     "name=cmd,type=CephChoices,strings=deep_scrub " \
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "");
   ceph_assert(r == 0);
@@ -4348,14 +4375,16 @@ void OSD::final_init()
   r = admin_socket->register_command(
     "scrub "				\
     "name=pgid,type=CephPgid,req=false "	\
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
-    "Trigger a scheduled scrub ");
+    "Trigger a scrub ");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
     "deep_scrub "			\
     "name=pgid,type=CephPgid,req=false "	\
-    "name=time,type=CephInt,req=false",
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "Trigger a scheduled deep scrub ");
   ceph_assert(r == 0);
@@ -6191,9 +6220,8 @@ void OSD::tick_without_osd_lock()
   }
 
   if (is_active()) {
-    if (!scrub_random_backoff()) {
-      sched_scrub();
-    }
+    service.get_scrub_services().initiate_a_scrub(
+      cct->_conf, service.is_recovery_active());
     service.promote_throttle_recalibrate();
     resume_creating_pg();
     bool need_send_beacon = false;
@@ -7509,130 +7537,24 @@ void OSD::handle_fast_scrub(MOSDScrub2 *m)
   m->put();
 }
 
-bool OSD::scrub_random_backoff()
+std::optional<PGLockWrapper> OSDService::get_locked_pg(spg_t pgid)
 {
-  bool coin_flip = (rand() / (double)RAND_MAX >=
-		    cct->_conf->osd_scrub_backoff_ratio);
-  if (!coin_flip) {
-    dout(20) << "scrub_random_backoff lost coin flip, randomly backing off (ratio: "
-	     << cct->_conf->osd_scrub_backoff_ratio << ")" << dendl;
-    return true;
+  auto pg = osd->lookup_lock_pg(pgid);
+  if (pg) {
+    return PGLockWrapper{pg};
+  } else {
+    return std::nullopt;
   }
-  return false;
 }
 
-
-void OSD::sched_scrub()
-{
-  auto& scrub_scheduler = service.get_scrub_services();
-
-  if (auto blocked_pgs = scrub_scheduler.get_blocked_pgs_count();
-      blocked_pgs > 0) {
-    // some PGs managed by this OSD were blocked by a locked object during
-    // scrub. This means we might not have the resources needed to scrub now.
-    dout(10)
-      << fmt::format(
-	   "{}: PGs are blocked while scrubbing due to locked objects ({} PGs)",
-	   __func__,
-	   blocked_pgs)
-      << dendl;
-  }
-
-  // fail fast if no resources are available
-  if (!scrub_scheduler.can_inc_scrubs()) {
-    dout(20) << __func__ << ": OSD cannot inc scrubs" << dendl;
-    return;
-  }
-
-  // if there is a PG that is just now trying to reserve scrub replica resources -
-  // we should wait and not initiate a new scrub
-  if (scrub_scheduler.is_reserving_now()) {
-    dout(20) << __func__ << ": scrub resources reservation in progress" << dendl;
-    return;
-  }
-
-  Scrub::ScrubPreconds env_conditions;
-
-  if (service.is_recovery_active() && !cct->_conf->osd_scrub_during_recovery) {
-    if (!cct->_conf->osd_repair_during_recovery) {
-      dout(15) << __func__ << ": not scheduling scrubs due to active recovery"
-	       << dendl;
-      return;
-    }
-    dout(10) << __func__
-      << " will only schedule explicitly requested repair due to active recovery"
-      << dendl;
-    env_conditions.allow_requested_repair_only = true;
-  }
-
-  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
-    dout(20) << __func__ << " sched_scrub starts" << dendl;
-    auto all_jobs = scrub_scheduler.list_registered_jobs();
-    for (const auto& sj : all_jobs) {
-      dout(20) << "sched_scrub scrub-queue jobs: " << *sj << dendl;
-    }
-  }
-
-  auto was_started = scrub_scheduler.select_pg_and_scrub(env_conditions);
-  dout(20) << "sched_scrub done (" << ScrubQueue::attempt_res_text(was_started)
-	   << ")" << dendl;
-}
-
-Scrub::schedule_result_t OSDService::initiate_a_scrub(spg_t pgid,
-						      bool allow_requested_repair_only)
-{
-  dout(20) << __func__ << " trying " << pgid << dendl;
-
-  // we have a candidate to scrub. We need some PG information to know if scrubbing is
-  // allowed
-
-  PGRef pg = osd->lookup_lock_pg(pgid);
-  if (!pg) {
-    // the PG was dequeued in the short timespan between creating the candidates list
-    // (collect_ripe_jobs()) and here
-    dout(5) << __func__ << " pg  " << pgid << " not found" << dendl;
-    return Scrub::schedule_result_t::no_such_pg;
-  }
-
-  // This has already started, so go on to the next scrub job
-  if (pg->is_scrub_queued_or_active()) {
-    pg->unlock();
-    dout(20) << __func__ << ": already in progress pgid " << pgid << dendl;
-    return Scrub::schedule_result_t::already_started;
-  }
-  // Skip other kinds of scrubbing if only explicitly requested repairing is allowed
-  if (allow_requested_repair_only && !pg->get_planned_scrub().must_repair) {
-    pg->unlock();
-    dout(10) << __func__ << " skip " << pgid
-	     << " because repairing is not explicitly requested on it" << dendl;
-    return Scrub::schedule_result_t::preconditions;
-  }
-
-  auto scrub_attempt = pg->sched_scrub();
-  pg->unlock();
-  return scrub_attempt;
-}
-
-void OSD::resched_all_scrubs()
-{
-  dout(10) << __func__ << ": start" << dendl;
-  auto all_jobs = service.get_scrub_services().list_registered_jobs();
-  for (auto& e : all_jobs) {
-
-    auto& job = *e;
-    dout(20) << __func__ << ": examine " << job.pgid << dendl;
-
-    PGRef pg = _lookup_lock_pg(job.pgid);
-    if (!pg)
-      continue;
-
-    dout(15) << __func__ << ": updating scrub schedule on " << job.pgid << dendl;
-    pg->on_scrub_schedule_input_change();
-
-    pg->unlock();
-  }
-  dout(10) << __func__ << ": done" << dendl;
-}
+// void OSDService::send_sched_recalc_to_pg(spg_t pgid)
+// {
+//   auto locked_pg = get_locked_pg(pgid);
+//   if (locked_pg) {
+//     queue_scrub_recalc_schedule(
+// 	&(*(locked_pg->pg())), Scrub::scrub_prio_t::low_priority);
+//   }
+// }
 
 MPGStats* OSD::collect_pg_stats()
 {
@@ -9835,9 +9757,15 @@ void OSD::handle_conf_change(const ConfigProxy& conf,
   }
 
   if (changed.count("osd_scrub_min_interval") ||
-      changed.count("osd_scrub_max_interval")) {
-    resched_all_scrubs();
-    dout(0) << __func__ << ": scrub interval change" << dendl;
+      changed.count("osd_scrub_max_interval") ||
+      changed.count("osd_deep_scrub_interval")) {
+    service.get_scrub_services().on_config_times_change();
+    dout(0) << fmt::format(
+		   "{}: scrub interval change (min:{} deep:{} max:{})",
+		   __func__, cct->_conf->osd_scrub_min_interval,
+		   cct->_conf->osd_deep_scrub_interval,
+		   cct->_conf->osd_scrub_max_interval)
+	    << dendl;
   }
   check_config();
   if (changed.count("osd_asio_thread_count")) {
