@@ -114,6 +114,9 @@ struct ScrubMachineListener {
 
   virtual void replica_handling_done() = 0;
 
+  /// the map builder got an error ret code from the backend
+  virtual void on_backend_error() = 0;
+
   /// the version of 'scrub_clear_state()' that does not try to invoke FSM
   /// services (thus can be called from FSM reactions)
   virtual void clear_pgscrub_state() = 0;
@@ -184,6 +187,8 @@ struct ScrubMachineListener {
   virtual void set_scrub_begin_time() = 0;
 
   virtual void set_scrub_duration() = 0;
+
+  virtual void on_repl_reservation_failure() = 0;
 
   /**
    * No new scrub session will start while a scrub was initiate on a PG,
