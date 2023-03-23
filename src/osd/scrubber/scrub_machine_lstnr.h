@@ -185,6 +185,8 @@ struct ScrubMachineListener {
 
   virtual void set_scrub_duration() = 0;
 
+  virtual void on_repl_reservation_failure() = 0;
+
   /**
    * No new scrub session will start while a scrub was initiate on a PG,
    * and that PG is trying to acquire replica resources.
