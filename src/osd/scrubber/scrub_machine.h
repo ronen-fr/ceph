@@ -127,6 +127,9 @@ MEV(SchedReplica)
 /// that is in-flight to the local ObjectStore
 MEV(ReplicaPushesUpd)
 
+/// triggering possible ops to re-instate the sched-target invariants
+MEV(NewIntervalReset)
+
 /// guarantee that the FSM is in the quiescent state (i.e. NotActive)
 MEV(FullReset)
 
@@ -321,6 +324,7 @@ struct ReservingReplicas : sc::state<ReservingReplicas, ScrubMachine>,
   using reactions = mpl::list<sc::custom_reaction<FullReset>,
 			      // all replicas granted our resources request
 			      sc::transition<RemotesReserved, ActiveScrubbing>,
+			      sc::custom_reaction<NewIntervalReset>,
 			      sc::custom_reaction<ReservationTimeout>,
 			      sc::custom_reaction<ReservationFailure>>;
 
@@ -329,7 +333,7 @@ struct ReservingReplicas : sc::state<ReservingReplicas, ScrubMachine>,
   ScrubMachine::timer_event_token_t m_timeout_token;
 
   sc::result react(const FullReset&);
-
+  sc::result react(const NewIntervalReset&);
   sc::result react(const ReservationTimeout&);
 
   /// at least one replica denied us the scrub resources we've requested
@@ -367,9 +371,11 @@ struct ActiveScrubbing
   ~ActiveScrubbing();
 
   using reactions = mpl::list<sc::custom_reaction<InternalError>,
+			      sc::custom_reaction<NewIntervalReset>,
 			      sc::custom_reaction<FullReset>>;
 
   sc::result react(const FullReset&);
+  sc::result react(const NewIntervalReset&);
   sc::result react(const InternalError&);
 };
 

@@ -164,7 +164,15 @@ sc::result ReservingReplicas::react(const ReservationFailure&)
   dout(10) << "ReservingReplicas::react(const ReservationFailure&)" << dendl;
 
   // the Scrubber must release all resources and abort the scrubbing
-  scrbr->clear_pgscrub_state();
+  scrbr->on_repl_reservation_failure();
+  return transit<NotActive>();
+}
+
+sc::result ReservingReplicas::react(const NewIntervalReset&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  dout(10) << "ReservingReplicas::react(const NewIntervalReset&)" << dendl;
+  scrbr->interval_when_active();  // RRR rename
   return transit<NotActive>();
 }
 
@@ -208,7 +216,15 @@ sc::result ActiveScrubbing::react(const InternalError&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << __func__ << dendl;
-  scrbr->clear_pgscrub_state();
+  scrbr->on_backend_error();
+  return transit<NotActive>();
+}
+
+sc::result ActiveScrubbing::react(const NewIntervalReset&)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  dout(10) << "ActiveScrubbing::react(const NewIntervalReset&)" << dendl;
+  scrbr->interval_when_active();
   return transit<NotActive>();
 }
 
@@ -291,6 +307,7 @@ PendingTimer::PendingTimer(my_context ctx)
   auto sleep_time = scrbr->get_scrub_sleep_time();
   if (sleep_time.count()) {
     // the following log line is used by osd-scrub-test.sh
+    // RRR fix test
     dout(20) << __func__ << " scrub state is PendingTimer, sleeping" << dendl;
 
     dout(20) << "PgScrubber: " << scrbr->get_spgid()
