@@ -456,11 +456,11 @@ public:
 			"ReservationFailure");
   }
 
-  void scrub_send_recalc_schedule(epoch_t queued, ThreadPool::TPHandle& handle)
-  {
-   forward_scrub_event(&ScrubPgIF::recalc_schedule, queued,
-			"RecalcSchedule");
-  }
+//   void scrub_send_recalc_schedule(epoch_t queued, ThreadPool::TPHandle& handle)
+//   {
+//    forward_scrub_event(&ScrubPgIF::recalc_schedule, queued,
+// 			"RecalcSchedule");
+//   }
 
   void scrub_send_scrub_resched(epoch_t queued, ThreadPool::TPHandle& handle)
   {
@@ -554,6 +554,7 @@ public:
    * - etc
    */
   /* mine? */void on_scrub_schedule_input_change();
+  void on_scrub_schedule_input_change__conf();
 
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) override;
 

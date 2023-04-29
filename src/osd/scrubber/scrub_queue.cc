@@ -511,7 +511,14 @@ void ScrubQueue::on_config_times_change()
 
   for (const auto& p : to_notify) {
     dout(15) << fmt::format("{}: rescheduling {}", __func__, p) << dendl;
-    osd_service.send_sched_recalc_to_pg(p);
+    //osd_service.send_sched_recalc_to_pg(p);
+    auto locked_pg = osd_service.get_locked_pg(p);
+    if (!locked_pg)
+      continue;
+
+    dout(15) << __func__ << ": updating scrub schedule on "
+	     << *(locked_pg->pg()) << dendl; ///\todo add formatter
+    locked_pg->pg()->on_scrub_schedule_input_change__conf();  // RRR
   }
 }
 

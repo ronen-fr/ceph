@@ -1351,6 +1351,17 @@ void PG::on_scrub_schedule_input_change()
   }
 }
 
+void PG::on_scrub_schedule_input_change__conf()
+{
+  if (is_active() && is_primary()) {
+    dout(20) << __func__ << ": active/primary" << dendl;
+    ceph_assert(m_scrubber);
+    m_scrubber->recalc_schedule();
+  } else {
+    dout(20) << __func__ << ": inactive or non-primary" << dendl;
+  }
+}
+
 
 void PG::scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type)
 {

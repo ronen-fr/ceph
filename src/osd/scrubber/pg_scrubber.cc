@@ -610,7 +610,7 @@ void PgScrubber::recovery_completed()
 }
 
 
-void PgScrubber::recalc_schedule([[maybe_unused]] epoch_t epoch_queued)
+void PgScrubber::recalc_schedule(/*[[maybe_unused]] epoch_t epoch_queued*/)
 {
   auto applicable_conf = m_osds->get_scrub_services().populate_config_params(
       m_pg->get_pgpool().info.opts);
@@ -2144,16 +2144,12 @@ void PgScrubber::scrub_finish()
     } else if (has_error) {
 
       // Deep scrub in order to get corrected error counts
-      //m_pg->scrub_after_recovery = true;
-      //m_planned_scrub.req_scrub = m_planned_scrub.req_scrub || m_flags.required;
-
       dout(10) << fmt::format(
 		      "{}: the repair will be followed by a deep-scrub",
 		      __func__)
 	       << dendl;
       m_after_repair_scrub_required = true;
     } else if (m_shallow_errors || m_deep_errors) {
-
       // We have errors but nothing can be fixed, so there is no repair
       // possible.
       state_set(PG_STATE_FAILED_REPAIR);
@@ -2221,7 +2217,7 @@ void PgScrubber::scrub_finish()
     int tr = m_osds->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
     ceph_assert(tr == 0);
   }
-  update_scrub_job(m_planned_scrub);
+  update_scrub_job();
 
   if (has_error) {
     m_pg->queue_peering_event(PGPeeringEventRef(

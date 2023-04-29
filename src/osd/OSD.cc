@@ -1812,11 +1812,11 @@ void OSDService::queue_for_scrub_denied(PG* pg, Scrub::scrub_prio_t with_priorit
   queue_scrub_event_msg<PGScrubDenied>(pg, with_priority);
 }
 
-//void OSDService::queue_scrub_recalc_schedule(PG* pg, Scrub::scrub_prio_t with_priority)
-//{
+// void OSDService::queue_scrub_recalc_schedule(PG* pg, Scrub::scrub_prio_t with_priority)
+// {
 //  // Resulting scrub event: 'RecalcSchedule'
 //  queue_scrub_event_msg<PGScrubRecalcSchedule>(pg, with_priority);
-//}
+// }
 
 void OSDService::queue_for_scrub_resched(PG* pg, Scrub::scrub_prio_t with_priority)
 {
@@ -7547,14 +7547,14 @@ std::optional<PGLockWrapper> OSDService::get_locked_pg(spg_t pgid)
   }
 }
 
-void OSDService::send_sched_recalc_to_pg(spg_t pgid)
-{
-  auto locked_pg = get_locked_pg(pgid);
-  if (locked_pg) {
-    queue_scrub_recalc_schedule(
-	&(*(locked_pg->pg())), Scrub::scrub_prio_t::low_priority);
-  }
-}
+// void OSDService::send_sched_recalc_to_pg(spg_t pgid)
+// {
+//   auto locked_pg = get_locked_pg(pgid);
+//   if (locked_pg) {
+//     queue_scrub_recalc_schedule(
+// 	&(*(locked_pg->pg())), Scrub::scrub_prio_t::low_priority);
+//   }
+// }
 
 MPGStats* OSD::collect_pg_stats()
 {
