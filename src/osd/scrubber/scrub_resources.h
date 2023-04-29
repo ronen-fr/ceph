@@ -45,8 +45,7 @@ class ScrubResources {
 
   /**
    * \returns true if the number of concurrent scrubs is
-   *  below osd_scrub_load_threshold.
-   * Note that this checks is ignored for urgent replica scrubs.
+   *  below osd_max_scrubs
    */
   bool can_inc_scrubs() const;
 

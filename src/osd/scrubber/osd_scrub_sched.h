@@ -137,7 +137,6 @@ using namespace ::std::literals;
  */
 enum class urgency_t {
   off,
-  penalized,
   periodic_regular,
   overdue,
   operator_requested,
@@ -209,8 +208,6 @@ struct sched_conf_t {
   bool mandatory_on_invalid{true};
 };
 
-//class ScrubJob;
-
 /*
  * There are two versions of the scheduling-target (the object detailing one
  * of the two scrub types (deep or shallow) for a specific PG):
@@ -226,6 +223,11 @@ struct SchedEntry {
       : pgid{pgid}
       , level{level}
   {}
+
+  SchedEntry(const SchedEntry&) = default;
+  SchedEntry(SchedEntry&&) = default;
+  SchedEntry& operator=(const SchedEntry&) = default;
+  SchedEntry& operator=(SchedEntry&&) = default;
 
   spg_t pgid;
   scrub_level_t level;
@@ -268,6 +270,9 @@ struct SchedEntry {
   bool is_ripe(utime_t now_is) const;
 
   void dump(std::string_view sect_name, ceph::Formatter* f) const;
+
+  // used by the not_before_queue_t:
+  using id_t = std::tuple<spg_t, scrub_level_t>;
 };
 
 std::weak_ordering cmp_ripe_entries(
@@ -278,6 +283,12 @@ std::weak_ordering cmp_future_entries(
     const Scrub::SchedEntry& l,
     const Scrub::SchedEntry& r);
 
+
+// the interface required by 'not_before_queue_t':
+
+const utime_t& project_not_before(const Scrub::SchedEntry&);
+const spg_t& project_removal_class(const Scrub::SchedEntry&);
+bool is_matching(const Scrub::SchedEntry&, SchedEntry::id_t);
 
 class SchedTarget {
  public:
@@ -353,7 +364,8 @@ class SchedTarget {
   /// push_nb_out() w/ delay=osd_scrub_retry_wrong_time
   void delay_on_wrong_time(utime_t scrub_clock_now);
 
-  //void delay_on_no_local_resrc(utime_t scrub_clock_now);
+  /// push_nb_out() w/ delay=osd_scrub_retry_delay
+  void delay_on_deep_errors(utime_t scrub_clock_now);
 
   void dump(std::string_view sect_name, ceph::Formatter* f) const;
 
@@ -470,8 +482,6 @@ class ScrubJob {
   on_abort(SchedTarget&& aborted_target, delay_cause_t issue, utime_t now_is);
 
   bool on_reservation_failure();
-      //std::chrono::seconds period,
-      //SchedTarget&& aborted_target);
 
   void mark_for_after_repair();
 
@@ -510,14 +520,6 @@ class ScrubJob {
    */
   bool blocked{false};
   utime_t blocked_since{};
-
-  //bool penalized{false};
-
-  /*
-   * if the PG is 'penalized' (after failing to secure replicas), this is the
-   * time at which the penalty is lifted.
-   */
-  //utime_t penalized_until{0, 0};
 
   /**
    * the more consecutive failures - the longer we will delay before
@@ -616,7 +618,7 @@ class ScrubSchedListener {
 
   virtual std::optional<PGLockWrapper> get_locked_pg(spg_t pgid) = 0;
 
-  virtual void send_sched_recalc_to_pg(spg_t pgid) = 0;
+  //virtual void send_sched_recalc_to_pg(spg_t pgid) = 0;
 
   virtual void queue_for_scrub_initiation(
       spg_t pg,
@@ -644,7 +646,6 @@ struct fmt::formatter<Scrub::urgency_t>
       case operator_requested:  desc = "operator-requested"; break;
       case overdue:             desc = "overdue"; break;
       case periodic_regular:    desc = "periodic-regular"; break;
-      case penalized:           desc = "reservation-failure"; break;
       case off:                 desc = "off"; break;
       // better to not have a default case, so that the compiler will warn
     }

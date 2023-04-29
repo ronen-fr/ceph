@@ -3,19 +3,15 @@
 
 #pragma once
 
-#include "include/expected.hpp"
-#include "include/utime.h"
-#include "include/utime_fmt.h"
-#include "osd/osd_types.h"
+//#include "include/expected.hpp"
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber/scrub_queue_if.h"
 #include "osd/scrubber/scrub_resources.h"
-#include "osd/scrubber_common.h"
 
 namespace Scrub {
 class ScrubSchedListener;
 class ScrubJob;
-class SchedEntry;
+struct SchedEntry;
 }  // namespace Scrub
 
 
@@ -29,17 +25,20 @@ struct ScrubQueueStats {
 struct ScrubQueueImp_IF {
   using SchedEntry = Scrub::SchedEntry;
 
-  using EntryPred = std::function<bool(const SchedEntry&)>;
+  virtual void enqueue_entry(const SchedEntry& entry) = 0;
 
-  virtual void push_entry(const SchedEntry& entry) = 0;
-
+  // returns 'true' if the entry was found and removed
   virtual bool remove_entry(spg_t pgid, scrub_level_t s_or_d) = 0;
 
-  virtual ScrubQueueStats get_stats(utime_t scrub_clock_now) const = 0;
+  // note: not 'const', as get_stats() updates the time (the 'not before'
+  // threshold)
+  virtual ScrubQueueStats get_stats(utime_t scrub_clock_now) = 0;
 
   virtual std::optional<SchedEntry> pop_ready_pg(utime_t scrub_clock_now) = 0;
 
   virtual void dump_scrubs(ceph::Formatter* f) const = 0;
+
+  using EntryPred = std::function<bool(const SchedEntry&, bool is_eligible)>;
 
   virtual std::set<spg_t> get_pgs(EntryPred) const = 0;
 
@@ -48,43 +47,10 @@ struct ScrubQueueImp_IF {
   virtual ~ScrubQueueImp_IF() = default;
 };
 
-
-class ScrubQueueImp : public ScrubQueueImp_IF {
-  using SchedEntry = Scrub::SchedEntry;
-  using SchedulingQueue = std::deque<SchedEntry>;
-
-
- public:
-  ScrubQueueImp(Scrub::ScrubQueueOps& parent_queue) : parent_queue(parent_queue)
-  {}
-
-  void push_entry(const SchedEntry& entry) override;
-
-  bool remove_entry(spg_t pgid, scrub_level_t s_or_d) override;
-
-  ScrubQueueStats get_stats(utime_t scrub_clock_now) const override;
-
-  std::optional<SchedEntry> pop_ready_pg(utime_t scrub_clock_now) override;
-
-  void dump_scrubs(ceph::Formatter* f) const override;
-
-  std::set<spg_t> get_pgs(EntryPred) const override;
-
-  std::vector<SchedEntry> get_entries(EntryPred) const override;
-
- private:
-  SchedulingQueue to_scrub;
-  Scrub::ScrubQueueOps& parent_queue;
-
-  // very temporary:
-  // sorts the 'ripe' entries (those with 'not earlier than' time
-  // in the past) and the future entries separately.
-  void normalize_queue(utime_t scrub_clock_now);
-};
-
+class ScrubQueueImp;
 
 /**
- * The 'ScrubQueue' is a "sub-component" of the OSD. It is responsible (mainly)
+ * The 'ScrubQueue' is a "sub-component" of the OSD. It is responsible (mainly) `
  * for selecting the PGs to be scrubbed and initiating the scrub operation.
  * 
  * Other responsibilities "traditionally" associated with the scrub-queue are:
@@ -166,9 +132,9 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   void remove_entry(spg_t pgid, scrub_level_t s_or_d) final;
 
-  void cp_and_queue_target(SchedEntry t) final;
+  void enqueue_target(SchedEntry t) final;
 
-  bool queue_entries(
+  bool enqueue_targets(
       spg_t pgid,
       const SchedEntry& shallow,
       const SchedEntry& deep) final;
@@ -256,7 +222,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
   /**
    * m_initiation_loop, when set, indicates that we are traversing the scrub
-   * queue looking for a PG to scrub. It also maintains the look ID (its start
+   * queue looking for a PG to scrub. It also maintains the loop ID (its start
    * time) and the number of retries left.
    */
   std::optional<ScrubStartLoop> m_initiation_loop;
@@ -271,9 +237,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   double daily_loadavg{0.0};
 
   std::string log_prefix;
-
-  //tl::expected<Scrub::ScrubPreconds, Scrub::schedule_result_t>
-  //preconditions_to_scrubbing(
 
   /**
    * The set of "environmental" restrictions that possibly affects the
@@ -307,7 +270,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
 
  public:  // used by the unit-tests
   /**
-   * unit-tests will override this function to return a mock time
+   * unit-tests override this function to return a mock time
    */
   virtual utime_t time_now() const { return ceph_clock_now(); }
 };

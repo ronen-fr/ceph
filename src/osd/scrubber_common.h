@@ -340,7 +340,7 @@ struct ScrubPgIF {
    * scrub scheduling configuration has changed. Update our scrub-queue
    * entries accordingly.
    */
-  virtual void recalc_schedule(epoch_t epoch_queued) = 0;
+  virtual void recalc_schedule(/*epoch_t epoch_queued*/) = 0;
 
   virtual void cleanup_store(ObjectStore::Transaction* t) = 0;
 

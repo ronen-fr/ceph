@@ -251,7 +251,7 @@ public:
 
   std::optional<PGLockWrapper> get_locked_pg(spg_t pgid) final;
 
-  void send_sched_recalc_to_pg(spg_t pgid) final;
+ // void send_sched_recalc_to_pg(spg_t pgid) final;
 
 //   /**
 //    * A callback used by the ScrubQueue object to initiate a scrub on a specific PG.

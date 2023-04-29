@@ -82,6 +82,17 @@ cmp_entries(utime_t t, const Scrub::SchedEntry& l, const Scrub::SchedEntry& r)
   return cmp_future_entries(l, r);
 }
 
+const utime_t& project_not_before(const SchedEntry& e)
+{
+  return e.not_before;
+}
+
+const spg_t& project_removal_class(const SchedEntry& e)
+{
+  return e.pgid;
+}
+
+
 }  // namespace Scrub
 
 
@@ -89,6 +100,11 @@ using SchedTarget = Scrub::SchedTarget;
 using urgency_t = Scrub::urgency_t;
 using delay_cause_t = Scrub::delay_cause_t;
 using OSDRestrictions = Scrub::OSDRestrictions;
+
+bool operator<(const Scrub::SchedEntry& lhs, const Scrub::SchedEntry& rhs)
+{
+  return Scrub::cmp_ripe_entries(lhs, rhs) == std::weak_ordering::less;
+}
 
 namespace {
 utime_t add_double(utime_t t, double d)
@@ -320,6 +336,25 @@ void SchedTarget::update_as_deep(
     return;
   }
 
+  // a special case for a PG with deep errors: no periodic shallow
+  // scrubs are to be performed, and the next deep scrub is scheduled
+  // instead (at shallow scrubs interval)
+  if (pg_info.stats.stats.sum.num_deep_scrub_errors > 0) {
+    auto base = pg_info.stats.stats_invalid
+		  ? time_now
+		  : pg_info.history.last_scrub_stamp;
+    sched_info.target = add_double(base, config.shallow_interval);
+    sched_info.not_before = sched_info.target;
+    sched_info.urgency = urgency_t::periodic_regular;
+    sched_info.deadline = add_double(sched_info.target, config.max_deep);
+
+    // the log message is verified by standalone tests:
+    dout(10) << fmt::format("{}: Deep scrub errors, upgrading scrub to deep-scrub. Target now:{}",
+                            __func__, sched_info)
+             << dendl;
+    return;
+  }
+
   // note that (based on existing code) we do not require an immediate
   // deep scrub if no stats are available (only a shallow one)
   auto base = pg_info.stats.stats_invalid
@@ -341,6 +376,7 @@ void SchedTarget::update_as_deep(
 			   : urgency_t::periodic_regular;
   auto_repairing = false;
 }
+
 
 void SchedTarget::push_nb_out(
     std::chrono::seconds delay,
@@ -376,6 +412,15 @@ void SchedTarget::delay_on_wrong_time(utime_t scrub_clock_now)
   const seconds delay =
       seconds(cct->_conf.get_val<int64_t>("osd_scrub_retry_wrong_time"));
   push_nb_out(delay, delay_cause_t::time, scrub_clock_now);
+}
+
+void SchedTarget::delay_on_deep_errors(utime_t scrub_clock_now)
+{
+  // there are deep errors, which means that no periodic shallow scrubs
+  // should be performed
+  const seconds delay =
+      seconds(cct->_conf.get_val<int64_t>("osd_scrub_retry_pg_state"));
+  push_nb_out(delay, delay_cause_t::pg_state, scrub_clock_now);
 }
 
 // void SchedTarget::delay_on_no_local_resrc(utime_t scrub_clock_now)
@@ -493,6 +538,9 @@ SchedTarget ScrubJob::get_moved_target(scrub_level_t s_or_d)
   return cp;
 }
 
+/**
+ * locking: scrub_queue::remove_entry() locks the queue
+ */
 void ScrubJob::dequeue_entry(scrub_level_t lvl)
 {
   scrub_queue.remove_entry(pgid, lvl);
@@ -532,10 +580,14 @@ void ScrubJob::init_and_queue_targets(
 {
   const int in_q_count = dequeue_targets();
 
-  //shallow_target.depenalize();
   shallow_target.update_as_shallow(info, aconf, scrub_clock_now);
+  dout(7) << fmt::format("{}: shallow_target: {} (rand: {})", __func__,
+        shallow_target, aconf.interval_randomize_ratio)
+          << dendl;
   //deep_target.depenalize();
   deep_target.update_as_deep(info, aconf, scrub_clock_now);
+  dout(7) << fmt::format("{}: deep_target: {}", __func__, deep_target)
+          << dendl;
 
   // if 'randomly selected', we will modify the deep target to coincide
   // with the shallow one
@@ -544,7 +596,7 @@ void ScrubJob::init_and_queue_targets(
 			       shallow_target.is_periodic() &&
 			       deep_target.is_periodic() &&
 			       (rand() / RAND_MAX) < aconf.deep_randomize_ratio;
-  if (upgrade_to_deep && (deep_target.sched_info.not_before >
+  if (false && upgrade_to_deep && (deep_target.sched_info.not_before >
 			  shallow_target.sched_info.not_before)) {
     deep_target.sched_info.target = std::min(
 	shallow_target.sched_info.target, deep_target.sched_info.target);
@@ -554,12 +606,12 @@ void ScrubJob::init_and_queue_targets(
     log_as_updated = " (updated)";
   }
 
-  if (scrub_queue.queue_entries(
+  if (scrub_queue.enqueue_targets(
 	  pgid, shallow_target.queued_element(),
 	  deep_target.queued_element())) {
     shallow_target.set_queued();
     deep_target.set_queued();
-    dout(15) << fmt::format(
+    dout(10) << fmt::format(
 		    "{}: {} targets removed from queue; added {} & {}{}",
 		    __func__, in_q_count, shallow_target, deep_target,
 		    log_as_updated)
@@ -629,7 +681,7 @@ void ScrubJob::requeue_entry(scrub_level_t level)
     // which means that the PG is no longer "scrubable"
     return;
   }
-  scrub_queue.cp_and_queue_target(target.queued_element());
+  scrub_queue.enqueue_target(target.queued_element());
   target.in_queue = true;
 }
 
@@ -737,7 +789,7 @@ void ScrubJob::on_abort(
   nxt_target.sched_info.not_before = delay_to;
   nxt_target.last_issue = issue;
 
-  if (scrub_queue.queue_entries(
+  if (scrub_queue.enqueue_targets(
 	  pgid, shallow_target.queued_element(),
 	  deep_target.queued_element())) {
     shallow_target.set_queued();
@@ -778,7 +830,7 @@ bool ScrubJob::on_reservation_failure()
 		  delay.count(), shallow_target, deep_target)
 	   << dendl;
 
-  scrub_queue.queue_entries(
+  scrub_queue.enqueue_targets(
       pgid, shallow_target.queued_element(), deep_target.queued_element());
   shallow_target.set_queued();
   deep_target.set_queued();
@@ -832,7 +884,7 @@ bool ScrubJob::on_reservation_failure(
     penalized_until = now_is + utime_t{penalty_period};
     trgts_demoted = true;
   }
-  scrub_queue.queue_entries(
+  scrub_queue.enqueue_targets(
       pgid, shallow_target.queued_element(), deep_target.queued_element());
   shallow_target.set_queued();
   deep_target.set_queued();
@@ -854,7 +906,7 @@ bool ScrubJob::on_reservation_failure(
 //   //shallow_target.depenalize();
 //   //deep_target.depenalize();
 // 
-//   if (scrub_queue.queue_entries(
+//   if (scrub_queue.enqueue_targets(
 // 	  pgid, shallow_target.queued_element(),
 // 	  deep_target.queued_element())) {
 //     shallow_target.set_queued();
@@ -882,7 +934,7 @@ std::string_view ScrubJob::registration_state() const
  */
 void ScrubJob::mark_for_rescrubbing()
 {
-  ceph_assert(scrubbing);
+  //ceph_assert(scrubbing);
   ceph_assert(!deep_target.in_queue);
   deep_target.auto_repairing = true;
   // no need to take existing deep_target contents into account,
@@ -912,7 +964,7 @@ void ScrubJob::at_scrub_completion(
   //deep_target.depenalize();
   deep_target.update_as_deep(pg_info, aconf, scrub_clock_now);
 
-  if (scrub_queue.queue_entries(
+  if (scrub_queue.enqueue_targets(
 	  pgid, shallow_target.queued_element(),
 	  deep_target.queued_element())) {
     shallow_target.set_queued();

@@ -492,15 +492,12 @@ std::string_view PgScrubber::registration_state() const
   return "(no sched job)"sv;
 }
 
-// void PgScrubber::rm_from_osd_scrubbing()
-// {
-//   if (m_scrub_job && m_scrub_job->is_state_registered()) {
-//     dout(15) << fmt::format(
-// 		    "{}: prev. state: {}", __func__, registration_state())
-// 	     << dendl;
-//     m_osds->get_scrub_services().remove_from_osd_queue(m_scrub_job);
-//   }
-// }
+void PgScrubber::rm_from_osd_scrubbing()
+{
+  if (m_scrub_job) {
+    m_scrub_job->remove_from_osd_queue();
+  }
+}
 
 void PgScrubber::on_pg_activate()
 {
@@ -610,7 +607,7 @@ void PgScrubber::recovery_completed()
 }
 
 
-void PgScrubber::recalc_schedule([[maybe_unused]] epoch_t epoch_queued)
+void PgScrubber::recalc_schedule(/*[[maybe_unused]] epoch_t epoch_queued*/)
 {
   auto applicable_conf = m_osds->get_scrub_services().populate_config_params(
       m_pg->get_pgpool().info.opts);
@@ -742,7 +739,7 @@ void PgScrubber::start_scrubbing(
   set_op_parameters(trgt, pg_cond);
   m_scrub_job->scrubbing = true;
 
-  dout(10) << fmt::format("{}: queuing target {}", __func__, trgt) << dendl;
+  dout(10) << fmt::format("{}: queuing target {}", __func__, *m_active_target) << dendl;
   m_osds->queue_for_scrub(m_pg, Scrub::scrub_prio_t::low_priority);
 }
 
@@ -765,7 +762,10 @@ std::optional<Scrub::schedule_result_t> PgScrubber::validate_scrub_mode(
   using schedule_result_t = Scrub::schedule_result_t;
   if (trgt.is_required()) {
     // 'initiated' scrubs
-    dout(10) << __func__ << ": initiated (\"must\") scrub" << dendl;
+    dout(10) << fmt::format(
+		    "{}: initiated (\"must\") scrub (target:{} pg:{})",
+		    __func__, trgt, pg_cond)
+	     << dendl;
 
     if (trgt.is_shallow() && pg_cond.has_deep_errors) {
       // we will honor the request anyway, but will report the issue
@@ -777,6 +777,9 @@ std::optional<Scrub::schedule_result_t> PgScrubber::validate_scrub_mode(
   }
 
   // --------  a periodic scrub
+  dout(10) << fmt::format(
+		  "{}: periodic target:{} pg:{}", __func__, trgt, pg_cond)
+	   << dendl;
 
   // if a shallow target:
   if (trgt.is_shallow()) {
@@ -784,6 +787,17 @@ std::optional<Scrub::schedule_result_t> PgScrubber::validate_scrub_mode(
       // can't scrub at all
       dout(10) << __func__ << ": shallow not allowed" << dendl;
       trgt.delay_on_level_not_allowed(scrub_clock_now);
+      return schedule_result_t::target_failure;
+    }
+
+    // if there are deep errors, we should have scheduled a deep scrub first.
+    // If we are here trying to perform a shallow scrub, it means that for some
+    // reason that deep scrub failed to be initiated. We will not try a shallow
+    // scrub until this is solved.
+    if (pg_cond.has_deep_errors) {
+      dout(10) << __func__ << ": Regular scrub skipped due to deep-scrub errors"
+	       << dendl;
+      trgt.delay_on_deep_errors(scrub_clock_now);
       return schedule_result_t::target_failure;
     }
 
@@ -1193,21 +1207,18 @@ void PgScrubber::on_init()
   }
 
   m_be = std::make_unique<ScrubBackend>(
-    *this,
-    *m_pg,
-    m_pg_whoami,
-    m_is_repair,
-    m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow,
-    m_pg->get_actingset());
+      *this, *m_pg, m_pg_whoami, m_is_repair,
+      m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow,
+      m_pg->get_actingset());
 
   //  create a new store
-  {
+  //if (!m_store || m_is_deep) {
     ObjectStore::Transaction t;
     cleanup_store(&t);
     m_store.reset(
       Scrub::Store::create(m_pg->osd->store, &t, m_pg->info.pgid, m_pg->coll));
     m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
-  }
+  //}
 
   m_start = m_pg->info.pgid.pgid.get_hobj_start();
   m_active = true;
@@ -1496,6 +1507,17 @@ void PgScrubber::repair_oinfo_oid(ScrubMap& smap)
   }
 }
 
+// static std::string rrr_to_object_key(int64_t pool, const librados::object_id_t& oid)
+// {
+//   auto hoid = hobject_t(object_t(oid.name),
+// 			oid.locator, // key
+// 			oid.snap,
+// 			0,		// hash
+// 			pool,
+// 			oid.nspace);
+//   hoid.build_hash_cache();
+//   return "SCRUB_OBJ_" + hoid.to_str();
+// }
 
 void PgScrubber::run_callbacks()
 {
@@ -1510,9 +1532,39 @@ void PgScrubber::run_callbacks()
 void PgScrubber::persist_scrub_results(inconsistent_objs_t&& all_errors)
 {
   dout(10) << __func__ << " " << all_errors.size() << " errors" << dendl;
+  ceph_assert(m_store);
+
+//   for (auto e : all_errors) {
+//     dout(7) << fmt::format("{}: persisting error on pg {}",
+//                            __func__,
+//                            m_pg_id)
+//             << dendl;
+//    try {
+//     auto xx = std::get_if<inconsistent_obj_wrapper>(&e);
+//     if (!xx) continue;
+//     bufferlist bl;
+//     xx->encode(bl);
+//     dout(7) << fmt::format("{}: persisting error length {} {}",
+//                            __func__,
+//                            bl.length(),
+//                             rrr_to_object_key(m_pg->pool.id, xx->object)    )
+//             << dendl;
+// 
+// 
+// 
+// 
+//    } catch (const buffer::error& q) {
+//      derr << __func__ << ": caught buffer::error: " << q.what() << dendl;
+//      //ceph_abort();
+//      continue;
+//    }
 
   for (auto& e : all_errors) {
     std::visit([this](auto& e) { m_store->add_error(m_pg->pool.id, e); }, e);
+//     dout(8) << fmt::format("{}: persisting error on pg {}",
+//                            __func__,
+//                            m_pg_id)
+//             << dendl;
   }
 
   ObjectStore::Transaction t;
@@ -1685,29 +1737,39 @@ void PgScrubber::set_op_parameters(
 
   // we are now committed to scrubbing this pg. The 'scheduling target' being
   // passed here is the one we have chosen to scrub. It will be moved into
-  // m_active_target (QueuedForRole::primary as it contains relevant info about the current scrub),   RRRR
-  // and a new target object will be created in the ScrubJob, to be used for
-  // scheduling the next scrub of this level.
-  set_queued_or_active(/*QueuedForRole::primary*/);
+  // m_active_target, and a new target object will be created in the ScrubJob,
+  // to be used for scheduling the next scrub of this level.
+
+  set_queued_or_active();
   m_active_target = m_scrub_job->get_moved_target(trgt.level());
   // remove our sister target from the queue
-  m_scrub_job->dequeue_entry(ScrubJob::the_other_level(trgt.level()));
+  // RRR locking here? check & document
+  m_scrub_job->dequeue_entry(ScrubJob::the_other_level(m_active_target->level()));
 
   // write down the epoch of starting a new scrub. Will be used
   // to discard stale messages from previous aborted scrubs.
   m_epoch_start = m_pg->get_osdmap_epoch();
 
-  m_flags.check_repair = trgt.urgency() == urgency_t::after_repair;
+  dout(7) << fmt::format("{}: m_flags.cr: {} | periodic? {} is_deep:{} | pg_conf.canar:{}",
+                                __func__, (m_active_target->urgency() == urgency_t::after_repair), m_active_target->is_periodic(),
+                                m_active_target->is_deep(), pg_cond.can_autorepair)
+                << dendl;
+
+
+  m_flags.check_repair = m_active_target->urgency() == urgency_t::after_repair;
   bool can_auto_repair =
-      trgt.is_deep() && trgt.is_periodic() && pg_cond.can_autorepair;
+      m_active_target->is_deep() && m_active_target->is_periodic() && pg_cond.can_autorepair;
   if (can_auto_repair) {
     // maintaining an existing log line
     dout(20) << __func__ << ": auto repair with deep scrubbing" << dendl;
   }
 
-  m_flags.auto_repair = can_auto_repair || trgt.get_auto_repair();
+  m_flags.auto_repair = can_auto_repair || m_active_target->get_auto_repair();
 
-  if (trgt.is_periodic()) {
+  dout(17) << fmt::format("{}: auto_repair:{}", __func__, m_flags.auto_repair)
+           << dendl;
+
+  if (m_active_target->is_periodic()) {
     // lower urgency
     m_flags.required = false;
     m_flags.priority = m_pg->get_scrub_priority();
@@ -1719,7 +1781,7 @@ void PgScrubber::set_op_parameters(
 
   // 'deep-on-error' is set for periodic shallow scrubs, if allowed
   // by the environment
-  if (trgt.is_shallow() && pg_cond.can_autorepair && trgt.is_periodic()) {
+  if (m_active_target->is_shallow() && pg_cond.can_autorepair && m_active_target->is_periodic()) {
     m_flags.deep_scrub_on_error = true;
     dout(10) << fmt::format(
 		    "{}: auto repair with scrubbing, rescrub if errors found",
@@ -1730,7 +1792,7 @@ void PgScrubber::set_op_parameters(
   state_set(PG_STATE_SCRUBBING);
 
   // will we be deep-scrubbing?
-  if (trgt.is_deep()) {
+  if (m_active_target->is_deep()) {
     state_set(PG_STATE_DEEP_SCRUB);
     m_is_deep = true;
   } else {
@@ -1743,8 +1805,8 @@ void PgScrubber::set_op_parameters(
   //
   // PG_STATE_REPAIR, on the other hand, is only used for status reports (inc.
   // the PG status as appearing in the logs).
-  m_is_repair = trgt.get_do_repair() || m_flags.auto_repair;
-  if (trgt.get_do_repair()) {
+  m_is_repair = m_active_target->get_do_repair() || m_flags.auto_repair;
+  if (m_active_target->get_do_repair()) {
     state_set(PG_STATE_REPAIR);
     update_op_mode_text();
   }
@@ -2144,16 +2206,12 @@ void PgScrubber::scrub_finish()
     } else if (has_error) {
 
       // Deep scrub in order to get corrected error counts
-      //m_pg->scrub_after_recovery = true;
-      //m_planned_scrub.req_scrub = m_planned_scrub.req_scrub || m_flags.required;
-
       dout(10) << fmt::format(
 		      "{}: the repair will be followed by a deep-scrub",
 		      __func__)
 	       << dendl;
       m_after_repair_scrub_required = true;
     } else if (m_shallow_errors || m_deep_errors) {
-
       // We have errors but nothing can be fixed, so there is no repair
       // possible.
       state_set(PG_STATE_FAILED_REPAIR);
@@ -2221,7 +2279,7 @@ void PgScrubber::scrub_finish()
     int tr = m_osds->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
     ceph_assert(tr == 0);
   }
-  update_scrub_job(m_planned_scrub);
+  //update_scrub_job(); // RRR ?
 
   if (has_error) {
     m_pg->queue_peering_event(PGPeeringEventRef(
@@ -2318,7 +2376,7 @@ void PgScrubber::on_operator_periodic_cmd(
 	    ? 2 * cnf.max_deep
 	    : (cnf.max_shallow ? *cnf.max_shallow : cnf.shallow_interval);
     dout(20) << fmt::format(
-		    "{}: stamp:{} ms:{}/{}/{}", __func__, stamp,
+		    "{}: stamp:{:s} ms:{}/{}/{}", __func__, stamp,
 		    (cnf.max_shallow ? "ms+" : "ms-"),
 		    (cnf.max_shallow ? *cnf.max_shallow : -999.99),
 		    cnf.shallow_interval)
@@ -2327,7 +2385,7 @@ void PgScrubber::on_operator_periodic_cmd(
   }
   stamp -= 100.0;  // for good measure
 
-  dout(10) << fmt::format("{}: stamp:{} ", __func__, stamp) << dendl;
+  dout(10) << fmt::format("{}: stamp:{:s} ", __func__, stamp) << dendl;
   asok_response_section(f, true, scrub_level);
 
   if (scrub_level == scrub_level_t::deep) {

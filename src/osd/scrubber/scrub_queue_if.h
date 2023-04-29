@@ -11,7 +11,8 @@
 
 namespace Scrub {
 class ScrubSchedListener;
-class SchedEntry;
+struct SchedEntry;
+struct sched_conf_t;
 
 
 /**
@@ -45,12 +46,12 @@ struct ScrubQueueOps {
    * \retval false if the targets were disabled (and were not added to
    * the queue)
    */
-  virtual bool queue_entries(
+  virtual bool enqueue_targets(
       spg_t pgid,
       const SchedEntry& shallow,
       const SchedEntry& deep) = 0;
 
-  virtual void cp_and_queue_target(SchedEntry t) = 0;
+  virtual void enqueue_target(SchedEntry t) = 0;
 
   virtual ~ScrubQueueOps() = default;
 };
@@ -102,3 +103,6 @@ class SchedLoopHolder {
 };
 
 }  // namespace Scrub
+
+// required by the not_before queue implementation:
+bool operator<(const Scrub::SchedEntry& lhs, const Scrub::SchedEntry& rhs);
