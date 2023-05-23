@@ -5797,15 +5797,6 @@ function TEST_periodic_scrub_replicated() {
     # Wait for schedule regular scrub
     wait_for_scrub $pg "$last_scrub"
 
-    # It needed to be upgraded
-    grep -q "Deep scrub errors, upgrading scrub to deep-scrub" $dir/osd.${primary}.log || return 1
-
-    # Bad object still known
-    rados list-inconsistent-obj $pg | jq '.' | grep -q $objname || return 1
-
-    # Can't upgrade with this set
-    ceph osd set nodeep-scrub
-    # Let map change propagate to OSDs
     ceph tell osd.0 get_latest_osdmap
     flush_pg_stats
     sleep 5
@@ -5818,7 +5809,7 @@ function TEST_periodic_scrub_replicated() {
     for i in $(seq 14 -1 0)
     do
       sleep 1
-      ! grep -q "Regular scrub skipped due to deep-scrub errors and nodeep-scrub set" $dir/osd.${primary}.log || { found=true ; break; }
+      ! grep -q "a periodic shallow scrub is skipped" $dir/osd.${primary}.log || { found=true ; break; }
       echo Time left: $i seconds
     done
     test $found = "true" || return 1

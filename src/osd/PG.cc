@@ -1436,13 +1436,13 @@ bool PG::is_time_for_deep(bool allow_deep_scrub,
              << dendl;
     return true;
   }
-
-  if (has_deep_errors) {
-    // note: the text below is matched by 'standalone' tests
-    osd->clog->info() << "osd." << osd->whoami << " pg " << info.pgid
-                      << " Deep scrub errors, upgrading scrub to deep-scrub";
-    return true;
-  }
+// 
+//   if (has_deep_errors) {
+//     // note: the text below is matched by 'standalone' tests
+//     osd->clog->info() << "osd." << osd->whoami << " pg " << info.pgid
+//                       << " Deep scrub errors, upgrading scrub to deep-scrub";
+//     return true;
+//   }
 
   // we only flip coins if 'allow_shallow_scrub' is asserted. Otherwise - as
   // this function is called often, we will probably be deep-scrubbing most of
@@ -1532,10 +1532,11 @@ std::optional<requested_scrub_t> PG::validate_periodic_mode(
 {
   ceph_assert(!planned.must_deep_scrub && !planned.must_repair);
 
-  if (!allow_deep_scrub && has_deep_errors) {
-    osd->clog->error()
-      << "osd." << osd->whoami << " pg " << info.pgid
-      << " Regular scrub skipped due to deep-scrub errors and nodeep-scrub set";
+  if (has_deep_errors && (!time_for_deep || !allow_deep_scrub)) {
+    osd->clog->error() << fmt::format(
+	"osd.{} pg {}: a periodic shallow scrub is skipped due to deep-scrub "
+	"errors",
+	osd->whoami, info.pgid);
     return std::nullopt;  // no scrubbing
   }
 
