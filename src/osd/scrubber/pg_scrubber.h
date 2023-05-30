@@ -20,7 +20,7 @@ Main Scrubber interfaces:
 └────────────────────────────────┬──────────────────┘
                                  │
                                  │
-                                 │ ownes & uses
+                                 │ owns & uses
                                  │
                                  │
                                  │
@@ -847,7 +847,7 @@ class PgScrubber : public ScrubPgIF,
 
   /**
    * a token identifying the 'current' scrub scheduling 'loop'. Opaque
-   * for the scrubber, but used by the OSD's ScrubQueue to identify stale
+   * to the scrubber, but used by the OSD's ScrubQueue to identify stale
    * scheduling 'loop' (the traversing of the ready targets in the
    * scrub queue).
    */

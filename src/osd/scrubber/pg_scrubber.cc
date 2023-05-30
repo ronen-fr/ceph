@@ -666,7 +666,6 @@ void PgScrubber::start_scrubbing(
   ceph_assert(!trgt.is_off());
 
   m_schedloop_step.emplace(m_scrub_queue, loop_id);
-
   auto clock_now = m_scrub_queue.scrub_clock_now();
 
   // a few checks. If failing - the 'not-before' is modified, and the target
@@ -1212,13 +1211,11 @@ void PgScrubber::on_init()
       m_pg->get_actingset());
 
   //  create a new store
-  //if (!m_store || m_is_deep) {
-    ObjectStore::Transaction t;
-    cleanup_store(&t);
-    m_store.reset(
+  ObjectStore::Transaction t;
+  cleanup_store(&t);
+  m_store.reset(
       Scrub::Store::create(m_pg->osd->store, &t, m_pg->info.pgid, m_pg->coll));
-    m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
-  //}
+  m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
 
   m_start = m_pg->info.pgid.pgid.get_hobj_start();
   m_active = true;
@@ -1230,23 +1227,9 @@ void PgScrubber::on_init()
 
 void PgScrubber::on_repl_reservation_failure()
 {
-//   const seconds penalty_period =
-//       seconds{m_pg->get_cct()->_conf.get_val<int64_t>(
-// 	  "osd_scrub_busy_replicas_penalty")};
-//   dout(10) << fmt::format(
-// 		  "{}: penalty period: {}s", __func__, penalty_period.count())
-// 	   << dendl;
-
+  dout(10) << __func__ << dendl;
   m_active_target.reset();
   m_scrub_job->on_reservation_failure();
-//   if (m_scrub_job->on_reservation_failure(
-// 	  penalty_period, std::move(*m_active_target))) {
-// 
-// 
-//     utime_t now_is = m_scrub_queue.scrub_clock_now();
-//     m_depenalize_timer = std::make_unique<depenalize_timer_t>(
-// 	m_osds, this, now_is + utime_t{penalty_period});
-//   }
 
   // trigger the next attempt by the OSD to select a PG to scrub:
   if (m_schedloop_step) {
@@ -1256,54 +1239,6 @@ void PgScrubber::on_repl_reservation_failure()
 
   clear_pgscrub_state();
 }
-
-// PgScrubber::depenalize_timer_t::depenalize_timer_t(
-//     OSDService* osds,
-//     PgScrubber* scrbr,
-//     utime_t timeout)
-//     : m_osds{osds}
-//     , m_scrbr{*scrbr}
-// {
-//   m_depenalize_cb = new LambdaContext(
-//       [this, scrbr = scrbr, pgid = scrbr->m_pg_id]([[maybe_unused]] int r) {
-// 	if (!m_depenalize_cb) {
-// 	  // already cancelled
-// 	  return;
-// 	}
-// 	lgeneric_dout(g_ceph_context, 7)
-// 	    << "depenalize_timer_t: callback activated" << dendl;
-// 
-// 	// send an event to the scrubber to handle the timeout
-// 	PGRef pg = m_osds->osd->lookup_lock_pg(pgid);
-// 	if (!pg) {
-// 	  lgeneric_subdout(g_ceph_context, osd, 10)
-// 	      << "depenalize_timer_t: Could not find PG " << pgid << dendl;
-// 	  m_depenalize_cb = nullptr;
-// 	  return;
-// 	}
-// 	m_depenalize_cb = nullptr;
-// 	lgeneric_dout(g_ceph_context, 10)
-// 	    << fmt::format("depenalize_timer_t: un-penalizing {}", pgid)
-// 	    << dendl;
-// 
-// 	scrbr->m_scrub_job->un_penalize();
-// 	pg->unlock();
-//       });
-// 
-//   std::lock_guard l(m_osds->sleep_lock);
-//   // add_event_after() deletes the callback if failing to add (and returns
-//   // nullptr)
-//   m_depenalize_cb =
-//       m_osds->sleep_timer.add_event_after(timeout, m_depenalize_cb);
-// }
-
-// PgScrubber::depenalize_timer_t::~depenalize_timer_t()
-// {
-//   if (m_depenalize_cb) {
-//     std::lock_guard l(m_osds->sleep_lock);
-//     m_osds->sleep_timer.cancel_event(m_depenalize_cb);
-//   }
-// }
 
 
 void PgScrubber::on_replica_init()
@@ -1507,18 +1442,6 @@ void PgScrubber::repair_oinfo_oid(ScrubMap& smap)
   }
 }
 
-// static std::string rrr_to_object_key(int64_t pool, const librados::object_id_t& oid)
-// {
-//   auto hoid = hobject_t(object_t(oid.name),
-// 			oid.locator, // key
-// 			oid.snap,
-// 			0,		// hash
-// 			pool,
-// 			oid.nspace);
-//   hoid.build_hash_cache();
-//   return "SCRUB_OBJ_" + hoid.to_str();
-// }
-
 void PgScrubber::run_callbacks()
 {
   std::list<Context*> to_run;
@@ -1534,37 +1457,8 @@ void PgScrubber::persist_scrub_results(inconsistent_objs_t&& all_errors)
   dout(10) << __func__ << " " << all_errors.size() << " errors" << dendl;
   ceph_assert(m_store);
 
-//   for (auto e : all_errors) {
-//     dout(7) << fmt::format("{}: persisting error on pg {}",
-//                            __func__,
-//                            m_pg_id)
-//             << dendl;
-//    try {
-//     auto xx = std::get_if<inconsistent_obj_wrapper>(&e);
-//     if (!xx) continue;
-//     bufferlist bl;
-//     xx->encode(bl);
-//     dout(7) << fmt::format("{}: persisting error length {} {}",
-//                            __func__,
-//                            bl.length(),
-//                             rrr_to_object_key(m_pg->pool.id, xx->object)    )
-//             << dendl;
-// 
-// 
-// 
-// 
-//    } catch (const buffer::error& q) {
-//      derr << __func__ << ": caught buffer::error: " << q.what() << dendl;
-//      //ceph_abort();
-//      continue;
-//    }
-
   for (auto& e : all_errors) {
     std::visit([this](auto& e) { m_store->add_error(m_pg->pool.id, e); }, e);
-//     dout(8) << fmt::format("{}: persisting error on pg {}",
-//                            __func__,
-//                            m_pg_id)
-//             << dendl;
   }
 
   ObjectStore::Transaction t;

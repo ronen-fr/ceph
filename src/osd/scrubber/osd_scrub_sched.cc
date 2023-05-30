@@ -805,11 +805,8 @@ void ScrubJob::on_abort(
  * Handle a failure to secure the replicas' scrub resources.
  * State on entry:
  * - no target is in the queue (both were dequeued when the scrub started);
- * - both 'shallow' & 'deep' targets are valid - set for the next scrub;
  */
 bool ScrubJob::on_reservation_failure()
-    //std::chrono::seconds penalty_period,
-    //SchedTarget&& aborted_target)
 {
   ceph_assert(scrubbing);
   ceph_assert(!deep_target.in_queue);
@@ -818,7 +815,7 @@ bool ScrubJob::on_reservation_failure()
   ++consec_aborts;
 
   const seconds delay =
-      seconds{cct->_conf.get_val<int64_t>("osd_scrub_busy_replicas_penalty"/*osd_scrub_retry_busy_replicas"*/)};
+      seconds{cct->_conf.get_val<int64_t>("osd_scrub_retry_busy_replicas")};
   auto now_is = scrub_queue.scrub_clock_now();
 
   shallow_target.push_nb_out(delay, delay_cause_t::replicas, now_is);

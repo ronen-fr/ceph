@@ -3,7 +3,6 @@
 
 #pragma once
 
-//#include "include/expected.hpp"
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber/scrub_queue_if.h"
 #include "osd/scrubber/scrub_resources.h"
@@ -14,8 +13,71 @@ class ScrubJob;
 struct SchedEntry;
 }  // namespace Scrub
 
-
-// RRR add scrub-sched-loop sequence diagram
+// clang-format off
+/*
+ * The main components involved in managing a "scrub initiation loop":
+ *
+ *  OSD
+ * |
+ * |
+ * |
+ * |
+ * |    ScrubQueue
+ * |    -----------
+ * |
+ * |           |
+ * |           |
+ * +-> initiate_a_scrub()
+ *             |
+ *             +--->  selects a PG
+ *             |
+ *             +--->  initializes m_initiation_loop (an object detailing the
+ *             |      state of the current loop, i.e. the current attempt to
+ *             |      find a PG to scrub)
+ *             |
+ *             |      +------------------------+
+ *             |      | - restrictions         |
+ *             |      | - max tries            |
+ *             |      | - started at           |
+ *             |      | - ....                 |
+ *             |      |                        |
+ *             |      |                        |
+ *             |      |                        |
+ *             |      +------------------------+
+ *             |                                 PG & PgScrubber
+ *             |                                ------------------
+ *             +-------------------------------> start_scrubbing()
+ *             |                                  +
+ *             |                                  start_scrub()
+ *             |                                  | |
+ *             |                                  | |
+ *             |                                  | |creates a wrapper object around
+ *             |                                  | |"I am the chosen one in the
+ *             |                                  | | current loop" (m_schedloop_step)
+ *             |                                  | |
+ *             |                                  | |
+ *             |                                  | |Guaranteed to cause (dtor) one of:
+ *             |        loop ID (matching ^)      | |
+ *             |  <-------------------------------+-+-- try the next one in queue
+ *             |        scrub_next_in_queue()     | |   (as I cannot be scrubbed)
+ *             |                                  | |
+ *             |                                  | |Or:
+ *             |                                  | |
+ *             |  <-------------------------------+-+-- loop concluded due to failure
+ *             |                                  | |
+ *             |        initiation_loop_done()    | |Or:
+ *             |                                  | |   I am happily scrubbing. Loop
+ *             |  <-------------------------------+-+-- concluded.
+ *             |                                  | |   (*) after replica reservation
+ *             |                                  | |
+ *             |                                  | |
+ *             |                                  | |
+ *             |                                  | |
+ *             |                                  | |
+ *             |                                  | |
+ *             |                                  | |
+ */
+// clang-format on
 
 struct ScrubQueueStats {
   uint_fast16_t num_ready{0};
@@ -215,7 +277,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   auto& conf() const { return cct->_conf; }
 #endif
 
-  mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
+  ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
 
   // the underlying implementation of the scrub queue
   std::unique_ptr<ScrubQueueImp_IF> m_queue_impl;
@@ -228,7 +290,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   std::optional<ScrubStartLoop> m_initiation_loop;
 
   /**
-   * protects 'm_initiation_loop'
+   * m_loop_lock protects 'm_initiation_loop'
    *
    * \attn never take 'jobs_lock' while holding this lock!
    */
@@ -239,7 +301,7 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   std::string log_prefix;
 
   /**
-   * The set of "environmental" restrictions that possibly affects the
+   * The set of "environmental" restrictions that possibly affect the
    * scheduling of scrubs (e.g. preventing some non-urgent scrubs from being
    * scheduled).
    * If restrictions_on_scrubbing() determines that no scrubbing is possible,

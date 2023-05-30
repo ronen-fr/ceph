@@ -530,25 +530,15 @@ options:
   see_also:
   - osd_scrub_slow_reservation_response
   with_legacy: false
-- name: osd_scrub_busy_replicas_penalty
-  type: int
-  level: advanced
-  desc: Period (in seconds) of low scrub priority following a replica denial
-  long_desc: The period for which a PG that failed to secure replica scrub resources will
-    be given a low scrub priority. Disabled if set to 0.
-  default: 300
-  min: 0
-  with_legacy: false
 - name: osd_scrub_retry_busy_replicas
   type: int
   level: advanced
   desc: Period (in seconds) before retrying scrub after a replica reservation failure
   long_desc: Minimum delay after a failed attempt to secure the replicas' scrub resources.
-  default: 5
+  default: 20
   min: 1
   see_also:
   - osd_scrub_retry_wrong_time
-  - osd_scrub_busy_replicas_penalty
   with_legacy: false
 - name: osd_scrub_retry_wrong_time
   type: int

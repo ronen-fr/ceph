@@ -16,31 +16,30 @@ using namespace std::literals;
 
 class ScrubQueueImp : public ScrubQueueImp_IF {
   using SchedEntry = Scrub::SchedEntry;
-  using SchedulingQueue = std::deque<SchedEntry>;
+  //using SchedulingQueue = std::deque<SchedEntry>;
 
 
  public:
-  ScrubQueueImp(
-      Scrub::ScrubQueueOps& parent_queue)  // : RRR parent_queue(parent_queue)
-  {}
+  ScrubQueueImp() {}
 
-  void enqueue_entry(const SchedEntry& entry) override;
+  ~ScrubQueueImp() = default;
 
-  bool remove_entry(spg_t pgid, scrub_level_t s_or_d) override;
+  void enqueue_entry(const SchedEntry& entry) final;
 
-  ScrubQueueStats get_stats(utime_t scrub_clock_now) override;
+  bool remove_entry(spg_t pgid, scrub_level_t s_or_d) final;
 
-  std::optional<SchedEntry> pop_ready_pg(utime_t scrub_clock_now) override;
+  ScrubQueueStats get_stats(utime_t scrub_clock_now) final;
 
-  void dump_scrubs(ceph::Formatter* f) const override;
+  std::optional<SchedEntry> pop_ready_pg(utime_t scrub_clock_now) final;
 
-  std::set<spg_t> get_pgs(EntryPred) const override;
+  void dump_scrubs(ceph::Formatter* f) const final;
 
-  std::vector<SchedEntry> get_entries(EntryPred) const override;
+  std::set<spg_t> get_pgs(EntryPred) const final;
+
+  std::vector<SchedEntry> get_entries(EntryPred) const final;
 
  private:
   not_before_queue_t<SchedEntry> to_scrub;
-  //Scrub::ScrubQueueOps& parent_queue;
 };
 
 
@@ -59,7 +58,7 @@ ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
     : cct{cct}
     , osd_service{osds}
     , m_osd_resources{[this](std::string msg) { log_fwd(msg); }, cct->_conf}
-    , m_queue_impl{std::make_unique<ScrubQueueImp>(*this /*cct, osds*/)}
+    , m_queue_impl{std::make_unique<ScrubQueueImp>()}
 {
   log_prefix = fmt::format("osd.{} scrub-queue::", osd_service.get_nodeid());
 
@@ -211,18 +210,6 @@ milliseconds ScrubQueue::required_sleep_time(bool high_priority_scrub) const
 using SchedEntry = Scrub::SchedEntry;
 using urgency_t = Scrub::urgency_t;
 
-// namespace {
-// 
-// // the 'identification' function for the 'to_scrub' queue
-// // (would have been a key in a map, where we not sorting the entries
-// // by different fields)
-// auto same_key(const SchedEntry& t, spg_t pgid, scrub_level_t s_or_d)
-// {
-//   return t.pgid == pgid && t.level == s_or_d;
-// }
-// }  // namespace
-
-
 bool ScrubQueue::enqueue_targets(
     spg_t pgid,
     const SchedEntry& shallow,
@@ -233,15 +220,19 @@ bool ScrubQueue::enqueue_targets(
 		  deep)
 	   << dendl;
   ceph_assert(shallow.pgid == pgid && deep.pgid == pgid);
+  // urgency is set to 'off' only when the PG is removed from the queue
+  ceph_assert(shallow.urgency != urgency_t::off &&
+              deep.urgency != urgency_t::off);
 
-  // RRR document how this can happen
-  if (shallow.urgency == urgency_t::off || deep.urgency == urgency_t::off) {
-    dout(10) << fmt::format(
-		    "{}: pg[{}]: one of the entries is 'off' - not queuing",
-		    __func__, pgid)
-	     << dendl;
-    return false;
-  }
+//   if (shallow.urgency == urgency_t::off || deep.urgency == urgency_t::off) {
+//     // which means that they were disabled by remove_from_osd_queue().
+//     // shouldn't happen, but let's be safe
+//     dout(10) << fmt::format(
+// 		    "{}: pg[{}]: one of the entries is 'off' - not queuing",
+// 		    __func__, pgid)
+// 	     << dendl;
+//     return false;
+//   }
 
   std::unique_lock l{jobs_lock};
   // now - add the new targets
@@ -312,15 +303,14 @@ void ScrubQueue::initiate_a_scrub(
 
   std::scoped_lock both_locks(jobs_lock, m_loop_lock);
 
-  // is there an active 'scrub-loop'? (i.e. - are we in the middle of
+  // is there already an active 'scrub-loop'? (i.e. - are we in the middle of
   // the asynchronous process of going over the ready-to-scrub PGs, trying
   // them one by one?)
-
   if (m_initiation_loop) {
     /// \todo add a timeout here
     dout(10)
 	<< fmt::format(
-	       "{}: already looking for scrub candidate (since{}). skipping",
+	       "{}: already looking for scrub candidate (since {}). skipping",
 	       __func__, m_initiation_loop->loop_id)
 	<< dendl;
     return;
@@ -330,16 +320,21 @@ void ScrubQueue::initiate_a_scrub(
 
   // for debug logs - list all jobs in the queue
   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
-    auto select_ready = [](const SchedEntry&, bool is_eligible) -> bool { return is_eligible; };
+    auto select_ready = [](const SchedEntry&, bool is_eligible) -> bool {
+      return is_eligible;
+    };
 
-    dout(20) << fmt::format("{}: the scrub targets queue:", __func__) << dendl;
+    dout(20) << fmt::format("{}: ready scrub targets:", __func__) << dendl;
     auto all_jobs = m_queue_impl->get_entries(select_ready);
     for (const auto& sj : all_jobs) {
       dout(20) << fmt::format(" scrub-queue job: {}", sj) << dendl;
     }
   }
-  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) { // RRR make that 30
-    auto select_ready = [](const SchedEntry&, bool is_eligible) -> bool { return is_eligible; };
+  if (g_conf()
+	  ->subsys.should_gather<ceph_subsys_osd, 20>()) {  // RRR make that 30
+    auto select_ready = [](const SchedEntry&, bool is_eligible) -> bool {
+      return is_eligible;
+    };
     dout(20) << fmt::format("{}: the PGs in the queue:", __func__) << dendl;
     auto ready_pgs = m_queue_impl->get_pgs(select_ready);
     for (const auto& rpg : ready_pgs) {
@@ -347,21 +342,22 @@ void ScrubQueue::initiate_a_scrub(
     }
   }
 
-
   // check the OSD-wide environment conditions (scrub resources, time, etc.).
   // These may restrict the type of scrubs we are allowed to start, or just
   // prevent us from starting any scrub at all.
   auto env_restrictions =
-      restrictions_on_scrubbing(conf(), is_recovery_active, scrub_tick_time);
+      restrictions_on_scrubbing(config, is_recovery_active, scrub_tick_time);
   if (!env_restrictions) {
     return;
   }
 
   auto queue_stats = m_queue_impl->get_stats(scrub_tick_time);
-dout(10) << fmt::format(
-		    "{}: in queue: {} ready, {} future, {} total", __func__,
-                        queue_stats.num_ready, queue_stats.num_total - queue_stats.num_ready,
-                        queue_stats.num_total) << dendl;
+  dout(20) << fmt::format(
+		  "{}: in queue: {} ready, {} future, {} total", __func__,
+		  queue_stats.num_ready,
+		  queue_stats.num_total - queue_stats.num_ready,
+		  queue_stats.num_total)
+	   << dendl;
   if (queue_stats.num_ready == 0) {
     dout(10) << fmt::format(
 		    "{}: no eligible scrub targets in the {} queued", __func__,
@@ -372,7 +368,7 @@ dout(10) << fmt::format(
 
   auto candidate = m_queue_impl->pop_ready_pg(scrub_tick_time);
   ceph_assert(candidate);  // we did check that the queue is not empty
-  dout(10) << fmt::format(
+  dout(20) << fmt::format(
 		  "{}: scrub candidate is pg[{}] ({}). There are {} eligible "
 		  "and {} future targets behind it "
 		  "in the queue",
