@@ -222,11 +222,6 @@ utime_t SchedTarget::sched_time() const
   return sched_info.not_before;
 }
 
-// void SchedTarget::depenalize()
-// {
-//   up_urgency_to(urgency_t::periodic_regular);
-// }
-
 void SchedTarget::up_urgency_to(urgency_t u)
 {
   sched_info.urgency = std::max(sched_info.urgency, u);

@@ -425,8 +425,6 @@ class SchedTarget {
 
   void up_urgency_to(urgency_t u);
 
-  //void depenalize();
-
   // updating periodic targets:
 
   void update_as_shallow(
@@ -573,8 +571,6 @@ class ScrubJob {
       const sched_conf_t& aconf,
       utime_t now_is);
 
-  //void un_penalize();
-
   void dump(ceph::Formatter* f) const;
 
   std::string_view registration_state() const;
@@ -617,8 +613,6 @@ class ScrubSchedListener {
   virtual int get_nodeid() const = 0;  // returns the OSD number ('whoami')
 
   virtual std::optional<PGLockWrapper> get_locked_pg(spg_t pgid) = 0;
-
-  //virtual void send_sched_recalc_to_pg(spg_t pgid) = 0;
 
   virtual void queue_for_scrub_initiation(
       spg_t pg,

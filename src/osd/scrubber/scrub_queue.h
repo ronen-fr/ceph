@@ -223,7 +223,6 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
    */
   void on_config_times_change();
 
- public:
   void dump_scrubs(ceph::Formatter* f);
 
   /**
@@ -328,7 +327,19 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   std::atomic_bool a_pg_is_reserving{false};
 
   [[nodiscard]] bool scrub_load_below_threshold() const;
+
+  /**
+   * \returns true if the current time is within the scrub time window
+   *
+   * Using the 'current scrub time' as maintained by the ScrubQueue
+   * object (which is the same as the 'current time' used by the OSD -
+   * unless we are in a unit-test).
+   */
   [[nodiscard]] bool scrub_time_permit() const;
+  [[nodiscard]] bool scrub_time_permit(utime_t t) const;
+
+  // note: sizeof(ScrubQueueStats)==4
+  void debug_log_queue(ScrubQueueStats queue_stats) const;
 
  public:  // used by the unit-tests
   /**

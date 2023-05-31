@@ -150,21 +150,7 @@ class not_before_queue_t {
   /// current time, see advance_time
   T current_time;
  public:
-  /// Enqueue item constructed from copied V
-//   void enqueue(const V& v)
-//   {
-//     auto* item = new sched_e_wrap_t(v);
-//     removal_registry.insert(*item);
-// 
-//     if (project_not_before(item->v) > current_time) {
-//       item->status = not_before_queue_t::status_t::INELIGIBLE;
-//       ineligible_queue.insert(*item);
-//     } else {
-//       item->status = not_before_queue_t::status_t::ELIGIBLE;
-//       eligible_queue.insert(*item);
-//     }
-//   }
-
+  /// Enqueue item constructed from copied/constructed V
   template <typename... Args>
   void enqueue(Args&& ...args)
   {
