@@ -42,7 +42,6 @@ int main(int argc, char** argv)
 }
 
 using schedule_result_t = Scrub::schedule_result_t;
-using ScrubJobRef = ScrubQueue::ScrubJobRef;
 using qu_state_t = ScrubQueue::qu_state_t;
 
 /// enabling access into ScrubQueue internals
@@ -52,15 +51,20 @@ class ScrubSchedTestWrapper : public ScrubQueue {
       : ScrubQueue(g_ceph_context, osds)
   {}
 
-  void rm_unregistered_jobs()
-  {
-    ScrubQueue::rm_unregistered_jobs(to_scrub);
-    ScrubQueue::rm_unregistered_jobs(penalized);
-  }
+//   void rm_unregistered_jobs()
+//   {
+//     ScrubQueue::rm_unregistered_jobs(to_scrub);
+//     ScrubQueue::rm_unregistered_jobs(penalized);
+//   }
 
-  ScrubQContainer collect_ripe_jobs()
+  std::vector<SchedEntry> collect_ripe_jobs()
   {
-    return ScrubQueue::collect_ripe_jobs(to_scrub, time_now());
+    m_queue_impl->update_time(time_now());
+    auto select_ready = [](const SchedEntry&, bool is_eligible) -> bool {
+      return is_eligible;
+    };
+    return m_queue_impl->get_entries(select_ready);
+    //return ScrubQueue::collect_ripe_jobs(to_scrub, time_now());
   }
 
   /**
@@ -71,7 +75,9 @@ class ScrubSchedTestWrapper : public ScrubQueue {
   {
     m_time_for_testing = utime_t{timeval{faked_now}};
   }
+
   void clear_time_for_testing() { m_time_for_testing.reset(); }
+
   mutable std::optional<utime_t> m_time_for_testing;
 
   utime_t time_now() const final
@@ -141,7 +147,7 @@ struct sjob_dynamic_data_t {
   pg_info_t mocked_pg_info;
   pool_opts_t mocked_pool_opts;
   requested_scrub_t request_flags;
-  ScrubQueue::ScrubJobRef job;
+  //ScrubQueue::ScrubJobRef job;
 };
 
 class TestScrubSched : public ::testing::Test {
