@@ -42,6 +42,7 @@
 
 #include <boost/algorithm/string/predicate.hpp>
 
+#include <iterator>
 #include <sstream>
 #include <syslog.h>
 

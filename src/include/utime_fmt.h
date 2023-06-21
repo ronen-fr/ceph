@@ -8,6 +8,7 @@
 #include <fmt/chrono.h>
 
 #include <string_view>
+#include <fmt/format.h>
 
 #include "include/utime.h"
 

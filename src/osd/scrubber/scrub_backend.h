@@ -47,12 +47,18 @@
 
 #include "common/LogClient.h"
 #include "common/scrub_types.h"
+#include "osd/OSDMap.h"
+#include "osd/osd_types_fmt.h"
+#include "osd/scrubber_common.h"
+//#include "osd/SnapMapReaderI.h"
 
 struct ScrubMap;
 
 class PG;
 class PgScrubber;
 class PGBackend;
+struct PGPool;
+using Scrub::PgScrubBeListener;
 
 
 using data_omap_digests_t =
