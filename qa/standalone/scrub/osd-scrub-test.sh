@@ -30,6 +30,7 @@ function run() {
     local funcs=${@:-$(set | sed -n -e 's/^\(TEST_[0-9a-z_]*\) .*/\1/p')}
     for func in $funcs ; do
         setup $dir || return 1
+        echo "-------------- Run Test $func -----------------------"
         $func $dir || return 1
         teardown $dir || return 1
     done

@@ -186,6 +186,8 @@ function teardown() {
 	    done
         fi
     fi
+    mkdir -p $TESTDIR/archive/log
+    mv $dir/*.log $TESTDIR/archive/log
     if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
 	if [ -n "$LOCALRUN" ]; then
 	    display_logs $dir
