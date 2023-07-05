@@ -449,7 +449,7 @@ unsigned int PgScrubber::scrub_requeue_priority(
 
 /* on_new_interval
  *
- * Responsible for restting any scrub state and releasing any resources.
+ * Responsible for resetting any scrub state and releasing any resources.
  * Any inflight events will be ignored via check_interval/should_drop_message
  * or canceled.
  */
@@ -1839,6 +1839,17 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
 void PgScrubber::handle_scrub_reserve_grant(OpRequestRef op, pg_shard_t from)
 {
   dout(10) << __func__ << " " << *op->get_req() << dendl;
+  {
+    if (m_debug_deny_replica) {
+      // debug/UT code
+      dout(10) << fmt::format("{}: debug_deny_replica set - denying", __func__)
+	       << dendl;
+      m_debug_deny_replica = false;
+      m_reservations->release_replica(from, m_pg->get_osdmap_epoch());
+      handle_scrub_reserve_reject(op, from);
+      return;
+    }
+  }
   op->mark_started();
 
   if (m_reservations.has_value()) {

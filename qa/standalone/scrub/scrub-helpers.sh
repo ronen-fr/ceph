@@ -18,7 +18,7 @@ function extract_published_sch() {
   local -n dict=$4 # a ref to the in/out dictionary
   local current_time=$2
   local extra_time=$3
-  local extr_dbg=1 # note: 3 and above leave some temp files around
+  local extr_dbg=3 # note: 3 and above leave some temp files around
 
   #turn off '-x' (but remember previous state)
   local saved_echo_flag=${-//[^x]/}
