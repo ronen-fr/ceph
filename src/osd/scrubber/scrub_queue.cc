@@ -279,7 +279,7 @@ void ScrubQueue::scrub_next_in_queue(utime_t loop_id)
   // are we indeed in the middle of a 'scrub-loop'?
   if (!m_initiation_loop) {
     dout(20) << fmt::format(
-		    "{}: no active scrub-loop (suggested loop ID:{})", __func__,
+		    "{}: no active scrub-loop (suggested loop ID:{:s})", __func__,
 		    loop_id)
 	     << dendl;
     return;
@@ -288,7 +288,7 @@ void ScrubQueue::scrub_next_in_queue(utime_t loop_id)
   // verify that we are not receiving a message from a previous loop
   if (m_initiation_loop->loop_id != loop_id) {
     dout(10) << fmt::format(
-		    "{}: loop-id mismatch. skipping. ({} != {})", __func__,
+		    "{}: loop-id mismatch. skipping. ({:s} != {:s})", __func__,
 		    m_initiation_loop->loop_id, loop_id)
 	     << dendl;
     return;

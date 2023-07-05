@@ -20,7 +20,7 @@
 #include "osd/osd_types.h"
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber/osd_scrub_sched.h"
-#include "osd/scrubber_common.h"
+#include "osd/scrubber/scrub_queue.h"
 
 int main(int argc, char** argv)
 {
@@ -42,7 +42,7 @@ int main(int argc, char** argv)
 }
 
 using schedule_result_t = Scrub::schedule_result_t;
-using qu_state_t = ScrubQueue::qu_state_t;
+using SchedEntry = Scrub::SchedEntry;
 
 /// enabling access into ScrubQueue internals
 class ScrubSchedTestWrapper : public ScrubQueue {
@@ -65,6 +65,14 @@ class ScrubSchedTestWrapper : public ScrubQueue {
     };
     return m_queue_impl->get_entries(select_ready);
     //return ScrubQueue::collect_ripe_jobs(to_scrub, time_now());
+  }
+
+  std::vector<SchedEntry> list_registered_jobs()
+  {
+    auto select_all = [](const SchedEntry&, bool is_eligible) -> bool {
+      return true;
+    };
+    return m_queue_impl->get_entries(select_all);
   }
 
   /**

@@ -715,7 +715,7 @@ struct fmt::formatter<Scrub::ScrubJob> {
 	ctx.out(), "pg[{}]:[t/s:{},t/d:{}],reg:{}", sjob.pgid,
 	sjob.shallow_target, sjob.deep_target, sjob.registration_state());
   }
-  bool shortened{false};  ///< no 'nearest target' info
+  bool shortened{false};  ///< true = no 'nearest target' info
 };
 
 template <>

@@ -43,7 +43,7 @@ Main Scrubber interfaces:
 │         PrimaryLogScrub                           │       │
 └─────┬───────────────────┬─────────────────────────┘       │
       │                   │                         implements
-      │    owns & uses   │                                 │
+      │    owns & uses    │                                 │
       │                   │       ┌─────────────────────────▼──────┐
       │                   │       │    <<ScrubMachineListener>>    │
       │                   │       └─────────▲──────────────────────┘
@@ -140,7 +140,6 @@ class ReplicaReservations {
   std::chrono::milliseconds m_timeout;
   std::optional<tpoint_t> m_timeout_point;
 
-  void release_replica(pg_shard_t peer, epoch_t epoch);
 
   void send_all_done();	 ///< all reservations are granted
 
@@ -148,6 +147,9 @@ class ReplicaReservations {
   void send_reject();
 
   std::optional<tpoint_t> update_latecomers(tpoint_t now_is);
+
+public: // for asok-testing (release_replica() is 'private' re normal usage)
+  void release_replica(pg_shard_t peer, epoch_t epoch);
 
  public:
   std::string m_log_msg_prefix;
@@ -471,7 +473,7 @@ class PgScrubber : public ScrubPgIF,
       std::stringstream& ss) override;
 
   int m_debug_blockrange{0};
-  bool m_debug_deny_replica{false};
+  bool m_debug_deny_replica{true};
 
   void start_scrubbing(
       scrub_level_t lvl,
