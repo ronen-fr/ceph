@@ -6025,17 +6025,14 @@ struct formatter<ObjectRecoveryInfo> {
 }
 
 struct ObjectRecoveryProgress {
-  uint64_t data_recovered_to;
+  uint64_t data_recovered_to{0};
   std::string omap_recovered_to;
-  bool first;
-  bool data_complete;
-  bool omap_complete;
-  bool error = false;
+  bool first{true};
+  bool data_complete{false};
+  bool omap_complete{false};
+  bool error{false};
 
-  ObjectRecoveryProgress()
-    : data_recovered_to(0),
-      first(true),
-      data_complete(false), omap_complete(false) { }
+  ObjectRecoveryProgress() {}
 
   bool is_complete(const ObjectRecoveryInfo& info) const {
     return (data_recovered_to >= (
@@ -6053,10 +6050,22 @@ struct ObjectRecoveryProgress {
   void encode(ceph::buffer::list &bl) const;
   void decode(ceph::buffer::list::const_iterator &bl);
   std::ostream &print(std::ostream &out) const;
+  std::string print() const;
   void dump(ceph::Formatter *f) const;
 };
 WRITE_CLASS_ENCODER(ObjectRecoveryProgress)
 std::ostream& operator<<(std::ostream& out, const ObjectRecoveryProgress &prog);
+
+namespace fmt {
+template <>
+struct formatter<ObjectRecoveryProgress> {
+  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const ObjectRecoveryProgress& orp, FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", orp.print());
+  }
+};
+}
 
 struct PushReplyOp {
   hobject_t soid;
