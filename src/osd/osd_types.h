@@ -6007,10 +6007,22 @@ struct ObjectRecoveryInfo {
   void encode(ceph::buffer::list &bl, uint64_t features) const;
   void decode(ceph::buffer::list::const_iterator &bl, int64_t pool = -1);
   std::ostream &print(std::ostream &out) const;
+  std::string print() const;
   void dump(ceph::Formatter *f) const;
 };
 WRITE_CLASS_ENCODER_FEATURES(ObjectRecoveryInfo)
 std::ostream& operator<<(std::ostream& out, const ObjectRecoveryInfo &inf);
+namespace fmt {
+template <>
+struct formatter<ObjectRecoveryInfo> {
+  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const ObjectRecoveryInfo& ori, FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", ori.print());
+  }
+};
+}
 
 struct ObjectRecoveryProgress {
   uint64_t data_recovered_to;
