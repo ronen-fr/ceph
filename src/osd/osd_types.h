@@ -3232,6 +3232,7 @@ public:
     void encode(ceph::buffer::list& bl) const;
     void decode(ceph::buffer::list::const_iterator& bl);
     void dump(ceph::Formatter *f) const;
+    std::string print() const;
     static void generate_test_instances(std::list<pg_interval_t*>& o);
   };
 
@@ -3256,6 +3257,7 @@ public:
     virtual void encode(ceph::buffer::list &bl) const = 0;
     virtual void decode(ceph::buffer::list::const_iterator &bl) = 0;
     virtual void dump(ceph::Formatter *f) const = 0;
+    virtual std::string print() const = 0;
     virtual void iterate_mayberw_back_to(
       epoch_t les,
       std::function<void(epoch_t, const std::set<pg_shard_t> &)> &&f) const = 0;
@@ -3301,6 +3303,9 @@ public:
     ceph_assert(past_intervals);
     past_intervals->dump(f);
   }
+
+  std::string print() const;
+
   static void generate_test_instances(std::list<PastIntervals *> & o);
 
   /**
@@ -3510,6 +3515,8 @@ public:
       const OSDMap &osdmap,
       const DoutPrefixProvider *dpp) const;
 
+    std::string print() const;
+
     // For verifying tests
     PriorSet(
       bool ec_pool,
@@ -3546,6 +3553,36 @@ WRITE_CLASS_ENCODER(PastIntervals)
 std::ostream& operator<<(std::ostream& out, const PastIntervals::pg_interval_t& i);
 std::ostream& operator<<(std::ostream& out, const PastIntervals &i);
 std::ostream& operator<<(std::ostream& out, const PastIntervals::PriorSet &i);
+
+namespace fmt {
+template <>
+struct formatter<PastIntervals::PriorSet> {
+  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const PastIntervals::PriorSet& pips, FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", pips.print());
+  }
+};
+
+template <>
+struct formatter<PastIntervals::pg_interval_t> {
+  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const PastIntervals::pg_interval_t& pipgi,
+              FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", pipgi.print());
+  }
+};
+
+template <>
+struct formatter<PastIntervals> {
+  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const PastIntervals& pi, FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", pi.print());
+  }
+};
+}  // namespace fmt
 
 template <typename F>
 PastIntervals::PriorSet::PriorSet(
