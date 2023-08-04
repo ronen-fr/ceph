@@ -4076,10 +4076,22 @@ public:
   void encode(ceph::buffer::list &bl) const;
   void decode(ceph::buffer::list::const_iterator &bl);
   void dump(ceph::Formatter *f) const;
+  std::string print() const;
   static void generate_test_instances(std::list<ObjectCleanRegions*>& o);
 };
 WRITE_CLASS_ENCODER(ObjectCleanRegions)
 std::ostream& operator<<(std::ostream& out, const ObjectCleanRegions& ocr);
+
+namespace fmt {
+template <>
+struct formatter<ObjectCleanRegions> {
+  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const ObjectCleanRegions& creg, FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", creg.print());
+  }
+};
+}
 
 
 struct OSDOp {
@@ -4299,7 +4311,7 @@ struct pg_log_entry_t {
      invalid_hash(false), invalid_pool(false) {
     snaps.reassign_to_mempool(mempool::mempool_osd_pglog);
   }
-      
+
   bool is_clone() const { return op == CLONE; }
   bool is_modify() const { return op == MODIFY; }
   bool is_promote() const { return op == PROMOTE; }
@@ -4358,6 +4370,7 @@ struct pg_log_entry_t {
   void encode(ceph::buffer::list &bl) const;
   void decode(ceph::buffer::list::const_iterator &bl);
   void dump(ceph::Formatter *f) const;
+  std::string fmt_print() const;
   static void generate_test_instances(std::list<pg_log_entry_t*>& o);
 
 };
@@ -6012,11 +6025,11 @@ struct ObjectRecoveryInfo {
 };
 WRITE_CLASS_ENCODER_FEATURES(ObjectRecoveryInfo)
 std::ostream& operator<<(std::ostream& out, const ObjectRecoveryInfo &inf);
+
 namespace fmt {
 template <>
 struct formatter<ObjectRecoveryInfo> {
   constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
-
   template <typename FormatContext>
   auto format(const ObjectRecoveryInfo& ori, FormatContext& ctx) const {
     return fmt::format_to(ctx.out(), "{}", ori.print());
