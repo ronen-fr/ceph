@@ -9,6 +9,7 @@
 #include "osd/osd_types.h"
 #include <fmt/chrono.h>
 #if FMT_VERSION >= 90000
+#include <fmt/ranges.h>
 #include <fmt/ostream.h>
 #endif
 
