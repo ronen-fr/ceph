@@ -5551,11 +5551,11 @@ struct SnapSet {
 
   /// get space accounted to clone
   uint64_t get_clone_bytes(snapid_t clone) const;
-    
+
   void encode(ceph::buffer::list& bl) const;
   void decode(ceph::buffer::list::const_iterator& bl);
   void dump(ceph::Formatter *f) const;
-  static void generate_test_instances(std::list<SnapSet*>& o);  
+  static void generate_test_instances(std::list<SnapSet*>& o);
 
   SnapContext get_ssc_as_of(snapid_t as_of) const {
     SnapContext out;
@@ -6057,22 +6057,22 @@ struct ObjectRecoveryInfo {
   void encode(ceph::buffer::list &bl, uint64_t features) const;
   void decode(ceph::buffer::list::const_iterator &bl, int64_t pool = -1);
   std::ostream &print(std::ostream &out) const;
-  std::string print() const;
+  std::string fmt_print() const;
   void dump(ceph::Formatter *f) const;
 };
 WRITE_CLASS_ENCODER_FEATURES(ObjectRecoveryInfo)
 std::ostream& operator<<(std::ostream& out, const ObjectRecoveryInfo &inf);
 
-namespace fmt {
-template <>
-struct formatter<ObjectRecoveryInfo> {
-  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
-  template <typename FormatContext>
-  auto format(const ObjectRecoveryInfo& ori, FormatContext& ctx) const {
-    return fmt::format_to(ctx.out(), "{}", ori.print());
-  }
-};
-}
+// namespace fmt {
+// template <>
+// struct formatter<ObjectRecoveryInfo> {
+//   constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
+//   template <typename FormatContext>
+//   auto format(const ObjectRecoveryInfo& ori, FormatContext& ctx) const {
+//     return fmt::format_to(ctx.out(), "{}", ori.print());
+//   }
+// };
+// }
 
 struct ObjectRecoveryProgress {
   uint64_t data_recovered_to{0};
