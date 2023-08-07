@@ -32,6 +32,8 @@
 #include "include/rados/rados_types.hpp"
 #include "include/mempool.h"
 
+#include "common/fmt_common.h"
+
 #include "msg/msg_types.h"
 #include "include/compat.h"
 #include "include/types.h"
