@@ -7,6 +7,7 @@
 #include <optional>
 #include <ostream>
 
+#include "common/fmt_common.h"
 #include "crimson/os/seastore/onode_manager/staged-fltree/fwd.h"
 #include "crimson/os/seastore/onode_manager/staged-fltree/node_types.h"
 #include "crimson/os/seastore/onode_manager/staged-fltree/value.h"
@@ -98,9 +99,20 @@ struct MatchHistory {
   std::optional<MatchKindCMP> string_match;
   std::optional<MatchKindCMP> right_match;
 };
+//}
+// namespace std {
+// inline ostream& operator<<(std::ostream& os, const crimson::os::seastore::onode::MatchHistory& pos) {
+//   return pos.dump(os);
+// }
+// }
 inline std::ostream& operator<<(std::ostream& os, const MatchHistory& pos) {
   return pos.dump(os);
 }
+}
+
+
+
+namespace crimson::os::seastore::onode {
 
 template <match_stage_t STAGE>
 struct _check_GT_t {
@@ -207,19 +219,43 @@ struct staged_position_t {
 
   index_t index;
   nxt_t nxt;
+
+  std::string fmt_print() const {
+    if (is_end()) {
+      return "END";
+    } else if (index == INDEX_LAST) {
+      return "LAST";
+    } else {
+      return std::to_string(index) + ", " + nxt.fmt_print();
+    }
+  }
 };
-template <match_stage_t STAGE>
-std::ostream& operator<<(std::ostream& os, const staged_position_t<STAGE>& pos) {
-  if (pos.index == INDEX_END) {
+}
+
+namespace std {
+template <crimson::os::seastore::onode::match_stage_t STAGE>
+std::ostream& operator<<(
+    std::ostream& os,
+    const crimson::os::seastore::onode::staged_position_t<STAGE>& pos) {
+  if (pos.index == crimson::os::seastore::onode::INDEX_END) {
     os << "END";
-  } else if (pos.index == INDEX_LAST) {
+  } else if (pos.index == crimson::os::seastore::onode::INDEX_LAST) {
     os << "LAST";
   } else {
     os << pos.index;
-    assert(is_valid_index(pos.index));
+    assert(crimson::os::seastore::onode::is_valid_index(pos.index));
   }
   return os << ", " << pos.nxt;
 }
+}
+
+namespace fmt {
+template <crimson::os::seastore::onode::match_stage_t S>
+struct formatter<crimson::os::seastore::onode::staged_position_t<S>>;
+} // namespace fmt
+
+
+namespace crimson::os::seastore::onode {
 
 template <>
 struct staged_position_t<STAGE_BOTTOM> {
@@ -280,19 +316,16 @@ struct staged_position_t<STAGE_BOTTOM> {
   static me_t end() { return {INDEX_END}; }
 
   index_t index;
-};
-template <>
-inline std::ostream& operator<<(std::ostream& os, const staged_position_t<STAGE_BOTTOM>& pos) {
-  if (pos.index == INDEX_END) {
-    os << "END";
-  } else if (pos.index == INDEX_LAST) {
-    os << "LAST";
-  } else {
-    os << pos.index;
-    assert(is_valid_index(pos.index));
+  std::string fmt_print() const {
+    if (is_end()) {
+      return "END";
+    } else if (index == INDEX_LAST) {
+      return "LAST";
+    } else {
+      return std::to_string(index);
+    }
   }
-  return os;
-}
+};
 
 using search_position_t = staged_position_t<STAGE_TOP>;
 
@@ -433,10 +466,20 @@ struct node_stats_t {
   unsigned num_kvs = 0;
 };
 
-}
+} // namespace crimson::os::seastore::onode
+
+namespace fmt {
+template <crimson::os::seastore::onode::match_stage_t S>
+struct formatter<crimson::os::seastore::onode::staged_position_t<S>> {
+  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const crimson::os::seastore::onode::staged_position_t<S>& k,
+              FormatContext& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", k.fmt_print());
+  }
+};
 
 #if FMT_VERSION >= 90000
-template <crimson::os::seastore::onode::match_stage_t S>
-struct fmt::formatter<crimson::os::seastore::onode::staged_position_t<S>> : fmt::ostream_formatter {};
-template <> struct fmt::formatter<crimson::os::seastore::onode::MatchHistory> : fmt::ostream_formatter {};
+template <> struct formatter<crimson::os::seastore::onode::MatchHistory> : ostream_formatter {};
 #endif
+}  // namespace fmt
