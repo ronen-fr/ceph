@@ -132,6 +132,8 @@ struct staged_position_t {
   static_assert(is_valid_stage(STAGE));
   using me_t = staged_position_t<STAGE>;
   using nxt_t = staged_position_t<STAGE - 1>;
+  using ::operator<<;
+
   bool is_end() const {
     if (index == INDEX_END) {
       return true;
@@ -436,7 +438,9 @@ struct node_stats_t {
 }
 
 #if FMT_VERSION >= 90000
+namespace fmt {
 template <crimson::os::seastore::onode::match_stage_t S>
-struct fmt::formatter<crimson::os::seastore::onode::staged_position_t<S>> : fmt::ostream_formatter {};
-template <> struct fmt::formatter<crimson::os::seastore::onode::MatchHistory> : fmt::ostream_formatter {};
+struct formatter<crimson::os::seastore::onode::staged_position_t<S>> : ostream_formatter {};
+template <> struct formatter<crimson::os::seastore::onode::MatchHistory> : ostream_formatter {};
+} // namespace fmt
 #endif
