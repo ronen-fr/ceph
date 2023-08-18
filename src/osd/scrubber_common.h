@@ -17,10 +17,25 @@ class Formatter;
 struct PGPool;
 
 namespace Scrub {
-  class ReplicaReservations;
-}
+class ReplicaReservations;
 
-/// Facilitating scrub-realated object access to private PG data
+// possible outcome when trying to select a PG and scrub it
+enum class schedule_result_t {
+  /// an internal, temporary, state:
+  ok_thus_far,
+
+  /// for a failure of a specific combination of PG & level:
+  target_failure,
+
+  /// for failure modes that are not related to a specific scrub target
+  failure,
+};
+
+class SchedTarget;
+struct SchedEntry;
+}  // namespace Scrub
+
+/// Facilitating scrub-related object access to private PG data
 class ScrubberPasskey {
 private:
   friend class Scrub::ReplicaReservations;
@@ -41,13 +56,46 @@ enum class scrub_prio_t : bool { low_priority = false, high_priority = true };
 /// see ScrubPGgIF::m_current_token
 using act_token_t = uint32_t;
 
+/*
+ * Identifying an instance of a 'scrub scheduling loop' - the
+ * OSD tick-initiated traversing the scrub queue, trying to start a scrub
+ * session on each one in turn. Note that a common failure mode is the
+ * failure to secure replicas reservations. The failure in that case is
+ * asynchronous. For the 'scheduling loop' to continue, the failing PG
+ * must notify the ScrubQueue. The token is used to identify the specific
+ * scheduling loop instance, but is also used (in the ScrubQueue code,
+ * where it is not 'opaque') to note that start time of the loop.
+ */
+using loop_token_t = utime_t;
+
 /// "environment" preconditions affecting which PGs are eligible for scrubbing
-struct ScrubPreconds {
+struct OSDRestrictions {
   bool allow_requested_repair_only{false};
   bool load_is_low{true};
   bool time_permit{true};
   bool only_deadlined{false};
 };
+
+}  // namespace Scrub
+
+template <>
+struct fmt::formatter<Scrub::OSDRestrictions> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::OSDRestrictions& conds, FormatContext& ctx)
+  {
+    return fmt::format_to(
+      ctx.out(),
+      "overdue-only:{} load:{} time:{} repair-only:{}",
+        conds.only_deadlined,
+        conds.load_is_low ? "ok" : "high",
+        conds.time_permit ? "ok" : "no",
+        conds.allow_requested_repair_only);
+  }
+};
+
+namespace Scrub {
 
 /// PG services used by the scrubber backend
 struct PgScrubBeListener {
@@ -64,7 +112,7 @@ struct PgScrubBeListener {
   // query the PG backend for the on-disk size of an object
   virtual uint64_t logical_to_ondisk_size(uint64_t logical_size) const = 0;
 
-  // used to verify our "cleaness" before scrubbing
+  // used to verify our "cleanliness" before scrubbing
   virtual bool is_waiting_for_unreadable_object() const = 0;
 };
 

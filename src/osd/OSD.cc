@@ -140,6 +140,7 @@
 
 #include "osd/ClassHandler.h"
 #include "osd/OpRequest.h"
+#include "osd/scrubber/scrub_queue.h"
 
 #include "auth/AuthAuthorizeHandler.h"
 #include "auth/RotatingKeyRing.h"

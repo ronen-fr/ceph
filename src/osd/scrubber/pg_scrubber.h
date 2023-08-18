@@ -783,6 +783,14 @@ class PgScrubber : public ScrubPgIF,
   bool m_active{false};
 
   /**
+   * a token identifying the 'current' scrub scheduling 'loop'. Opaque
+   * to the scrubber, but used by the OSD's ScrubQueue to identify stale
+   * scheduling 'loop' (the traversing of the ready targets in the
+   * scrub queue).
+   */
+  std::optional<Scrub::SchedLoopHolder> m_schedloop_step{std::nullopt};
+
+  /**
    * a flag designed to prevent the initiation of a second scrub on a PG for
    * which scrubbing has been initiated.
    *

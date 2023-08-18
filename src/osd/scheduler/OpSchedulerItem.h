@@ -27,6 +27,9 @@
 
 class OSD;
 struct OSDShard;
+namespace Scrub {
+  struct OSDRestrictions;
+}
 
 namespace ceph::osd::scheduler {
 
@@ -363,6 +366,36 @@ class PGScrubItem : public PGOpQueueable {
   {
     return op_scheduler_class::background_best_effort;
   }
+};
+
+/**
+ *  Try to initiate a scrub. If we can't, cause the next ready scrub-sched job
+ *  to be tried.
+ */
+class PGScrubTryInitiating : public PGScrubItem {
+ private:
+  scrub_level_t m_level;
+  utime_t m_token;  ///< identifying the specific "scrub initiating loop"
+  Scrub::OSDRestrictions m_env_conditions;  // note - only 1L in size
+  using PGScrubItem::print;
+ public:
+  PGScrubTryInitiating(
+      spg_t pg,
+      scrub_level_t level,
+      utime_t token,
+      Scrub::OSDRestrictions env_conditions)
+      : PGScrubItem{pg, 0 /*epoch_queued*/, "PGScrubTryInitiating"}
+      , m_level{level}
+      , m_token{token}
+      , m_env_conditions{env_conditions}
+  {}
+  std::string print() const final {
+    return fmt::format(
+	"PGScrubTryInitiating(pgid={} level:{} token:{:s} env_conditions:({}))",
+	get_pgid(), m_level, m_token, m_env_conditions);
+  }
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle)
+      final;
 };
 
 class PGScrubResched : public PGScrubItem {
