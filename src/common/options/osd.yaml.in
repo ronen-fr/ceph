@@ -1456,3 +1456,21 @@ options:
   level: dev
   default: true
   with_legacy: true
+- name: osd_debug_scrub_reserve_drop_probability
+  type: float
+  level: dev
+  desc: Chance of dropping a reservation request during scrub
+  default: 0
+  with_legacy: false
+- name: osd_debug_scrub_reserve_delay_probability
+  type: float
+  level: dev
+  desc: Chance of delaying a reservation respone during scrub
+  default: 0
+  with_legacy: false
+- name: osd_debug_scrub_reserve_max_delay
+  type: millisecs
+  level: dev
+  desc: If delaying a reservation response, delay for [0.5 * max_delay, max_delay]
+  default: 0
+  with_legacy: false

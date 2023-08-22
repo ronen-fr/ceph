@@ -65,7 +65,7 @@ using act_token_t = uint32_t;
  * failure to secure replicas reservations. The failure in that case is
  * asynchronous. For the 'scheduling loop' to continue, the failing PG
  * must notify the ScrubQueue. The token is used to identify the specific
- * scheduling loop instance, but is also (in the ScrubQueue code,
+ * scheduling loop instance, but is also used (in the ScrubQueue code,
  * where it is not 'opaque') to note that start time of the loop.
  */
 using loop_token_t = utime_t;
@@ -247,6 +247,7 @@ struct ScrubPgIF {
    * This might trigger an 'after repair' scrub.
    */
   virtual void recovery_completed() = 0;
+
   virtual bool is_after_repair_required() const = 0;
 
   // currently only used for an assertion:
@@ -361,7 +362,6 @@ struct ScrubPgIF {
    * entries accordingly.
    */
   virtual void recalc_schedule(epoch_t epoch_queued) = 0;
-
 
   virtual void cleanup_store(ObjectStore::Transaction* t) = 0;
 

@@ -129,9 +129,9 @@ public:
   }
 
   // accessors
-  constexpr time_t        sec()  const { return tv.tv_sec; }
-  constexpr long          usec() const { return tv.tv_nsec/1000; }
-  constexpr int           nsec() const { return tv.tv_nsec; }
+  constexpr time_t  sec()  const { return tv.tv_sec; }
+  constexpr long    usec() const { return tv.tv_nsec/1000; }
+  constexpr int     nsec() const { return tv.tv_nsec; }
 
   // ref accessors/modifiers
   __u32&         sec_ref()  { return tv.tv_sec; }

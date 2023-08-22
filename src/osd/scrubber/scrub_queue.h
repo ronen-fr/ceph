@@ -244,15 +244,9 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   Scrub::ScrubResources m_osd_resources;
 
 #ifdef WITH_SEASTAR
-  auto& conf() const
-  {
-    return local_conf();
-  }
+  auto& conf() const { return local_conf(); }
 #else
-  auto& conf() const
-  {
-    return cct->_conf;
-  }
+  auto& conf() const { return cct->_conf; }
 #endif
 
   mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
@@ -312,8 +306,5 @@ class ScrubQueue : public Scrub::ScrubQueueOps {
   /**
    * unit-tests will override this function to return a mock time
    */
-  virtual utime_t time_now() const
-  {
-    return ceph_clock_now();
-  }
+  virtual utime_t time_now() const { return ceph_clock_now(); }
 };

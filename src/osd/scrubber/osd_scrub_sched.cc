@@ -331,7 +331,7 @@ void SchedTarget::update_as_deep(
   if (sched_info.target > time_now) {
     double r = rand() / (double)RAND_MAX;
     sched_info.target +=
-	config.deep_interval * config.interval_randomize_ratio * r;
+	config.deep_interval * config.interval_randomize_ratio * r; // XXX deep_scrub_randomized_ratio ??
   }
   sched_info.not_before = sched_info.target;
   sched_info.deadline = add_double(sched_info.target, config.max_deep);

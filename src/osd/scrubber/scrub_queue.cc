@@ -496,7 +496,7 @@ std::optional<Scrub::OSDRestrictions> ScrubQueue::restrictions_on_scrubbing(
 }
 
 /**
- * the refactored "OSD::sched_all_scrubs()"
+ * the refactored "OSD::resched_all_scrubs()"
  *
  * Scans the queue for entries that are "periodic", and messages the PGs
  * named in those entries to recalculate their scrub scheduling

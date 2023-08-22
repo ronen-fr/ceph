@@ -64,7 +64,6 @@ typedef OpRequest::Ref OpRequestRef;
 class DynamicPerfStats;
 class PgScrubber;
 class ScrubBackend;
-
 class ScrubQueue;
 
 namespace Scrub {
