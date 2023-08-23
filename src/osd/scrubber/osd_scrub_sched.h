@@ -123,6 +123,13 @@ ScrubQueue interfaces (main functions):
 
 class PG;
 
+/*
+ * identifying a PG to scrub:
+ * - in this version: a PG
+ * - in the future: a PG + a scrub type (shallow/deep)
+ */
+using ScrubTargetId = spg_t;
+
 namespace Scrub {
 
 using namespace ::std::literals;
@@ -314,8 +321,11 @@ class ScrubQueue {
    *
    * locking: locks jobs_lock
    */
-  Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
+  //Scrub::schedule_result_t select_pg_and_scrub(Scrub::ScrubPreconds& preconds);
 
+  std::optional<ScrubTargetId> select_pg_to_scrub(Scrub::OSDRestrictions& preconds, utime_t scrub_tick);
+
+  std::vector<ScrubTargetId> ready_to_scrub(Scrub::OSDRestrictions& preconds, utime_t scrub_tick);
   /**
    * Translate attempt_ values into readable text
    */

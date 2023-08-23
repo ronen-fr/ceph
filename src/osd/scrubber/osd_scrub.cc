@@ -19,17 +19,18 @@ static std::ostream& _prefix_target(std::ostream* _dout, T* t)
 }
 
 
-OsdScrub::OsdScrub(CephContext* cct, const ceph::common::ConfigProxy& config)
+OsdScrub::OsdScrub(CephContext* cct, Scrub::ScrubSchedListener& osd_svc, const ceph::common::ConfigProxy& config)
     : cct(cct)
+    , m_osd_svc{osd_svc}
     , conf(config)
     , m_resource_bookkeeper{[this](std::string msg) { log_fwd(msg); }, config}
-    , m_queue{} // RRR: ScrubQueue
+    , m_queue{cct, m_osd_svc} // RRR: ScrubQueue
 {
   dout(20) << fmt::format("{}: created", __func__) << dendl;
 }
 
 
-void OsdScrub::initiate_a_scrub(bool is_recovery_active)
+void OsdScrub::initiate_scrub(bool is_recovery_active)
 {
   #ifdef NOT_YET
   if (auto blocked_pgs = scrub_scheduler.get_blocked_pgs_count();
@@ -81,87 +82,94 @@ void OsdScrub::initiate_a_scrub(bool is_recovery_active)
   /*
    at this phase of the refactoring: no change to the actual interface used
    to initiate a scrub (via the OSD).
-   We loop over the queue, until the first PG that is not immediately not available
-   for scrubbing.
+   Also - no change to the queue interface used here: we ask for a list of (up to N)
+   eligible targets (based on the known restrictions).
+   We try all elements of this list until a (possibly temporary) success.
   */
-  while (true) { // RRR refine to include a max number of iterations
-    // let the queue handle the load/time issues?
+  //while (true) { // RRR refine to include a max number of iterations
+ 
+   #ifdef NOT_YET
+   // let the queue handle the load/time issues?
     auto candidate = m_queue.select_pg_to_scrub(*env_restrictions, m_scrub_tick_time);
     if (!candidate) {
       dout(20) << fmt::format("{}: no more PGs to try", __func__) << dendl;
       break;
     }
+        #endif
+    auto candidates = m_queue.ready_to_scrub(*env_restrictions, m_scrub_tick_time);
 
+  Scrub::schedule_result_t res = Scrub::schedule_result_t::none_ready;
+  for (const auto& candidate : candidates) {
     // State @ entering:
     // - the target was already dequeued from the queue
     //
-    // process now:
+    // process:
     // - mark the OSD as 'reserving now'
     // - queue the initiation message on the PG
     // - (later) set a timer for initiation confirmation/failure
     set_reserving_now();
-    dout(20) << fmt::format("{}: initiating scrub on {}", __func__, *candidate) << dendl;
+    dout(20) << fmt::format("{}: initiating scrub on {}", __func__, candidate) << dendl;
 
     // we have a candidate to scrub. We turn to the OSD to verify that the PG
     // configuration allows the specified type of scrub, and to initiate the
     // scrub.
     switch (
-      osd_service.initiate_a_scrub(candidate->pgid,
+      m_osd_svc.initiate_a_scrub(candidate,
 				   env_restrictions->allow_requested_repair_only)) {
 
       case Scrub::schedule_result_t::scrub_initiated:
 	// the happy path. We are done
-	dout(20) << " initiated for " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::scrub_initiated;
+	dout(20) << " initiated for " << candidate.pgid << dendl;
+	res = Scrub::schedule_result_t::scrub_initiated;
+        break;
 
       case Scrub::schedule_result_t::already_started:
       case Scrub::schedule_result_t::preconditions:
       case Scrub::schedule_result_t::bad_pg_state:
 	// continue with the next job
-	dout(20) << "failed (state/cond/started) " << candidate->pgid << dendl;
+	dout(20) << "failed (state/cond/started) " << candidate.pgid << dendl;
 	break;
 
       case Scrub::schedule_result_t::no_such_pg:
 	// The pg is no longer there
-	dout(20) << "failed (no pg) " << candidate->pgid << dendl;
+	dout(20) << "failed (no pg) " << candidate.pgid << dendl;
+        // RRR not handled here
 	break;
 
       case Scrub::schedule_result_t::no_local_resources:
 	// failure to secure local resources. No point in trying the other
 	// PGs at this time. Note that this is not the same as replica resources
 	// failure!
-	dout(20) << "failed (local) " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::no_local_resources;
+	dout(20) << "failed (local) " << candidate.pgid << dendl;
+	res = Scrub::schedule_result_t::no_local_resources;
+        break;
 
       case Scrub::schedule_result_t::none_ready:
 	// can't happen. Just for the compiler.
-	dout(5) << "failed !!! " << candidate->pgid << dendl;
-	return Scrub::schedule_result_t::none_ready;
+	dout(5) << "failed !!! " << candidate.pgid << dendl;
+	//return Scrub::schedule_result_t::none_ready;
+        break;
+    }
+
+    if (res == Scrub::schedule_result_t::no_local_resources) {
+        break;
+            }
+
+    if (res == Scrub::schedule_result_t::scrub_initiated) {
+      break;
     }
   }
 
+  // this is definitely how the queue would be managed in the 2'nd phase, when
+  // only one target would be selected at a time - and that target would have been dequeued.
 
-
-
-auto candidate = m_queue.select_pg_to_scrub(*env_restrictions, m_scrub_tick_time); candidate) {
-
-
-
-
+  if (res != Scrub::schedule_result_t::scrub_initiated) {
+    clear_reserving_now();
+    dout(20) << fmt::format("{}: no more PGs to try", __func__) << dendl;
   }
 
-
-  auto candidate = m_queue.select_pg_to_scrub(*env_restrictions, m_scrub_tick_time);
-  if (candidate) {
-    // State @ entering:
-    // - the target was already dequeued from the queue
-    //
-    // process now:
-    // - mark the OSD as 'reserving now'
-    // - queue the initiation message on the PG
-    // - (later) set a timer for initiation confirmation/failure
-
-  }
+  dout(20) << fmt::format("{}: sched_scrub done", __func__) << dendl;
+}
 
 // 
 // 
@@ -215,9 +223,6 @@ auto candidate = m_queue.select_pg_to_scrub(*env_restrictions, m_scrub_tick_time
 //   }
 
 //  auto was_started = scrub_scheduler.select_pg_and_scrub(env_conditions, m_scrub_tick_time);
-  dout(20) << "sched_scrub done (" << ScrubQueue::attempt_res_text(was_started)
-	   << ")" << dendl;
-}
 
 void OsdScrub::log_fwd(std::string_view text)
 {

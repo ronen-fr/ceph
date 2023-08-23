@@ -6,6 +6,10 @@
 #include "osd/osd_types_fmt.h"
 #include "osd/scrubber_common.h"
 
+// needed for the ScrubSchedListener interface, which
+// should be moved to a separate file
+#include "osd/scrubber/osd_scrub_sched.h"
+
 /// off-loading scrubbing initiation logic from the OSD
 
 /// also - CPU load as pertaining to scrubs, and scrub counters
@@ -34,24 +38,24 @@
 
 */
 
-class ScrubQueue;
-
 class OsdScrub {
 
   // ctor needs: conf, log message data, ...
 
 public:
 
-  OsdScrub(CephContext* cct, const ceph::common::ConfigProxy& config);
+  OsdScrub(CephContext* cct, Scrub::ScrubSchedListener& osd_svc, const ceph::common::ConfigProxy& config);
 
   /// select a target from the queue, and initiate a scrub
-  void initiate_a_scrub(bool active_recovery);
+  void initiate_scrub(bool active_recovery);
 
   void log_fwd(std::string_view text);
 
 private:
   CephContext* cct;
   const ceph::common::ConfigProxy& conf;
+  Scrub::ScrubSchedListener& m_osd_svc;
+
 
   std::optional<Scrub::OSDRestrictions> restrictions_on_scrubbing(
       bool is_recovery_active,
