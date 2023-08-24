@@ -17,8 +17,8 @@ using ScrubResources = Scrub::ScrubResources;
 Scrub::ScrubResources::ScrubResources(
     log_upwards_t log_access,
     const ceph::common::ConfigProxy& config)
-    : log_upwards(log_access)
-    , conf(config)
+    : log_upwards{log_access}
+    , conf{config}
 {}
 
 bool Scrub::ScrubResources::can_inc_scrubs() const
