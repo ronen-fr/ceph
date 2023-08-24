@@ -28,8 +28,8 @@
 ┌───────────────────────────▼────────────┐
 │                                        │
 │                                        │
-│  ScrubQContainer    to_scrub <>────────┼────────┐
-│  ScrubQContainer    penalized          │        │
+│  Scrub::ScrubQContainer    to_scrub <>────────┼────────┐
+│  Scrub::ScrubQContainer    penalized          │        │
 │                                        │        │
 │                                        │        │
 │  OSD_wide resource counters            │        │
@@ -120,8 +120,10 @@ ScrubQueue interfaces (main functions):
 #include "include/utime_fmt.h"
 #include "osd/osd_types_fmt.h"
 #include "utime.h"
+#include "osd/scrubber/osd_scrub_pg_if.h"
 
 class PG;
+class PGLockWrapper;
 
 /*
  * identifying a PG to scrub:
@@ -150,6 +152,8 @@ class ScrubSchedListener {
  public:
   virtual int get_nodeid() const = 0;  // returns the OSD number ('whoami')
 
+  virtual std::optional<PGLockWrapper> get_locked_pg(spg_t pgid) = 0;
+
   /**
    * A callback used by the ScrubQueue object to initiate a scrub on a specific
    * PG.
@@ -162,13 +166,14 @@ class ScrubSchedListener {
    * reason.
    */
   virtual schedule_result_t initiate_a_scrub(
-    spg_t pgid,
-    bool allow_requested_repair_only) = 0;
+      spg_t pgid,
+      bool allow_requested_repair_only) = 0;
 
   virtual ~ScrubSchedListener() {}
 };
 
 }  // namespace Scrub
+
 
 /**
  * the queue of PGs waiting to be scrubbed.
@@ -182,128 +187,128 @@ class ScrubSchedListener {
  */
 class ScrubQueue {
  public:
-  enum class must_scrub_t { not_mandatory, mandatory };
+  //enum class must_scrub_t { not_mandatory, mandatory };
 
-  enum class qu_state_t {
-    not_registered,  // not a primary, thus not considered for scrubbing by this
-		     // OSD (also the temporary state when just created)
-    registered,	     // in either of the two queues ('to_scrub' or 'penalized')
-    unregistering    // in the process of being unregistered. Will be finalized
-		     // under lock
-  };
+//   enum class qu_state_t {
+//     not_registered,  // not a primary, thus not considered for scrubbing by this
+// 		     // OSD (also the temporary state when just created)
+//     registered,	     // in either of the two queues ('to_scrub' or 'penalized')
+//     unregistering    // in the process of being unregistered. Will be finalized
+// 		     // under lock
+//   };
 
   ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds);
   virtual ~ScrubQueue() = default;
 
-  struct scrub_schedule_t {
-    utime_t scheduled_at{};
-    utime_t deadline{0, 0};
-  };
+//   struct Scrub::scrub_schedule_t {
+//     utime_t scheduled_at{};
+//     utime_t deadline{0, 0};
+//   };
 
-  struct sched_params_t {
-    utime_t proposed_time{};
-    double min_interval{0.0};
-    double max_interval{0.0};
-    must_scrub_t is_must{ScrubQueue::must_scrub_t::not_mandatory};
-  };
+//   struct Scrub::sched_params_t {
+//     utime_t proposed_time{};
+//     double min_interval{0.0};
+//     double max_interval{0.0};
+//     must_scrub_t is_must{ScrubQueue::must_scrub_t::not_mandatory};
+//   };
 
-  struct ScrubJob final : public RefCountedObject {
-
-    /**
-     *  a time scheduled for scrub, and a deadline: The scrub could be delayed
-     * if system load is too high (but not if after the deadline),or if trying
-     * to scrub out of scrub hours.
-     */
-    scrub_schedule_t schedule;
-
-    /// pg to be scrubbed
-    const spg_t pgid;
-
-    /// the OSD id (for the log)
-    const int whoami;
-
-    ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
-
-    /**
-     * the old 'is_registered'. Set whenever the job is registered with the OSD,
-     * i.e. is in either the 'to_scrub' or the 'penalized' vectors.
-     */
-    std::atomic_bool in_queues{false};
-
-    /// last scrub attempt failed to secure replica resources
-    bool resources_failure{false};
-
-    /**
-     *  'updated' is a temporary flag, used to create a barrier after
-     *  'sched_time' and 'deadline' (or any other job entry) were modified by
-     *  different task.
-     *  'updated' also signals the need to move a job back from the penalized
-     *  queue to the regular one.
-     */
-    std::atomic_bool updated{false};
-
-    /**
-     * the scrubber is waiting for locked objects to be unlocked.
-     * Set after a grace period has passed.
-     */
-    bool blocked{false};
-    utime_t blocked_since{};
-
-    utime_t penalty_timeout{0, 0};
-
-    CephContext* cct;
-
-    ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
-
-    utime_t get_sched_time() const { return schedule.scheduled_at; }
-
-    /**
-     * relatively low-cost(*) access to the scrub job's state, to be used in
-     * logging.
-     *  (*) not a low-cost access on x64 architecture
-     */
-    std::string_view state_desc() const
-    {
-      return ScrubQueue::qu_state_text(state.load(std::memory_order_relaxed));
-    }
-
-    void update_schedule(const ScrubQueue::scrub_schedule_t& adjusted);
-
-    void dump(ceph::Formatter* f) const;
-
-    /*
-     * as the atomic 'in_queues' appears in many log prints, accessing it for
-     * display-only should be made less expensive (on ARM. On x86 the _relaxed
-     * produces the same code as '_cs')
-     */
-    std::string_view registration_state() const
-    {
-      return in_queues.load(std::memory_order_relaxed) ? "in-queue"
-						       : "not-queued";
-    }
-
-    /**
-     * access the 'state' directly, for when a distinction between 'registered'
-     * and 'unregistering' is needed (both have in_queues() == true)
-     */
-    bool is_state_registered() const { return state == qu_state_t::registered; }
-
-    /**
-     * a text description of the "scheduling intentions" of this PG:
-     * are we already scheduled for a scrub/deep scrub? when?
-     */
-    std::string scheduling_state(utime_t now_is, bool is_deep_expected) const;
-
-    friend std::ostream& operator<<(std::ostream& out, const ScrubJob& pg);
-  };
+//   struct ScrubJob final : public RefCountedObject {
+// 
+//     /**
+//      *  a time scheduled for scrub, and a deadline: The scrub could be delayed
+//      * if system load is too high (but not if after the deadline),or if trying
+//      * to scrub out of scrub hours.
+//      */
+//     Scrub::scrub_schedule_t schedule;
+// 
+//     /// pg to be scrubbed
+//     const spg_t pgid;
+// 
+//     /// the OSD id (for the log)
+//     const int whoami;
+// 
+//     ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
+// 
+//     /**
+//      * the old 'is_registered'. Set whenever the job is registered with the OSD,
+//      * i.e. is in either the 'to_scrub' or the 'penalized' vectors.
+//      */
+//     std::atomic_bool in_queues{false};
+// 
+//     /// last scrub attempt failed to secure replica resources
+//     bool resources_failure{false};
+// 
+//     /**
+//      *  'updated' is a temporary flag, used to create a barrier after
+//      *  'sched_time' and 'deadline' (or any other job entry) were modified by
+//      *  different task.
+//      *  'updated' also signals the need to move a job back from the penalized
+//      *  queue to the regular one.
+//      */
+//     std::atomic_bool updated{false};
+// 
+//     /**
+//      * the scrubber is waiting for locked objects to be unlocked.
+//      * Set after a grace period has passed.
+//      */
+//     bool blocked{false};
+//     utime_t blocked_since{};
+// 
+//     utime_t penalty_timeout{0, 0};
+// 
+//     CephContext* cct;
+// 
+//     ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
+// 
+//     utime_t get_sched_time() const { return schedule.scheduled_at; }
+// 
+//     /**
+//      * relatively low-cost(*) access to the scrub job's state, to be used in
+//      * logging.
+//      *  (*) not a low-cost access on x64 architecture
+//      */
+//     std::string_view state_desc() const
+//     {
+//       return ScrubQueue::qu_state_text(state.load(std::memory_order_relaxed));
+//     }
+// 
+//     void update_schedule(const ScrubQueue::Scrub::scrub_schedule_t& adjusted);
+// 
+//     void dump(ceph::Formatter* f) const;
+// 
+//     /*
+//      * as the atomic 'in_queues' appears in many log prints, accessing it for
+//      * display-only should be made less expensive (on ARM. On x86 the _relaxed
+//      * produces the same code as '_cs')
+//      */
+//     std::string_view registration_state() const
+//     {
+//       return in_queues.load(std::memory_order_relaxed) ? "in-queue"
+// 						       : "not-queued";
+//     }
+// 
+//     /**
+//      * access the 'state' directly, for when a distinction between 'registered'
+//      * and 'unregistering' is needed (both have in_queues() == true)
+//      */
+//     bool is_state_registered() const { return state == qu_state_t::registered; }
+// 
+//     /**
+//      * a text description of the "scheduling intentions" of this PG:
+//      * are we already scheduled for a scrub/deep scrub? when?
+//      */
+//     std::string scheduling_state(utime_t now_is, bool is_deep_expected) const;
+// 
+//     friend std::ostream& operator<<(std::ostream& out, const ScrubJob& pg);
+//   };
 
   friend class TestOSDScrub;
   friend class ScrubSchedTestWrapper; ///< unit-tests structure
 
-  using ScrubJobRef = ceph::ref_t<ScrubJob>;
-  using ScrubQContainer = std::vector<ScrubJobRef>;
-
-  static std::string_view qu_state_text(qu_state_t st);
+//   using Scrub::ScrubJobRef = ceph::ref_t<ScrubJob>;
+//   using Scrub::ScrubQContainer = std::vector<Scrub::ScrubJobRef>;
+//
+  //static std::string_view qu_state_text(qu_state_t st);
 
   /**
    * called periodically by the OSD to select the first scrub-eligible PG
@@ -342,13 +347,13 @@ class ScrubQueue {
    * remove the pg from set of PGs to be scanned for scrubbing.
    * To be used if we are no longer the PG's primary, or if the PG is removed.
    */
-  void remove_from_osd_queue(ScrubJobRef sjob);
+  void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
 
   /**
    * @return the list (not std::set!) of all scrub jobs registered
    *   (apart from PGs in the process of being removed)
    */
-  ScrubQContainer list_registered_jobs() const;
+  Scrub::ScrubQContainer list_registered_jobs() const;
 
   /**
    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
@@ -360,7 +365,7 @@ class ScrubQueue {
    *
    * locking: might lock jobs_lock
    */
-  void register_with_osd(ScrubJobRef sjob, const sched_params_t& suggested);
+  void register_with_osd(Scrub::ScrubJobRef sjob, const Scrub::sched_params_t& suggested);
 
   /**
    * modify a scrub-job's scheduled time and deadline
@@ -378,19 +383,20 @@ class ScrubQueue {
    * - not a 'must': we take the suggested time as a basis, and add to it some
    *   configuration / random delays.
    *
-   *  ('must' is sched_params_t.is_must)
+   *  ('must' is Scrub::sched_params_t.is_must)
    *
    *  locking: not using the jobs_lock
    */
-  void update_job(ScrubJobRef sjob, const sched_params_t& suggested);
+  void update_job(Scrub::ScrubJobRef sjob, const Scrub::sched_params_t& suggested);
 
-  sched_params_t determine_scrub_time(const requested_scrub_t& request_flags,
+  Scrub::sched_params_t determine_scrub_time(const requested_scrub_t& request_flags,
 				      const pg_info_t& pg_info,
 				      const pool_opts_t& pool_conf) const;
 
  public:
   void dump_scrubs(ceph::Formatter* f) const;
 
+#if 0
   /**
    * No new scrub session will start while a scrub was initiated on a PG,
    * and that PG is trying to acquire replica resources.
@@ -410,6 +416,8 @@ class ScrubQueue {
   void mark_pg_scrub_blocked(spg_t blocked_pg);
   void clear_pg_scrub_blocked(spg_t blocked_pg);
   int get_blocked_pgs_count() const;
+#endif
+
 
   /**
    * scrub_sleep_time
@@ -451,18 +459,18 @@ class ScrubQueue {
    */
   mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
 
-  ScrubQContainer to_scrub;   ///< scrub jobs (i.e. PGs) to scrub
-  ScrubQContainer penalized;  ///< those that failed to reserve remote resources
+  Scrub::ScrubQContainer to_scrub;   ///< scrub jobs (i.e. PGs) to scrub
+  Scrub::ScrubQContainer penalized;  ///< those that failed to reserve remote resources
   bool restore_penalized{false};
 
   double daily_loadavg{0.0};
 
   static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
-    return jobref->state == qu_state_t::registered;
+    return jobref->state == Scrub::qu_state_t::registered;
   };
 
   static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
-    return jobref->state == qu_state_t::not_registered;
+    return jobref->state == Scrub::qu_state_t::not_registered;
   };
 
   /**
@@ -474,7 +482,7 @@ class ScrubQueue {
    * clear dead entries (unregistered, or belonging to removed PGs) from a
    * queue. Job state is changed to match new status.
    */
-  void rm_unregistered_jobs(ScrubQContainer& group);
+  void rm_unregistered_jobs(Scrub::ScrubQContainer& group);
 
   /**
    * the set of all scrub jobs in 'group' which are ready to be scrubbed
@@ -485,7 +493,7 @@ class ScrubQueue {
    * Note that the returned container holds independent refs to the
    * scrub jobs.
    */
-  ScrubQContainer collect_ripe_jobs(ScrubQContainer& group, utime_t time_now);
+  Scrub::ScrubQContainer collect_ripe_jobs(Scrub::ScrubQContainer& group, utime_t time_now);
 
 
   /// scrub resources management lock (guarding scrubs_local & scrubs_remote)
@@ -521,8 +529,8 @@ class ScrubQueue {
    *
    * @return a pair of values: the determined scrub time, and the deadline
    */
-  scrub_schedule_t adjust_target_time(
-    const sched_params_t& recomputed_params) const;
+  Scrub::scrub_schedule_t adjust_target_time(
+    const Scrub::sched_params_t& recomputed_params) const;
 
   /**
    * Look for scrub jobs that have their 'resources_failure' set. These jobs
@@ -535,8 +543,8 @@ class ScrubQueue {
   void move_failed_pgs(utime_t now_is);
 
   Scrub::schedule_result_t select_from_group(
-    ScrubQContainer& group,
-    const Scrub::ScrubPreconds& preconds,
+    Scrub::ScrubQContainer& group,
+    const Scrub::OSDRestrictions& preconds,
     utime_t now_is);
 
 protected: // used by the unit-tests
@@ -546,32 +554,32 @@ protected: // used by the unit-tests
   virtual utime_t time_now() const { return ceph_clock_now(); }
 };
 
-template <>
-struct fmt::formatter<ScrubQueue::qu_state_t>
-    : fmt::formatter<std::string_view> {
-  template <typename FormatContext>
-  auto format(const ScrubQueue::qu_state_t& s, FormatContext& ctx)
-  {
-    auto out = ctx.out();
-    out = fmt::formatter<string_view>::format(
-      std::string{ScrubQueue::qu_state_text(s)}, ctx);
-    return out;
-  }
-};
-
-template <>
-struct fmt::formatter<ScrubQueue::ScrubJob> {
-  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
-  template <typename FormatContext>
-  auto format(const ScrubQueue::ScrubJob& sjob, FormatContext& ctx)
-  {
-    return fmt::format_to(
-      ctx.out(),
-      "pg[{}] @ {:s} (dl:{:s}) - <{}> / failure: {} / pen. t.o.: {:s} / queue "
-      "state: {:.7}",
-      sjob.pgid, sjob.schedule.scheduled_at, sjob.schedule.deadline,
-      sjob.registration_state(), sjob.resources_failure, sjob.penalty_timeout,
-      sjob.state.load(std::memory_order_relaxed));
-  }
-};
+// template <>
+// struct fmt::formatter<Scrub::qu_state_t>
+//     : fmt::formatter<std::string_view> {
+//   template <typename FormatContext>
+//   auto format(const Scrub::qu_state_t& s, FormatContext& ctx)
+//   {
+//     auto out = ctx.out();
+//     out = fmt::formatter<string_view>::format(
+//       std::string{Scrub::qu_state_text(s)}, ctx);
+//     return out;
+//   }
+// };
+// 
+// template <>
+// struct fmt::formatter<Scrub::ScrubJob> {
+//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+// 
+//   template <typename FormatContext>
+//   auto format(const Scrub::ScrubJob& sjob, FormatContext& ctx)
+//   {
+//     return fmt::format_to(
+//       ctx.out(),
+//       "pg[{}] @ {:s} (dl:{:s}) - <{}> / failure: {} / pen. t.o.: {:s} / queue "
+//       "state: {:.7}",
+//       sjob.pgid, sjob.schedule.scheduled_at, sjob.schedule.deadline,
+//       sjob.registration_state(), sjob.resources_failure, sjob.penalty_timeout,
+//       sjob.state.load(std::memory_order_relaxed));
+//   }
+// };
