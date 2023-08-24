@@ -32,37 +32,40 @@ OsdScrub::OsdScrub(CephContext* cct, Scrub::ScrubSchedListener& osd_svc, const c
 
 void OsdScrub::initiate_scrub(bool is_recovery_active)
 {
-  #ifdef NOT_YET
+#ifdef NOT_YET
   if (auto blocked_pgs = scrub_scheduler.get_blocked_pgs_count();
       blocked_pgs > 0) {
     // some PGs managed by this OSD were blocked by a locked object during
     // scrub. This means we might not have the resources needed to scrub now.
-    dout(10)
-      << fmt::format(
-	   "{}: PGs are blocked while scrubbing due to locked objects ({} PGs)",
-	   __func__,
-	   blocked_pgs)
-      << dendl;
+    dout(10) << fmt::format(
+		    "{}: PGs are blocked while scrubbing due to locked objects "
+		    "({} PGs)",
+		    __func__, blocked_pgs)
+	     << dendl;
   }
-  #endif
+#endif
 
   // fail fast if no resources are available
   if (!m_resource_bookkeeper.can_inc_scrubs()) {
-    dout(20) << fmt::format("{}: too many scrubs already running on this OSD", __func__) << dendl;
+    dout(20) << fmt::format(
+		    "{}: too many scrubs already running on this OSD", __func__)
+	     << dendl;
     return;
   }
 
   // if there is a PG that is just now trying to reserve scrub replica resources -
   // we should wait and not initiate a new scrub
   if (is_reserving_now()) {
-    dout(20) << fmt::format("{}: scrub resources reservation in progress", __func__) << dendl;
+    dout(20) << fmt::format(
+		    "{}: scrub resources reservation in progress", __func__)
+	     << dendl;
     return;
   }
 
   m_scrub_tick_time = ceph_clock_now();
   dout(10) << fmt::format(
-		  "{}: time now:{}, is_recovery_active:{}", __func__, m_scrub_tick_time,
-		  is_recovery_active)
+		  "{}: time now:{}, is_recovery_active:{}", __func__,
+		  m_scrub_tick_time, is_recovery_active)
 	   << dendl;
 
 
@@ -75,9 +78,9 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
     return;
   }
 
-  #ifdef NOT_YET
+#ifdef NOT_YET
   list the queue - will be done in select_pg_to_scrub()
-  #endif
+#endif
 
   /*
    at this phase of the refactoring: no change to the actual interface used
@@ -87,16 +90,19 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
    We try all elements of this list until a (possibly temporary) success.
   */
   //while (true) { // RRR refine to include a max number of iterations
- 
-   #ifdef NOT_YET
-   // let the queue handle the load/time issues?
-    auto candidate = m_queue.select_pg_to_scrub(*env_restrictions, m_scrub_tick_time);
-    if (!candidate) {
-      dout(20) << fmt::format("{}: no more PGs to try", __func__) << dendl;
-      break;
-    }
-        #endif
-    auto candidates = m_queue.ready_to_scrub(*env_restrictions, m_scrub_tick_time);
+
+#ifdef NOT_YET
+      // let the queue handle the load/time issues?
+      auto candidate =
+      m_queue.select_pg_to_scrub(*env_restrictions, m_scrub_tick_time);
+  if (!candidate) {
+    dout(20) << fmt::format("{}: no more PGs to try", __func__) << dendl;
+    break;
+  }
+#endif
+
+  auto candidates =
+      m_queue.ready_to_scrub(*env_restrictions, m_scrub_tick_time);
 
   Scrub::schedule_result_t res = Scrub::schedule_result_t::none_ready;
   for (const auto& candidate : candidates) {
@@ -108,20 +114,20 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
     // - queue the initiation message on the PG
     // - (later) set a timer for initiation confirmation/failure
     set_reserving_now();
-    dout(20) << fmt::format("{}: initiating scrub on {}", __func__, candidate) << dendl;
+    dout(20) << fmt::format("{}: initiating scrub on {}", __func__, candidate)
+	     << dendl;
 
     // we have a candidate to scrub. We turn to the OSD to verify that the PG
     // configuration allows the specified type of scrub, and to initiate the
     // scrub.
-    switch (
-      m_osd_svc.initiate_a_scrub(candidate,
-				   env_restrictions->allow_requested_repair_only)) {
-
+    res = m_osd_svc.initiate_a_scrub(
+	candidate, env_restrictions->allow_requested_repair_only);
+    switch (res) {
       case Scrub::schedule_result_t::scrub_initiated:
 	// the happy path. We are done
 	dout(20) << " initiated for " << candidate.pgid << dendl;
 	res = Scrub::schedule_result_t::scrub_initiated;
-        break;
+	break;
 
       case Scrub::schedule_result_t::already_started:
       case Scrub::schedule_result_t::preconditions:
@@ -133,7 +139,7 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
       case Scrub::schedule_result_t::no_such_pg:
 	// The pg is no longer there
 	dout(20) << "failed (no pg) " << candidate.pgid << dendl;
-        // RRR not handled here
+	// RRR not handled here
 	break;
 
       case Scrub::schedule_result_t::no_local_resources:
@@ -142,25 +148,27 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
 	// failure!
 	dout(20) << "failed (local) " << candidate.pgid << dendl;
 	res = Scrub::schedule_result_t::no_local_resources;
-        break;
+	break;
 
       case Scrub::schedule_result_t::none_ready:
 	// can't happen. Just for the compiler.
 	dout(5) << "failed !!! " << candidate.pgid << dendl;
 	//return Scrub::schedule_result_t::none_ready;
-        break;
+	break;
     }
 
     if (res == Scrub::schedule_result_t::no_local_resources) {
-        break;
-            }
+      break;
+    }
 
     if (res == Scrub::schedule_result_t::scrub_initiated) {
+      // in the temporary implementation: we need to dequeue the target at this time
+      m_queue.scrub_initiated(candidate);
       break;
     }
   }
 
-  // this is definitely how the queue would be managed in the 2'nd phase, when
+  // this is definitely not how the queue would be managed in the 2'nd phase, when
   // only one target would be selected at a time - and that target would have been dequeued.
 
   if (res != Scrub::schedule_result_t::scrub_initiated) {

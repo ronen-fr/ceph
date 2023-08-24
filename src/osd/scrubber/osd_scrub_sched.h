@@ -326,6 +326,13 @@ class ScrubQueue {
   std::optional<ScrubTargetId> select_pg_to_scrub(Scrub::OSDRestrictions& preconds, utime_t scrub_tick);
 
   std::vector<ScrubTargetId> ready_to_scrub(Scrub::OSDRestrictions& preconds, utime_t scrub_tick);
+
+  /**
+   * called by the OSD when a scrub session was initiated on a PG. We should dequeue
+   * the target PG (and, later on, deque both targets related to this PG).
+   */
+  void scrub_initiated(ScrubTargetId target);
+
   /**
    * Translate attempt_ values into readable text
    */
