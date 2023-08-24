@@ -122,6 +122,7 @@ ScrubQueue interfaces (main functions):
 #include "utime.h"
 
 class PG;
+class PGLockWrapper;
 
 /*
  * identifying a PG to scrub:
@@ -150,6 +151,8 @@ class ScrubSchedListener {
  public:
   virtual int get_nodeid() const = 0;  // returns the OSD number ('whoami')
 
+  virtual std::optional<PGLockWrapper> get_locked_pg(spg_t pgid) = 0;
+
   /**
    * A callback used by the ScrubQueue object to initiate a scrub on a specific
    * PG.
@@ -162,13 +165,14 @@ class ScrubSchedListener {
    * reason.
    */
   virtual schedule_result_t initiate_a_scrub(
-    spg_t pgid,
-    bool allow_requested_repair_only) = 0;
+      spg_t pgid,
+      bool allow_requested_repair_only) = 0;
 
   virtual ~ScrubSchedListener() {}
 };
 
 }  // namespace Scrub
+
 
 /**
  * the queue of PGs waiting to be scrubbed.
@@ -536,7 +540,7 @@ class ScrubQueue {
 
   Scrub::schedule_result_t select_from_group(
     ScrubQContainer& group,
-    const Scrub::ScrubPreconds& preconds,
+    const Scrub::OSDRestrictions& preconds,
     utime_t now_is);
 
 protected: // used by the unit-tests

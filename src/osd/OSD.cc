@@ -259,7 +259,8 @@ OSDService::OSDService(OSD *osd, ceph::async::io_context_pool& poolctx) :
   osd_skip_data_digest(cct->_conf, "osd_skip_data_digest"),
   publish_lock{ceph::make_mutex("OSDService::publish_lock")},
   pre_publish_lock{ceph::make_mutex("OSDService::pre_publish_lock")},
-  m_scrub_queue{cct, *this},
+  //m_scrub_queue{cct, *this},
+  m_osd_scrub{cct, *this, cct->_conf},
   agent_valid_iterator(false),
   agent_ops(0),
   flush_mode_high_count(0),
@@ -2866,7 +2867,7 @@ will start to track new ops received afterwards.";
     f->close_section();
   } else if (prefix == "dump_scrub_reservations") {
     f->open_object_section("scrub_reservations");
-    service.get_scrub_services().dump_scrub_reservations(f);
+    service.get_scrub_services().resource_bookkeeper().dump_scrub_reservations(f);
     f->close_section();
   } else if (prefix == "get_latest_osdmap") {
     get_latest_osdmap();
@@ -6295,9 +6296,8 @@ void OSD::tick_without_osd_lock()
   }
 
   if (is_active()) {
-    if (!scrub_random_backoff()) {
-      sched_scrub();
-    }
+    service.get_scrub_services().initiate_scrub(service.is_recovery_active());
+
     service.promote_throttle_recalibrate();
     resume_creating_pg();
     bool need_send_beacon = false;
@@ -7610,19 +7610,17 @@ void OSD::handle_fast_scrub(MOSDScrub2 *m)
   m->put();
 }
 
-bool OSD::scrub_random_backoff()
+std::optional<PGLockWrapper> OSDService::get_locked_pg(spg_t pgid)
 {
-  bool coin_flip = (rand() / (double)RAND_MAX >=
-		    cct->_conf->osd_scrub_backoff_ratio);
-  if (!coin_flip) {
-    dout(20) << "scrub_random_backoff lost coin flip, randomly backing off (ratio: "
-	     << cct->_conf->osd_scrub_backoff_ratio << ")" << dendl;
-    return true;
+  auto pg = osd->lookup_lock_pg(pgid);
+  if (pg) {
+    return PGLockWrapper{pg};
+  } else {
+    return std::nullopt;
   }
-  return false;
 }
 
-
+#if 0
 void OSD::sched_scrub()
 {
   auto& scrub_scheduler = service.get_scrub_services();
@@ -7678,6 +7676,7 @@ void OSD::sched_scrub()
   dout(20) << "sched_scrub done (" << ScrubQueue::attempt_res_text(was_started)
 	   << ")" << dendl;
 }
+#endif
 
 Scrub::schedule_result_t OSDService::initiate_a_scrub(spg_t pgid,
 						      bool allow_requested_repair_only)
@@ -7714,6 +7713,7 @@ Scrub::schedule_result_t OSDService::initiate_a_scrub(spg_t pgid,
   return scrub_attempt;
 }
 
+#if 0
 void OSD::resched_all_scrubs()
 {
   dout(10) << __func__ << ": start" << dendl;
@@ -7734,6 +7734,7 @@ void OSD::resched_all_scrubs()
   }
   dout(10) << __func__ << ": done" << dendl;
 }
+#endif
 
 MPGStats* OSD::collect_pg_stats()
 {
@@ -9967,10 +9968,17 @@ void OSD::handle_conf_change(const ConfigProxy& conf,
   }
 
   if (changed.count("osd_scrub_min_interval") ||
-      changed.count("osd_scrub_max_interval")) {
-    resched_all_scrubs();
-    dout(0) << __func__ << ": scrub interval change" << dendl;
+      changed.count("osd_scrub_max_interval") ||
+      changed.count("osd_deep_scrub_interval")) {
+    service.get_scrub_services().on_config_times_change();
+    dout(0) << fmt::format(
+		   "{}: scrub interval change (min:{} deep:{} max:{})",
+		   __func__, cct->_conf->osd_scrub_min_interval,
+		   cct->_conf->osd_deep_scrub_interval,
+		   cct->_conf->osd_scrub_max_interval)
+	    << dendl;
   }
+
   check_config();
   if (changed.count("osd_asio_thread_count")) {
     service.poolctx.stop();
