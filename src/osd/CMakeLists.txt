@@ -27,6 +27,7 @@ set(osd_srcs
   scrubber/scrub_machine.cc
   scrubber/ScrubStore.cc
   scrubber/scrub_backend.cc
+  scrubber/scrub_reservations.cc
   Watch.cc
   Session.cc
   SnapMapper.cc
