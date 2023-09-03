@@ -42,14 +42,16 @@ namespace Scrub {
 
 void ReplicaReservations::release_replica(pg_shard_t peer, epoch_t epoch)
 {
-  auto m = new MOSDScrubReserve(spg_t(m_pg_info.pgid.pgid, peer.shard),
-				epoch,
-				MOSDScrubReserve::RELEASE,
-				m_pg->pg_whoami);
-  m_osds->send_message_osd_cluster(peer.osd, m, epoch);
+  auto m = make_message<MOSDScrubReserve>(
+      spg_t(m_pg_info.pgid.pgid, peer.shard), epoch, MOSDScrubReserve::RELEASE,
+      m_pg->pg_whoami);
+  m_pg->send_cluster_message(peer.osd, m, epoch, false);
 }
 
-void ReplicaReservations::send_a_request(pg_shard_t peer, epoch_t epoch)
+
+void ReplicaReservations::send_request_to_replica(
+    pg_shard_t peer,
+    epoch_t epoch)
 {
   auto m = make_message<MOSDScrubReserve>(
       spg_t(m_pg_info.pgid.pgid, peer.shard), epoch, MOSDScrubReserve::REQUEST,
@@ -63,6 +65,7 @@ void ReplicaReservations::send_a_request(pg_shard_t peer, epoch_t epoch)
 	   << dendl;
 }
 
+
 ReplicaReservations::ReplicaReservations(
     PG* pg,
     pg_shard_t whoami,
@@ -74,14 +77,12 @@ ReplicaReservations::ReplicaReservations(
     , m_scrub_job{scrubjob}
     , m_conf{conf}
 {
-  epoch_t epoch = m_pg->get_osdmap_epoch();
-
   // sort the acting set, so that we send the requests in a consistent order
   // (reducing the chance of deadlocking with another PG) // RRR rephrase
   auto acting = pg->get_actingset();
   m_sorted_secondaries.reserve(acting.size());
   std::copy_if(
-      acting.begin(), acting.end(), std::back_inserter(m_sorted_secondaries),
+      acting.cbegin(), acting.cend(), std::back_inserter(m_sorted_secondaries),
       [whoami](const pg_shard_t& shard) { return shard != whoami; });
 
   // sorted by OSD number
@@ -90,6 +91,7 @@ ReplicaReservations::ReplicaReservations(
       [](const pg_shard_t& a, const pg_shard_t& b) { return a.osd < b.osd; });
   m_total_needeed = m_sorted_secondaries.size();
 
+  const epoch_t epoch = m_pg->get_osdmap_epoch();
   m_log_msg_prefix = fmt::format(
       "osd.{} ep: {} scrubber::ReplicaReservations pg[{}]: ", m_osds->whoami,
       epoch, pg->pg_id);
@@ -104,9 +106,10 @@ ReplicaReservations::ReplicaReservations(
 
   } else {
     // send the first reservation requests
-    send_a_request(*m_next_to_request, epoch);
+    send_request_to_replica(*m_next_to_request, epoch);
   }
 }
+
 
 void ReplicaReservations::send_all_done()
 {
@@ -114,12 +117,14 @@ void ReplicaReservations::send_all_done()
   m_osds->queue_for_scrub_granted(m_pg, scrub_prio_t::low_priority);
 }
 
+
 void ReplicaReservations::send_reject()
 {
   // stop any pending timeout timer
   m_scrub_job->resources_failure = true;
   m_osds->queue_for_scrub_denied(m_pg, scrub_prio_t::low_priority);
 }
+
 
 void ReplicaReservations::release_all(replica_subset_t replicas)
 {
@@ -130,6 +135,7 @@ void ReplicaReservations::release_all(replica_subset_t replicas)
   }
 }
 
+
 void ReplicaReservations::discard_all()
 {
   dout(10) << fmt::format("{}: reset w/o issuing messages", __func__) << dendl;
@@ -138,6 +144,7 @@ void ReplicaReservations::discard_all()
   m_next_to_request = m_sorted_secondaries.begin();
 }
 
+
 ReplicaReservations::~ReplicaReservations()
 {
   auto requested =
@@ -145,11 +152,12 @@ ReplicaReservations::~ReplicaReservations()
   release_all(requested);
 }
 
+
 /**
  * Once the secondary we have messaged has granted the reservation, we send
  * the next request in ascending shard number order.
  *
- *  @ATTN we would not reach here if the ReplicaReservation object managed by
+ * @ATTN we would not reach here if the ReplicaReservation object managed by
  * the scrubber was reset.
  */
 void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
@@ -184,9 +192,10 @@ void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
     send_all_done();
   } else {
     // send the next reservation request
-    send_a_request(*m_next_to_request, m_pg->get_osdmap_epoch());
+    send_request_to_replica(*m_next_to_request, m_pg->get_osdmap_epoch());
   }
 }
+
 
 void ReplicaReservations::handle_reserve_reject(
     OpRequestRef op,
@@ -218,6 +227,7 @@ void ReplicaReservations::handle_reserve_reject(
   send_reject();
 }
 
+
 void ReplicaReservations::handle_no_reply_timeout()
 {
   dout(1) << fmt::format(
@@ -230,6 +240,7 @@ void ReplicaReservations::handle_no_reply_timeout()
   release_all(requested);
   send_reject();
 }
+
 
 std::ostream& ReplicaReservations::gen_prefix(std::ostream& out) const
 {
