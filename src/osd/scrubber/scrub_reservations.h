@@ -22,34 +22,31 @@ namespace Scrub {
 /**
  * Reserving/freeing scrub resources at the replicas.
  *
- * When constructed - sends reservation requests to the acting_set.
+ * When constructed - sends reservation requests to the acting_set OSDs, one
+ * by one.
+ * Once a replica's OSD replies with a 'grant'ed reservation, we send a
+ * reservation request to the next replica.
  * A rejection triggers a "couldn't acquire the replicas' scrub resources"
- * event. All previous requests, whether already granted or not, are explicitly
+ * event. All granted reservations are released.
  * released.
+ *
+ * Reserved replicas should be released at the end of the scrub session. The one
+ * exception is when the scrub terminates upon an interval change. In that
+ * scenario the replicas discard their reservations when noticing the change
+ * in interval, and there is no need (and no guaranteed way) to send them
+ * the release message.
  *
  * Timeouts:
  *
- *  Slow-Secondary Warning:
- *  Once at least half of the replicas have accepted the reservation, we start
- *  reporting any secondary that takes too long (more than <conf> milliseconds
- *  after the previous response received) to respond to the reservation request.
- *  (Why? because we have encountered real-life situations where a specific OSD
- *  was systematically very slow (e.g. 5 seconds) to respond to the reservation
- *  requests, slowing the scrub process to a crawl).
+ *  Slow-Secondary Warning: (not re-implemented yet)
  *
  *  Reservation Timeout:
  *  We limit the total time we wait for the replicas to respond to the
- *  reservation request. If we don't get all the responses (either Grant or
- *  Reject) within <conf> milliseconds, we give up and release all the
- *  reservations we have acquired so far.
+ *  reservation request. If the reservation back-and-forth does not complete
+ *  within <conf> milliseconds, we give up and release all the reservations we
+ *  acquired till that moment.
  *  (Why? because we have encountered instances where a reservation request was
  *  lost - either due to a bug or due to a network issue.)
- *
- * A note re performance: I've measured a few container alternatives for
- * m_reserved_peers, with its specific usage pattern. Std::set is extremely
- * slow, as expected. flat_set is only slightly better. Surprisingly -
- * std::vector (with no sorting) is better than boost::small_vec. And for
- * std::vector: no need to pre-reserve.
  */
 class ReplicaReservations {
   using clock = std::chrono::system_clock;
@@ -81,32 +78,7 @@ class ReplicaReservations {
 
   std::string m_log_msg_prefix;
 
- private:
-  /// send a reservation request to a replica's OSD
-  void send_a_request(pg_shard_t peer, epoch_t epoch);
-
-  /// send a release message to that shard's OSD
-  void release_replica(pg_shard_t peer, epoch_t epoch);
-
-  /// let the scrubber know that we have reserved all the replicas
-  void send_all_done();
-
-  /// notify the scrubber that we have failed to reserve replicas' resources
-  void send_reject();
-
-  /// send 'release' messages to all replicas we have managed to reserve
-  void release_all(replica_subset_t replicas);
-
  public:
-  /**
-   *  quietly discard all knowledge about existing reservations. No messages
-   *  are sent to peers.
-   *  To be used upon interval change, as we know that the running scrub is no
-   *  longer relevant, and that the replicas had reset the reservations on
-   *  their side.
-   */
-  void discard_all();
-
   ReplicaReservations(
       PG* pg,
       pg_shard_t whoami,
@@ -119,10 +91,40 @@ class ReplicaReservations {
 
   void handle_reserve_reject(OpRequestRef op, pg_shard_t from);
 
-  // if timing out on receiving replies from our replicas:
+  /**
+   * if timing out on receiving replies from our replicas:
+   * All reserved replicas are released.
+   * A failure notification is sent to the scrubber.
+   */
   void handle_no_reply_timeout();
 
+  /**
+   *  quietly discard all knowledge about existing reservations. No messages
+   *  are sent to peers.
+   *  To be used upon interval change, as we know that the running scrub is no
+   *  longer relevant, and that the replicas had reset the reservations on
+   *  their side.
+   */
+  void discard_all();
+
+  // note: 'public', as accessed via the 'standard' dout_prefix() macro
   std::ostream& gen_prefix(std::ostream& out) const;
+
+ private:
+  /// send a reservation request to a replica's OSD
+  void send_request_to_replica(pg_shard_t peer, epoch_t epoch);
+
+  /// send a release message to that shard's OSD
+  void release_replica(pg_shard_t peer, epoch_t epoch);
+
+  /// let the scrubber know that we have reserved all the replicas
+  void send_all_done();
+
+  /// notify the scrubber that we have failed to reserve replicas' resources
+  void send_reject();
+
+  /// send 'release' messages to all replicas we have managed to reserve
+  void release_all(replica_subset_t replicas);
 };
 
 }  // namespace Scrub
