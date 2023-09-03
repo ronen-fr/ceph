@@ -6,13 +6,15 @@
 #include <chrono>
 #include <memory>
 #include <optional>
+#include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
-#include <set>
 
 #include "osd/PG.h"
 #include "osd/scrubber_common.h"
+
 #include "osd_scrub_sched.h"
 
 namespace Scrub {
@@ -52,34 +54,50 @@ namespace Scrub {
 class ReplicaReservations {
   using clock = std::chrono::system_clock;
   using tpoint_t = std::chrono::time_point<clock>;
+  using replica_subset_t = std::span<const pg_shard_t>;
 
   PG* m_pg;
-  std::set<pg_shard_t> m_acting_set;
+
+  /// the acting set (not including myself), sorted by OSD id
+  std::vector<pg_shard_t> m_sorted_secondaries;
+
+  /// the next replica to which we will send a reservation request
+  std::vector<pg_shard_t>::const_iterator m_next_to_request;
+
+  /// used to send both internal and inter-OSD messages
   OSDService* m_osds;
-  std::vector<pg_shard_t> m_waited_for_peers;
-  std::vector<pg_shard_t> m_reserved_peers;
-  bool m_had_rejections{false};
-  int m_pending{-1};
+
   const pg_info_t& m_pg_info;
   ScrubQueue::ScrubJobRef m_scrub_job;	///< a ref to this PG's scrub job
   const ConfigProxy& m_conf;
 
-  // detecting slow peers (see 'slow-secondary' above)
-  std::chrono::milliseconds m_timeout;
-  std::optional<tpoint_t> m_timeout_point;
+  /// the number of secondaries
+  int m_total_needeed{-1};
 
+  /// always <= m_total_needed
+  long unsigned int m_requests_sent{0};
+
+  tpoint_t m_request_sent_at;  ///< for detecting slow peers
+
+  std::string m_log_msg_prefix;
+
+ private:
+  /// send a reservation request to a replica's OSD
+  void send_a_request(pg_shard_t peer, epoch_t epoch);
+
+  /// send a release message to that shard's OSD
   void release_replica(pg_shard_t peer, epoch_t epoch);
 
-  void send_all_done();	 ///< all reservations are granted
+  /// let the scrubber know that we have reserved all the replicas
+  void send_all_done();
 
   /// notify the scrubber that we have failed to reserve replicas' resources
   void send_reject();
 
-  std::optional<tpoint_t> update_latecomers(tpoint_t now_is);
+  /// send 'release' messages to all replicas we have managed to reserve
+  void release_all(replica_subset_t replicas);
 
  public:
-  std::string m_log_msg_prefix;
-
   /**
    *  quietly discard all knowledge about existing reservations. No messages
    *  are sent to peers.
