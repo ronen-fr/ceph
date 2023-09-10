@@ -12,39 +12,13 @@ using namespace ::std::chrono;
 using namespace ::std::chrono_literals;
 using namespace ::std::literals;
 
-#define dout_subsys ceph_subsys_osd
-#undef dout_context
-#define dout_context (cct)
-#undef dout_prefix
-#define dout_prefix                                                            \
-  *_dout << "osd." << osd_service.get_nodeid() << " scrub-queue::" << __func__ \
-	 << " "
-
-
-
-void ScrubQueue::dump_scrubs(ceph::Formatter* f) const
-{
-  ceph_assert(f != nullptr);
-  std::lock_guard lck(jobs_lock);
-
-  f->open_array_section("scrubs");
-
-  std::for_each(to_scrub.cbegin(), to_scrub.cend(), [&f](const ScrubJobRef& j) {
-    j->dump(f);
-  });
-
-  std::for_each(penalized.cbegin(),
-		penalized.cend(),
-		[&f](const ScrubJobRef& j) { j->dump(f); });
-
-  f->close_section();
-}
 
 // ////////////////////////////////////////////////////////////////////////// //
 // scrub initiation - OSD code temporarily moved here from OSD.cc
 
+#define dout_subsys ceph_subsys_osd
 #undef dout_context
-#define dout_context cct
+#define dout_context (cct)
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 #define dout_prefix _prefix(_dout, whoami, get_osdmap_epoch())
@@ -175,6 +149,88 @@ void OSD::resched_all_scrubs()
   *_dout << "osd." << osd_service.get_nodeid() << " scrub-queue::" << __func__ \
 	 << " "
 
+
+void ScrubQueue::dump_scrubs(ceph::Formatter* f) const
+{
+  ceph_assert(f != nullptr);
+  std::lock_guard lck(jobs_lock);
+
+  f->open_array_section("scrubs");
+
+  std::for_each(to_scrub.cbegin(), to_scrub.cend(), [&f](const ScrubJobRef& j) {
+    j->dump(f);
+  });
+
+  std::for_each(penalized.cbegin(),
+		penalized.cend(),
+		[&f](const ScrubJobRef& j) { j->dump(f); });
+
+  f->close_section();
+}
+
+
+// not holding jobs_lock. 'group' is a copy of the actual list.
+Scrub::schedule_result_t ScrubQueue::select_from_group(
+    ScrubQContainer& group,
+    const Scrub::OSDRestrictions& preconds,
+    utime_t now_is)
+{
+  dout(15) << "jobs #: " << group.size() << dendl;
+
+  for (auto& candidate : group) {
+
+    // we expect the first job in the list to be a good candidate (if any)
+
+    dout(20) << "try initiating scrub for " << candidate->pgid << dendl;
+
+    if (preconds.only_deadlined && (candidate->schedule.deadline.is_zero() ||
+				    candidate->schedule.deadline >= now_is)) {
+      dout(15) << " not scheduling scrub for " << candidate->pgid << " due to "
+	       << (preconds.time_permit ? "high load" : "time not permitting")
+	       << dendl;
+      continue;
+    }
+
+    // we have a candidate to scrub. We turn to the OSD to verify that the PG
+    // configuration allows the specified type of scrub, and to initiate the
+    // scrub.
+    switch (osd_service.initiate_a_scrub(
+	candidate->pgid, preconds.allow_requested_repair_only)) {
+
+      case Scrub::schedule_result_t::scrub_initiated:
+	// the happy path. We are done
+	dout(20) << " initiated for " << candidate->pgid << dendl;
+	return Scrub::schedule_result_t::scrub_initiated;
+
+      case Scrub::schedule_result_t::already_started:
+      case Scrub::schedule_result_t::preconditions:
+      case Scrub::schedule_result_t::bad_pg_state:
+	// continue with the next job
+	dout(20) << "failed (state/cond/started) " << candidate->pgid << dendl;
+	break;
+
+      case Scrub::schedule_result_t::no_such_pg:
+	// The pg is no longer there
+	dout(20) << "failed (no pg) " << candidate->pgid << dendl;
+	break;
+
+      case Scrub::schedule_result_t::no_local_resources:
+	// failure to secure local resources. No point in trying the other
+	// PGs at this time. Note that this is not the same as replica resources
+	// failure!
+	dout(20) << "failed (local) " << candidate->pgid << dendl;
+	return Scrub::schedule_result_t::no_local_resources;
+
+      case Scrub::schedule_result_t::none_ready:
+	// can't happen. Just for the compiler.
+	dout(5) << "failed !!! " << candidate->pgid << dendl;
+	return Scrub::schedule_result_t::none_ready;
+    }
+  }
+
+  dout(20) << " returning 'none ready'" << dendl;
+  return Scrub::schedule_result_t::none_ready;
+}
 
 
 // ////////////////////////////////////////////////////////////////////////// //
