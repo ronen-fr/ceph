@@ -9,6 +9,12 @@
 using namespace ::std::chrono;
 using namespace ::std::chrono_literals;
 using namespace ::std::literals;
+using qu_state_t = Scrub::qu_state_t;
+using must_scrub_t = Scrub::must_scrub_t;
+using ScrubQContainer = Scrub::ScrubQContainer;
+using sched_params_t = Scrub::sched_params_t;
+using OSDRestrictions = Scrub::OSDRestrictions;
+using ScrubJob = Scrub::ScrubJob;
 
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubJob
@@ -18,7 +24,7 @@ using namespace ::std::literals;
 #undef dout_prefix
 #define dout_prefix *_dout << "osd." << whoami << " "
 
-ScrubQueue::ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
+ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
     : RefCountedObject{cct}
     , pgid{pg}
     , whoami{node_id}
@@ -26,19 +32,19 @@ ScrubQueue::ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
 {}
 
 // debug usage only
-ostream& operator<<(ostream& out, const ScrubQueue::ScrubJob& sjob)
+ostream& operator<<(ostream& out, const ScrubJob& sjob)
 {
   out << sjob.pgid << ",  " << sjob.schedule.scheduled_at
       << " dead: " << sjob.schedule.deadline << " - "
       << sjob.registration_state() << " / failure: " << sjob.resources_failure
       << " / pen. t.o.: " << sjob.penalty_timeout
-      << " / queue state: " << ScrubQueue::qu_state_text(sjob.state);
+      << " / queue state: " << ScrubJob::qu_state_text(sjob.state);
 
   return out;
 }
 
-void ScrubQueue::ScrubJob::update_schedule(
-  const ScrubQueue::scrub_schedule_t& adjusted)
+void ScrubJob::update_schedule(
+  const Scrub::scrub_schedule_t& adjusted)
 {
   schedule = adjusted;
   penalty_timeout = utime_t(0, 0);  // helps with debugging
@@ -51,8 +57,8 @@ void ScrubQueue::ScrubJob::update_schedule(
                           schedule.scheduled_at, registration_state()) << dendl;
 }
 
-std::string ScrubQueue::ScrubJob::scheduling_state(utime_t now_is,
-						   bool is_deep_expected) const
+std::string ScrubJob::scheduling_state(utime_t now_is, bool is_deep_expected)
+    const
 {
   // if not in the OSD scheduling queues, not a candidate for scrubbing
   if (state != qu_state_t::registered) {
@@ -66,9 +72,9 @@ std::string ScrubQueue::ScrubJob::scheduling_state(utime_t now_is,
     return fmt::format("queued for {}scrub", (is_deep_expected ? "deep " : ""));
   }
 
-  return fmt::format("{}scrub scheduled @ {:s}",
-		     (is_deep_expected ? "deep " : ""),
-		     schedule.scheduled_at);
+  return fmt::format(
+      "{}scrub scheduled @ {:s}", (is_deep_expected ? "deep " : ""),
+      schedule.scheduled_at);
 }
 
 
@@ -96,6 +102,7 @@ ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
   }
 }
 
+
 /*
  * Modify the scrub job state:
  * - if 'registered' (as expected): mark as 'unregistering'. The job will be
@@ -106,7 +113,7 @@ ScrubQueue::ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds)
  *
  * Note: not holding the jobs lock
  */
-void ScrubQueue::remove_from_osd_queue(ScrubJobRef scrub_job)
+void ScrubQueue::remove_from_osd_queue(Scrub::ScrubJobRef scrub_job)
 {
   dout(15) << "removing pg[" << scrub_job->pgid << "] from OSD scrub queue"
 	   << dendl;
@@ -119,21 +126,21 @@ void ScrubQueue::remove_from_osd_queue(ScrubJobRef scrub_job)
   if (ret) {
 
     dout(10) << "pg[" << scrub_job->pgid << "] sched-state changed from "
-	     << qu_state_text(expected_state) << " to "
-	     << qu_state_text(scrub_job->state) << dendl;
+	     << ScrubJob::qu_state_text(expected_state) << " to "
+	     << ScrubJob::qu_state_text(scrub_job->state) << dendl;
 
   } else {
 
     // job wasn't in state 'registered' coming in
     dout(5) << "removing pg[" << scrub_job->pgid
-	    << "] failed. State was: " << qu_state_text(expected_state)
+	    << "] failed. State was: " << ScrubJob::qu_state_text(expected_state)
 	    << dendl;
   }
 }
 
 void ScrubQueue::register_with_osd(
-  ScrubJobRef scrub_job,
-  const ScrubQueue::sched_params_t& suggested)
+  Scrub::ScrubJobRef scrub_job,
+  const sched_params_t& suggested)
 {
   qu_state_t state_at_entry = scrub_job->state.load();
   dout(20) << fmt::format(
@@ -193,31 +200,31 @@ void ScrubQueue::register_with_osd(
 }
 
 // look mommy - no locks!
-void ScrubQueue::update_job(ScrubJobRef scrub_job,
-			    const ScrubQueue::sched_params_t& suggested)
+void ScrubQueue::update_job(Scrub::ScrubJobRef scrub_job,
+			    const sched_params_t& suggested)
 {
   // adjust the suggested scrub time according to OSD-wide status
   auto adjusted = adjust_target_time(suggested);
   scrub_job->update_schedule(adjusted);
 }
 
-ScrubQueue::sched_params_t ScrubQueue::determine_scrub_time(
+sched_params_t ScrubQueue::determine_scrub_time(
   const requested_scrub_t& request_flags,
   const pg_info_t& pg_info,
   const pool_opts_t& pool_conf) const
 {
-  ScrubQueue::sched_params_t res;
+  sched_params_t res;
 
   if (request_flags.must_scrub || request_flags.need_auto) {
 
     // Set the smallest time that isn't utime_t()
     res.proposed_time = PgScrubber::scrub_must_stamp();
-    res.is_must = ScrubQueue::must_scrub_t::mandatory;
+    res.is_must = Scrub::must_scrub_t::mandatory;
     // we do not need the interval data in this case
 
   } else if (pg_info.stats.stats_invalid && conf()->osd_scrub_invalid_stats) {
     res.proposed_time = time_now();
-    res.is_must = ScrubQueue::must_scrub_t::mandatory;
+    res.is_must = Scrub::must_scrub_t::mandatory;
 
   } else {
     res.proposed_time = pg_info.history.last_scrub_stamp;
@@ -250,7 +257,7 @@ void ScrubQueue::move_failed_pgs(utime_t now_is)
       // remote resources. Move it to the secondary scrub queue.
 
       dout(15) << "moving " << sjob->pgid
-	       << " state: " << ScrubQueue::qu_state_text(sjob->state) << dendl;
+	       << " state: " << ScrubJob::qu_state_text(sjob->state) << dendl;
 
       // determine the penalty time, after which the job should be reinstated
       utime_t after = now_is;
@@ -298,7 +305,7 @@ std::string_view ScrubQueue::attempt_res_text(Scrub::schedule_result_t v)
   return "(unknown)"sv;
 }
 
-std::string_view ScrubQueue::qu_state_text(qu_state_t st)
+std::string_view ScrubJob::qu_state_text(qu_state_t st)
 {
   switch (st) {
     case qu_state_t::not_registered: return "not registered w/ OSD"sv;
@@ -395,8 +402,8 @@ void ScrubQueue::rm_unregistered_jobs(ScrubQContainer& group)
 
 namespace {
 struct cmp_sched_time_t {
-  bool operator()(const ScrubQueue::ScrubJobRef& lhs,
-		  const ScrubQueue::ScrubJobRef& rhs) const
+  bool operator()(const Scrub::ScrubJobRef& lhs,
+		  const Scrub::ScrubJobRef& rhs) const
   {
     return lhs->schedule.scheduled_at < rhs->schedule.scheduled_at;
   }
@@ -404,14 +411,14 @@ struct cmp_sched_time_t {
 }  // namespace
 
 // called under lock
-ScrubQueue::ScrubQContainer ScrubQueue::collect_ripe_jobs(
+ScrubQContainer ScrubQueue::collect_ripe_jobs(
   ScrubQContainer& group,
   utime_t time_now)
 {
   rm_unregistered_jobs(group);
 
   // copy ripe jobs
-  ScrubQueue::ScrubQContainer ripes;
+  ScrubQContainer ripes;
   ripes.reserve(group.size());
 
   std::copy_if(group.begin(),
@@ -435,13 +442,13 @@ ScrubQueue::ScrubQContainer ScrubQueue::collect_ripe_jobs(
 }
 
 
-ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
+Scrub::scrub_schedule_t ScrubQueue::adjust_target_time(
   const sched_params_t& times) const
 {
-  ScrubQueue::scrub_schedule_t sched_n_dead{
+  Scrub::scrub_schedule_t sched_n_dead{
     times.proposed_time, times.proposed_time};
 
-  if (times.is_must == ScrubQueue::must_scrub_t::not_mandatory) {
+  if (times.is_must == Scrub::must_scrub_t::not_mandatory) {
     // unless explicitly requested, postpone the scrub with a random delay
     double scrub_min_interval = times.min_interval > 0
 				  ? times.min_interval
@@ -476,6 +483,7 @@ ScrubQueue::scrub_schedule_t ScrubQueue::adjust_target_time(
   return sched_n_dead;
 }
 
+
 // note: called with jobs_lock held
 void ScrubQueue::scan_penalized(bool forgive_all, utime_t time_now)
 {
@@ -506,7 +514,7 @@ void ScrubQueue::scan_penalized(bool forgive_all, utime_t time_now)
   }
 }
 
-void ScrubQueue::ScrubJob::dump(ceph::Formatter* f) const
+void ScrubJob::dump(ceph::Formatter* f) const
 {
   f->open_object_section("scrub");
   f->dump_stream("pgid") << pgid;
@@ -517,9 +525,9 @@ void ScrubQueue::ScrubJob::dump(ceph::Formatter* f) const
   f->close_section();
 }
 
-ScrubQueue::ScrubQContainer ScrubQueue::list_registered_jobs() const
+ScrubQContainer ScrubQueue::list_registered_jobs() const
 {
-  ScrubQueue::ScrubQContainer all_jobs;
+  ScrubQContainer all_jobs;
   all_jobs.reserve(to_scrub.size() + penalized.size());
   dout(20) << " size: " << all_jobs.capacity() << dendl;
 

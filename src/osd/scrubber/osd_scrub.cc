@@ -157,13 +157,13 @@ void ScrubQueue::dump_scrubs(ceph::Formatter* f) const
 
   f->open_array_section("scrubs");
 
-  std::for_each(to_scrub.cbegin(), to_scrub.cend(), [&f](const ScrubJobRef& j) {
-    j->dump(f);
-  });
+  std::for_each(
+      to_scrub.cbegin(), to_scrub.cend(),
+      [&f](const Scrub::ScrubJobRef& j) { j->dump(f); });
 
-  std::for_each(penalized.cbegin(),
-		penalized.cend(),
-		[&f](const ScrubJobRef& j) { j->dump(f); });
+  std::for_each(
+      penalized.cbegin(), penalized.cend(),
+      [&f](const Scrub::ScrubJobRef& j) { j->dump(f); });
 
   f->close_section();
 }
@@ -171,7 +171,7 @@ void ScrubQueue::dump_scrubs(ceph::Formatter* f) const
 
 // not holding jobs_lock. 'group' is a copy of the actual list.
 Scrub::schedule_result_t ScrubQueue::select_from_group(
-    ScrubQContainer& group,
+    Scrub::ScrubQContainer& group,
     const Scrub::OSDRestrictions& preconds,
     utime_t now_is)
 {
