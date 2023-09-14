@@ -170,6 +170,7 @@ class ScrubQueue {
 
   friend class TestOSDScrub;
   friend class ScrubSchedTestWrapper; ///< unit-tests structure
+  friend class OsdScrub; ///< transitory - fixed in followup commits
   using sched_params_t = Scrub::sched_params_t;
 
   /**
