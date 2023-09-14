@@ -1,6 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
+#include "./osd_scrub.h"
 #include "./osd_scrub_sched.h"
 
 #include "osdc/Objecter.h"
@@ -19,13 +20,53 @@ using namespace ::std::literals;
 #define dout_subsys ceph_subsys_osd
 #undef dout_context
 #define dout_context (cct)
-#define dout_subsys ceph_subsys_osd
 #undef dout_prefix
-#define dout_prefix _prefix(_dout, whoami, get_osdmap_epoch())
+#define dout_prefix _prefix_fn(_dout, this, __func__)
 
+template <class T>
+static std::ostream&
+_prefix_fn(std::ostream* _dout, T* t, std::string fn="")
+{
+  return t->gen_prefix(*_dout, fn);
+}
+
+
+OsdScrub::OsdScrub(
+    CephContext* cct,
+    Scrub::ScrubSchedListener& osd_svc,
+    const ceph::common::ConfigProxy& config)
+    : cct{cct}
+    , m_osd_svc{osd_svc}
+    , conf(config)
+    , m_resource_bookkeeper{[this](std::string msg) { log_fwd(msg); }, conf}
+    , m_queue{cct, m_osd_svc}
+    , m_log_prefix{fmt::format("osd.{}: osd-scrub:", m_osd_svc.get_nodeid())}
+    //, m_load_tracker{cct, conf, m_osd_svc.get_nodeid()}
+{}
+
+std::ostream& OsdScrub::gen_prefix(std::ostream& out, std::string_view fn) const
+{
+  return out << m_log_prefix << fn << ": ";
+}
+
+void OsdScrub::dump_scrubs(ceph::Formatter* f) const
+{
+  m_queue.dump_scrubs(f);
+}
+
+void OsdScrub::log_fwd(std::string_view text)
+{
+  dout(20) << text << dendl;
+}
+
+
+
+// temporary dout() support for OSD members:
 static ostream& _prefix(std::ostream* _dout, int whoami, epoch_t epoch) {
   return *_dout << "osd." << whoami << " " << epoch << " ";
 }
+#undef dout_prefix
+#define dout_prefix _prefix(_dout, whoami, get_osdmap_epoch())
 
 void OSD::sched_scrub()
 {
@@ -140,15 +181,9 @@ void OSD::resched_all_scrubs()
 }
 
 
-
-
-#undef dout_context
-#define dout_context (cct)
+// restoring local dout() settings (to be removed in a followup commit)
 #undef dout_prefix
-#define dout_prefix                                                            \
-  *_dout << "osd." << osd_service.get_nodeid() << " scrub-queue::" << __func__ \
-	 << " "
-
+#define dout_prefix _prefix_fn(_dout, this, __func__)
 
 void ScrubQueue::dump_scrubs(ceph::Formatter* f) const
 {
@@ -236,21 +271,36 @@ Scrub::schedule_result_t ScrubQueue::select_from_group(
 // ////////////////////////////////////////////////////////////////////////// //
 // CPU load tracking and related
 
+// OsdScrub::LoadTracker::LoadTracker(
+//     CephContext* cct,
+//     const ceph::common::ConfigProxy& config,
+//     int node_id)
+//     : cct{cct}
+//     , conf{config}
+//     , log_prefix{fmt::format("osd.{} scrub-queue::load-tracker::", node_id)}
+// {
+//   // initialize the daily loadavg with current 15min loadavg
+//   if (double loadavgs[3]; getloadavg(loadavgs, 3) == 3) {
+//     daily_loadavg = loadavgs[2];
+//   } else {
+//     derr << "OSD::init() : couldn't read loadavgs\n" << dendl;
+//     daily_loadavg = 1.0;
+//   }
+// }
+
+///\todo replace with Knuth's algo (to reduce the numerical error)
 std::optional<double> ScrubQueue::update_load_average()
 {
   int hb_interval = conf()->osd_heartbeat_interval;
   int n_samples = std::chrono::duration_cast<seconds>(24h).count();
   if (hb_interval > 1) {
-    n_samples /= hb_interval;
-    if (n_samples < 1)
-      n_samples = 1;
+    n_samples = std::max(n_samples / hb_interval, 1);
   }
 
   // get CPU load avg
   double loadavg;
   if (getloadavg(&loadavg, 1) == 1) {
     daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavg) / n_samples;
-    dout(17) << "heartbeat: daily_loadavg " << daily_loadavg << dendl;
     return 100 * loadavg;
   }
 
@@ -261,7 +311,7 @@ bool ScrubQueue::scrub_load_below_threshold() const
 {
   double loadavgs[3];
   if (getloadavg(loadavgs, 3) != 3) {
-    dout(10) << __func__ << " couldn't read loadavgs\n" << dendl;
+    dout(10) << fmt::format("{}: couldn't read loadavgs", __func__) << dendl;
     return false;
   }
 
@@ -269,25 +319,41 @@ bool ScrubQueue::scrub_load_below_threshold() const
   long cpus = sysconf(_SC_NPROCESSORS_ONLN);
   double loadavg_per_cpu = cpus > 0 ? loadavgs[0] / cpus : loadavgs[0];
   if (loadavg_per_cpu < conf()->osd_scrub_load_threshold) {
-    dout(20) << "loadavg per cpu " << loadavg_per_cpu << " < max "
-	     << conf()->osd_scrub_load_threshold << " = yes" << dendl;
+    dout(20) << fmt::format(
+		    "loadavg per cpu {:.3f} < max {:.3f} = yes",
+		    loadavg_per_cpu, conf()->osd_scrub_load_threshold)
+	     << dendl;
     return true;
   }
 
   // allow scrub if below daily avg and currently decreasing
   if (loadavgs[0] < daily_loadavg && loadavgs[0] < loadavgs[2]) {
-    dout(20) << "loadavg " << loadavgs[0] << " < daily_loadavg "
-	     << daily_loadavg << " and < 15m avg " << loadavgs[2] << " = yes"
+    dout(20) << fmt::format(
+		    "loadavg {:.3f} < daily_loadavg {:.3f} and < 15m avg "
+		    "{:.3f} = yes",
+		    loadavgs[0], daily_loadavg, loadavgs[2])
 	     << dendl;
     return true;
   }
 
-  dout(20) << "loadavg " << loadavgs[0] << " >= max "
-	   << conf()->osd_scrub_load_threshold << " and ( >= daily_loadavg "
-	   << daily_loadavg << " or >= 15m avg " << loadavgs[2] << ") = no"
+  dout(10) << fmt::format(
+		  "loadavg {:.3f} >= max {:.3f} and ( >= daily_loadavg {:.3f} "
+		  "or >= 15m avg {:.3f} ) = no",
+		  loadavgs[0], conf()->osd_scrub_load_threshold, daily_loadavg,
+		  loadavgs[2])
 	   << dendl;
   return false;
 }
+
+
+std::optional<double> OsdScrub::update_load_average()
+{
+  return m_queue.update_load_average();
+}
+
+
+
+// ////////////////////////////////////////////////////////////////////////// //
 
 // checks for half-closed ranges. Modify the (p<till)to '<=' to check for
 // closed.
@@ -295,6 +361,11 @@ static inline bool isbetween_modulo(int64_t from, int64_t till, int p)
 {
   // the 1st condition is because we have defined from==till as "always true"
   return (till == from) || ((till >= from) ^ (p >= from) ^ (p < till));
+}
+
+bool OsdScrub::scrub_time_permit(utime_t now) const
+{
+  return m_queue.scrub_time_permit(now);
 }
 
 bool ScrubQueue::scrub_time_permit(utime_t now) const
@@ -323,6 +394,11 @@ bool ScrubQueue::scrub_time_permit(utime_t now) const
   return time_permit;
 }
 
+std::chrono::milliseconds OsdScrub::scrub_sleep_time(bool must_scrub) const
+{
+  return m_queue.scrub_sleep_time(must_scrub);
+}
+
 std::chrono::milliseconds ScrubQueue::scrub_sleep_time(bool must_scrub) const
 {
   std::chrono::milliseconds regular_sleep_period{
@@ -341,4 +417,93 @@ std::chrono::milliseconds ScrubQueue::scrub_sleep_time(bool must_scrub) const
   return std::max(extended_sleep, regular_sleep_period);
 }
 
+// ////////////////////////////////////////////////////////////////////////// //
+// forwarders to the queue
 
+Scrub::sched_params_t OsdScrub::determine_scrub_time(
+    const requested_scrub_t& request_flags,
+    const pg_info_t& pg_info,
+    const pool_opts_t& pool_conf) const
+{
+  return m_queue.determine_scrub_time(request_flags, pg_info, pool_conf);
+}
+
+void OsdScrub::update_job(
+    Scrub::ScrubJobRef sjob,
+    const Scrub::sched_params_t& suggested)
+{
+  m_queue.update_job(sjob, suggested);
+}
+
+void OsdScrub::register_with_osd(
+    Scrub::ScrubJobRef sjob,
+    const Scrub::sched_params_t& suggested)
+{
+  m_queue.register_with_osd(sjob, suggested);
+}
+
+void OsdScrub::remove_from_osd_queue(Scrub::ScrubJobRef sjob)
+{
+  m_queue.remove_from_osd_queue(sjob);
+}
+
+bool OsdScrub::inc_scrubs_local()
+{
+  return m_resource_bookkeeper.inc_scrubs_local();
+}
+
+void OsdScrub::dec_scrubs_local()
+{
+  m_resource_bookkeeper.dec_scrubs_local();
+}
+
+bool OsdScrub::inc_scrubs_remote()
+{
+  return m_resource_bookkeeper.inc_scrubs_remote();
+}
+
+void OsdScrub::dec_scrubs_remote()
+{
+  m_resource_bookkeeper.dec_scrubs_remote();
+}
+
+void OsdScrub::mark_pg_scrub_blocked(spg_t blocked_pg)
+{
+  m_queue.mark_pg_scrub_blocked(blocked_pg);
+}
+
+void OsdScrub::clear_pg_scrub_blocked(spg_t blocked_pg)
+{
+  m_queue.clear_pg_scrub_blocked(blocked_pg);
+}
+
+int OsdScrub::get_blocked_pgs_count() const
+{
+  return m_queue.get_blocked_pgs_count();
+}
+
+bool OsdScrub::set_reserving_now()
+{
+  return m_queue.set_reserving_now();
+}
+
+void OsdScrub::clear_reserving_now()
+{
+  m_queue.clear_reserving_now();
+}
+
+bool OsdScrub::is_reserving_now() const
+{
+  return m_queue.is_reserving_now();
+}
+
+Scrub::ScrubQContainer OsdScrub::list_registered_jobs() const
+{
+  return m_queue.list_registered_jobs();
+}
+
+Scrub::schedule_result_t OsdScrub::select_pg_and_scrub(
+    Scrub::OSDRestrictions& preconds)
+{
+  return m_queue.select_pg_and_scrub(preconds);
+}

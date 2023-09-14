@@ -29,8 +29,7 @@ using ScrubJob = Scrub::ScrubJob;
 #define dout_prefix _prefix_fn(_dout, this, __func__)
 
 template <class T>
-static std::ostream&
-_prefix_fn(std::ostream* _dout, T* t, std::string fn="")
+static std::ostream& _prefix_fn(std::ostream* _dout, T* t, std::string fn = "")
 {
   return t->gen_prefix(*_dout, fn);
 }
