@@ -17,8 +17,6 @@ using sched_params_t = Scrub::sched_params_t;
 using OSDRestrictions = Scrub::OSDRestrictions;
 using ScrubJob = Scrub::ScrubJob;
 
-
-
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubQueue
 
