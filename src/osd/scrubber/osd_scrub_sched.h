@@ -196,7 +196,7 @@ class ScrubQueue {
    *
    * locking: locks jobs_lock
    */
-  Scrub::schedule_result_t select_pg_and_scrub(Scrub::OSDRestrictions& preconds);
+  Scrub::schedule_result_t select_pg_and_scrub(Scrub::OSDRestrictions preconds);
 
   /**
    * Translate attempt_ values into readable text
@@ -277,14 +277,6 @@ class ScrubQueue {
   void clear_reserving_now();
   bool is_reserving_now() const;
 
-
-  bool can_inc_scrubs() const;
-  bool inc_scrubs_local();
-  void dec_scrubs_local();
-  bool inc_scrubs_remote();
-  void dec_scrubs_remote();
-  void dump_scrub_reservations(ceph::Formatter* f) const;
-
   /// counting the number of PGs stuck while scrubbing, waiting for objects
   void mark_pg_scrub_blocked(spg_t blocked_pg);
   void clear_pg_scrub_blocked(spg_t blocked_pg);
@@ -301,13 +293,6 @@ class ScrubQueue {
    * of day (see configs osd_scrub_begin*)
    */
   std::chrono::milliseconds scrub_sleep_time(bool must_scrub) const;
-
-  /**
-   *  called every heartbeat to update the "daily" load average
-   *
-   *  @returns a load value for the logger
-   */
-  [[nodiscard]] std::optional<double> update_load_average();
 
  private:
   CephContext* cct;
@@ -382,7 +367,6 @@ class ScrubQueue {
 
   std::atomic_bool a_pg_is_reserving{false};
 
-  [[nodiscard]] bool scrub_load_below_threshold() const;
   [[nodiscard]] bool scrub_time_permit(utime_t now) const;
 
   /**
@@ -408,7 +392,7 @@ class ScrubQueue {
 
   Scrub::schedule_result_t select_from_group(
     Scrub::ScrubQContainer& group,
-    const Scrub::OSDRestrictions& preconds,
+    Scrub::OSDRestrictions preconds,
     utime_t now_is);
 
 protected: // used by the unit-tests
