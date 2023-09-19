@@ -139,21 +139,6 @@ class ScrubSchedListener {
    */
   virtual std::optional<PGLockWrapper> get_locked_pg(spg_t pgid) = 0;
 
-  /**
-   * A callback used by the ScrubQueue object to initiate a scrub on a specific
-   * PG.
-   *
-   * The request might fail for multiple reasons, as ScrubQueue cannot by its
-   * own check some of the PG-specific preconditions and those are checked here.
-   * See attempt_t definition.
-   *
-   * @return a Scrub::attempt_t detailing either a success, or the failure
-   * reason.
-   */
-  virtual schedule_result_t initiate_a_scrub(
-    spg_t pgid,
-    bool allow_requested_repair_only) = 0;
-
   virtual ~ScrubSchedListener() {}
 };
 
