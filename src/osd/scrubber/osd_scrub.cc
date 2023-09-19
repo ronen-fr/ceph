@@ -114,7 +114,7 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
 
   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
     dout(20) << "scrub scheduling (@tick) starts" << dendl;
-    auto all_jobs = list_registered_jobs();
+    auto all_jobs = m_queue.list_registered_jobs();
     for (const auto& sj : all_jobs) {
       dout(20) << fmt::format("\tscrub-queue jobs: {}", *sj) << dendl;
     }
@@ -278,24 +278,6 @@ void OsdScrub::on_config_change()
   }
 }
 
-void ScrubQueue::dump_scrubs(ceph::Formatter* f) const
-{
-  ceph_assert(f != nullptr);
-  std::lock_guard lck(jobs_lock);
-
-  f->open_array_section("scrubs");
-
-  std::for_each(
-      to_scrub.cbegin(), to_scrub.cend(),
-      [&f](const Scrub::ScrubJobRef& j) { j->dump(f); });
-
-  std::for_each(
-      penalized.cbegin(), penalized.cend(),
-      [&f](const Scrub::ScrubJobRef& j) { j->dump(f); });
-
-  f->close_section();
-}
-
 
 // ////////////////////////////////////////////////////////////////////////// //
 // CPU load tracking and related
@@ -339,7 +321,7 @@ bool OsdScrub::LoadTracker::scrub_load_below_threshold() const
 {
   double loadavgs[3];
   if (getloadavg(loadavgs, 3) != 3) {
-    dout(10) << fmt::format("{}: couldn't read loadavgs", __func__) << dendl;
+    dout(10) << "couldn't read loadavgs" << dendl;
     return false;
   }
 
@@ -520,14 +502,4 @@ bool OsdScrub::set_reserving_now()
 void OsdScrub::clear_reserving_now()
 {
   m_queue.clear_reserving_now();
-}
-
-bool OsdScrub::is_reserving_now() const
-{
-  return m_queue.is_reserving_now();
-}
-
-Scrub::ScrubQContainer OsdScrub::list_registered_jobs() const
-{
-  return m_queue.list_registered_jobs();
 }
