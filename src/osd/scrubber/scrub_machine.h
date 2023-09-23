@@ -15,6 +15,11 @@
 #include <boost/statechart/transition.hpp>
 
 #include "common/version.h"
+#include "messages/MOSDOp.h"
+#include "messages/MOSDRepScrub.h"
+#include "messages/MOSDRepScrubMap.h"
+#include "messages/MOSDScrubReserve.h"
+
 #include "include/Context.h"
 #include "osd/scrubber_common.h"
 
@@ -41,6 +46,46 @@ namespace mpl = ::boost::mpl;
 
 void on_event_creation(std::string_view nm);
 void on_event_discard(std::string_view nm);
+
+// reservation grant/reject events carry the peer's response
+struct ReplicaRsrvResp : sc::event<ReplicaRsrvResp> {
+  OpRequestRef m_op;
+  pg_shard_t m_from;
+  const MOSDScrubReserve* m_msg;
+  bool m_granted;
+  //inline static int actv{0};  ///< for logging
+  ReplicaRsrvResp(OpRequestRef op, pg_shard_t from) : m_op(op), m_from(from)
+  {
+    on_event_creation("ReplicaRsrvResp");
+    m_msg = m_op->get_req<MOSDScrubReserve>();
+    m_granted = (m_msg->type == MOSDScrubReserve::GRANT);
+  }
+  void print(std::ostream* out) const
+  {
+    //*out << "ReplicaGrantReservation(" << from << ", " << granted << ")";
+    *out << fmt::format("ReplicaRsrvResp({}, {})", m_from, m_granted);
+  }
+  std::string_view print() const { return "ReplicaRsrvResp"; }
+  ~ReplicaRsrvResp() { on_event_discard("ReplicaRsrvResp"); }
+};
+struct ReplicaGrant : sc::event<ReplicaGrant> {
+  OpRequestRef m_op;
+  pg_shard_t m_from;
+  const MOSDScrubReserve* m_msg;
+  //inline static int actv{0};  ///< for logging
+  ReplicaGrant(OpRequestRef op, pg_shard_t from) : m_op(op), m_from(from)
+  {
+    on_event_creation("ReplicaRsrvResp");
+    m_msg = m_op->get_req<MOSDScrubReserve>();
+  }
+  void print(std::ostream* out) const
+  {
+    //*out << "ReplicaGrantReservation(" << from << ", " << granted << ")";
+    *out << fmt::format("ReplicaGrant(from: {})", m_from);
+  }
+  std::string_view print() const { return "ReplicaGrant"; }
+  ~ReplicaGrant() { on_event_discard("ReplicaGrant"); }
+};
 
 #define MEV(E)                                          \
   struct E : sc::event<E> {                             \
@@ -141,6 +186,7 @@ MEV(ScrubFinished)
 //
 
 struct NotActive;	    ///< the quiescent state. No active scrubbing.
+struct Session;            ///< either reserving or actively scrubbing
 struct ReservingReplicas;   ///< securing scrub resources from replicas' OSDs
 struct ActiveScrubbing;	    ///< the active state for a Primary. A sub-machine.
 struct ReplicaIdle;         ///< Initial reserved replica state
@@ -163,13 +209,17 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   [[nodiscard]] bool is_reserving() const;
   [[nodiscard]] bool is_accepting_updates() const;
 
+
+// ///////////////// aux declarations & functions //////////////////////// //
+
+
 private:
   /**
    * scheduled_event_state_t
    *
    * Heap allocated, ref-counted state shared between scheduled event callback
    * and timer_event_token_t.  Ensures that callback and timer_event_token_t
-   * can be safetly destroyed in either order while still allowing for
+   * can be safely destroyed in either order while still allowing for
    * cancellation.
    */
   struct scheduled_event_state_t {
@@ -183,7 +233,7 @@ private:
     ~scheduled_event_state_t() {
       /* For the moment, this assert encodes an assumption that we always
        * retain the token until the event either fires or is canceled.
-       * If a user needs/wants to relaxt that requirement, this assert can
+       * If a user needs/wants to relax that requirement, this assert can
        * be removed */
       assert(!cb_token);
     }
@@ -284,6 +334,10 @@ public:
   }
 };
 
+
+// ///////////////// the states //////////////////////// //
+
+
 /**
  *  The Scrubber's base (quiescent) state.
  *  Scrubbing is triggered by one of the following events:
@@ -314,7 +368,29 @@ struct NotActive : sc::state<NotActive, ScrubMachine>, NamedSimply {
   sc::result react(const AfterRepairScrub&);
 };
 
-struct ReservingReplicas : sc::state<ReservingReplicas, ScrubMachine>,
+/**
+ *  Session
+ *
+ *  This state encompasses the two main "active" states: ReservingReplicas and
+ *  ActiveScrubbing.
+ *  'Session' is the owner of all the resources that are allocated for a
+ *  scrub session.
+ *
+ *  Exit from this state is RRR
+ *  Note that if terminating the session following an interval change - no
+ *  reservations are released. This is because we know that the replicas are
+ *  also resetting their reservations.
+ */
+struct Session : sc::state<Session, ScrubMachine, ReservingReplicas>, NamedSimply {
+  explicit Session(my_context ctx);
+  ~Session();
+
+  using reactions = mpl::list<sc::transition<FullReset, NotActive>>;
+
+  std::unique_ptr<ReplicaReservations> m_reservations;
+};
+
+struct ReservingReplicas : sc::state<ReservingReplicas, Session>,
 			   NamedSimply {
   explicit ReservingReplicas(my_context ctx);
   ~ReservingReplicas();
@@ -364,7 +440,7 @@ struct WaitReplicas;
 struct WaitDigestUpdate;
 
 struct ActiveScrubbing
-    : sc::state<ActiveScrubbing, ScrubMachine, PendingTimer>, NamedSimply {
+    : sc::state<ActiveScrubbing, Session, PendingTimer>, NamedSimply {
 
   explicit ActiveScrubbing(my_context ctx);
   ~ActiveScrubbing();

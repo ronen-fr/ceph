@@ -1569,7 +1569,7 @@ void PgScrubber::handle_scrub_reserve_request(OpRequestRef op)
    * replicas.  Unconditionally clear any existing state prior to handling
    * the new reservation. */
   m_fsm->process_event(FullReset{});
-  
+
   bool granted{false};
   if (m_pg->cct->_conf->osd_scrub_during_recovery ||
       !m_osds->is_recovery_active()) {
@@ -2192,11 +2192,16 @@ void PgScrubber::set_scrub_duration()
   });
 }
 
+void PgScrubber::set_resources_failure()
+{
+  m_scrub_job->resources_failure = true;
+}
+
 void PgScrubber::reserve_replicas()
 {
-  dout(10) << __func__ << dendl;
-  m_reservations.emplace(
-    m_pg, m_pg_whoami, m_scrub_job, m_pg->get_cct()->_conf);
+//   dout(10) << __func__ << dendl;
+//   m_reservations.emplace(
+//     m_pg, m_pg_whoami, m_scrub_job, m_pg->get_cct()->_conf);
 }
 
 void PgScrubber::cleanup_on_finish()
@@ -2467,15 +2472,17 @@ void ReplicaReservations::release_replica(pg_shard_t peer, epoch_t epoch)
 
 ReplicaReservations::ReplicaReservations(
   PG* pg,
+  PgScrubber& scrubber,
   pg_shard_t whoami,
-  Scrub::ScrubJobRef scrubjob,
+  //Scrub::ScrubJobRef scrubjob,
   const ConfigProxy& conf)
     : m_pg{pg}
+    , m_scrubber{scrubber}
     , m_acting_set{pg->get_actingset()}
     , m_osds{m_pg->get_pg_osd(ScrubberPasskey())}
     , m_pending{static_cast<int>(m_acting_set.size()) - 1}
     , m_pg_info{m_pg->get_pg_info(ScrubberPasskey())}
-    , m_scrub_job{scrubjob}
+    //, m_scrub_job{scrubjob}
     , m_conf{conf}
 {
   epoch_t epoch = m_pg->get_osdmap_epoch();
@@ -2515,7 +2522,7 @@ void ReplicaReservations::send_all_done()
 void ReplicaReservations::send_reject()
 {
   // stop any pending timeout timer
-  m_scrub_job->resources_failure = true;
+  m_scrubber.set_resources_failure();
   m_osds->queue_for_scrub_denied(m_pg, scrub_prio_t::low_priority);
 }
 

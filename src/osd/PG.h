@@ -550,6 +550,9 @@ public:
 
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) override;
 
+  /// set the scrub_job's 'resources_failure' flag
+  //void set_resources_failure();
+
   uint64_t get_snap_trimq_size() const override {
     return snap_trimq.size();
   }
