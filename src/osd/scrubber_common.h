@@ -429,8 +429,9 @@ struct ScrubPgIF {
 
   // and on the primary:
   virtual void handle_scrub_reserve_grant(OpRequestRef op, pg_shard_t from) = 0;
-  virtual void handle_scrub_reserve_reject(OpRequestRef op,
-					   pg_shard_t from) = 0;
+  virtual void handle_scrub_reserve_reject(
+      OpRequestRef op,
+      pg_shard_t from) = 0;
 
   virtual void rm_from_osd_scrubbing() = 0;
 
