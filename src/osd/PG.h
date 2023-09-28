@@ -1457,10 +1457,10 @@ public:
  */
 class PGLockWrapper {
  public:
-  explicit PGLockWrapper(PGRef locked_pg) : m_pg{locked_pg} {}
+  explicit PGLockWrapper(PGRef locked_pg) : m_pg{std::move(locked_pg)} {}
   PGRef pg() { return m_pg; }
   ~PGLockWrapper();
-  PGLockWrapper(PGLockWrapper&& rhs) : m_pg(std::move(rhs.m_pg)) {
+  PGLockWrapper(PGLockWrapper&& rhs) noexcept : m_pg(std::move(rhs.m_pg)) {
     rhs.m_pg = nullptr;
   }
   PGLockWrapper(const PGLockWrapper& rhs) = delete;
