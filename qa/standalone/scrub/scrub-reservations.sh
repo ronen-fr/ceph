@@ -39,11 +39,13 @@ function initial_pool_fill()
 {
   local dir=$1
   local pool=$2
-  local OBJS=1000
+  #local OBJS=10000
+  local OBJS=500
   local saved_echo_flag=${-//[^x]/}
   set +x
 
-  dd if=/dev/urandom of=$dir/datafile bs=1k count=1
+  #dd if=/dev/urandom of=$dir/datafile bs=4k count=8
+  dd if=/dev/urandom of=$dir/datafile bs=2k count=1
   for j in $(seq 1 $OBJS)
   do
     rados -p $pool put obj$j $dir/datafile || return 1
@@ -74,34 +76,43 @@ function TEST_two_rounds()
 {
   local dir=$1
   local -A cluster_conf=(
-      ['osds_num']="6"
-      ['pgs_in_pool']="3"
+      ['osds_num']="7"
+      ['pgs_in_pool']="16"
       ['pool_name']="test"
+      ['extras']=" --osd_op_queue=wpq --osd_scrub_sleep=0.3"
   )
 
   local extr_dbg=3
   (( extr_dbg > 1 )) && echo "Dir: $dir"
   ec_scrub_cluster $dir cluster_conf
 
+  sleep 4
   # also set the chunk sizes
   # set max scrubs
 
   # write some data
   initial_pool_fill $dir ${cluster_conf['pool_name']}
+  ceph tell osd.* config set osd_max_scrubs 2
+  ceph tell osd.* config set debug_osd 20/20
+  ceph tell osd.* config set osd_scrub_chunk_max 4
+  ceph tell osd.* config set osd_scrub_chunk_min 2
+  sleep 3
 
   # start scrubbing
-  ceph tell osd.* config set osd_deep_scrub_interval "0.01"
-  ceph tell osd.* config set osd_scrub_min_interval "0.01"
-  ceph tell osd.* config set osd_scrub_max_interval "0.02"
+  #ceph tell osd.* config set osd_deep_scrub_interval "0.01"
+  #ceph tell osd.* config set osd_scrub_min_interval "0.01"
+  #ceph tell osd.* config set osd_scrub_max_interval "0.02"
   sleep 1
-  ceph --format json pg dump pgs >> /tmp/pgs.json
+  ceph pg dump pgs >> /tmp/pgs.json
   # jq '[[[.pg_stats[].pgid]]]'
   ceph pg dump pgs
   bin/ceph pg ls-by-osd 1
 
   # wait to see enough scrubs terminated in the cluster log
-
-  sleep 100
+  pwd
+  #/home/rfriedma/pgs.py
+  ../qa/standalone/scrub/multi_scrubs.py
+  ceph pg dump pgs
   collect_log
 }
 

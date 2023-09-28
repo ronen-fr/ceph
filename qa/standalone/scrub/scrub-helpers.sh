@@ -291,8 +291,10 @@ function ec_scrub_cluster() {
       run_osd $dir $osd $(echo $ceph_osd_args) || return 1
     done
 
-    ceph osd erasure-code-profile set myprofile crush-failure-domain=osd k=4 m=2
-    ceph osd pool create $poolname erasure myprofile
+    ceph osd erasure-code-profile set myprofile crush-failure-domain=osd k=4 m=2 || return 1
+    ceph osd pool create $poolname $pg_num $pg_num erasure myprofile || return 1
+    #ceph osd pool set $poolname size 4
+    ceph osd pool set $poolname pg_autoscale_mode off
     wait_for_clean || return 1
 
     # update the in/out 'args' with the ID of the new pool
