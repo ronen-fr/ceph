@@ -59,27 +59,29 @@ function collect_log()
   echo collect logs
 }
 
-function handle_1pg_scrubbing()
-{
-  local dir=$1
-  local pool=$2
-  local pg=$3
-  local times=$5
-  local saved_echo_flag=${-//[^x]/}
-  set -x
+# function handle_1pg_scrubbing()
+# {
+#   local dir=$1
+#   local pool=$2
+#   local pg=$3
+#   local times=$5
+#   local saved_echo_flag=${-//[^x]/}
+#   set -x
+#
+#
+#   if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+# }
 
-
-  if [[ -n "$saved_echo_flag" ]]; then set -x; fi
-}
-
-function TEST_two_rounds()
+function TEST_ec_pool_reserv()
 {
   local dir=$1
   local -A cluster_conf=(
       ['osds_num']="7"
       ['pgs_in_pool']="16"
-      ['pool_name']="test"
-      ['extras']=" --osd_op_queue=wpq --osd_scrub_sleep=0.3"
+      ['pool_name']="ec_test"
+      ['erasure_k']="4"
+      ['erasure_m']="2"
+      ['extras']=" --osd_op_queue=wpq --osd_scrub_sleep=0.9"
   )
 
   local extr_dbg=3
@@ -87,8 +89,6 @@ function TEST_two_rounds()
   ec_scrub_cluster $dir cluster_conf
 
   sleep 4
-  # also set the chunk sizes
-  # set max scrubs
 
   # write some data
   initial_pool_fill $dir ${cluster_conf['pool_name']}
@@ -99,21 +99,66 @@ function TEST_two_rounds()
   sleep 3
 
   # start scrubbing
-  #ceph tell osd.* config set osd_deep_scrub_interval "0.01"
-  #ceph tell osd.* config set osd_scrub_min_interval "0.01"
-  #ceph tell osd.* config set osd_scrub_max_interval "0.02"
-  sleep 1
-  ceph pg dump pgs >> /tmp/pgs.json
-  # jq '[[[.pg_stats[].pgid]]]'
+  pwd
+  ceph pg dump pgs >> /tmp/pgs${pool_id}.json
   ceph pg dump pgs
   bin/ceph pg ls-by-osd 1
 
   # wait to see enough scrubs terminated in the cluster log
-  pwd
   #/home/rfriedma/pgs.py
-  ../qa/standalone/scrub/multi_scrubs.py
+  rounds=3
+  ../qa/standalone/scrub/multi_scrubs.py --repeat $rounds --pool-type ec --outlog ev_logZ.json
   ceph pg dump pgs
-  collect_log
+
+  # currently I am having problems with different TZ in both files
+  sed 's/T08/T03/g' < ev_logZ.json > ev_log.json
+  ls ./td/scrub-reservations
+  ../qa/standalone/scrub/collect_scrub_events.py --title "ec-4-2/$rounds" --logs-dir ./td/scrub-reservations \
+    --csv /tmp/pgs${pool_id} --prev ev_log.json
+  #../qa/standalone/scrub/collect_scrub_events.py --title "ec-4-2/3" --logs-dir ./td/scrub-reservations  --csv /tmp/pgs${pool_id}.csv --prev ev_log.json
+}
+
+function TEST_rep_pool_reserv()
+{
+  local dir=$1
+  local -A cluster_conf=(
+      ['osds_num']="6"
+      ['pgs_in_pool']="16"
+      ['pool_name']="rep_test"
+      ['extras']=" --osd_op_queue=wpq --osd_scrub_sleep=0.9"
+  )
+
+  local extr_dbg=3
+  (( extr_dbg > 1 )) && echo "Dir: $dir"
+  standard_scrub_cluster $dir cluster_conf
+
+  sleep 4
+
+  # write some data
+  initial_pool_fill $dir ${cluster_conf['pool_name']}
+  ceph tell osd.* config set osd_max_scrubs 2
+  ceph tell osd.* config set debug_osd 20/20
+  ceph tell osd.* config set osd_scrub_chunk_max 4
+  ceph tell osd.* config set osd_scrub_chunk_min 2
+  sleep 3
+
+  # start scrubbing
+  pwd
+  ceph pg dump pgs >> /tmp/pgs${pool_id}.json
+  ceph pg dump pgs
+  bin/ceph pg ls-by-osd 1
+
+  # wait to see enough scrubs terminated in the cluster log
+  #/home/rfriedma/pgs.py
+  rounds=3
+  ../qa/standalone/scrub/multi_scrubs.py --repeat $rounds  --outlog rep_ev_logZ.json
+  ceph pg dump pgs
+
+  # currently I am having problems with different TZ in both files
+  sed 's/T08/T03/g' < rep_ev_logZ.json > rep_ev_log.json
+  ls ./td/scrub-reservations
+  ../qa/standalone/scrub/collect_scrub_events.py --title "rep/$rounds" --logs-dir ./td/scrub-reservations \
+    --csv /tmp/pgs${pool_id} --prev rep_ev_log.json
 }
 
 main scrub-reservations "$@"

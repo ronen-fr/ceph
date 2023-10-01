@@ -186,6 +186,8 @@ function teardown() {
 	    done
         fi
     fi
+    mkdir -p $TESTDIR/archive/log
+    mv $dir/* $TESTDIR/archive/log
     if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
 	if [ -n "$LOCALRUN" ]; then
 	    display_logs $dir
@@ -2253,6 +2255,7 @@ function test_get_op_scheduler() {
 # @return 0 on success, 1 on error
 #
 function main() {
+    set -x
     local dir=td/$1
     shift
 
