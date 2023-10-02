@@ -141,6 +141,7 @@ MEV(ScrubFinished)
 //
 
 struct NotActive;	    ///< the quiescent state. No active scrubbing.
+struct Session;            ///< either reserving or actively scrubbing
 struct ReservingReplicas;   ///< securing scrub resources from replicas' OSDs
 struct ActiveScrubbing;	    ///< the active state for a Primary. A sub-machine.
 struct ReplicaIdle;         ///< Initial reserved replica state
@@ -163,13 +164,17 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   [[nodiscard]] bool is_reserving() const;
   [[nodiscard]] bool is_accepting_updates() const;
 
+
+// ///////////////// aux declarations & functions //////////////////////// //
+
+
 private:
   /**
    * scheduled_event_state_t
    *
    * Heap allocated, ref-counted state shared between scheduled event callback
    * and timer_event_token_t.  Ensures that callback and timer_event_token_t
-   * can be safetly destroyed in either order while still allowing for
+   * can be safely destroyed in either order while still allowing for
    * cancellation.
    */
   struct scheduled_event_state_t {
@@ -183,7 +188,7 @@ private:
     ~scheduled_event_state_t() {
       /* For the moment, this assert encodes an assumption that we always
        * retain the token until the event either fires or is canceled.
-       * If a user needs/wants to relaxt that requirement, this assert can
+       * If a user needs/wants to relax that requirement, this assert can
        * be removed */
       assert(!cb_token);
     }
@@ -259,7 +264,7 @@ public:
    * schedule_timer_event_after
    *
    * Schedules event EventT{Args...} to be delivered duration in the future.
-   * The implementation implicitely drops the event on interval change.  The
+   * The implementation implicitly drops the event on interval change.  The
    * returned timer_event_token_t can be used to cancel the event prior to
    * its delivery -- it should generally be embedded as a member in the state
    * intended to handle the event.  See the comment on timer_event_token_t
@@ -283,6 +288,10 @@ public:
     return timer_event_token_t{this, token};
   }
 };
+
+
+// ///////////////// the states //////////////////////// //
+
 
 /**
  *  The Scrubber's base (quiescent) state.
@@ -314,7 +323,29 @@ struct NotActive : sc::state<NotActive, ScrubMachine>, NamedSimply {
   sc::result react(const AfterRepairScrub&);
 };
 
-struct ReservingReplicas : sc::state<ReservingReplicas, ScrubMachine>,
+
+/**
+ *  Session
+ *
+ *  This state encompasses the two main "active" states: ReservingReplicas and
+ *  ActiveScrubbing.
+ *  'Session' is the owner of all the resources that are allocated for a
+ *  scrub session.
+ *
+ *  Exit from this state is RRR
+ *  Note that if terminating the session following an interval change - no
+ *  reservations are released. This is because we know that the replicas are
+ *  also resetting their reservations.
+ */
+struct Session : sc::state<Session, ScrubMachine, ReservingReplicas>, NamedSimply {
+  explicit Session(my_context ctx);
+  ~Session();
+
+  using reactions = mpl::list<sc::transition<FullReset, NotActive>>;
+  // RRR handle interval
+};
+
+struct ReservingReplicas : sc::state<ReservingReplicas, Session>,
 			   NamedSimply {
   explicit ReservingReplicas(my_context ctx);
   ~ReservingReplicas();
@@ -327,9 +358,6 @@ struct ReservingReplicas : sc::state<ReservingReplicas, ScrubMachine>,
   ceph::coarse_real_clock::time_point entered_at =
     ceph::coarse_real_clock::now();
   ScrubMachine::timer_event_token_t m_timeout_token;
-
-  /// if true - we must 'clear_reserving_now()' upon exit
-  bool m_holding_isreserving_flag{false};
 
   sc::result react(const FullReset&);
 
@@ -364,7 +392,7 @@ struct WaitReplicas;
 struct WaitDigestUpdate;
 
 struct ActiveScrubbing
-    : sc::state<ActiveScrubbing, ScrubMachine, PendingTimer>, NamedSimply {
+    : sc::state<ActiveScrubbing, Session, PendingTimer>, NamedSimply {
 
   explicit ActiveScrubbing(my_context ctx);
   ~ActiveScrubbing();
