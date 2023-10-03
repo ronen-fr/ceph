@@ -241,4 +241,9 @@ struct ScrubMachineListener {
 
   /// sending cluster-log warnings
   virtual void log_cluster_warning(const std::string& msg) const = 0;
+
+  // temporary interface (to be discarded in a follow-up commit)
+  // to handle replica reservation messages routed thru the FSM
+  virtual void grant_from_replica(OpRequestRef op, pg_shard_t from) = 0;
+  virtual void reject_from_replica(OpRequestRef op, pg_shard_t from) = 0;
 };
