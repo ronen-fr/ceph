@@ -31,8 +31,7 @@ namespace Scrub {
 ReplicaReservations::ReplicaReservations(ScrubMachineListener& scrbr)
     : m_scrubber{scrbr}
     , m_pg{m_scrubber.get_pg()}
-    , m_whoami{m_pg->pg_whoami}
-    , m_pgid{m_scrubber.get_spgid()}
+    , m_pgid{m_scrubber.get_spgid().pgid}
     , m_osds{m_pg->get_pg_osd(ScrubberPasskey())}
 {
   // the acting set is sorted by pg_shard_t. The reservations are to be issued
@@ -44,7 +43,9 @@ ReplicaReservations::ReplicaReservations(ScrubMachineListener& scrbr)
   m_sorted_secondaries.reserve(acting.size());
   std::copy_if(
       acting.cbegin(), acting.cend(), std::back_inserter(m_sorted_secondaries),
-      [whoami=m_whoami](const pg_shard_t& shard) { return shard != whoami; });
+      [whoami = m_pg->pg_whoami](const pg_shard_t& shard) {
+	return shard != whoami;
+      });
 
   m_next_to_request = m_sorted_secondaries.cbegin();
   // send out the 1'st request (unless we have no replicas)
@@ -61,8 +62,8 @@ void ReplicaReservations::release_all()
   // send 'release' messages to all replicas we have managed to reserve
   for (const auto& peer : replicas) {
     auto m = make_message<MOSDScrubReserve>(
-	spg_t{m_pgid.pgid, peer.shard}, epoch, MOSDScrubReserve::RELEASE,
-	m_whoami);
+	spg_t{m_pgid, peer.shard}, epoch, MOSDScrubReserve::RELEASE,
+	m_pg->pg_whoami);
     m_pg->send_cluster_message(peer.osd, m, epoch, false);
   }
 
@@ -97,21 +98,20 @@ void ReplicaReservations::handle_reserve_grant(OpRequestRef op, pg_shard_t from)
 
   auto elapsed = clock::now() - m_last_request_sent_at;
 
-  // log a warning if the response was late
+  // log a warning if the response was slow to arrive
   auto warn_timeout = m_scrubber.get_pg_cct()->_conf.get_val<milliseconds>(
-       "osd_scrub_slow_reservation_response");
+      "osd_scrub_slow_reservation_response");
   if (!m_slow_response_warned && (elapsed > warn_timeout)) {
     dout(1) << fmt::format(
-		   "slow reservation response from {} ({}ms)",
-		   from, duration_cast<milliseconds>(elapsed).count())
+		   "slow reservation response from {} ({}ms)", from,
+		   duration_cast<milliseconds>(elapsed).count())
 	    << dendl;
     // prevent additional warnings
     m_slow_response_warned = true;
   }
   dout(10) << fmt::format(
-		  "granted by {} ({} of {}) in {}ms",
-		  from, active_requests_cnt(),
-		  m_sorted_secondaries.size(),
+		  "granted by {} ({} of {}) in {}ms", from,
+		  active_requests_cnt(), m_sorted_secondaries.size(),
 		  duration_cast<milliseconds>(elapsed).count())
 	   << dendl;
   send_next_reservation_or_complete();
@@ -129,13 +129,13 @@ void ReplicaReservations::send_next_reservation_or_complete()
     const auto peer = *m_next_to_request;
     const auto epoch = m_pg->get_osdmap_epoch();
     auto m = make_message<MOSDScrubReserve>(
-	spg_t{m_pgid.pgid, peer.shard}, epoch, MOSDScrubReserve::REQUEST,
-	m_whoami);
+	spg_t{m_pgid, peer.shard}, epoch, MOSDScrubReserve::REQUEST,
+	m_pg->pg_whoami);
     m_pg->send_cluster_message(peer.osd, m, epoch, false);
     m_last_request_sent_at = clock::now();
     dout(10) << fmt::format(
-		    "reserving {} ({} of {})", *m_next_to_request,
-		    active_requests_cnt(), m_sorted_secondaries.size())
+		    "reserving {} (the {} of {} replicas)", *m_next_to_request,
+		    active_requests_cnt()+1, m_sorted_secondaries.size())
 	     << dendl;
     m_next_to_request++;
   }
@@ -148,8 +148,8 @@ void ReplicaReservations::verify_rejections_source(
   // a convenient log message for the reservation process conclusion
   // (matches the one in send_next_reservation_or_complete())
   dout(10) << fmt::format(
-		  "remote reservation failure. Rejected by {} ({})",
-		  from, *op->get_req())
+		  "remote reservation failure. Rejected by {} ({})", from,
+		  *op->get_req())
 	   << dendl;
 
   // verify that the denial is from the peer we expected. If not?
@@ -160,8 +160,7 @@ void ReplicaReservations::verify_rejections_source(
   const auto expected = *get_last_sent();
   if (from != expected) {
     dout(1) << fmt::format(
-		   "unexpected rejection from {} (expected {})",
-		   from, expected)
+		   "unexpected rejection from {} (expected {})", from, expected)
 	    << dendl;
   } else {
     // correct peer, wrong answer...
@@ -186,7 +185,7 @@ std::ostream& ReplicaReservations::gen_prefix(std::ostream& out, std::string fn)
     const
 {
   return m_pg->gen_prefix(out)
-	 << "scrubber::ReplicaReservations:" << fn << ": ";
+	 << fmt::format("scrubber::ReplicaReservations:{}: ", fn);
 }
 
 }  // namespace Scrub

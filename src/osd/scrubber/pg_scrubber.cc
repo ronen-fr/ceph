@@ -475,9 +475,9 @@ void PgScrubber::on_new_interval()
   // If in active session - the IntervalChanged handler takes care of
   // discarding the remote reservations, and transitioning out of Session.
   // That resets both the scrubber and the FSM.
-  // The next line (FullReset) is only relevant for the
-  // case where we are not an active Primary.
   m_fsm->process_event(IntervalChanged{});
+
+  // The 'FullReset' is only relevant if we are not an active Primary
   m_fsm->process_event(FullReset{});
   rm_from_osd_scrubbing();
 }

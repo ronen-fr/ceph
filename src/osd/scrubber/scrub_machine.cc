@@ -171,9 +171,6 @@ ReservingReplicas::ReservingReplicas(my_context ctx)
     m_timeout_token =
 	machine.schedule_timer_event_after<ReservationTimeout>(timeout);
   }
-
-  /// \todo start a second timer to warn about slow-to-reply replicas
-  /// using "osd_scrub_slow_reservation_response" conf val
 }
 
 ReservingReplicas::~ReservingReplicas()
@@ -198,6 +195,8 @@ sc::result ReservingReplicas::react(const ReplicaReject& ev)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ReservingReplicas::react(const ReplicaReject&)" << dendl;
 
+  // manipulate the 'next to reserve' iterator to exclude
+  // the rejecting replica from the set of replicas requiring release
   context<Session>().m_reservations->verify_rejections_source(
       ev.m_op, ev.m_from);
 

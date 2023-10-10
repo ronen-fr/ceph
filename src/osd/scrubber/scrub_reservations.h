@@ -9,8 +9,9 @@
 #include <vector>
 
 #include "osd/scrubber_common.h"
-#include "scrub_machine_lstnr.h"
+
 #include "osd_scrub_sched.h"
+#include "scrub_machine_lstnr.h"
 
 namespace Scrub {
 
@@ -32,7 +33,9 @@ namespace Scrub {
  *
  * Timeouts:
  *
- *  Slow-Secondary Warning: (not re-implemented yet \todo)
+ *  Slow-Secondary Warning:
+ *  Warn if a replica takes more than <conf> milliseconds to reply to a
+ *  reservation request. Only one warning is issued per session.
  *
  *  Reservation Timeout:
  *  We limit the total time we wait for the replicas to respond to the
@@ -48,13 +51,13 @@ class ReplicaReservations {
   ScrubMachineListener& m_scrubber;
   PG* m_pg;
 
-  const pg_shard_t m_whoami;
-  const spg_t m_pgid;
+  /// shorthand for m_scrubber.get_spgid().pgid
+  const pg_t m_pgid;
 
   /// for dout && when queueing messages to the FSM
   OSDService* m_osds;
 
-  /// the acting set (not including myself), sorted by OSD id
+  /// the acting set (not including myself), sorted by pg_shard_t
   std::vector<pg_shard_t> m_sorted_secondaries;
 
   /// the next replica to which we will send a reservation request
