@@ -172,7 +172,7 @@ struct ScrubMachineListener {
   /**
    * cancel_callback
    *
-   * Attempts to cancel the callback to whcih the passed token is associated.
+   * Attempts to cancel the callback to which the passed token is associated.
    * cancel_callback is best effort, the callback may still fire.
    * cancel_callback guarantees that exactly one of the two things will happen:
    * - the callback is destroyed and will not be invoked

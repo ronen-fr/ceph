@@ -309,7 +309,7 @@ public:
    * schedule_timer_event_after
    *
    * Schedules event EventT{Args...} to be delivered duration in the future.
-   * The implementation implicitely drops the event on interval change.  The
+   * The implementation implicitly drops the event on interval change.  The
    * returned timer_event_token_t can be used to cancel the event prior to
    * its delivery -- it should generally be embedded as a member in the state
    * intended to handle the event.  See the comment on timer_event_token_t
