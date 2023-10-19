@@ -226,8 +226,7 @@ struct ScrubMachineListener {
   /// sending cluster-log warnings
   virtual void log_cluster_warning(const std::string& msg) const = 0;
 
-  // temporary interface (to be discarded in a follow-up PR)
-  /// set the 'resources_failure' flag in the scrub-job object
+  /// modify current scrub target's 'not before' time
   virtual void flag_reservations_failure() = 0;
 
   /// is this scrub more than just regular periodic scrub?

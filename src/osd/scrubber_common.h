@@ -17,8 +17,18 @@ class Formatter;
 struct PGPool;
 
 namespace Scrub {
-  class ReplicaReservations;
-  struct ReplicaActive;
+class ReplicaReservations;
+struct ReplicaActive;
+class ScrubJob;
+class SchedTarget;
+struct SchedEntry;
+}
+
+// a convenience func for identifying the "other type of scrub target"
+static inline scrub_level_t operator!(scrub_level_t s_or_d)
+{
+  return (s_or_d == scrub_level_t::deep) ? scrub_level_t::shallow
+					 : scrub_level_t::deep;
 }
 
 /// Facilitating scrub-related object access to private PG data
@@ -29,6 +39,7 @@ private:
   friend class PrimaryLogScrub;
   friend class PgScrubber;
   friend class ScrubBackend;
+  friend class Scrub::ScrubJob;
   ScrubberPasskey() {}
   ScrubberPasskey(const ScrubberPasskey&) = default;
   ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
@@ -56,9 +67,45 @@ struct OSDRestrictions {
   bool only_deadlined{false};
 };
 
+
+/// concise passing of PG state re scrubbing to the
+/// scrubber at initiation of a scrub
+struct ScrubPGPreconds {
+  bool allow_shallow{true};
+  bool allow_deep{true};
+  bool has_deep_errors{false};
+  bool can_autorepair{false};
+};
+
+/// possible outcome when trying to select a PG and scrub it
+enum class schedule_result_t {
+  scrub_initiated,	    // successfully started a scrub
+  target_specific_failure,  // failed to scrub this specific target
+  target_not_there,         // target not in queue, or no PG (prob a race)
+  osd_wide_failure	    // failed to scrub any target
+};
+
 }  // namespace Scrub
 
 namespace fmt {
+
+template <>
+struct formatter<Scrub::ScrubPGPreconds> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::ScrubPGPreconds& conds, FormatContext& ctx)
+  {
+    return fmt::format_to(
+      ctx.out(),
+      "allowed:{}/{} err:{} autorp:{}",
+        conds.allow_shallow ? "+" : "-",
+        conds.allow_deep ? "+" : "-",
+        conds.has_deep_errors ? "+" : "-",
+        conds.can_autorepair ? "+" : "-");
+  }
+};
+
 template <>
 struct formatter<Scrub::OSDRestrictions> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
@@ -289,6 +336,27 @@ struct ScrubPgIF {
    */
   [[nodiscard]] virtual bool is_queued_or_active() const = 0;
 
+
+  /// RRR doc
+  virtual void mark_target_dequeued(scrub_level_t scrub_level) = 0;
+
+  virtual Scrub::schedule_result_t start_scrubbing(
+    Scrub::SchedEntry trgt,
+    Scrub::OSDRestrictions env_restrictions,
+    Scrub::ScrubPGPreconds pg_cond) = 0;
+
+  /**
+   * let the scrubber know that a recovery operation has completed.
+   * This might trigger an 'after repair' scrub.
+   */
+  virtual void recovery_completed() = 0;
+
+  /**
+   * returning 'm_after_repair_scrub_required'. Used by the PG to determine
+   * how to count some repair-related events.
+   */
+  virtual bool is_after_repair_required() const = 0;
+
   /**
    * Manipulate the 'scrubbing request has been queued, or - we are
    * actually scrubbing' Scrubber's flag
@@ -306,7 +374,11 @@ struct ScrubPgIF {
 
   virtual void replica_scrub_op(OpRequestRef op) = 0;
 
-  virtual void set_op_parameters(const requested_scrub_t&) = 0;
+  //virtual void set_op_parameters(const requested_scrub_t&) = 0;
+//   virtual void set_op_parameters(
+//       Scrub::SchedTarget& trgt,
+//       Scrub::ScrubPGPreconds pg_cond/*,
+//       const requested_scrub_t& request*/) = 0;
 
   /// stop any active scrubbing (on interval end) and unregister from
   /// the OSD scrub queue
@@ -336,8 +408,14 @@ struct ScrubPgIF {
     scrub_level_t scrub_level,
     requested_scrub_t& request_flags) = 0;
 
-  virtual void dump_scrubber(ceph::Formatter* f,
-			     const requested_scrub_t& request_flags) const = 0;
+  virtual void dump_scrubber(ceph::Formatter* f/*,
+			     const requested_scrub_t& request_flags*/) const = 0;
+
+  /**
+   * scrub scheduling configuration has changed. Update our scrub-queue
+   * entries accordingly.
+   */
+  virtual void recalc_schedule() = 0;
 
   /**
    * Return true if soid is currently being scrubbed and pending IOs should
@@ -410,7 +488,7 @@ struct ScrubPgIF {
    * This function assumes that the queue registration status is up-to-date,
    * i.e. the OSD "knows our name" if-f we are the Primary.
    */
-  virtual void update_scrub_job(const requested_scrub_t& request_flags) = 0;
+  //virtual void update_scrub_job(const requested_scrub_t& request_flags) = 0;
 
   /**
    * route incoming replica-reservations requests/responses to the

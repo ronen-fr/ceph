@@ -227,7 +227,10 @@ void PrimaryLogScrub::_scrub_finish()
 }
 
 PrimaryLogScrub::PrimaryLogScrub(PrimaryLogPG* pg) : PgScrubber{pg}, m_pl_pg{pg}
-{}
+{
+  // note: the PG is not locked at this point
+  dout(10) << __func__ << dendl;
+}
 
 void PrimaryLogScrub::_scrub_clear_state()
 {

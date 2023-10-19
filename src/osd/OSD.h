@@ -500,7 +500,11 @@ public:
                               uint64_t cost,
 			      int priority);
   void queue_for_snap_trim(PG *pg);
-  void queue_for_scrub(PG* pg, Scrub::scrub_prio_t with_priority);
+// 
+//   ceph::mutex scrub_queue_lock =
+//       ceph::make_mutex("OSDService::scrub_queue_lock");
+
+  void queue_for_scrub(PG *pg, Scrub::scrub_prio_t with_priority);
 
   void queue_scrub_after_repair(PG* pg, Scrub::scrub_prio_t with_priority);
 
