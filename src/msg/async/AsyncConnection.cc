@@ -512,7 +512,7 @@ void AsyncConnection::_connect()
 
   state = STATE_CONNECTING;
   protocol->connect();
-  // rescheduler connection in order to avoid lock dep
+  // reschedule connection in order to avoid lock dep
   // may called by external thread(send_message)
   center->dispatch_event_external(read_handler);
 }
@@ -532,7 +532,7 @@ void AsyncConnection::accept(ConnectedSocket socket,
   target_addr = peer_addr; // until we know better
   state = STATE_ACCEPTING;
   protocol->accept();
-  // rescheduler connection in order to avoid lock dep
+  // reschedule connection in order to avoid lock dep
   center->dispatch_event_external(read_handler);
 }
 

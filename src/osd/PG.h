@@ -40,6 +40,7 @@
 #include "recovery_types.h"
 #include "MissingLoc.h"
 #include "scrubber_common.h"
+#include "scrubber/scrub_queue_entry.h"
 
 #include "mgr/OSDPerfMetricTypes.h"
 
@@ -192,6 +193,9 @@ public:
   /// set when the scrub request is queued, and reset after scrubbing fully
   /// cleaned up.
   bool is_scrub_queued_or_active() const { return m_scrubber->is_queued_or_active(); }
+
+  /// RRR doc
+  void mark_scrub_target_dequeued(scrub_level_t scrub_level);
 
 public:
   // -- members --
@@ -709,7 +713,9 @@ public:
   virtual void on_shutdown() = 0;
 
   bool get_must_scrub() const;
-  Scrub::schedule_result_t sched_scrub();
+
+  Scrub::schedule_result_t start_scrubbing(Scrub::SchedEntry trgt,
+        Scrub::OSDRestrictions osd_restrictions);
 
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const;
   /// the version that refers to flags_.priority
@@ -1236,7 +1242,7 @@ public:
 
   // -- scrub --
 protected:
-  bool scrub_after_recovery;
+  //bool scrub_after_recovery;
 
   int active_pushes;
 
@@ -1461,5 +1467,4 @@ class PGLockWrapper {
  private:
   PGRef m_pg;
 };
-
 #endif

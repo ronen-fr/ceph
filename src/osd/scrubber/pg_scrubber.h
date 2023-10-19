@@ -81,12 +81,15 @@ Main Scrubber interfaces:
 #include "ScrubStore.h"
 #include "osd_scrub_sched.h"
 #include "scrub_backend.h"
+//#include "scrub_job.h"
 #include "scrub_machine_lstnr.h"
 #include "scrub_reservations.h"
 
 namespace Scrub {
 class ScrubMachine;
 struct BuildMap;
+// RRR or this:
+class ScrubJob;
 
 
 /**
@@ -141,6 +144,60 @@ class MapsCollectionStatus {
   friend ostream& operator<<(ostream& out, const MapsCollectionStatus& sf);
 };
 
+// /**
+//  *  A collection of the configuration parameters (pool & OSD) that affect
+//  *  scrub scheduling.
+//  */
+// struct sched_conf_t {
+//   /// the desired interval between shallow scrubs
+//   double shallow_interval{0.0};
+// 
+//   /// the desired interval between deep scrubs
+//   double deep_interval{0.0};
+// 
+//   /**
+//    * the maximum interval between shallow scrubs, as determined by either the
+//    * OSD or the pool configuration. Empty if no limit is configured.
+//    */
+//   std::optional<double> max_shallow;
+// 
+//   /**
+//    * the maximum interval between deep scrubs.
+//    * For deep scrubs - there is no equivalent of scrub_max_interval. Per the
+//    * documentation, once deep_scrub_interval has passed, we are already
+//    * "overdue", at least as far as the "ignore allowed load" window is
+//    * concerned. \todo based on users complaints (and the fact that the
+//    * interaction between the configuration parameters is clear to no one),
+//    * this will be revised shortly.
+//    */
+//   double max_deep{0.0};
+// 
+//   /**
+//    * interval_randomize_ratio
+//    *
+//    * We add an extra random duration to the configured times when doing
+//    * scheduling. An event configured with an interval of <interval> will
+//    * actually be scheduled at a time selected uniformly from
+//    * [<interval>, (1+<interval_randomize_ratio>) * <interval>)
+//    */
+//   double interval_randomize_ratio{0.0};
+// 
+//   /**
+//    * a randomization factor aimed at preventing 'thundering herd' problems
+//    * upon deep-scrubs common intervals. If polling a random number smaller
+//    * than that percentage, the next shallow scrub is upgraded to deep.
+//    */
+//   double deep_randomize_ratio{0.0};
+// 
+//   /**
+//    * must we schedule a scrub with high urgency if we do not have a valid
+//    * last scrub stamp?
+//    */
+//   bool mandatory_on_invalid{true};
+// };
+
+
+
 
 }  // namespace Scrub
 
@@ -179,6 +236,7 @@ struct scrub_flags_t {
 ostream& operator<<(ostream& out, const scrub_flags_t& sf);
 
 
+
 /**
  * The part of PG-scrubbing code that isn't state-machine wiring.
  *
@@ -194,14 +252,25 @@ class PgScrubber : public ScrubPgIF,
 
   friend class ScrubBackend;  // will be replaced by a limited interface
 
+  friend class ::Scrub::ScrubJob;
+
   //  ------------------  the I/F exposed to the PG (ScrubPgIF) -------------
 
   /// are we waiting for resource reservation grants form our replicas?
   [[nodiscard]] bool is_reserving() const final;
 
+  Scrub::schedule_result_t start_scrubbing(
+    Scrub::SchedEntry trgt,
+    Scrub::OSDRestrictions env_restrictions,
+    Scrub::ScrubPGPreconds pg_cond);
+
   void initiate_regular_scrub(epoch_t epoch_queued) final;
 
   void initiate_scrub_after_repair(epoch_t epoch_queued) final;
+
+  void recovery_completed() final;
+
+  bool is_after_repair_required() const;
 
   void send_scrub_resched(epoch_t epoch_queued) final;
 
@@ -260,7 +329,11 @@ class PgScrubber : public ScrubPgIF,
 
   // managing scrub op registration
 
-  void update_scrub_job(const requested_scrub_t& request_flags) final;
+  void recalc_schedule() final;
+
+  //void update_scrub_job(const requested_scrub_t& request_flags) final;
+
+  void mark_target_dequeued(scrub_level_t scrub_level) final;
 
   void rm_from_osd_scrubbing() final;
 
@@ -293,8 +366,8 @@ class PgScrubber : public ScrubPgIF,
     scrub_level_t scrub_level,
     requested_scrub_t& request_flags) final;
 
-  void dump_scrubber(ceph::Formatter* f,
-		     const requested_scrub_t& request_flags) const final;
+  void dump_scrubber(ceph::Formatter* f/*,
+		     const requested_scrub_t& request_flags*/) const final;
 
   // used if we are a replica
 
@@ -348,7 +421,11 @@ class PgScrubber : public ScrubPgIF,
    * flag-set; PG_STATE_SCRUBBING, and possibly PG_STATE_DEEP_SCRUB &
    * PG_STATE_REPAIR are set.
    */
-  void set_op_parameters(const requested_scrub_t& request) final;
+  //void set_op_parameters(const requested_scrub_t& request) final;
+
+  void set_op_parameters(
+      Scrub::SchedTarget& trgt,
+      Scrub::ScrubPGPreconds pg_cond);
 
   void cleanup_store(ObjectStore::Transaction* t) final;
 
@@ -511,8 +588,12 @@ class PgScrubber : public ScrubPgIF,
   virtual void _scrub_clear_state() {}
 
   utime_t m_scrub_reg_stamp;		///< stamp we registered for
-  Scrub::ScrubJobRef m_scrub_job;	///< the scrub-job used by the OSD to
-					///< schedule us
+
+  /**
+   * the scrubber has initiated a recovery, and is waiting for the recovery
+   * to complete (in order to perform an 'after-repair' scrub)
+   */
+  bool m_after_repair_scrub_required{false};
 
   ostream& show(ostream& out) const override;
 
@@ -628,12 +709,23 @@ class PgScrubber : public ScrubPgIF,
 
   epoch_t m_last_aborted{};  // last time we've noticed a request to abort
 
+  std::optional<Scrub::schedule_result_t> validate_scrub_mode(
+    Scrub::SchedTarget& trgt,
+    utime_t scrub_clock_now,
+    Scrub::ScrubPGPreconds pg_cond);
+
   // 'optional', as 'LocalReservation' is
   // 'RAII-designed' to guarantee un-reserving when deleted.
   std::optional<Scrub::LocalReservation> m_local_osd_resource;
 
   void cleanup_on_finish();  // scrub_clear_state() as called for a Primary when
 			     // Active->NotActive
+
+  /**
+   * combine cluster & pool configuration options into a single struct
+   * of scrub-related parameters.
+   */
+  Scrub::sched_conf_t populate_config_params() const;
 
  protected:
   PG* const m_pg;
@@ -660,6 +752,12 @@ class PgScrubber : public ScrubPgIF,
 
   epoch_t m_interval_start{0};	///< interval's 'from' of when scrubbing was
 				///< first scheduled
+
+  /**
+   * A copy of the specific scheduling target (either shallow_target or
+   * deep_target in the scrub_job) that was selected for this active scrub
+   */
+  std::optional<Scrub::SchedTarget> m_active_target;
 
   void repair_oinfo_oid(ScrubMap& smap);
 
@@ -734,6 +832,8 @@ class PgScrubber : public ScrubPgIF,
   int num_digest_updates_pending{0};
   hobject_t m_start, m_end;  ///< note: half-closed: [start,end)
 
+  Scrub::ScrubJob m_scrub_job;	///< scrub scheduling data
+
   /// Returns epoch of current osdmap
   epoch_t get_osdmap_epoch() const { return get_osdmap()->get_epoch(); }
 
@@ -782,13 +882,8 @@ class PgScrubber : public ScrubPgIF,
   /**
    * initiate a deep-scrub after the current scrub ended with errors.
    */
-  void request_rescrubbing(requested_scrub_t& req_flags);
+  //void request_rescrubbing(requested_scrub_t& req_flags);
 
-  /**
-   * combine cluster & pool configuration options into a single struct
-   * of scrub-related parameters.
-   */
-  Scrub::sched_conf_t populate_config_params() const;
 
   /*
    * Select a range of objects to scrub.
@@ -820,6 +915,8 @@ class PgScrubber : public ScrubPgIF,
   void persist_scrub_results(inconsistent_objs_t&& all_errors);
   void apply_snap_mapper_fixes(
     const std::vector<Scrub::snap_mapper_fix_t>& fix_list);
+
+  void at_scrub_failure(Scrub::delay_cause_t issue);
 
   // our latest periodic 'publish_stats_to_osd()'. Required frequency depends on
   // scrub state.
@@ -937,3 +1034,22 @@ class PgScrubber : public ScrubPgIF,
 
   preemption_data_t preemption_data;
 };
+
+namespace fmt {
+template <>
+struct formatter<Scrub::sched_conf_t> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const Scrub::sched_conf_t& cf, FormatContext& ctx)
+  {
+    return format_to(
+	ctx.out(),
+	"periods: s:{}/{} d:{}/{} iv-ratio:{} deep-rand:{} on-inv:{}",
+	cf.shallow_interval, cf.max_shallow.value_or(-1.0), cf.deep_interval,
+	cf.max_deep, cf.interval_randomize_ratio, cf.deep_randomize_ratio,
+	cf.mandatory_on_invalid);
+  }
+};
+
+}  // namespace fmt
+

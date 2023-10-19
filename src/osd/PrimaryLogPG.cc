@@ -1031,7 +1031,7 @@ void PrimaryLogPG::do_command(
     f->close_section();
 
     if (is_primary() && is_active() && m_scrubber) {
-      m_scrubber->dump_scrubber(f.get(), m_planned_scrub);
+      m_scrubber->dump_scrubber(f.get()/*, m_planned_scrub*/);
     }
 
     f->open_object_section("agent_state");
@@ -12295,7 +12295,7 @@ int PrimaryLogPG::recover_missing(
   int priority,
   PGBackend::RecoveryHandle *h)
 {
-  dout(10) << __func__ << " sar: " << scrub_after_recovery << dendl;
+  dout(10) << __func__ << " sar: " << m_scrubber->is_after_repair_required() << dendl;
 
   if (recovery_state.get_missing_loc().is_unfound(soid)) {
     dout(7) << __func__ << " " << soid
@@ -12326,7 +12326,8 @@ int PrimaryLogPG::recover_missing(
 	 if (!object_missing) {
 	   object_stat_sum_t stat_diff;
 	   stat_diff.num_objects_recovered = 1;
-	   if (scrub_after_recovery)
+	   //if (scrub_after_recovery)
+           if (m_scrubber->is_after_repair_required())
 	     stat_diff.num_objects_repaired = 1;
 	   on_global_recover(soid, stat_diff, true);
 	 } else {
