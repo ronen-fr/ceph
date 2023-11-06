@@ -4363,18 +4363,20 @@ void OSD::final_init()
     "");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
-    "pg "			   \
-    "name=pgid,type=CephPgid "	   \
-    "name=cmd,type=CephChoices,strings=scrub " \
-    "name=time,type=CephInt,req=false",
+    "pg "
+    "name=pgid,type=CephPgid "
+    "name=cmd,type=CephChoices,strings=scrub "
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
-    "pg "			   \
-    "name=pgid,type=CephPgid "	   \
-    "name=cmd,type=CephChoices,strings=deep_scrub " \
-    "name=time,type=CephInt,req=false",
+    "pg "
+    "name=pgid,type=CephPgid "
+    "name=cmd,type=CephChoices,strings=deep_scrub "
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
     "");
   ceph_assert(r == 0);
@@ -4404,18 +4406,20 @@ void OSD::final_init()
     "list unfound objects on this pg, perhaps starting at an offset given in JSON");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
-    "scrub "				\
-    "name=pgid,type=CephPgid,req=false "	\
-    "name=time,type=CephInt,req=false",
+    "scrub "
+    "name=pgid,type=CephPgid,req=false "
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
-    "Trigger a scheduled scrub ");
+    "Trigger a scrub ");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
-    "deep_scrub "			\
-    "name=pgid,type=CephPgid,req=false "	\
-    "name=time,type=CephInt,req=false",
+    "deep_scrub "
+    "name=pgid,type=CephPgid,req=false "
+    "name=time,type=CephInt,req=false "
+    "name=force,type=CephBool,req=false",
     asok_hook,
-    "Trigger a scheduled deep scrub ");
+    "Trigger a deep scrub ");
   ceph_assert(r == 0);
 }
 
