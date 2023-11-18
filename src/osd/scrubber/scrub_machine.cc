@@ -654,33 +654,162 @@ ScrubMachine::~ScrubMachine() = default;
 
 // -------- for replicas -----------------------------------------------------
 
-// ----------------------- ReplicaActiveOp --------------------------------
+// ----------------------- ReplicaActive --------------------------------
+
+ReplicaActive::ReplicaActive(my_context ctx)
+    : my_base(ctx)
+    , NamedSimply(context<ScrubMachine>().m_scrbr, "ReplicaActive")
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  dout(10) << "-- state -->> ReplicaActive" << dendl;
+  m_pg = scrbr->get_pg();
+  m_osds = m_pg->get_pg_osd(ScrubberPasskey());
+}
+
+ReplicaActive::~ReplicaActive()
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  if (reserved_by_my_primary) {
+    dout(10) << "ReplicaActive::~ReplicaActive(): clearing reservation"
+	     << dendl;
+    clear_remote_reservation();
+  }
+}
+
+
+/*
+ * Note: we are expected to be in the initial internal state (Idle) when
+ * receiving any registration request. Our other internal states, the
+ * active ones, have their own handler for this event, and will treat it
+ * as an abort request.
+ *
+ * Process:
+ * - if already reserved: clear existing reservation, then continue
+ * - ask the OSD for the "reservation resource"
+ * - if granted: mark it internally and notify the Primary.
+ * - otherwise: just notify the requesting primary.
+ */
+void ReplicaActive::on_reserve_req(const ReplicaReserveReq& ev)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  dout(10) << "ReplicaActive::on_reserve_req()" << dendl;
+
+  if (reserved_by_my_primary) {
+    dout(10) << "ReplicaActive::on_reserve_req(): already reserved" << dendl;
+    // clear the existing reservation
+    clear_remote_reservation();  // clears the flag, too
+  }
+
+  // ask the OSD for the reservation
+  const auto ret = get_remote_reservation();
+  if (ret.granted) {
+    reserved_by_my_primary = true;
+    dout(10) << fmt::format("{}: reserved? yes", __func__) << dendl;
+  } else {
+    dout(10) << fmt::format("{}: reserved? no ({})", __func__, ret.error_msg)
+	     << dendl;
+  }
+
+  Message* reply = new MOSDScrubReserve(
+      spg_t(pg_id.pgid, m_pg->get_primary().shard), ev.m_op->sent_epoch, ret.op,
+      m_pg->pg_whoami);
+  m_osds->send_message_osd_cluster(reply, ev.m_op->get_req()->get_connection());
+}
+
+
+void ReplicaActive::on_release(const ReplicaRelease& ev)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  if (!reserved_by_my_primary) {
+    dout(5) << fmt::format(
+		   "ReplicaActive::on_release() from {}: not reserved!",
+		   ev.m_from)
+	    << dendl;
+    return;
+  }
+  dout(10) << fmt::format("ReplicaActive::on_release() from {}", ev.m_from)
+	   << dendl;
+  clear_remote_reservation();
+}
+
+
+ReplicaActive::ReservationAttemptRes ReplicaActive::get_remote_reservation()
+{
+  using ReservationAttemptRes = ReplicaActive::ReservationAttemptRes;
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  if (!scrbr->get_pg_cct()->_conf.get_val<bool>("osd_scrub_during_recovery") &&
+      m_osds->is_recovery_active()) {
+    return ReservationAttemptRes{
+	MOSDScrubReserve::REJECT, "recovery is active", false};
+  }
+
+  if (m_osds->get_scrub_services().inc_scrubs_remote(scrbr->get_spgid().pgid)) {
+    return ReservationAttemptRes{MOSDScrubReserve::GRANT, "", true};
+  } else {
+    return ReservationAttemptRes{
+	MOSDScrubReserve::REJECT, "failed to reserve remotely", false};
+  }
+}
+
+
+void ReplicaActive::clear_remote_reservation()
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  dout(10) << "ReplicaActive::clear_remote_reservation()" << dendl;
+  m_osds->get_scrub_services().dec_scrubs_remote(scrbr->get_spgid().pgid);
+  reserved_by_my_primary = false;
+}
+
+
+void ReplicaActive::check_for_updates(const StartReplica& ev)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  dout(10) << "ReplicaActive::check_for_updates()" << dendl;
+  post_event(ReplicaPushesUpd{});
+}
+
+// ---------------- ReplicaActive/ReplicaIdle ---------------------------
+
+ReplicaIdle::ReplicaIdle(my_context ctx)
+    : my_base(ctx)
+    , NamedSimply(context<ScrubMachine>().m_scrbr, "ReplicaActive/ReplicaIdle")
+{
+  dout(10) << "-- state -->> ReplicaActive/ReplicaIdle" << dendl;
+}
+
+
+// ------------- ReplicaActive/ReplicaActiveOp --------------------------
 
 ReplicaActiveOp::ReplicaActiveOp(my_context ctx)
     : my_base(ctx)
     , NamedSimply(context<ScrubMachine>().m_scrbr, "ReplicaActiveOp")
 {
-  dout(10) << "-- state -->> ReplicaActiveOp" << dendl;
+  dout(10) << "-- state -->> ReplicaActive/ReplicaActiveOp" << dendl;
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   scrbr->on_replica_init();
 }
 
-/**
- * \note: here is too late to call replica_handling_done(). See the
- * comment in build_replica_map_chunk()
- */
-ReplicaActiveOp::~ReplicaActiveOp() = default;
 
-// ----------------------- ReplicaWaitUpdates --------------------------------
+ReplicaActiveOp::~ReplicaActiveOp()
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  dout(10) << __func__ << dendl;
+  scrbr->replica_handling_done();
+}
+
+
+// ------------- ReplicaActive/ReplicaWaitUpdates ------------------------
 
 ReplicaWaitUpdates::ReplicaWaitUpdates(my_context ctx)
     : my_base(ctx)
     , NamedSimply(
 	  context<ScrubMachine>().m_scrbr,
-	  "ReplicaActiveOp/ReplicaWaitUpdates")
+	  "ReplicaActive/ReplicaActiveOp/ReplicaWaitUpdates")
 {
-  dout(10) << "-- state -->> ReplicaActiveOp/ReplicaWaitUpdates" << dendl;
+  dout(10) << "-- state -->> ReplicaActive/ReplicaActiveOp/ReplicaWaitUpdates"
+	   << dendl;
 }
+
 
 /*
  * Triggered externally, by the entity that had an update re pushes
@@ -692,7 +821,6 @@ sc::result ReplicaWaitUpdates::react(const ReplicaPushesUpd&)
 	   << scrbr->pending_active_pushes() << dendl;
 
   if (scrbr->pending_active_pushes() == 0) {
-
     // done waiting
     return transit<ReplicaBuildingMap>();
   }
@@ -700,17 +828,20 @@ sc::result ReplicaWaitUpdates::react(const ReplicaPushesUpd&)
   return discard_event();
 }
 
+
 // ----------------------- ReplicaBuildingMap -----------------------------------
 
 ReplicaBuildingMap::ReplicaBuildingMap(my_context ctx)
     : my_base(ctx)
     , NamedSimply(
 	  context<ScrubMachine>().m_scrbr,
-	  "ReplicaActiveOp/ReplicaBuildingMap")
+	  "ReplicaActive/ReplicaActiveOp/ReplicaBuildingMap")
 {
-  dout(10) << "-- state -->> ReplicaActiveOp/ReplicaBuildingMap" << dendl;
+  dout(10) << "-- state -->> ActiveAsReplicaReplicaActiveOp/ReplicaBuildingMap"
+	   << dendl;
   post_event(SchedReplica{});
 }
+
 
 sc::result ReplicaBuildingMap::react(const SchedReplica&)
 {
@@ -722,14 +853,13 @@ sc::result ReplicaBuildingMap::react(const SchedReplica&)
     dout(10) << "replica scrub job preempted" << dendl;
 
     scrbr->send_preempted_replica();
-    scrbr->replica_handling_done();
-    return transit<NotActive>();
+    return transit<ReplicaIdle>();
   }
 
   // start or check progress of build_replica_map_chunk()
   auto ret_init = scrbr->build_replica_map_chunk();
   if (ret_init != -EINPROGRESS) {
-    return transit<NotActive>();
+    return transit<ReplicaIdle>();
   }
 
   return discard_event();
