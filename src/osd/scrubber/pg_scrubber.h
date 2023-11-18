@@ -324,6 +324,8 @@ class PgScrubber : public ScrubPgIF,
 
   void on_new_interval() final;
 
+  void on_replica_activate() final;
+
   void scrub_clear_state() final;
 
   bool is_queued_or_active() const final;
