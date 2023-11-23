@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 project(ceph
   VERSION 18.0.0
   LANGUAGES CXX C ASM)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 cmake_policy(SET CMP0028 NEW)
 cmake_policy(SET CMP0046 NEW)
@@ -776,3 +777,9 @@ add_tags(ctags
   EXCLUDE_OPTS ${CTAG_EXCLUDES}
   EXCLUDES "*.js" "*.css" ".tox" "python-common/build")
 add_custom_target(tags DEPENDS ctags)
+
+# if(CMAKE_EXPORT_COMPILE_COMMANDS)
+set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
+#endif()
+
+

@@ -96,7 +96,45 @@ OP_EV(ReplicaReserveReq);
 /// explicit release request from the Primary
 OP_EV(ReplicaRelease);
 
+template <typename EV>
+struct NoDataEvent : sc::event<EV> {
+  static constexpr const char* event_name = "<>";
+  inline static bool a_copy{true};
+  NoDataEvent()
+  {
+    a_copy = false;
+    on_event_creation(static_cast<EV*>(this)->event_name);
+  }
 
+  NoDataEvent(const NoDataEvent&) = default;
+  NoDataEvent(NoDataEvent&&) = default;
+  NoDataEvent& operator=(const NoDataEvent&) = default;
+  NoDataEvent& operator=(NoDataEvent&&) = default;
+
+  void print(std::ostream* out) const
+  {
+    *out << fmt::format("{}", EV::event_name);
+  }
+  std::string_view print() const { return EV::event_name; }
+  ~NoDataEvent()
+  {
+    if (!a_copy)
+      on_event_discard(EV::event_name);
+  }
+};
+
+#define ND_EV(T)                                                 \
+  struct T : NoDataEvent<T> {                                    \
+    static constexpr const char* event_name = #T;                \
+    template <typename... Args>                                  \
+    T(Args&&... args) : NoDataEvent(std::forward<Args>(args)...) \
+    {                                                            \
+    }                                                            \
+  };
+
+#define MEV(E) ND_EV(E)
+
+#if 0
 #define MEV(E)                                          \
   struct E : sc::event<E> {                             \
     inline static int actv{0};                          \
@@ -113,6 +151,8 @@ OP_EV(ReplicaRelease);
     void print(std::ostream* out) const { *out << #E; } \
     std::string_view print() const { return #E; }       \
   };
+#endif
+
 
 /// all replicas have granted our reserve request
 MEV(RemotesReserved)
