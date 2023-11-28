@@ -202,6 +202,13 @@ void PgScrubber::at_scrub_failure(delay_cause_t issue)
   m_active_target.reset();
 }
 
+void PgScrubber::on_backend_error()
+{
+  dout(5) << fmt::format("{}: @ start: {}", __func__, m_scrub_job) << dendl;
+  at_scrub_failure(delay_cause_t::backend_error);
+  clear_pgscrub_state();
+}
+
 
 //   initiating state-machine events --------------------------------
 

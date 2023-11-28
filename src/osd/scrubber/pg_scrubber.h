@@ -507,6 +507,8 @@ class PgScrubber : public ScrubPgIF,
   void on_replica_init() final;
   void replica_handling_done() final;
 
+  void on_backend_error() final;
+
   /// the version of 'scrub_clear_state()' that does not try to invoke FSM
   /// services (thus can be called from FSM reactions)
   void clear_pgscrub_state() final;
