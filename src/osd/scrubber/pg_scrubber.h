@@ -509,6 +509,8 @@ class PgScrubber : public ScrubPgIF,
 
   void on_backend_error() final;
 
+  void assert_targets_not_in_transition() const final;
+
   /// the version of 'scrub_clear_state()' that does not try to invoke FSM
   /// services (thus can be called from FSM reactions)
   void clear_pgscrub_state() final;

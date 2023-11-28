@@ -178,12 +178,14 @@ bool PgScrubber::should_abort() const
   if (m_is_deep) {
     if (get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
 	m_pg->pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB)) {
-      dout(10) << "nodeep_scrub set, aborting" << dendl;
+      dout(5) << fmt::format("{}: nodeep_scrub set, aborting", __func__)
+	      << dendl;
       return true;
     }
-  } else if (get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
-	     m_pg->pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB)) {
-    dout(10) << "noscrub set, aborting" << dendl;
+  } else if (
+      get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
+      m_pg->pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB)) {
+    dout(5) << fmt::format("{}: noscrub set, aborting", __func__) << dendl;
     return true;
   }
 
@@ -207,6 +209,11 @@ void PgScrubber::on_backend_error()
   dout(5) << fmt::format("{}: @ start: {}", __func__, m_scrub_job) << dendl;
   at_scrub_failure(delay_cause_t::backend_error);
   clear_pgscrub_state();
+}
+
+void PgScrubber::assert_targets_not_in_transition() const
+{
+  ceph_assert(!m_active_target);
 }
 
 
