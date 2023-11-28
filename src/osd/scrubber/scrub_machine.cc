@@ -133,6 +133,12 @@ Session::~Session()
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   m_reservations.reset();
 
+  // when reaching here, we expect the 're-targeting' of the PG, i.e.
+  // the updating and (possibly) re-queueing of the two relevant
+  // scrub-queue objects, to have been done already.
+  // For at least this initial phase of testing - we will assert that.
+  scrbr->assert_targets_not_in_transition();
+
   // note the interaction between clearing the 'queued' flag and two
   // other states: the snap-mapper and the scrubber internal state.
   // All of these must be cleared in the correct order, and the snap mapper

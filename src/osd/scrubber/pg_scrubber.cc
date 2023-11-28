@@ -204,6 +204,11 @@ void PgScrubber::at_scrub_failure(delay_cause_t issue)
   m_active_target.reset();
 }
 
+void PgScrubber::assert_targets_not_in_transition() const
+{
+  ceph_assert(!m_active_target);
+}
+
 
 //   initiating state-machine events --------------------------------
 

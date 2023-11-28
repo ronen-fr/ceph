@@ -229,6 +229,12 @@ struct ScrubMachineListener {
   /// modify current scrub target's 'not before' time
   virtual void flag_reservations_failure() = 0;
 
+  /**
+   * verify that we have restored the scrub targets to a stable state.
+   * I.e.: the 'active target' should be cleared.
+   */
+  virtual void assert_targets_not_in_transition() const = 0;
+
   /// is this scrub more than just regular periodic scrub?
   [[nodiscard]] virtual bool is_high_priority() const = 0;
 };
