@@ -363,6 +363,7 @@ class PgScrubber : public ScrubPgIF,
   int get_whoami() const final;
   spg_t get_spgid() const final { return m_pg->get_pgid(); }
   PG* get_pg() const final { return m_pg; }
+  PerfCounters& get_scrub_perf() const final;
 
   // temporary interface (to be discarded in a follow-up PR)
   /// set the 'resources_failure' flag in the scrub-job object

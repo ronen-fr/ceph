@@ -3,8 +3,11 @@
 
 #pragma once
 #include <string_view>
+#include <vector>
+#include <map>
 
 #include "osd/osd_types_fmt.h"
+#include "osd/osd_perf_counters.h"
 #include "osd/scrubber/osd_scrub_sched.h"
 #include "osd/scrubber/scrub_resources.h"
 #include "osd/scrubber_common.h"
@@ -26,7 +29,7 @@ class OsdScrub {
       Scrub::ScrubSchedListener& osd_svc,
       const ceph::common::ConfigProxy& config);
 
-  ~OsdScrub() = default;
+  ~OsdScrub();
 
   // note: public, as accessed by the dout macros
   std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
@@ -162,6 +165,10 @@ class OsdScrub {
    */
   std::optional<double> update_load_average();
 
+   // the scrub performance counters collections
+   // ---------------------------------------------------------------
+  PerfCounters* get_perf_counters(int pool_type, scrub_level_t level);
+
  private:
   CephContext* cct;
   Scrub::ScrubSchedListener& m_osd_svc;
@@ -238,4 +245,35 @@ class OsdScrub {
     std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
   };
   LoadTracker m_load_tracker;
+
+  // the scrub performance counters collections
+  // ---------------------------------------------------------------
+
+  // indexed by scrub level & pool type
+  std::map<std::string/*label*/, ceph::common::PerfCounters*> m_perf_counters;
+
+  // the labels matrix is:
+  //   <shallow/deep>  X  <replicated/EC>  // maybe later we'll add <periodic/operator>
+  static inline std::vector<std::string> perf_labels = {
+      ceph::perf_counters::key_create(
+	  "osd_scrub_sh_repl",
+	  {{"level", "shallow"}, {"pooltype", "replicated"}}),
+      ceph::perf_counters::key_create(
+	  "osd_scrub_dp_repl", {{"level", "deep"}, {"pooltype", "replicated"}}),
+      ceph::perf_counters::key_create(
+	  "osd_scrub_sh_ec", {{"level", "shallow"}, {"pooltype", "ec"}}),
+      ceph::perf_counters::key_create(
+	  "osd_scrub_dp_ec", {{"level", "deep"}, {"pooltype", "ec"}})};
+
+//   static std::vector<std::string> get_counters_labels();
+
+  /**
+   * create 4 sets of performance counters (for shallow vs. deep,
+   * replicated vs. erasure pools). Add them to the cct, but also maintain
+   * a separate map of the counters, indexed by the pool type and scrub level.
+   */
+  void create_scrub_perf_counters();
+
+  // 'remove' the counters from the cct, and delete them
+  void destroy_scrub_perf_counters();
 };

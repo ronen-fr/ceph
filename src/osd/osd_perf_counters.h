@@ -5,6 +5,7 @@
 
 #include "include/common_fwd.h"
 #include "common/perf_counters.h"
+#include "common/perf_counters_key.h"
 
 enum {
   l_osd_first = 10000,
@@ -174,3 +175,38 @@ enum {
 };
 
 PerfCounters *build_recoverystate_perf(CephContext *cct);
+
+// Scrubber perf counters
+enum {
+  scrbcnt_first = 20500,
+
+  // -- basic statistics --
+  /// The number of times we started a scrub
+  scrbcnt_started,
+  /// # successful scrubs
+  scrbcnt_successful,
+  /// # time to complete a successful scrub
+  scrbcnt_successful_elapsed,
+  /// # failed scrubs
+  scrbcnt_failed,
+  /// # time for a scrub to fail
+  scrbcnt_failed_elapsed,
+
+  // -- interruptions of various types
+  /// # preemptions
+  scrbcnt_preempted,
+  /// # chunks selection performed
+  scrbcnt_chunks_selected,
+  /// # busy chunks
+  scrbcnt_chunks_busy,
+  /// # waiting on object events
+  scrbcnt_blocked,
+  /// # write blocked by the scrub
+  scrbcnt_write_blocked,
+
+  // -- replicas reservation
+  // ...
+  scrbcnt_last,
+};
+
+PerfCounters *build_scrub_labeled_perf(CephContext *cct, std::string label);

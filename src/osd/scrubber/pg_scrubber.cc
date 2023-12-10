@@ -926,6 +926,8 @@ bool PgScrubber::select_range()
 
 void PgScrubber::select_range_n_notify()
 {
+  get_scrub_perf().inc(scrbcnt_chunks_selected);
+
   if (select_range()) {
     // the next chunk to handle is not blocked
     dout(20) << __func__ << ": selection OK" << dendl;
@@ -935,6 +937,7 @@ void PgScrubber::select_range_n_notify()
     // we will wait for the objects range to become available for scrubbing
     dout(10) << __func__ << ": selected chunk is busy" << dendl;
     m_osds->queue_scrub_chunk_busy(m_pg, Scrub::scrub_prio_t::low_priority);
+    get_scrub_perf().inc(scrbcnt_chunks_busy);
   }
 }
 
@@ -944,6 +947,7 @@ bool PgScrubber::write_blocked_by_scrub(const hobject_t& soid)
     return false;
   }
 
+  get_scrub_perf().inc(scrbcnt_write_blocked);
   dout(20) << __func__ << " " << soid << " can preempt? "
 	   << preemption_data.is_preemptable() << " already preempted? "
 	   << preemption_data.was_preempted() << dendl;
@@ -2178,6 +2182,7 @@ PgScrubber::PgScrubber(PG* pg)
 void PgScrubber::set_scrub_begin_time()
 {
   scrub_begin_stamp = ceph_clock_now();
+  get_scrub_perf().inc(scrbcnt_started);
   m_osds->clog->debug() << fmt::format(
     "{} {} starts",
     m_pg->info.pgid.pgid,
@@ -2188,12 +2193,24 @@ void PgScrubber::set_scrub_duration()
 {
   utime_t stamp = ceph_clock_now();
   utime_t duration = stamp - scrub_begin_stamp;
+  get_scrub_perf().inc(scrbcnt_successful);
+  get_scrub_perf().tinc(scrbcnt_successful_elapsed, duration);
+
   m_pg->recovery_state.update_stats([=](auto& history, auto& stats) {
     stats.last_scrub_duration = ceill(duration.to_msec() / 1000.0);
     stats.scrub_duration = double(duration);
     return true;
   });
 }
+
+
+PerfCounters& PgScrubber::get_scrub_perf() const
+{
+  return *m_osds->get_scrub_services().get_perf_counters(
+      m_pg->pool.info.is_replicated(), m_is_deep ? scrub_level_t::deep
+                                                 : scrub_level_t::shallow);
+}
+
 
 void PgScrubber::cleanup_on_finish()
 {

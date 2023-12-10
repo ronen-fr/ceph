@@ -321,7 +321,7 @@ PerfCounters *build_osd_logger(CephContext *cct) {
 
   return osd_plb.create_perf_counters();
 }
- 
+
 
 PerfCounters *build_recoverystate_perf(CephContext *cct) {
   PerfCountersBuilder rs_perf(cct, "recoverystate_perf", rs_first, rs_last);
@@ -359,4 +359,30 @@ PerfCounters *build_recoverystate_perf(CephContext *cct) {
   rs_perf.add_time_avg(rs_notrecovering_latency, "notrecovering_latency", "Notrecovering recovery state latency");
 
   return rs_perf.create_perf_counters();
+}
+
+
+PerfCounters *build_scrub_labeled_perf(CephContext *cct, std::string label)
+{
+  // the labels matrix is:
+  //   <shallow/deep>  X  <replicated/EC>  // maybe later we'll add <periodic/operator>
+  PerfCountersBuilder scrub_perf(cct, label, scrbcnt_first, scrbcnt_last);
+
+  // All the basic scrubber stats are to be considered useful
+  scrub_perf.set_prio_default(PerfCountersBuilder::PRIO_INTERESTING);
+  //scrub_perf.set_prio_default(PerfCountersBuilder::PRIO_USEFUL);
+
+  scrub_perf.add_u64_counter(scrbcnt_started, "num_scrubs_started", "scrubs count");
+  scrub_perf.add_u64_counter(scrbcnt_failed, "failed_scrubs", "failed scrubs count");
+  scrub_perf.add_u64_counter(scrbcnt_successful, "successful_scrubs", "successful scrubs count");
+  scrub_perf.add_time_avg(scrbcnt_failed_elapsed, "failed_scrubs_elapsed", "time to scrub failure");
+  scrub_perf.add_time_avg(scrbcnt_successful_elapsed, "successful_scrubs_elapsed", "time to scrub completion");
+
+  scrub_perf.add_u64_counter(scrbcnt_preempted, "preemptions", "preemptions on scrubs");
+  scrub_perf.add_u64_counter(scrbcnt_chunks_selected, "chunk_selected", "chunk selection during scrubs");
+  scrub_perf.add_u64_counter(scrbcnt_chunks_busy, "chunk_busy", "chunk busy during scrubs");
+  scrub_perf.add_u64_counter(scrbcnt_blocked, "locked_object", "waiting on locked object events");
+  scrub_perf.add_u64_counter(scrbcnt_write_blocked, "write_blocked_by_scrub", "write blocked by scrub");
+
+  return scrub_perf.create_perf_counters();
 }
