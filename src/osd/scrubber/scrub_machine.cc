@@ -125,6 +125,8 @@ Session::Session(my_context ctx)
   // occasions will cause no harm.
   // We choose ignorance.
   std::ignore = scrbr->set_reserving_now();
+
+  m_perf_counters = &scrbr->get_scrub_perf();
 }
 
 Session::~Session()
@@ -306,6 +308,7 @@ RangeBlocked::RangeBlocked(my_context ctx)
     m_timeout_token = machine.schedule_timer_event_after<RangeBlockedAlarm>(
       grace);
   }
+  context<Session>().m_perf_counters->inc(scrbcnt_blocked);
 }
 
 sc::result RangeBlocked::react(const RangeBlockedAlarm&)

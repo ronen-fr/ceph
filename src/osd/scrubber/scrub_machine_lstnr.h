@@ -56,6 +56,12 @@ struct ScrubMachineListener {
   virtual spg_t get_spgid() const = 0;
   virtual PG* get_pg() const = 0;
 
+  /**
+   * access the set of performance counters relevant to this scrub
+   * (one of the four sets of counters maintained by the OSD)
+   */
+  virtual PerfCounters& get_scrub_perf() const = 0;
+
   using scrubber_callback_t = std::function<void(void)>;
   using scrubber_callback_cancel_token_t = Context*;
 

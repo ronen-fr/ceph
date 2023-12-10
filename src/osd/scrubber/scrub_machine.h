@@ -420,6 +420,10 @@ struct Session : sc::state<Session, ScrubMachine, ReservingReplicas>,
   /// managing the scrub session's reservations (optional, as
   /// it's an RAII wrapper around the state of 'holding reservations')
   std::optional<ReplicaReservations> m_reservations{std::nullopt};
+
+  /// the relevant set of performance counters for this session
+  /// (relevant, i.e. for this pool type X scrub level)
+  PerfCounters* m_perf_counters{nullptr};
 };
 
 struct ReservingReplicas : sc::state<ReservingReplicas, Session>,
