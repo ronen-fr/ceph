@@ -70,8 +70,13 @@ class ReplicaReservations {
   /// Doubles as a 'do once' flag for the warning.
   std::chrono::milliseconds m_slow_response_warn_timeout;
 
+  /// access to the performance counters container relevant to this scrub
+  /// parameters
+  PerfCounters& m_perf_counters;
+  clock::time_point m_process_started_at;
+
  public:
-  ReplicaReservations(ScrubMachineListener& scrubber);
+  ReplicaReservations(ScrubMachineListener& scrubber, PerfCounters& pc);
 
   ~ReplicaReservations();
 

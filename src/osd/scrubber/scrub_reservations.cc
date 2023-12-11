@@ -29,11 +29,14 @@ static std::ostream& _prefix_fn(std::ostream* _dout, T* t, std::string fn = "")
 
 namespace Scrub {
 
-ReplicaReservations::ReplicaReservations(ScrubMachineListener& scrbr)
+ReplicaReservations::ReplicaReservations(
+    ScrubMachineListener& scrbr,
+    PerfCounters& pc)
     : m_scrubber{scrbr}
     , m_pg{m_scrubber.get_pg()}
     , m_pgid{m_scrubber.get_spgid().pgid}
     , m_osds{m_pg->get_pg_osd(ScrubberPasskey())}
+    , m_perf_counters{pc}
 {
   // the acting set is sorted by pg_shard_t. The reservations are to be issued
   // in this order, so that the OSDs will receive the requests in a consistent
@@ -47,12 +50,15 @@ ReplicaReservations::ReplicaReservations(ScrubMachineListener& scrbr)
       [whoami = m_pg->pg_whoami](const pg_shard_t& shard) {
 	return shard != whoami;
       });
+  m_perf_counters.set(scrbcnt_resrv_replicas_num, m_sorted_secondaries.size());
+  m_process_started_at = clock::now();
 
   m_next_to_request = m_sorted_secondaries.cbegin();
   if (m_scrubber.is_high_priority()) {
     // for high-priority scrubs (i.e. - user-initiated), no reservations are
     // needed.
     dout(10) << "high-priority scrub - no reservations needed" << dendl;
+    m_perf_counters.inc(scrbcnt_resrv_skipped);
   } else {
     // send out the 1'st request (unless we have no replicas)
     send_next_reservation_or_complete();
@@ -131,6 +137,12 @@ bool ReplicaReservations::send_next_reservation_or_complete()
   if (m_next_to_request == m_sorted_secondaries.cend()) {
     // granted by all replicas
     dout(10) << "remote reservation complete" << dendl;
+    auto logged_duration = clock::now() - m_process_started_at;
+    m_perf_counters.tinc(scrbcnt_resrv_successful_elapsed, logged_duration);
+    m_perf_counters.inc(scrbcnt_resrv_success);
+    m_osds->logger->hinc(
+	l_osd_scrub_reservation_dur_hist, m_sorted_secondaries.size(),
+	logged_duration.count());
     return true;  // done
   }
 
