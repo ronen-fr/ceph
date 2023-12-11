@@ -132,6 +132,10 @@ enum {
   l_osd_pg_fastinfo,
   l_osd_pg_biginfo,
 
+  // scrubber related. Here, as the rest of the scrub counters
+  // are labeled, and histograms do not support labels.
+  l_osd_scrub_reservation_dur_hist,
+
   l_osd_last,
 };
 
@@ -176,7 +180,8 @@ enum {
 
 PerfCounters *build_recoverystate_perf(CephContext *cct);
 
-// Scrubber perf counters
+// Scrubber perf counters. There are four sets (shallow vs. deep,
+// EC vs. replicated) of these counters:
 enum {
   scrbcnt_first = 20500,
 
@@ -205,7 +210,23 @@ enum {
   scrbcnt_write_blocked,
 
   // -- replicas reservation
-  // ...
+  /// # successfully completed reservation steps
+  scrbcnt_resrv_success,
+  /// # time to complete a successful replicas reservation
+  scrbcnt_resrv_successful_elapsed,
+  /// # failed attempt to reserve replicas due to an abort
+  scrbcnt_resrv_aborted,
+  /// # reservation process timed out
+  scrbcnt_resrv_timed_out,
+  /// # reservation failed due to a 'rejected' response
+  scrbcnt_resrv_rejected,
+  /// # reservation skipped for high-priority scrubs
+  scrbcnt_resrv_skipped,
+  /// # time for a replicas reservation process to fail
+  scrbcnt_resrv_failed_elapsed,
+  /// # number of replicas
+  scrbcnt_resrv_replicas_num,
+
   scrbcnt_last,
 };
 

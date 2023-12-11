@@ -162,7 +162,7 @@ ReservingReplicas::ReservingReplicas(my_context ctx)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
 
   // initiate the reservation process
-  context<Session>().m_reservations.emplace(*scrbr);
+  context<Session>().m_reservations.emplace(*scrbr, *context<Session>().m_perf_counters);
 
   if (context<Session>().m_reservations->get_last_sent()) {
     // the 1'st reservation request was sent
@@ -208,6 +208,7 @@ sc::result ReservingReplicas::react(const ReplicaReject& ev)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ReservingReplicas::react(const ReplicaReject&)" << dendl;
+  context<Session>().m_perf_counters->inc(scrbcnt_resrv_rejected);
 
   // manipulate the 'next to reserve' iterator to exclude
   // the rejecting replica from the set of replicas requiring release
@@ -226,6 +227,7 @@ sc::result ReservingReplicas::react(const ReservationTimeout&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ReservingReplicas::react(const ReservationTimeout&)" << dendl;
+  context<Session>().m_perf_counters->inc(scrbcnt_resrv_timed_out);
 
   const auto msg = fmt::format(
       "osd.{} PgScrubber: {} timeout on reserving replicas (since {})",
