@@ -102,6 +102,8 @@ struct ScrubMachineListener {
   /// state.
   virtual void set_state_name(const char* name) = 0;
 
+  virtual std::string_view get_op_mode_text() const = 0;
+
   [[nodiscard]] virtual bool is_primary() const = 0;
 
   virtual void select_range_n_notify() = 0;
@@ -180,9 +182,7 @@ struct ScrubMachineListener {
    */
   virtual void maps_compare_n_cleanup() = 0;
 
-  virtual void set_scrub_begin_time() = 0;
-
-  virtual void set_scrub_duration() = 0;
+  virtual void set_scrub_duration(std::chrono::milliseconds duration) = 0;
 
   /**
    * No new scrub session will start while a scrub was initiate on a PG,

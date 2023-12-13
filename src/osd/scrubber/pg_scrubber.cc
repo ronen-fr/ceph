@@ -1066,6 +1066,11 @@ void PgScrubber::update_op_mode_text()
 	   << ". Displayed: " << m_mode_desc << dendl;
 }
 
+std::string_view PgScrubber::get_op_mode_text() const
+{
+  return m_mode_desc;
+}
+
 void PgScrubber::_request_scrub_map(pg_shard_t replica,
 				    eversion_t version,
 				    hobject_t start,
@@ -2081,14 +2086,15 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 	false};
 
     } else {
-      int32_t duration = (utime_t{now_is} - scrub_begin_stamp).sec();
+      int32_t dur_seconds =
+	  duration_cast<seconds>(m_fsm->get_time_scrubbing()).count();
       return pg_scrubbing_status_t{
-	utime_t{},
-	duration,
-	pg_scrub_sched_status_t::active,
-	true,  // active
-	(m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow),
-	false /* is periodic? unknown, actually */};
+	  utime_t{},
+	  dur_seconds,
+	  pg_scrub_sched_status_t::active,
+	  true,	 // active
+	  (m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow),
+	  false /* is periodic? unknown, actually */};
     }
   }
   if (m_scrub_job->state != Scrub::qu_state_t::registered) {
@@ -2179,30 +2185,15 @@ PgScrubber::PgScrubber(PG* pg)
       m_osds->cct, m_pg->pg_id, m_osds->get_nodeid());
 }
 
-void PgScrubber::set_scrub_begin_time()
+void PgScrubber::set_scrub_duration(std::chrono::milliseconds duration)
 {
-  scrub_begin_stamp = ceph_clock_now();
-  get_scrub_perf().inc(scrbcnt_started);
-  m_osds->clog->debug() << fmt::format(
-    "{} {} starts",
-    m_pg->info.pgid.pgid,
-    m_mode_desc);
-}
-
-void PgScrubber::set_scrub_duration()
-{
-  utime_t stamp = ceph_clock_now();
-  utime_t duration = stamp - scrub_begin_stamp;
-  get_scrub_perf().inc(scrbcnt_successful);
-  get_scrub_perf().tinc(scrbcnt_successful_elapsed, duration);
-
   m_pg->recovery_state.update_stats([=](auto& history, auto& stats) {
-    stats.last_scrub_duration = ceill(duration.to_msec() / 1000.0);
-    stats.scrub_duration = double(duration);
+    stats.last_scrub_duration =
+	std::chrono::ceil<std::chrono::seconds>(duration).count();
+    stats.scrub_duration = double(duration.count());
     return true;
   });
 }
-
 
 PerfCounters& PgScrubber::get_scrub_perf() const
 {
@@ -2210,7 +2201,6 @@ PerfCounters& PgScrubber::get_scrub_perf() const
       m_pg->pool.info.is_replicated(), m_is_deep ? scrub_level_t::deep
                                                  : scrub_level_t::shallow);
 }
-
 
 void PgScrubber::cleanup_on_finish()
 {

@@ -73,6 +73,8 @@ class ReplicaReservations {
   /// access to the performance counters container relevant to this scrub
   /// parameters
   PerfCounters& m_perf_counters;
+
+  /// used only for the 'duration of the reservation process' perf counter
   clock::time_point m_process_started_at;
 
  public:

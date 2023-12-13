@@ -57,6 +57,16 @@ bool ScrubMachine::is_reserving() const
   return state_cast<const ReservingReplicas*>();
 }
 
+ceph::timespan ScrubMachine::get_time_scrubbing() const
+{
+  auto session = state_cast<const Session*>();
+  if (session &&
+      session->m_scrub_begin_stamp != ceph::coarse_real_clock::time_point{}) {
+    return ceph::coarse_real_clock::now() - session->m_scrub_begin_stamp;
+  }
+  return ceph::timespan{};
+}
+
 bool ScrubMachine::is_accepting_updates() const
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
@@ -104,7 +114,6 @@ sc::result NotActive::react(const AfterRepairScrub&)
 {
   dout(10) << "NotActive::react(const AfterRepairScrub&)" << dendl;
   DECLARE_LOCALS;
-  scrbr->set_scrub_begin_time();
   return transit<ReservingReplicas>();
 }
 
@@ -159,12 +168,13 @@ ReservingReplicas::ReservingReplicas(my_context ctx)
     , NamedSimply(context<ScrubMachine>().m_scrbr, "Session/ReservingReplicas")
 {
   dout(10) << "-- state -->> ReservingReplicas" << dendl;
+  auto& session = context<Session>();
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
 
   // initiate the reservation process
-  context<Session>().m_reservations.emplace(*scrbr, *context<Session>().m_perf_counters);
+  session.m_reservations.emplace(*scrbr, *context<Session>().m_perf_counters);
 
-  if (context<Session>().m_reservations->get_last_sent()) {
+  if (session.m_reservations->get_last_sent()) {
     // the 1'st reservation request was sent
 
     auto timeout = scrbr->get_pg_cct()->_conf.get_val<milliseconds>(
@@ -207,13 +217,13 @@ sc::result ReservingReplicas::react(const ReplicaGrant& ev)
 sc::result ReservingReplicas::react(const ReplicaReject& ev)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  auto& session = context<Session>();
   dout(10) << "ReservingReplicas::react(const ReplicaReject&)" << dendl;
-  context<Session>().m_perf_counters->inc(scrbcnt_resrv_rejected);
+  session.m_perf_counters->inc(scrbcnt_resrv_rejected);
 
   // manipulate the 'next to reserve' iterator to exclude
   // the rejecting replica from the set of replicas requiring release
-  context<Session>().m_reservations->verify_rejections_source(
-      ev.m_op, ev.m_from);
+  session.m_reservations->verify_rejections_source(ev.m_op, ev.m_from);
 
   // set 'reservation failure' as the scrub termination cause (affecting
   // the rescheduling of this PG)
@@ -226,8 +236,9 @@ sc::result ReservingReplicas::react(const ReplicaReject& ev)
 sc::result ReservingReplicas::react(const ReservationTimeout&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  auto& session = context<Session>();
   dout(10) << "ReservingReplicas::react(const ReservationTimeout&)" << dendl;
-  context<Session>().m_perf_counters->inc(scrbcnt_resrv_timed_out);
+  session.m_perf_counters->inc(scrbcnt_resrv_timed_out);
 
   const auto msg = fmt::format(
       "osd.{} PgScrubber: {} timeout on reserving replicas (since {})",
@@ -249,7 +260,14 @@ ActiveScrubbing::ActiveScrubbing(my_context ctx)
 {
   dout(10) << "-- state -->> ActiveScrubbing" << dendl;
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
-  scrbr->set_scrub_begin_time();
+  auto& session = context<Session>();
+
+  // set the 'scrub begin time' - and log the cluster-wide event
+  session.m_scrub_begin_stamp = ceph::coarse_real_clock::now();
+  session.m_perf_counters->inc(scrbcnt_started);
+  scrbr->get_clog()->debug() << fmt::format(
+    "{} {} starts", machine.m_pg_id, scrbr->get_op_mode_text());
+
   scrbr->on_init();
 }
 
@@ -259,7 +277,16 @@ ActiveScrubbing::ActiveScrubbing(my_context ctx)
 ActiveScrubbing::~ActiveScrubbing()
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  auto& session = context<Session>();
   dout(15) << __func__ << dendl;
+
+  // if the begin-time stamp was not set 'off' (as done if the scrubbing
+  // completed successfully), we use it now to set the 'failed scrub' duration.
+  if (session.m_scrub_begin_stamp != ceph::coarse_real_clock::time_point{}) {
+    auto logged_duration = ceph::coarse_real_clock::now() - session.m_scrub_begin_stamp;
+    session.m_perf_counters->tinc(scrbcnt_failed_elapsed, logged_duration);
+    session.m_perf_counters->inc(scrbcnt_failed);
+  }
 }
 
 /*
@@ -645,7 +672,15 @@ sc::result WaitDigestUpdate::react(const ScrubFinished&)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "WaitDigestUpdate::react(const ScrubFinished&)" << dendl;
-  scrbr->set_scrub_duration();
+  auto& session = context<Session>();
+
+  // set the 'scrub duration'
+  session.m_perf_counters->inc(scrbcnt_successful);
+  auto duration = machine.get_time_scrubbing();
+  session.m_perf_counters->tinc(scrbcnt_successful_elapsed, duration);
+  scrbr->set_scrub_duration(duration_cast<milliseconds>(duration));
+  session.m_scrub_begin_stamp = ceph::coarse_real_clock::time_point{};
+
   scrbr->scrub_finish();
   return transit<NotActive>();
 }

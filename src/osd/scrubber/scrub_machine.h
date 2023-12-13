@@ -231,6 +231,10 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   [[nodiscard]] bool is_reserving() const;
   [[nodiscard]] bool is_accepting_updates() const;
 
+  // elapsed time for the currently active scrub.
+  // Zero during the replica reservation process
+  ceph::timespan get_time_scrubbing() const;
+
 
 // ///////////////// aux declarations & functions //////////////////////// //
 
@@ -424,6 +428,9 @@ struct Session : sc::state<Session, ScrubMachine, ReservingReplicas>,
   /// the relevant set of performance counters for this session
   /// (relevant, i.e. for this pool type X scrub level)
   PerfCounters* m_perf_counters{nullptr};
+
+  /// the time when the session was initiated
+  ceph::coarse_real_clock::time_point m_scrub_begin_stamp{};
 };
 
 struct ReservingReplicas : sc::state<ReservingReplicas, Session>,
