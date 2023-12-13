@@ -231,6 +231,10 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   [[nodiscard]] bool is_reserving() const;
   [[nodiscard]] bool is_accepting_updates() const;
 
+  // elapsed time for the currently active scrub.
+  // Zero during the replica reservation process
+  ceph::timespan get_time_scrubbing() const;
+
 
 // ///////////////// aux declarations & functions //////////////////////// //
 
@@ -423,7 +427,10 @@ struct Session : sc::state<Session, ScrubMachine, ReservingReplicas>,
 
   /// the relevant set of performance counters for this session
   /// (relevant, i.e. for this pool type X scrub level)
-  PerfCounters* m_perf_counters{nullptr};
+  PerfCounters* m_perf_set{nullptr};
+
+  /// the time when the session was initiated
+  ScrubTimePoint m_scrub_begin_stamp{};
 };
 
 struct ReservingReplicas : sc::state<ReservingReplicas, Session>,
@@ -435,8 +442,7 @@ struct ReservingReplicas : sc::state<ReservingReplicas, Session>,
 			      sc::transition<RemotesReserved, ActiveScrubbing>,
 			      sc::custom_reaction<ReservationTimeout>>;
 
-  ceph::coarse_real_clock::time_point entered_at =
-    ceph::coarse_real_clock::now();
+  ScrubTimePoint entered_at = ScrubClock::now();
   ScrubMachine::timer_event_token_t m_timeout_token;
 
   /// a "raw" event carrying a peer's grant response
@@ -486,13 +492,12 @@ struct ActiveScrubbing
 struct RangeBlocked : sc::state<RangeBlocked, ActiveScrubbing>, NamedSimply {
   explicit RangeBlocked(my_context ctx);
   using reactions = mpl::list<
-    sc::custom_reaction<RangeBlockedAlarm>,
-    sc::transition<Unblocked, PendingTimer>>;
+      sc::custom_reaction<RangeBlockedAlarm>,
+      sc::transition<Unblocked, PendingTimer>>;
 
-  ceph::coarse_real_clock::time_point entered_at =
-    ceph::coarse_real_clock::now();
+  ScrubTimePoint entered_at = ScrubClock::now();
   ScrubMachine::timer_event_token_t m_timeout_token;
-  sc::result react(const RangeBlockedAlarm &);
+  sc::result react(const RangeBlockedAlarm&);
 };
 
 /**
@@ -510,8 +515,7 @@ struct PendingTimer : sc::state<PendingTimer, ActiveScrubbing>, NamedSimply {
     sc::transition<InternalSchedScrub, NewChunk>,
     sc::custom_reaction<SleepComplete>>;
 
-  ceph::coarse_real_clock::time_point entered_at =
-    ceph::coarse_real_clock::now();
+  ScrubTimePoint entered_at = ScrubClock::now();
   ScrubMachine::timer_event_token_t m_sleep_timer;
   sc::result react(const SleepComplete&);
 };

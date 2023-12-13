@@ -471,11 +471,9 @@ class PgScrubber : public ScrubPgIF,
 
   std::string dump_awaited_maps() const final;
 
-  void set_scrub_begin_time() final;
+  void set_scrub_duration(std::chrono::milliseconds duration) final;
 
-  void set_scrub_duration() final;
-
-  utime_t scrub_begin_stamp;
+  //utime_t scrub_begin_stamp;
   std::ostream& gen_prefix(std::ostream& out) const final;
 
   /// facilitate scrub-backend access to SnapMapper mappings
@@ -768,6 +766,8 @@ class PgScrubber : public ScrubPgIF,
   std::string_view m_mode_desc;
 
   void update_op_mode_text();
+
+  std::string_view get_op_mode_text() const final;
 
  private:
   /**

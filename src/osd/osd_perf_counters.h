@@ -188,6 +188,8 @@ enum {
   // -- basic statistics --
   /// The number of times we started a scrub
   scrbcnt_started,
+  /// # scrubs that got past replicas reservation
+  scrbcnt_active_started,
   /// # successful scrubs
   scrbcnt_successful,
   /// # time to complete a successful scrub

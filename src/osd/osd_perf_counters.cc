@@ -336,7 +336,7 @@ PerfCounters *build_osd_logger(CephContext *cct) {
   };
   osd_plb.add_u64_counter_histogram(
       l_osd_scrub_reservation_dur_hist, "scrub_resrv_repnum_vs_duration",
-      rsrv_hist_x_axis_config, rsrv_hist_y_axis_config, "Histogram of RRR");
+      rsrv_hist_x_axis_config, rsrv_hist_y_axis_config, "Histogram of scrub replicas reservation duration");
 
   return osd_plb.create_perf_counters();
 }
@@ -387,11 +387,10 @@ PerfCounters *build_scrub_labeled_perf(CephContext *cct, std::string label)
   //   <shallow/deep>  X  <replicated/EC>  // maybe later we'll add <periodic/operator>
   PerfCountersBuilder scrub_perf(cct, label, scrbcnt_first, scrbcnt_last);
 
-  // All the basic scrubber stats are to be considered useful
   scrub_perf.set_prio_default(PerfCountersBuilder::PRIO_INTERESTING);
-  //scrub_perf.set_prio_default(PerfCountersBuilder::PRIO_USEFUL);
 
-  scrub_perf.add_u64_counter(scrbcnt_started, "num_scrubs_started", "scrubs count");
+  scrub_perf.add_u64_counter(scrbcnt_started, "num_scrubs_started", "scrubs attempted count");
+  scrub_perf.add_u64_counter(scrbcnt_active_started, "num_scrubs_past_reservation", "scrubs count");
   scrub_perf.add_u64_counter(scrbcnt_failed, "failed_scrubs", "failed scrubs count");
   scrub_perf.add_u64_counter(scrbcnt_successful, "successful_scrubs", "successful scrubs count");
   scrub_perf.add_time_avg(scrbcnt_failed_elapsed, "failed_scrubs_elapsed", "time to scrub failure");
