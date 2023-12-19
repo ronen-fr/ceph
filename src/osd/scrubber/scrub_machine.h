@@ -23,14 +23,18 @@
 #include "include/Context.h"
 #include "osd/scrubber_common.h"
 
+#include "scrub_backend.h"
 #include "scrub_machine_lstnr.h"
+#include "pg_scrubber.h"
 #include "scrub_reservations.h"
+
+using WasScrubMachineListener = PgScrubber;
 
 /// a wrapper that sets the FSM state description used by the
 /// PgScrubber
 /// \todo consider using the full NamedState as in Peering
 struct NamedSimply {
-  explicit NamedSimply(ScrubMachineListener* scrubber, const char* name);
+  explicit NamedSimply(WasScrubMachineListener* scrubber, const char* name);
 };
 
 class PG;  // holding a pointer to that one - just for testing
@@ -52,8 +56,8 @@ void on_event_discard(std::string_view nm);
 template <typename EV>
 struct OpCarryingEvent : sc::event<EV> {
   static constexpr const char* event_name = "<>";
-  const OpRequestRef m_op;
-  const pg_shard_t m_from;
+  OpRequestRef m_op;
+  pg_shard_t m_from;
   OpCarryingEvent(OpRequestRef op, pg_shard_t from) : m_op{op}, m_from{from}
   {
     on_event_creation(static_cast<EV*>(this)->event_name);
@@ -95,6 +99,10 @@ OP_EV(ReplicaReserveReq);
 
 /// explicit release request from the Primary
 OP_EV(ReplicaRelease);
+
+/// initiating replica scrub
+OP_EV(StartReplica)
+
 
 
 #define MEV(E)                                          \
@@ -167,9 +175,6 @@ MEV(DigestUpdate)
 /// we are a replica for this PG
 MEV(ReplicaActivate)
 
-/// initiating replica scrub
-MEV(StartReplica)
-
 MEV(SchedReplica)
 
 /// Update to active_pushes. 'active_pushes' represents recovery
@@ -220,11 +225,11 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   friend class PgScrubber;
 
  public:
-  explicit ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub);
+  explicit ScrubMachine(PG* pg, WasScrubMachineListener* pg_scrub);
   ~ScrubMachine();
 
   spg_t m_pg_id;
-  ScrubMachineListener* m_scrbr;
+  WasScrubMachineListener* m_scrbr;
   std::ostream& gen_prefix(std::ostream& out) const;
 
   void assert_not_active() const;
@@ -246,7 +251,7 @@ private:
    */
   struct scheduled_event_state_t {
     bool canceled = false;
-    ScrubMachineListener::scrubber_callback_cancel_token_t cb_token = nullptr;
+    WasScrubMachineListener::scrubber_callback_cancel_token_t cb_token = nullptr;
 
     operator bool() const {
       return nullptr != cb_token;
@@ -683,6 +688,10 @@ struct ReplicaIdle : sc::state<ReplicaIdle, ReplicaActive>, NamedSimply {
   explicit ReplicaIdle(my_context ctx);
   ~ReplicaIdle() = default;
 
+  using reactions = mpl::list<sc::custom_reaction<StartReplica>>;
+  sc::result react(const StartReplica&);
+
+#if 0
   // note the execution of check_for_updates() when transitioning to
   // ReplicaActiveOp/ReplicaWaitUpdates. That would trigger a ReplicaPushesUpd
   // event, which will be handled by ReplicaWaitUpdates.
@@ -691,6 +700,7 @@ struct ReplicaIdle : sc::state<ReplicaIdle, ReplicaActive>, NamedSimply {
       ReplicaWaitUpdates,
       ReplicaActive,
       &ReplicaActive::check_for_updates>>;
+#endif
 };
 
 
@@ -718,6 +728,9 @@ struct ReplicaActiveOp
    * - and we should log this unexpected scenario clearly in the cluster log.
    */
   sc::result react(const StartReplica&);
+
+  /// "backend" data-structures for this chunk
+  std::unique_ptr<ScrubBackend> m_be;
 };
 
 /*

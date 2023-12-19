@@ -1513,10 +1513,11 @@ void PgScrubber::replica_scrub_op(OpRequestRef op)
 
   set_queued_or_active();
   advance_token();
-  m_osds->queue_for_rep_scrub(m_pg,
-			      m_replica_request_priority,
-			      m_flags.priority,
-			      m_current_token);
+  m_fsm->process_event(StartReplica{op, m_pg->get_primary().osd});
+//   m_osds->queue_for_rep_scrub(m_pg,
+// 			      m_replica_request_priority,
+// 			      m_flags.priority,
+// 			      m_current_token);
 }
 
 void PgScrubber::set_op_parameters(const requested_scrub_t& request)

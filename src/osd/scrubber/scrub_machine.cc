@@ -23,12 +23,21 @@ using namespace std::chrono_literals;
 #define DECLARE_LOCALS                                           \
   auto& machine = context<ScrubMachine>();			 \
   std::ignore = machine;					 \
-  ScrubMachineListener* scrbr = machine.m_scrbr;		 \
+  PgScrubber* scrbr = machine.m_scrbr;		                 \
   std::ignore = scrbr;                                           \
   auto pg_id = machine.m_pg_id;					 \
   std::ignore = pg_id;
 
-NamedSimply::NamedSimply(ScrubMachineListener* scrubber, const char* name)
+
+// #define DECLARE_LOCALS                                           \
+//   auto& machine = context<ScrubMachine>();			 \
+//   std::ignore = machine;					 \
+//   ScrubMachineListener* scrbr = machine.m_scrbr;		 \
+//   std::ignore = scrbr;                                           \
+//   auto pg_id = machine.m_pg_id;					 \
+//   std::ignore = pg_id;
+
+NamedSimply::NamedSimply(WasScrubMachineListener* scrubber, const char* name)
 {
   scrubber->set_state_name(name);
 }
@@ -645,7 +654,7 @@ sc::result WaitDigestUpdate::react(const ScrubFinished&)
   return transit<NotActive>();
 }
 
-ScrubMachine::ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub)
+ScrubMachine::ScrubMachine(PG* pg, WasScrubMachineListener* pg_scrub)
     : m_pg_id{pg->pg_id}
     , m_scrbr{pg_scrub}
 {}
@@ -786,6 +795,9 @@ ReplicaActiveOp::ReplicaActiveOp(my_context ctx)
 {
   dout(10) << "-- state -->> ReplicaActive/ReplicaActiveOp" << dendl;
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  m_be = std::make_unique<ScrubBackend>(
+      scrbr, *m_pg, m_pg_whoami, m_is_repair,
+      m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow);
   scrbr->on_replica_init();
 }
 
