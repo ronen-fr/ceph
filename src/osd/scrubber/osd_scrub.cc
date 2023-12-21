@@ -170,10 +170,12 @@ std::optional<Scrub::OSDRestrictions> OsdScrub::restrictions_on_scrubbing(
     utime_t scrub_clock_now) const
 {
   // our local OSD may already be running too many scrubs
-  if (!m_resource_bookkeeper.can_inc_scrubs()) {
-    dout(10) << "OSD cannot inc scrubs" << dendl;
-    return std::nullopt;
-  }
+
+  // no need to perform twice!
+//   if (!m_resource_bookkeeper.can_inc_scrubs()) {
+//     dout(10) << "OSD cannot inc scrubs" << dendl;
+//     return std::nullopt;
+//   }
 
   // if there is a PG that is just now trying to reserve scrub replica resources
   // - we should wait and not initiate a new scrub

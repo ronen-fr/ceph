@@ -13,6 +13,7 @@
 
 
 using ScrubResources = Scrub::ScrubResources;
+using LocalResourceWrapper = Scrub::LocalResourceWrapper;
 
 ScrubResources::ScrubResources(
     log_upwards_t log_access,
@@ -32,17 +33,17 @@ bool ScrubResources::can_inc_scrubs() const
   return can_inc_local_scrubs_unlocked();
 }
 
-bool ScrubResources::inc_scrubs_local()
+std::unique_ptr<LocalResourceWrapper> ScrubResources::inc_scrubs_local(bool is_high_priority)
 {
   std::lock_guard lck{resource_lock};
-  if (can_inc_local_scrubs_unlocked()) {
+  if (is_high_priority || can_inc_local_scrubs_unlocked()) {
     ++scrubs_local;
     log_upwards(fmt::format(
 	"{}: {} -> {} (max {}, remote {})", __func__, (scrubs_local - 1),
 	scrubs_local, conf->osd_max_scrubs, granted_reservations.size()));
-    return true;
+    return return std::make_unique<LocalResourceWrapper>(*this, is_high_priority);
   }
-  return false;
+  return nullptr;
 }
 
 bool ScrubResources::can_inc_local_scrubs_unlocked() const
@@ -81,7 +82,7 @@ bool ScrubResources::inc_scrubs_remote(pg_t pgid)
   }
 
   auto pre_op_cnt = granted_reservations.size();
-  if (pre_op_cnt < conf->osd_max_scrubs) {
+  if (std::cmp_less(pre_op_cnt, conf->osd_max_scrubs)) {
     granted_reservations.insert(pgid);
     log_upwards(fmt::format(
 	"{}: pg[{}] reserved. Remote scrubs count changed from {} -> {} (max "

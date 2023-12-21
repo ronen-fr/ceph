@@ -310,7 +310,8 @@ function _scrub_abort() {
         # test fail.
         run_osd $dir $osd --osd_pool_default_pg_autoscale_mode=off \
             --osd_deep_scrub_randomize_ratio=0.0 \
-            --osd_scrub_sleep=5.0 \
+            --osd_scrub_sleep=3.0 \
+	    --osd_scrub_chunk_max=10 \
             --osd_scrub_interval_randomize_ratio=0 \
             --osd_op_queue=wpq || return 1
     done
