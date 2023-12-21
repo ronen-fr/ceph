@@ -407,7 +407,7 @@ void PgScrubber::reset_epoch(epoch_t epoch_queued)
 {
   dout(10) << __func__ << " state deep? " << state_test(PG_STATE_DEEP_SCRUB)
 	   << dendl;
-  m_fsm->assert_not_active();
+  m_fsm->assert_not_in_session();
 
   m_epoch_start = epoch_queued;
   ceph_assert(m_is_deep == state_test(PG_STATE_DEEP_SCRUB));
@@ -515,6 +515,14 @@ void PgScrubber::on_pg_activate(const requested_scrub_t& request_flags)
 		  (is_primary() ? "Primary" : "Replica/other"), pre_reg,
 		  pre_state, registration_state(), m_scrub_job->state_desc())
 	   << dendl;
+}
+
+void PgScrubber::on_primary_active_clean()
+{
+  dout(10) << fmt::format(
+		  "{}: reg state: {}", __func__, m_scrub_job->state_desc())
+	   << dendl;
+  m_fsm->process_event(PrimaryActivate{});
 }
 
 /*
