@@ -745,15 +745,21 @@ struct ReplicaActive : sc::state<ReplicaActive, ScrubMachine, ReplicaIdle>,
 struct ReplicaIdle : sc::state<ReplicaIdle, ReplicaActive>, NamedSimply {
   explicit ReplicaIdle(my_context ctx);
   ~ReplicaIdle() = default;
+  void reset_ignored(const FullReset&);
 
   // note the execution of check_for_updates() when transitioning to
   // ReplicaActiveOp/ReplicaWaitUpdates. That would trigger a ReplicaPushesUpd
   // event, which will be handled by ReplicaWaitUpdates.
-  using reactions = mpl::list<sc::transition<
-      StartReplica,
-      ReplicaWaitUpdates,
-      ReplicaActive,
-      &ReplicaActive::check_for_updates>>;
+  using reactions = mpl::list<
+      sc::transition<
+	  StartReplica,
+	  ReplicaWaitUpdates,
+	  ReplicaActive,
+	  &ReplicaActive::check_for_updates>,
+      sc::in_state_reaction<
+	  FullReset,
+	  ReplicaIdle,
+	  &ReplicaIdle::reset_ignored>>;
 };
 
 
@@ -768,7 +774,9 @@ struct ReplicaActiveOp
   explicit ReplicaActiveOp(my_context ctx);
   ~ReplicaActiveOp();
 
-  using reactions = mpl::list<sc::custom_reaction<StartReplica>>;
+  using reactions = mpl::list<
+      sc::custom_reaction<StartReplica>,
+      sc::transition<FullReset, ReplicaIdle>>;
 
   /**
    * Handling the unexpected (read - caused by a bug) case of receiving a

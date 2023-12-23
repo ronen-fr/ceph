@@ -846,6 +846,11 @@ ReplicaIdle::ReplicaIdle(my_context ctx)
   dout(10) << "-- state -->> ReplicaActive/ReplicaIdle" << dendl;
 }
 
+void ReplicaIdle::reset_ignored(const FullReset&)
+{
+  dout(10) << "ReplicaIdle::react(const FullReset&): FullReset ignored"
+	   << dendl;
+}
 
 // ------------- ReplicaActive/ReplicaActiveOp --------------------------
 
