@@ -123,11 +123,14 @@ PrimaryActive::PrimaryActive(my_context ctx)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "-- state -->> PrimaryActive" << dendl;
+  // insert this PG into the OSD scrub queue. Calculate initial schedule
+  scrbr->on_PrimaryActive();
 }
 
 PrimaryActive::~PrimaryActive()
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  scrbr->rm_from_osd_scrubbing();
 }
 
 
