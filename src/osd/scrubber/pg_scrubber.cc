@@ -152,7 +152,7 @@ bool PgScrubber::verify_against_abort(epoch_t epoch_to_verify)
 
   // if we were not aware of the abort before - kill the scrub.
   if (epoch_to_verify >= m_last_aborted) {
-    scrub_clear_state();
+    m_fsm->process_event(FullReset{});
     m_last_aborted = std::max(epoch_to_verify, m_epoch_start);
   }
   return false;

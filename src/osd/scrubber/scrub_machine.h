@@ -179,7 +179,9 @@ MEV(ReplicaPushesUpd)
 
 /**
  * IntervalChanged
+ * The only path from PrimaryActive or ReplicaActive down to NotActive.
  *
+ * Note re reserved replicas:
  * This event notifies the ScrubMachine that it is no longer responsible for
  * releasing replica state.  It will generally be submitted upon a PG interval
  * change.
@@ -192,7 +194,12 @@ MEV(ReplicaPushesUpd)
  */
 MEV(IntervalChanged)
 
-/// guarantee that the FSM is in the quiescent state (i.e. NotActive)
+/**
+ * stops the scrubbing session, and resets the scrubber.
+ * For a replica - aborts the handling of the current request.
+ * In both cases - a transition to the peering mode quiescent state (i.e.
+ * PrimaryIdle or ReplicaIdle).
+ */
 MEV(FullReset)
 
 /// finished handling this chunk. Go get the next one
