@@ -128,6 +128,10 @@ PrimaryActive::PrimaryActive(my_context ctx)
 PrimaryActive::~PrimaryActive()
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  // we may have set some PG state flags without reaching Session.
+  // And we may be holding a 'local resource'.
+  scrbr->clear_pgscrub_state();
+  scrbr->rm_from_osd_scrubbing();
 }
 
 
@@ -154,12 +158,12 @@ sc::result PrimaryIdle::react(const AfterRepairScrub&)
   return transit<ReservingReplicas>();
 }
 
-void PrimaryIdle::reset_ignored(const FullReset&)
-{
-  dout(10) << "PrimaryIdle::react(const FullReset&): FullReset ignored"
-	   << dendl;
+void PrimaryIdle::clear_state(const FullReset&) {
+  dout(10) << "PrimaryIdle::react(const FullReset&): clearing state flags"
+           << dendl;
+  DECLARE_LOCALS;
+  scrbr->clear_pgscrub_state();
 }
-
 
 // ----------------------- Session -----------------------------------------
 

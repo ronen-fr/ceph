@@ -179,7 +179,9 @@ MEV(ReplicaPushesUpd)
 
 /**
  * IntervalChanged
+ * The only path from PrimaryActive or ReplicaActive down to NotActive.
  *
+ * Note re reserved replicas:
  * This event notifies the ScrubMachine that it is no longer responsible for
  * releasing replica state.  It will generally be submitted upon a PG interval
  * change.
@@ -192,7 +194,12 @@ MEV(ReplicaPushesUpd)
  */
 MEV(IntervalChanged)
 
-/// guarantee that the FSM is in the quiescent state (i.e. NotActive)
+/**
+ * stops the scrubbing session, and resets the scrubber.
+ * For a replica - aborts the handling of the current request.
+ * In both cases - a transition to the peering mode quiescent state (i.e.
+ * PrimaryIdle or ReplicaIdle).
+ */
 MEV(FullReset)
 
 /// finished handling this chunk. Go get the next one
@@ -434,24 +441,27 @@ struct PrimaryActive : sc::state<PrimaryActive, ScrubMachine, PrimaryIdle>,
       sc::transition<IntervalChanged, NotActive>>;
 };
 
+/**
+ * \ATTN: set_op_parameters() is called while we are still in this state (waiting
+ * for a queued OSD message to trigger the transition into Session). Thus,
+ * even in this 'idle' state - there is some state we must take care to reset.
+ * Specifically - the PG state flags we were playing with in set_op_parameters().
+ */
 struct PrimaryIdle : sc::state<PrimaryIdle, PrimaryActive>, NamedSimply {
   explicit PrimaryIdle(my_context ctx);
   ~PrimaryIdle() = default;
-  void reset_ignored(const FullReset&);
+  void clear_state(const FullReset&);
 
   using reactions = mpl::list<
       sc::custom_reaction<StartScrub>,
       // a scrubbing that was initiated at recovery completion:
       sc::custom_reaction<AfterRepairScrub>,
-      sc::in_state_reaction<
-	  FullReset,
-	  PrimaryIdle,
-	  &PrimaryIdle::reset_ignored>>;
+      // undoing set_op_params(), if aborted before starting the scrub:
+      sc::in_state_reaction<FullReset, PrimaryIdle, &PrimaryIdle::clear_state>>;
 
   sc::result react(const StartScrub&);
   sc::result react(const AfterRepairScrub&);
 };
-
 
 /**
  *  Session
