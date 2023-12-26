@@ -345,8 +345,7 @@ struct ScrubPgIF {
     scrub_level_t scrub_level,
     requested_scrub_t& request_flags) = 0;
 
-  virtual void dump_scrubber(ceph::Formatter* f,
-			     const requested_scrub_t& request_flags) const = 0;
+  virtual void dump_scrubber(ceph::Formatter* f) const = 0;
 
   /**
    * Return true if soid is currently being scrubbed and pending IOs should

@@ -26,14 +26,45 @@ static std::ostream& _prefix_fn(std::ostream* _dout, T* t, std::string fn = "")
 {
   return t->gen_prefix(*_dout, fn);
 }
+// ////////////////////////////////////////////////////////////////////////// //
+// ScrubJob
 
-ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
-    : RefCountedObject{cct}
-    , pgid{pg}
-    , whoami{node_id}
-    , cct{cct}
-    , log_msg_prefix{fmt::format("osd.{}: scrub-job:pg[{}]:", node_id, pgid)}
+ScrubJob::ScrubJob(
+    PgScrubber& scrubber,
+    const spg_t& pg)
+    : m_scrubber{scrubber}
+    , m_pgid{pg}
+    , m_shallow_target{pg, scrub_level_t::shallow}
+    , m_deep_target{pg, scrub_level_t::deep}
+    , m_osd_scrub{m_scrubber.m_osds->get_scrub_services()}
+    , m_queue{m_scrubber.m_osds->get_scrub_services().get_scrub_queue()}
 {}
+
+void ScrubJob::reset()
+{
+  ceph_assert(!in_queue());
+  m_shallow_target.reset();
+  m_deep_target.reset();
+}
+
+
+bool ScrubJob::in_queue() const
+{
+  return m_shallow_target.in_queue || m_deep_target.in_queue;
+}
+
+void ScrubJob::mark_target_dequeued(scrub_level_t scrub_level)
+{
+  auto& trgt = get_target(scrub_level);
+  trgt.clear_queued();
+}
+
+
+std::string_view ScrubJob::registration_state() const
+{
+  return in_queue() ? "in-queue" : "not-queued";
+}
+
 
 // debug usage only
 namespace std {
