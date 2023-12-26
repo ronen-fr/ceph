@@ -475,15 +475,13 @@ void PgScrubber::on_new_interval()
 
 bool PgScrubber::is_scrub_registered() const
 {
-  return m_scrub_job && m_scrub_job->in_queues;
+  return m_scrub_job.in_queue();
 }
 
 std::string_view PgScrubber::registration_state() const
 {
-  if (m_scrub_job) {
-    return m_scrub_job->registration_state();
-  }
-  return "(no sched job)"sv;
+
+  return m_scrub_job.registration_state();
 }
 
 void PgScrubber::rm_from_osd_scrubbing()
@@ -1993,46 +1991,34 @@ void PgScrubber::on_digest_updates()
   }
 }
 
-/*
- * note that the flags-set fetched from the PG (m_pg->m_planned_scrub)
- * is cleared once scrubbing starts; Some of the values dumped here are
- * thus transitory.
- */
-void PgScrubber::dump_scrubber(ceph::Formatter* f,
-			       const requested_scrub_t& request_flags) const
+void PgScrubber::dump_scrubber(ceph::Formatter* f) const
 {
   f->open_object_section("scrubber");
 
-  if (m_active) {  // TBD replace with PR#42780's test
+  if (is_queued_or_active()) {
     f->dump_bool("active", true);
     dump_active_scrubber(f, state_test(PG_STATE_DEEP_SCRUB));
   } else {
     f->dump_bool("active", false);
-    f->dump_bool("must_scrub",
-		 (m_planned_scrub.must_scrub || m_flags.required));
-    f->dump_bool("must_deep_scrub", request_flags.must_deep_scrub);
-    f->dump_bool("must_repair", request_flags.must_repair);
-    f->dump_bool("need_auto", request_flags.need_auto);
+    const auto now_is = ceph_clock_now();
+    auto& closest = m_scrub_job.closest_target(now_is);
+    f->dump_bool("must_scrub", closest.is_high_priority());
+    //f->dump_stream("scrub_reg_stamp") << m_scrub_job.get_sched_time(now_is);
+    f->dump_stream("scrub_reg_stamp") << closest.get_sched_time();
 
-    f->dump_stream("scrub_reg_stamp") << m_scrub_job->get_sched_time();
-
-    // note that we are repeating logic that is coded elsewhere (currently
-    // PG.cc). This is not optimal.
-    bool deep_expected =
-      (ceph_clock_now() >= m_pg->next_deepscrub_interval()) ||
-      request_flags.must_deep_scrub || request_flags.need_auto;
-    auto sched_state =
-      m_scrub_job->scheduling_state(ceph_clock_now(), deep_expected);
+    auto sched_state = m_scrub_job.scheduling_state();
+    //m_scrub_job.dump(f);
     f->dump_string("schedule", sched_state);
   }
 
   if (m_publish_sessions) {
-    f->dump_int("test_sequence",
-		m_sessions_counter);  // an ever-increasing number used by tests
+    // an ever-increasing number used by tests
+    f->dump_int("test_sequence", m_sessions_counter);
   }
 
   f->close_section();
 }
+
 
 void PgScrubber::dump_active_scrubber(ceph::Formatter* f, bool is_deep) const
 {

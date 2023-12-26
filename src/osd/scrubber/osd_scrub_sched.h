@@ -107,8 +107,10 @@ ScrubQueue interfaces (main functions):
  */
 // clang-format on
 
+#include <functional>
 #include <optional>
 #include "utime.h"
+#include "osd/scrubber/scrub_queue_entry.h"
 #include "osd/scrubber/scrub_job.h"
 #include "osd/PG.h"
 
@@ -174,13 +176,25 @@ class ScrubQueue {
    * remove the pg from set of PGs to be scanned for scrubbing.
    * To be used if we are no longer the PG's primary, or if the PG is removed.
    */
-  void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
+  //void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
 
   /**
    * @return the list (not std::set!) of all scrub jobs registered
    *   (apart from PGs in the process of being removed)
    */
-  Scrub::ScrubQContainer list_registered_jobs() const;
+  //Scrub::ScrubQContainer list_registered_jobs() const;
+
+  /**
+   * the set of all PGs named by the entries in the queue (but only those
+   * entries that satisfy the predicate)
+   */
+  std::set<spg_t> get_pgs(Scrub::EntryPred) const;
+
+  /// a copy of all entries in the queue that satisfy the predicate
+  std::vector<Scrub::SchedEntry> get_entries(Scrub::EntryPred) const;
+
+  /// a copy of all entries in the queue
+  std::vector<Scrub::SchedEntry> get_all_entries() const;
 
   /**
    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
@@ -192,7 +206,7 @@ class ScrubQueue {
    *
    * locking: might lock jobs_lock
    */
-  void register_with_osd(Scrub::ScrubJobRef sjob, const sched_params_t& suggested);
+  //void register_with_osd(Scrub::ScrubJobRef sjob, const sched_params_t& suggested);
 
   /**
    * modify a scrub-job's scheduled time and deadline
@@ -214,11 +228,11 @@ class ScrubQueue {
    *
    *  locking: not using the jobs_lock
    */
-  void update_job(Scrub::ScrubJobRef sjob, const sched_params_t& suggested);
+  //void update_job(Scrub::ScrubJobRef sjob, const sched_params_t& suggested);
 
-  sched_params_t determine_scrub_time(const requested_scrub_t& request_flags,
-				      const pg_info_t& pg_info,
-				      const pool_opts_t& pool_conf) const;
+//   sched_params_t determine_scrub_time(const requested_scrub_t& request_flags,
+// 				      const pg_info_t& pg_info,
+// 				      const pool_opts_t& pool_conf) const;
 
   std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
 
@@ -273,17 +287,9 @@ class ScrubQueue {
    *
    *  Note that PG locks should not be acquired while holding jobs_lock.
    */
-  mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
+  //mutable ceph::mutex jobs_lock = ceph::make_mutex("ScrubQueue::jobs_lock");
 
   Scrub::ScrubQContainer to_scrub;   ///< scrub jobs (i.e. PGs) to scrub
-
-  static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
-    return jobref->state == Scrub::qu_state_t::registered;
-  };
-
-  static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
-    return jobref->state == Scrub::qu_state_t::not_registered;
-  };
 
   /**
    * clear dead entries (unregistered, or belonging to removed PGs) from a
@@ -328,17 +334,6 @@ class ScrubQueue {
   ceph::mutex reserving_lock = ceph::make_mutex("ScrubQueue::reserving_lock");
   std::optional<spg_t> reserving_pg;
   utime_t reserving_since;
-
-  /**
-   * If the scrub job was not explicitly requested, we postpone it by some
-   * random length of time.
-   * And if delaying the scrub - we calculate, based on pool parameters, a
-   * deadline we should scrub before.
-   *
-   * @return a pair of values: the determined scrub time, and the deadline
-   */
-  Scrub::scrub_schedule_t adjust_target_time(
-    const Scrub::sched_params_t& recomputed_params) const;
 
 protected: // used by the unit-tests
   /**

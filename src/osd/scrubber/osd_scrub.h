@@ -65,6 +65,9 @@ class OsdScrub {
   // implementing the PGs interface to the scrub scheduling objects
   // ---------------------------------------------------------------
 
+  Scrub::QueueInterface& get_scrub_queue() { return m_queue; }
+  ceph::mutex& get_scrub_queue_lock() { return m_scrub_queue_lock; }
+
   // updating the resource counters
   std::unique_ptr<Scrub::LocalResourceWrapper> inc_scrubs_local(
       bool is_high_priority);
@@ -102,9 +105,9 @@ class OsdScrub {
    *
    *  locking: not using the jobs_lock
    */
-  void update_job(
-      Scrub::ScrubJobRef sjob,
-      const Scrub::sched_params_t& suggested);
+//   void update_job(
+//       Scrub::ScrubJobRef sjob,
+//       const Scrub::sched_params_t& suggested);
 
   /**
    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
@@ -116,15 +119,15 @@ class OsdScrub {
    *
    * locking: might lock jobs_lock
    */
-  void register_with_osd(
-      Scrub::ScrubJobRef sjob,
-      const Scrub::sched_params_t& suggested);
+//   void register_with_osd(
+//       Scrub::ScrubJobRef sjob,
+//       const Scrub::sched_params_t& suggested);
 
   /**
    * remove the pg from set of PGs to be scanned for scrubbing.
    * To be used if we are no longer the PG's primary, or if the PG is removed.
    */
-  void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
+//   void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
 
   /**
    * \returns std::chrono::milliseconds indicating how long to wait between
@@ -198,7 +201,7 @@ class OsdScrub {
    *          initiated, and if not - why.
    */
   Scrub::schedule_result_t initiate_a_scrub(
-      spg_t pgid,
+      const Scrub::SchedEntry& trgt,
       Scrub::OSDRestrictions restrictions);
 
   /// resource reservation management
@@ -206,6 +209,11 @@ class OsdScrub {
 
   /// the queue of PGs waiting to be scrubbed
   ScrubQueue m_queue;
+
+  /// and its lock
+  mutable ceph::mutex m_scrub_queue_lock =
+      ceph::make_mutex("OsdScrub::scrub_queue_lock");
+
 
   const std::string m_log_prefix{};
 

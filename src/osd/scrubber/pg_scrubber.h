@@ -281,8 +281,7 @@ class PgScrubber : public ScrubPgIF,
     scrub_level_t scrub_level,
     requested_scrub_t& request_flags) final;
 
-  void dump_scrubber(ceph::Formatter* f,
-		     const requested_scrub_t& request_flags) const final;
+  void dump_scrubber(ceph::Formatter* f) const final;
 
   // used if we are a replica
 
