@@ -38,6 +38,7 @@ enum class qu_state_t {
 struct scrub_schedule_t {
   utime_t scheduled_at{};
   utime_t deadline{0, 0};
+  utime_t not_before{utime_t::max()};
 };
 
 struct sched_params_t {
@@ -95,7 +96,7 @@ class ScrubJob final : public RefCountedObject {
 
   ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
 
-  utime_t get_sched_time() const { return schedule.scheduled_at; }
+  utime_t get_sched_time() const { return schedule.not_before; }
 
   static std::string_view qu_state_text(qu_state_t st);
 
@@ -109,7 +110,12 @@ class ScrubJob final : public RefCountedObject {
     return qu_state_text(state.load(std::memory_order_relaxed));
   }
 
-  void update_schedule(const scrub_schedule_t& adjusted);
+  /**
+   *  'reset_notbefore' is used to reset the 'not_before' time to the updated
+   *  'scheduled_at' time. This is used whenever the scrub-job schedule is
+   *  updated not as a result of a scrub attempt failure.
+   */
+  void update_schedule(const scrub_schedule_t& adjusted, bool reset_notbefore);
 
   void dump(ceph::Formatter* f) const;
 
@@ -229,9 +235,9 @@ struct formatter<Scrub::ScrubJob> {
   {
     return fmt::format_to(
 	ctx.out(),
-	"pg[{}] @ {:s} (dl:{:s}) - <{}> / failure: {} / queue state: "
+	"pg[{}] @ {:s} ({:s}) (dl:{:s}) - <{}> / failure: {} / queue state: "
 	"{:.7}",
-	sjob.pgid, sjob.schedule.scheduled_at,
+	sjob.pgid, sjob.schedule.not_before, sjob.schedule.scheduled_at,
 	sjob.schedule.deadline, sjob.registration_state(),
 	sjob.resources_failure, sjob.state.load(std::memory_order_relaxed));
   }
