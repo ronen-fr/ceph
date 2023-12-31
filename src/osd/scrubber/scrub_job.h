@@ -109,7 +109,7 @@ class ScrubJob final : public RefCountedObject {
   }
 
   /**
-   * 'reset_failure_penalty' is used to reset the 'not_before' jo attribute to
+   * 'reset_failure_penalty' is used to reset the 'not_before' job attribute to
    * the updated 'scheduled_at' time. This is used whenever the scrub-job
    * schedule is updated, and the update is not a result of a scrub attempt
    * failure.
