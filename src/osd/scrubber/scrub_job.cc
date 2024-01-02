@@ -49,25 +49,32 @@ void ScrubJob::update_schedule(
 {
   dout(15)
       << fmt::format(
-	     "was: nb:{:s}({:s}). Called with: rest?{} nb:{:s} ({:s}) ({})",
+	     "was: nb:{:s}({:s}). Called with: rest?{} {:s} ({})",
 	     schedule.not_before, schedule.scheduled_at, reset_nb,
-	     adjusted.not_before, adjusted.scheduled_at, registration_state())
+	     adjusted.scheduled_at, registration_state())
       << dendl;
   schedule.scheduled_at = adjusted.scheduled_at;
   schedule.deadline = adjusted.deadline;
 
-  if (reset_nb || schedule.not_before < schedule.scheduled_at) {
+  if (reset_nb || (schedule.not_before < schedule.scheduled_at)) {
     schedule.not_before = schedule.scheduled_at;
   }
 
-  // 'updated' is changed here while not holding jobs_lock. That's OK, as
-  // the (atomic) flag will only be cleared by select_pg_and_scrub() after
-  // scan_penalized() is called and the job was moved to the to_scrub queue.
   updated = true;
   dout(10) << fmt::format(
 		  "adjusted: nb:{:s} ({:s}) ({})", schedule.not_before,
 		  schedule.scheduled_at, registration_state())
 	   << dendl;
+}
+
+void ScrubJob::push_nb_out(
+    std::chrono::seconds delay,
+    Scrub::delay_cause_t delay_cause,
+    utime_t scrub_clock_now)
+{
+  schedule.not_before =
+      std::max(scrub_clock_now, schedule.not_before) + utime_t{delay};
+  last_issue = delay_cause;
 }
 
 std::string ScrubJob::scheduling_state(utime_t now_is, bool is_deep_expected)
