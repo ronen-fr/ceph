@@ -19,7 +19,7 @@
 
 class MOSDScrubReserve : public MOSDFastDispatchOp {
 private:
-  static constexpr int HEAD_VERSION = 1;
+  static constexpr int HEAD_VERSION = 2;
   static constexpr int COMPAT_VERSION = 1;
 public:
   spg_t pgid;
@@ -32,6 +32,7 @@ public:
   };
   int32_t type;
   pg_shard_t from;
+  bool queuing_is_supported;
 
   epoch_t get_map_epoch() const override {
     return map_epoch;
@@ -59,7 +60,7 @@ public:
     out << "MOSDScrubReserve(" << pgid << " ";
     switch (type) {
     case REQUEST:
-      out << "REQUEST ";
+      out << (queuing_is_supported ? "QREQUEST " : "REQUEST ");
       break;
     case GRANT:
       out << "GRANT ";
@@ -82,6 +83,11 @@ public:
     decode(map_epoch, p);
     decode(type, p);
     decode(from, p);
+    if (header.version >= 2) {
+      decode(queuing_is_supported, p);
+    } else {
+      queuing_is_supported = false;
+    }
   }
 
   void encode_payload(uint64_t features) {
@@ -90,6 +96,7 @@ public:
     encode(map_epoch, payload);
     encode(type, payload);
     encode(from, payload);
+    encode(queuing_is_supported, payload);
   }
 private:
   template<class T, typename... Args>
