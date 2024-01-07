@@ -613,7 +613,7 @@ function TEST_dump_scrub_schedule() {
     ceph tell $pgid schedule-scrub
     sleep 1
     sched_data=()
-    declare -A expct_scrub_peri_sched=( ['query_is_future']="false" )
+    declare -A expct_scrub_peri_sched=( ['query_is_future']="true" )
     wait_any_cond $pgid 10 $saved_last_stamp expct_scrub_peri_sched "waitingBeingScheduled" sched_data || return 1
 
     # note: the induced change in 'last_scrub_stamp' that we've caused above, is by itself not a publish-stats
