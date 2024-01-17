@@ -277,18 +277,25 @@ sc::result ReservingReplicas::react(const ReplicaReject& ev)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   auto& session = context<Session>();
   dout(10) << "ReservingReplicas::react(const ReplicaReject&)" << dendl;
-  session.m_reservations->log_failure_and_duration(scrbcnt_resrv_rejected);
 
-  // manipulate the 'next to reserve' iterator to exclude
-  // the rejecting replica from the set of replicas requiring release
-  session.m_reservations->verify_rejections_source(ev.m_op, ev.m_from);
+  // Verify that the message is from the replica we were expecting a reply from,
+  // and that the message is not stale. If all is well - this is a real rejection:
+  // - log required details;
+  // - manipulate the 'next to reserve' iterator to exclude
+  //   the rejecting replica from the set of replicas requiring release
+  if (session.m_reservations->handle_rejection(ev.m_op, ev.m_from)) {
+    // a real rejection
 
-  // set 'reservation failure' as the scrub termination cause (affecting
-  // the rescheduling of this PG)
-  scrbr->flag_reservations_failure();
+    // set 'reservation failure' as the scrub termination cause (affecting
+    // the rescheduling of this PG)
+    scrbr->flag_reservations_failure();
 
-  // 'Session' state dtor stops the scrubber
-  return transit<PrimaryIdle>();
+    // 'Session' state dtor stops the scrubber
+    return transit<PrimaryIdle>();
+  } else {
+    // stale or unexpected
+    return discard_event();
+  }
 }
 
 sc::result ReservingReplicas::react(const ReservationTimeout&)
@@ -774,7 +781,12 @@ ReplicaActive::~ReplicaActive()
 void ReplicaActive::on_reserve_req(const ReplicaReserveReq& ev)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
-  dout(10) << "ReplicaActive::on_reserve_req()" << dendl;
+  const auto& m = ev.m_op->get_req<MOSDScrubReserve>();
+  const auto msg_nonce = m->reservation_nonce;
+  dout(10) << fmt::format(
+		  "ReplicaActive::on_reserve_req() from {} (id:{})", ev.m_from,
+		  msg_nonce)
+	   << dendl;
 
   if (reserved_by_my_primary) {
     dout(10) << "ReplicaActive::on_reserve_req(): already reserved" << dendl;
@@ -794,7 +806,7 @@ void ReplicaActive::on_reserve_req(const ReplicaReserveReq& ev)
 
   Message* reply = new MOSDScrubReserve(
       spg_t(pg_id.pgid, m_pg->get_primary().shard), ev.m_op->sent_epoch, ret.op,
-      m_pg->pg_whoami);
+      m_pg->pg_whoami, msg_nonce);
   m_osds->send_message_osd_cluster(reply, ev.m_op->get_req()->get_connection());
 }
 

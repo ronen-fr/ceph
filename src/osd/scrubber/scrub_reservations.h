@@ -8,12 +8,15 @@
 #include <string_view>
 #include <vector>
 
+#include "messages/MOSDScrubReserve.h"
 #include "osd/scrubber_common.h"
 
 #include "osd_scrub_sched.h"
 #include "scrub_machine_lstnr.h"
 
 namespace Scrub {
+
+using reservation_nonce_t = MOSDScrubReserve::reservation_nonce_t;
 
 /**
  * Reserving/freeing scrub resources at the replicas.
@@ -44,6 +47,20 @@ namespace Scrub {
  *  that have been acquired until that moment.
  *  (Why? because we have encountered instances where a reservation request was
  *  lost - either due to a bug or due to a network issue.)
+ *
+ * Keeping primary & replica in sync:
+ *
+ *  Reservation requests are unique in that they may time-out and cancelled
+ *  by the primary. A request that was delayed for too long and was
+ *  cancelled by the sender - might still elicit a late (and irrelevant)
+ *  response from the replica. A sequence of such cancelled requests might
+ *  cause the primary and the replica to be out of sync.
+ *
+ *  To avoid this, we use a 'reservation_nonce' field in the request and
+ *  response messages. The primary increments the nonce for each request
+ *  it sends, and the replica includes the nonce in its response.
+ *  Note - 'release' messages, which are not answered by the replica,
+ *  do not use that field.
  */
 class ReplicaReservations {
   ScrubMachineListener& m_scrubber;
@@ -63,6 +80,13 @@ class ReplicaReservations {
 
   /// for logs, and for detecting slow peers
   ScrubTimePoint m_last_request_sent_at;
+
+  /// a token to uniquely identify the last reservation request sent.
+  /// The response received will be checked against this nonce, to detect
+  /// stale responses.
+  /// Starts at 1, and is incremented for each request sent. '0' is reserved
+  /// for legacy messages.
+  reservation_nonce_t m_last_request_sent_nonce{1};
 
   /// the 'slow response' timeout (in milliseconds) - as configured.
   /// Doubles as a 'do once' flag for the warning.
@@ -93,15 +117,19 @@ class ReplicaReservations {
   bool handle_reserve_grant(OpRequestRef op, pg_shard_t from);
 
   /**
+   * React to an incoming reservation rejection.
+   *
    * Verify that the sender of the received rejection is the replica we
-   * were expecting a reply from.
-   * If this is so - just mark the fact that the specific peer need not
-   * be released.
+   * were expecting a reply from, and that the message isn't stale.
+   * If a real rejection: log it, and mark the fact that the specific peer
+   * need not be released.
    *
    * Note - the actual handling of scrub session termination and of
    * releasing the reserved replicas is done by the caller (the FSM).
+   *
+   * Returns true if the rejection is valid, false otherwise.
    */
-  void verify_rejections_source(OpRequestRef op, pg_shard_t from);
+  bool handle_rejection(OpRequestRef op, pg_shard_t from);
 
   /**
    * Notifies implementation that it is no longer responsible for releasing
@@ -140,6 +168,17 @@ class ReplicaReservations {
    */
   bool send_next_reservation_or_complete();
 
+  /// (internal helper) is this is a reply to our last request?
+  tl::expected<bool, std::string> is_response_relevant(
+      epoch_t msg_epoch,
+      reservation_nonce_t msg_nonce,
+      pg_shard_t from) const;
+
+  /// (internal helper) is this reply coming from the expected replica?
+  tl::expected<bool, std::string> is_msg_source_correct(
+      epoch_t msg_epoch,
+      pg_shard_t from) const;
+
   // ---   perf counters helpers
 
   /**
@@ -148,4 +187,4 @@ class ReplicaReservations {
   void log_success_and_duration();
 };
 
-} // namespace Scrub
+}  // namespace Scrub
