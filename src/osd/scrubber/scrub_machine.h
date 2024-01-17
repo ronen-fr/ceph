@@ -733,6 +733,7 @@ struct ReplicaActive : sc::state<ReplicaActive, ScrubMachine, ReplicaIdle>,
 
  private:
   bool reserved_by_my_primary{false};
+  //reservation_nonce_t reservation_nonce{0};
 
   // shortcuts:
   PG* m_pg;
