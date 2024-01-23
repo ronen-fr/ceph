@@ -9,7 +9,6 @@ using must_scrub_t = Scrub::must_scrub_t;
 using ScrubQContainer = Scrub::ScrubQContainer;
 using sched_params_t = Scrub::sched_params_t;
 using OSDRestrictions = Scrub::OSDRestrictions;
-using ScrubJob = Scrub::ScrubJob;
 
 
 // ////////////////////////////////////////////////////////////////////////// //
@@ -17,7 +16,7 @@ using ScrubJob = Scrub::ScrubJob;
 
 #define dout_subsys ceph_subsys_osd
 #undef dout_context
-#define dout_context (cct)
+#define dout_context (m_scrubber.cct)
 #undef dout_prefix
 #define dout_prefix _prefix_fn(_dout, this, __func__)
 
@@ -27,21 +26,26 @@ static std::ostream& _prefix_fn(std::ostream* _dout, T* t, std::string fn = "")
   return t->gen_prefix(*_dout, fn);
 }
 
-ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
-    : RefCountedObject{cct}
-    , pgid{pg}
-    , whoami{node_id}
-    , cct{cct}
-    , log_msg_prefix{fmt::format("osd.{}: scrub-job:pg[{}]:", node_id, pgid)}
-{}
+
 
 // debug usage only
 namespace std {
-ostream& operator<<(ostream& out, const ScrubJob& sjob)
+ostream& operator<<(ostream& out, const Scrub::ScrubJob& sjob)
 {
   return out << fmt::format("{}", sjob);
 }
 }  // namespace std
+
+namespace Scrub {
+
+ScrubJob::ScrubJob(PgScrubber& scrubber, const spg_t& pg)
+    : m_scrubber{scrubber}
+    , m_pgid{pg}
+, m_shallow_target{m_pgid, scrub_level_t::shallow}
+, m_deep_target{m_pgid, scrub_level_t::deep}
+    //, log_msg_prefix{fmt::format("osd.{}: scrub-job:pg[{}]:", node_id, pgid)}
+{}
+
 
 void ScrubJob::update_schedule(
     const Scrub::scrub_schedule_t& adjusted,
@@ -125,3 +129,5 @@ void ScrubJob::dump(ceph::Formatter* f) const
 	       schedule.scheduled_at == PgScrubber::scrub_must_stamp());
   f->close_section();
 }
+
+}  // namespace Scrub
