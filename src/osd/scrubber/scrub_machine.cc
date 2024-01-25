@@ -741,7 +741,8 @@ sc::result WaitDigestUpdate::react(const ScrubFinished&)
 }
 
 ScrubMachine::ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub)
-    : m_pg_id{pg->pg_id}
+    : m_pg{pg}
+    , m_pg_id{pg->pg_id}
     , m_scrbr{pg_scrub}
 {}
 
@@ -800,13 +801,12 @@ ReplicaReactCode ReplicaActive::on_reserve_request(
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   const auto m = ev.m_op->get_req<MOSDScrubReserve>();
-  const auto msg_nonce = m->reservation_nonce;
-  dout(10)
-      << fmt::format(
-	     "ReplicaActive::on_reserve_req() from {} request:{} is async?{} (reservation_nonce:{})",
-	     ev.m_from, ev, async_request, msg_nonce)
-      << dendl;
-  auto& svc = m_osds->get_scrub_services();  // shorthand
+  last_request_nonce = m->reservation_nonce;
+  dout(10) << fmt::format(
+		  "ReplicaActive::on_reserve_req() request:{} is async?{} "
+		  "reservation_nonce:{}",
+		  ev, async_request, last_request_nonce)
+	   << dendl;
 
   if (reserved_by_my_primary) {
     dout(10) << "ReplicaActive::on_reserve_request(): already reserved"
@@ -817,31 +817,42 @@ ReplicaReactCode ReplicaActive::on_reserve_request(
 
   Message* reply{nullptr};
   ReplicaReactCode next_action{ReplicaReactCode::discard};
+  AsyncScrubResData request_details{
+      pg_id, ev.m_from, ev.m_op->sent_epoch, last_request_nonce};
+  auto& reserver = m_osds->get_scrub_reserver();
 
   if (async_request) {
     // the request is to be handled asynchronously
-    svc.enqueue_remote_reservation(pg_id.pgid);
+    dout(20) << fmt::format(
+		    "{}: async request: {} details:{}", __func__, ev,
+		    request_details)
+	     << dendl;
+    reserver_callback = new RtReservationCB(machine.m_pg, request_details);
+    reserver.request_reservation(pg_id, reserver_callback, 0, nullptr);
     next_action = ReplicaReactCode::goto_processing_reservation;
 
   } else {
     // an immediate yes/no is required
-    const auto granted = svc.inc_scrubs_remote(scrbr->get_spgid().pgid);
+    reserver_callback = new NullOpCB(machine.m_pg);
+    const auto granted =
+	reserver.request_reservation_or_fail(pg_id, reserver_callback);
     if (granted) {
       reserved_by_my_primary = true;
       dout(10) << fmt::format("{}: reserved? yes", __func__) << dendl;
       reply = new MOSDScrubReserve(
 	  spg_t(pg_id.pgid, m_pg->get_primary().shard), ev.m_op->sent_epoch,
-	  MOSDScrubReserve::GRANT, m_pg->pg_whoami, msg_nonce);
+	  MOSDScrubReserve::GRANT, m_pg->pg_whoami, last_request_nonce);
       next_action = ReplicaReactCode::goto_replica_reserved;
 
     } else {
       dout(10) << fmt::format("{}: reserved? no", __func__) << dendl;
       reply = new MOSDScrubReserve(
 	  spg_t(pg_id.pgid, m_pg->get_primary().shard), ev.m_op->sent_epoch,
-	  MOSDScrubReserve::REJECT, m_pg->pg_whoami, msg_nonce);
+	  MOSDScrubReserve::REJECT, m_pg->pg_whoami, last_request_nonce);
       // the event is discarded
       next_action = ReplicaReactCode::discard;
     }
+    reserver_callback = nullptr;
   }
 
   if (reply) {
@@ -849,6 +860,36 @@ ReplicaReactCode ReplicaActive::on_reserve_request(
 	reply, ev.m_op->get_req()->get_connection());
   }
   return next_action;
+}
+
+bool ReplicaActive::granted_by_reserver(const AsyncScrubResData& reservation)
+{
+  DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
+  dout(10) << fmt::format("{}: reservation granted: {}", __func__, reservation)
+	   << dendl;
+
+  /// verify that the granted reservation is the one we were waiting for
+  if (reservation.nonce != context<ReplicaActive>().last_request_nonce) {
+    dout(1) << fmt::format(
+		   "{}: reservation_nonce mismatch: {} != {}", __func__,
+		   reservation.nonce,
+		   context<ReplicaActive>().last_request_nonce)
+	    << dendl;
+    ceph_abort_msg("unexpected async reservation_nonce");
+    return false;
+  }
+
+  reserved_by_my_primary = true;
+  reserver_callback = nullptr;
+
+  // notify the primary
+  auto grant_msg = make_message<MOSDScrubReserve>(
+      spg_t(pg_id.pgid, m_pg->get_primary().shard), reservation.request_epoch,
+      MOSDScrubReserve::GRANT, m_pg->pg_whoami, last_request_nonce);
+
+  m_pg->send_cluster_message(
+      m_pg->get_primary().osd, grant_msg, reservation.request_epoch, false);
+  return true;
 }
 
 void ReplicaActive::on_release(const ReplicaRelease& ev)
@@ -868,8 +909,9 @@ void ReplicaActive::clear_reservation_by_remote_primary(bool log_failure)
 		  (reserved_by_my_primary ? "yes" : "no"))
 	   << dendl;
   if (reserved_by_my_primary) {
-    m_osds->get_scrub_services().dec_scrubs_remote(scrbr->get_spgid().pgid);
+    m_osds->get_scrub_reserver().cancel_reservation(pg_id);
     reserved_by_my_primary = false;
+    reserver_callback = nullptr;
   } else if (log_failure) {
     const auto msg = fmt::format(
 	"ReplicaActive::clear_reservation_by_remote_primary(): "
@@ -913,7 +955,8 @@ sc::result ReplicaUnreserved::react(const ReplicaReserveReq& ev)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   dout(10) << "ReplicaUnreserved::react(const ReplicaReserveReq&)" << dendl;
 
-  switch (context<ReplicaActive>().on_reserve_request(ev, false)) {
+  bool async_request = true && ev.m_op->get_req<MOSDScrubReserve>()->wait_for_resources /* && a config */;
+  switch (context<ReplicaActive>().on_reserve_request(ev, async_request)) {
     case ReplicaReactCode::discard:
       return discard_event();
     case ReplicaReactCode::goto_processing_reservation:
@@ -981,14 +1024,17 @@ ReplicaWaitingReservation::ReplicaWaitingReservation(my_context ctx)
       << dendl;
 }
 
-sc::result ReplicaWaitingReservation::react(const ReserverGranted&)
+sc::result ReplicaWaitingReservation::react(const ReserverGranted& ev)
 {
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
-  dout(10) << "ReplicaWaitingReservation::react(const ReserverGranted&)"
+  dout(10) << fmt::format(
+		  "ReplicaWaitingReservation::react(const ReserverGranted&): "
+		  "event:{}",
+		  ev)
 	   << dendl;
-
-  /// \todo complete the handling of the granted reservation
-  ceph_abort_msg("not implemented yet");
+  if (context<ReplicaActive>().granted_by_reserver(ev.value)) {
+    return transit<ReplicaReserved>();
+  }
   return discard_event();
 }
 

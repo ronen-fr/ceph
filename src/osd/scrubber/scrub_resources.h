@@ -97,15 +97,6 @@ class ScrubResources {
   /// decrements the number of scrubs acting as a Primary
   void dec_scrubs_local();
 
-  /// increments the number of scrubs acting as a Replica
-  bool inc_scrubs_remote(pg_t pgid);
-
-  /// queue a request with the scrub reserver
-  void enqueue_remote_reservation(pg_t pgid) {}
-
-  /// decrements the number of scrubs acting as a Replica
-  void dec_scrubs_remote(pg_t pgid);
-
   void dump_scrub_reservations(ceph::Formatter* f) const;
 };
 

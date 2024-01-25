@@ -353,6 +353,9 @@ void OSDSingletonState::handle_conf_change(
   if (changed.count("osd_max_trimming_pgs")) {
     snap_reserver.set_max(conf->osd_max_trimming_pgs);
   }
+//   if (changed.contains("osd_max_scrubs")) {
+//     scrub_reserver.set_max(conf->osd_max_scrubs);
+//   }
 }
 
 seastar::future<OSDSingletonState::local_cached_map_t>
