@@ -16,13 +16,11 @@
 #include <boost/statechart/transition.hpp>
 
 #include "common/fmt_common.h"
+#include "include/Context.h"
 #include "common/version.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDRepScrub.h"
 #include "messages/MOSDRepScrubMap.h"
-#include "messages/MOSDScrubReserve.h"
-
-#include "include/Context.h"
 #include "osd/scrubber_common.h"
 
 #include "scrub_machine_lstnr.h"
@@ -136,7 +134,7 @@ struct value_event_t : sc::event<T> {
 
 
 /// the async-reserver granted our reservation request
-OP_EV(ReserverGranted);
+VALUE_EVENT(ReserverGranted, AsyncScrubResData);
 
 #define MEV(E)                                          \
   struct E : sc::event<E> {                             \
@@ -288,6 +286,7 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   explicit ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub);
   ~ScrubMachine();
 
+  PG* m_pg;
   spg_t m_pg_id;
   ScrubMachineListener* m_scrbr;
   std::ostream& gen_prefix(std::ostream& out) const;
@@ -818,6 +817,59 @@ struct ReplicaActive : sc::state<
   void clear_reservation_by_remote_primary(bool log_failure);
 
   using reactions = mpl::list<sc::transition<IntervalChanged, NotActive>>;
+
+  // remote reservation machinery
+  struct RtReservationCB : public Context {
+    PGRef pg;
+    AsyncScrubResData res_data;
+    bool canceled{false};
+
+    explicit RtReservationCB(PGRef pg, AsyncScrubResData request_details)
+	: pg{pg}
+	, res_data{request_details}
+    {}
+
+    void finish(int) override
+    {
+      pg->lock();
+      if (!canceled)
+	pg->m_scrubber->send_granted_by_reserver(res_data);
+      pg->unlock();
+    }
+
+    void cancel()
+    {
+      ceph_assert(pg->is_locked());
+      ceph_assert(!canceled);
+      canceled = true;
+    }
+  };
+
+  Context* reserver_callback{nullptr};
+
+  struct TestCB : public Context {
+    PGRef pg;
+    bool canceled{false};
+
+    explicit TestCB(PGRef pg)
+	: pg{pg}
+    {}
+
+    void finish(int) override
+    {
+      pg->lock();
+      //if (!canceled)
+        //	pg->m_scrubber->send_granted_by_reserver(res_data);
+      pg->unlock();
+    }
+
+    void cancel()
+    {
+      ceph_assert(pg->is_locked());
+      ceph_assert(!canceled);
+      canceled = true;
+    }
+  };
 
  private:
   bool reserved_by_my_primary{false};

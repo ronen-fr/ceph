@@ -349,6 +349,7 @@ function _scrub_abort() {
     for i in $(seq 0 200)
     do
       flush_pg_stats
+      ceph pg dump pgs
       if ceph pg dump pgs | grep  ^$pgid| grep -q "scrubbing"
       then
         found="yes"
@@ -379,7 +380,7 @@ function _scrub_abort() {
       then
         continue
       fi
-      #ceph pg dump pgs
+      ceph pg dump pgs
       break
     done
     set +o pipefail

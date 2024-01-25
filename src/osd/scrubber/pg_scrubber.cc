@@ -391,10 +391,15 @@ void PgScrubber::send_scrub_is_finished(epoch_t epoch_queued)
 	   << dendl;
 
   // can't check for "active"
-
   m_fsm->process_event(Scrub::ScrubFinished{});
-
   dout(10) << "scrubber event --<< " << __func__ << dendl;
+}
+
+void PgScrubber::send_granted_by_reserver(const AsyncScrubResData& req)
+{
+  dout(10) << "scrubber event -->> granted_by_reserver" << dendl;
+  m_fsm->process_event(Scrub::ReserverGranted{req});
+  dout(10) << "scrubber event --<< granted_by_reserver" << dendl;
 }
 
 // -----------------
