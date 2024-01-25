@@ -16,13 +16,11 @@
 #include <boost/statechart/transition.hpp>
 
 #include "common/fmt_common.h"
+#include "include/Context.h"
 #include "common/version.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDRepScrub.h"
 #include "messages/MOSDRepScrubMap.h"
-#include "messages/MOSDScrubReserve.h"
-
-#include "include/Context.h"
 #include "osd/scrubber_common.h"
 
 #include "scrub_machine_lstnr.h"
@@ -136,7 +134,7 @@ struct value_event_t : sc::event<T> {
 
 
 /// the async-reserver granted our reservation request
-OP_EV(ReserverGranted);
+VALUE_EVENT(ReserverGranted, AsyncScrubResData);
 
 #define MEV(E)                                          \
   struct E : sc::event<E> {                             \
@@ -288,6 +286,7 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
   explicit ScrubMachine(PG* pg, ScrubMachineListener* pg_scrub);
   ~ScrubMachine();
 
+  PG* m_pg;
   spg_t m_pg_id;
   ScrubMachineListener* m_scrbr;
   std::ostream& gen_prefix(std::ostream& out) const;
@@ -783,6 +782,37 @@ struct WaitDigestUpdate : sc::state<WaitDigestUpdate, ActiveScrubbing>,
  *      * ReplicaWaitUpdates
  *      * ReplicaBuildingMap
  */
+/*
+ * AsyncReserver for scrub 'remote' reservations
+ * -----------------------------------------------
+ *
+ * Unless disabled by 'osd_scrub_disable_reservation_queuing', scrub
+ * reservation requests are handled by an async reserver: they are queued,
+ * until the number of concurrent scrubs is below the configured limit.
+ *
+ * On the replica side, all reservations are treated as having the same priority.
+ * Note that 'high priority' scrubs, e.g. user-initiated scrubs, are not required
+ * to perform any reservations, and are never handled by the replicas' OSD.
+ *
+ * A queued scrub reservation request is cancelled by any of the following events:
+ *
+ * - a new interval: in this case, we do not expect to see a cancellation request
+ *   from the primary, and we can simply remove the request from the queue;
+ *
+ * - a cancellation request from the primary: probably a result of timing out on
+ *   the reservation process. Here, we can simply remove the request from the queue.
+ *
+ * - a new reservation request for the same PG: which means we had missed the
+ *   previous cancellation request. We cancel the previous request, and replace
+ *   it with the new one. We would also issue an error log message.
+ *
+ * Primary/Replica with differing versions:
+ *
+ * The updated version of MOSDScrubReserve contains a new 'OK to queue' field.
+ * For legacy Primary OSDs, this field is decoded as 'false', and the replica
+ * responds immediately, with grant/rejection.
+*/
+
 
 struct ReplicaIdle;
 
@@ -809,15 +839,74 @@ struct ReplicaActive : sc::state<
       const ReplicaReserveReq&,
       bool async_request);
 
+  /**
+   * the queued reservation request was granted by the async reserver.
+   * Notify the Primary.
+   * Returns 'false' if the reservation is not the last one to be received
+   * by this replica.
+   */
+  bool granted_by_reserver(const AsyncScrubResData& resevation);
+
   /// handle a 'release' from a primary
   void on_release(const ReplicaRelease& ev);
 
-  /// cancel the reserver request.
-  /// The 'failure' re 'log_failure' is logged if we are not reserved to
-  /// begin with.
+  /**
+   * cancel the reserver request.
+   * The 'failure' re 'log_failure' is logged if we are not reserved to
+   * begin with.
+   */
   void clear_reservation_by_remote_primary(bool log_failure);
 
+  /**
+   * cancel_ungranted_request - cancel the reservation request if it was not
+   * already granted by the async reserver.
+   */
+  void cancel_ungranted_request();
+
   using reactions = mpl::list<sc::transition<IntervalChanged, NotActive>>;
+
+  // clang-format off
+  // remote reservation machinery
+  struct RtReservationCB : public Context {
+    PGRef pg;
+    AsyncScrubResData res_data;
+    bool canceled{false};
+
+    explicit RtReservationCB(PGRef pg, AsyncScrubResData request_details)
+	: pg{pg}
+	, res_data{request_details}
+    {}
+
+    void finish(int) override {
+      pg->lock();
+      if (!canceled)
+	pg->m_scrubber->send_granted_by_reserver(res_data);
+      pg->unlock();
+    }
+
+    void cancel() {
+      ceph_assert(pg->is_locked());
+      ceph_assert(!canceled);
+      canceled = true;
+    }
+  };
+  // clang-format on
+
+  Context* reserver_callback{nullptr};
+  MOSDScrubReserve::reservation_nonce_t last_request_nonce{0};
+
+  // clang-format off
+  struct NullOpCB : public Context {
+    PGRef pg;
+    bool canceled{false};
+    explicit NullOpCB(PGRef pg) : pg{pg} {}
+    void finish(int) override {}
+    void cancel() {
+      ceph_assert(pg->is_locked());
+      canceled = true;
+    }
+  };
+  // clang-format on
 
  private:
   bool reserved_by_my_primary{false};
@@ -888,6 +977,7 @@ struct ReplicaWaitingReservation
     : sc::state<ReplicaWaitingReservation, ReplicaIdle>,
       NamedSimply {
   explicit ReplicaWaitingReservation(my_context ctx);
+  ~ReplicaWaitingReservation();
 
   using reactions = mpl::list<
       // the 'normal' (expected) events:
