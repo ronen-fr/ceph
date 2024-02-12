@@ -4,6 +4,7 @@
 #include "PGPeeringEvent.h"
 #include "common/ceph_releases.h"
 #include "common/dout.h"
+#include "include/utime_fmt.h"
 #include "PeeringState.h"
 
 #include "messages/MOSDPGRemove.h"
@@ -3853,6 +3854,9 @@ std::optional<pg_stat_t> PeeringState::prepare_stats_for_publish(
   }
   psdout(20) << __func__ << " reporting purged_snaps "
 	     << pre_publish.purged_snaps << dendl;
+
+  psdout(11) << fmt::format("{}: pg_states_publish={} fresh:{} cutoff:{} fresh>cutoff:{}",
+                            __func__, pg_stats_publish.has_value(), info.stats.last_fresh, cutoff, info.stats.last_fresh > cutoff) << dendl;
 
   if (pg_stats_publish && pre_publish == *pg_stats_publish &&
       info.stats.last_fresh > cutoff) {

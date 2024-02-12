@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <fmt/ranges.h>
+#include <fmt/chrono.h>
 
 #include "debug.h"
 
@@ -2495,6 +2496,22 @@ int PgScrubber::asok_debug(std::string_view cmd,
   return 0;
 }
 
+
+#include <fmt/format.h>
+#include <fmt/chrono.h>
+#include <ctime>
+
+template<> struct fmt::formatter<timespec> {
+	template <typename ParseContext>
+		constexpr auto parse(ParseContext& ctx) { return ctx.begin(); }
+
+	template <typename FormatContext>
+	auto format(const timespec& s, FormatContext& ctx) {
+		return format_to(ctx.out(), "{:%F %T}.{:09}", fmt::gmtime(s.tv_sec), s.tv_nsec);
+	}
+};
+
+
 /*
  * Note: under PG lock
  */
@@ -2536,7 +2553,15 @@ void PgScrubber::update_scrub_stats(ceph::coarse_real_clock::time_point now_is)
 			    buf)
 	     << dendl;
   }
-
+  {
+    utime_t nowx = ceph_clock_now();
+    auto d1 = coarse_real_clock::to_timespec(m_last_stat_upd);
+    auto d2 = now_is-m_last_stat_upd;
+  //dout(10) << fmt::format("{}: updating stats {},{},{},{}", __func__, now_is, m_last_stat_upd, now_is-m_last_stat_upd, period) << dendl;
+  //dout(10) << fmt::format("{}: updating stats {},{},{},{}", __func__, now_is, m_last_stat_upd, 0, 0) << dendl;
+  //dout(10) << fmt::format("{}: updating stats {},{},{},{}", __func__, now_is-m_last_stat_upd, period, 0, 0) << dendl;
+  dout(10) << fmt::format("{}: updating stats {},{},{},{}", __func__, nowx, d1, period, d2) << dendl;
+  }
   if (now_is - m_last_stat_upd > period) {
     m_pg->publish_stats_to_osd();
     m_last_stat_upd = now_is;

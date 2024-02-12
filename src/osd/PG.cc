@@ -2817,7 +2817,7 @@ void PG::dump_missing(Formatter *f)
 void PG::with_pg_stats(ceph::coarse_real_clock::time_point now_is,
 		       std::function<void(const pg_stat_t&, epoch_t lec)>&& f)
 {
-  dout(30) << __func__ << dendl;
+  dout(17) << __func__ << dendl;
   // possibly update the scrub state & timers
   lock();
   if (m_scrubber) {
