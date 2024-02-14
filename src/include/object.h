@@ -112,10 +112,10 @@ struct file_object_t {
 struct snapid_t {
   uint64_t val;
   // cppcheck-suppress noExplicitConstructor
-  snapid_t(uint64_t v=0) : val(v) {}
+  constexpr snapid_t(uint64_t v=0) : val(v) {}
   snapid_t operator+=(snapid_t o) { val += o.val; return *this; }
   snapid_t operator++() { ++val; return *this; }
-  operator uint64_t() const { return val; }
+  constexpr operator uint64_t() const { return val; }
 };
 
 inline void encode(snapid_t i, ceph::buffer::list &bl) {
@@ -160,6 +160,7 @@ struct sobject_t {
 
   sobject_t() : snap(0) {}
   sobject_t(object_t o, snapid_t s) : oid(o), snap(s) {}
+  sobject_t(object_t o, uint64_t s) : oid(o), snap(snapid_t{s}) {}
 
   auto operator<=>(const sobject_t&) const noexcept = default;
 

@@ -111,7 +111,7 @@ public:
       return pool;
   }
 
-  hobject_t() : snap(0), hash(0), max(false), pool(INT64_MIN) {
+  hobject_t() : snap(snapid_t(0)), hash(0), max(false), pool(INT64_MIN) {
     build_hash_cache();
   }
 
@@ -171,7 +171,7 @@ public:
     if (is_max())
       return *this;
     hobject_t ret = *this;
-    ret.snap = 0;
+    ret.snap = snapid_t{0};
     return ret;
   }
 

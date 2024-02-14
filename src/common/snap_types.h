@@ -80,10 +80,10 @@ struct SnapContext {
   bool is_valid() const;
 
   void clear() {
-    seq = 0;
+    seq = snapid_t{0};
     snaps.clear();
   }
-  bool empty() const { return seq == 0; }
+  bool empty() const { return seq == snapid_t{0}; }
 
   void encode(ceph::buffer::list& bl) const {
     using ceph::encode;

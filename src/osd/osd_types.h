@@ -1481,7 +1481,7 @@ public:
   /// metadata for the most recent PG merge
   pg_merge_meta_t last_pg_merge_meta;
   
-  snapid_t snap_seq = 0;        ///< seq for per-pool snapshot
+  snapid_t snap_seq{0};        ///< seq for per-pool snapshot
   epoch_t snap_epoch = 0;       ///< osdmap epoch of last snap
   uint64_t auid = 0;            ///< who owns the pg
 
@@ -5305,17 +5305,17 @@ struct pg_nls_response_template {
   static void generate_test_instances(std::list<pg_nls_response_template<T>*>& o) {
     o.push_back(new pg_nls_response_template<T>);
     o.push_back(new pg_nls_response_template<T>);
-    o.back()->handle = hobject_t(object_t("hi"), "key", 1, 2, -1, "");
+    o.back()->handle = hobject_t(object_t("hi"), "key", snapid_t{1}, 2, -1, "");
     o.back()->entries.push_back(librados::ListObjectImpl("", "one", ""));
     o.back()->entries.push_back(librados::ListObjectImpl("", "two", "twokey"));
     o.back()->entries.push_back(librados::ListObjectImpl("", "three", ""));
     o.push_back(new pg_nls_response_template<T>);
-    o.back()->handle = hobject_t(object_t("hi"), "key", 3, 4, -1, "");
+    o.back()->handle = hobject_t(object_t("hi"), "key", snapid_t{3}, 4, -1, "");
     o.back()->entries.push_back(librados::ListObjectImpl("n1", "n1one", ""));
     o.back()->entries.push_back(librados::ListObjectImpl("n1", "n1two", "n1twokey"));
     o.back()->entries.push_back(librados::ListObjectImpl("n1", "n1three", ""));
     o.push_back(new pg_nls_response_template<T>);
-    o.back()->handle = hobject_t(object_t("hi"), "key", 5, 6, -1, "");
+    o.back()->handle = hobject_t(object_t("hi"), "key", snapid_t{5}, 6, -1, "");
     o.back()->entries.push_back(librados::ListObjectImpl("", "one", ""));
     o.back()->entries.push_back(librados::ListObjectImpl("", "two", "twokey"));
     o.back()->entries.push_back(librados::ListObjectImpl("", "three", ""));
@@ -5363,7 +5363,7 @@ struct pg_ls_response_t {
   static void generate_test_instances(std::list<pg_ls_response_t*>& o) {
     o.push_back(new pg_ls_response_t);
     o.push_back(new pg_ls_response_t);
-    o.back()->handle = hobject_t(object_t("hi"), "key", 1, 2, -1, "");
+    o.back()->handle = hobject_t(object_t("hi"), "key", snapid_t{1}, 2, -1, "");
     o.back()->entries.push_back(std::make_pair(object_t("one"), std::string()));
     o.back()->entries.push_back(std::make_pair(object_t("two"), std::string("twokey")));
   }
@@ -6501,8 +6501,8 @@ struct clone_info {
   static void generate_test_instances(std::list<clone_info*>& o) {
     o.push_back(new clone_info);
     o.push_back(new clone_info);
-    o.back()->cloneid = 1;
-    o.back()->snaps.push_back(1);
+    o.back()->cloneid = snapid_t{1};
+    o.back()->snaps.push_back(snapid_t{1});
     o.back()->overlap.push_back(std::pair<uint64_t,uint64_t>(0,4096));
     o.back()->overlap.push_back(std::pair<uint64_t,uint64_t>(8192,4096));
     o.back()->size = 16384;
@@ -6550,8 +6550,8 @@ struct obj_list_snap_response_t {
     o.push_back(new obj_list_snap_response_t);
     o.push_back(new obj_list_snap_response_t);
     clone_info cl;
-    cl.cloneid = 1;
-    cl.snaps.push_back(1);
+    cl.cloneid = snapid_t{1};
+    cl.snaps.push_back(snapid_t{1});
     cl.overlap.push_back(std::pair<uint64_t,uint64_t>(0,4096));
     cl.overlap.push_back(std::pair<uint64_t,uint64_t>(8192,4096));
     cl.size = 16384;
@@ -6561,7 +6561,7 @@ struct obj_list_snap_response_t {
     cl.overlap.clear();
     cl.size = 32768;
     o.back()->clones.push_back(cl);
-    o.back()->seq = 123;
+    o.back()->seq = snapid_t{123};
   }
 };
 

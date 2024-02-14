@@ -872,7 +872,7 @@ pg_t pg_t::get_parent() const
 
 hobject_t pg_t::get_hobj_start() const
 {
-  return hobject_t(object_t(), string(), 0, m_seed, m_pool,
+  return hobject_t(object_t(), string(), snapid_t{0}, m_seed, m_pool,
 		   string());
 }
 
@@ -1734,7 +1734,7 @@ void pg_pool_t::add_snap(const char *n, utime_t stamp)
 {
   ceph_assert(!is_unmanaged_snaps_mode());
   flags |= FLAG_POOL_SNAPS;
-  snapid_t s = get_snap_seq() + 1;
+  snapid_t s = snapid_t(get_snap_seq() + 1);
   snap_seq = s;
   snaps[s].snapid = s;
   snaps[s].name = n;
@@ -1748,13 +1748,13 @@ uint64_t pg_pool_t::add_unmanaged_snap(bool preoctopus_compat)
     if (preoctopus_compat) {
       // kludge for pre-mimic tracking of pool vs selfmanaged snaps.  after
       // mimic this field is not decoded but our flag is set; pre-mimic, we
-      // have a non-empty removed_snaps to signifiy a non-pool-snaps pool.
+      // have a non-empty removed_snaps to signify a non-pool-snaps pool.
       removed_snaps.insert(snapid_t(1));
     }
-    snap_seq = 1;
+    snap_seq = snapid_t{1};
   }
   flags |= FLAG_SELFMANAGED_SNAPS;
-  snap_seq = snap_seq + 1;
+  snap_seq = snapid_t(snap_seq + 1);
   return snap_seq;
 }
 
@@ -2304,7 +2304,7 @@ void pg_pool_t::generate_test_instances(list<pg_pool_t*>& o)
   a.last_change = 9;
   a.last_force_op_resend = 123823;
   a.last_force_op_resend_preluminous = 123824;
-  a.snap_seq = 10;
+  a.snap_seq = snapid_t{10};
   a.snap_epoch = 11;
   a.flags = FLAG_POOL_SNAPS;
   a.auid = 12;
@@ -2322,7 +2322,7 @@ void pg_pool_t::generate_test_instances(list<pg_pool_t*>& o)
 
   a.flags = FLAG_SELFMANAGED_SNAPS;
   a.snaps.clear();
-  a.removed_snaps.insert(2);
+  a.removed_snaps.insert(snapid_t{2});
   a.quota_max_bytes = 2473;
   a.quota_max_objects = 4374;
   a.tiers.insert(0);
@@ -5875,14 +5875,14 @@ void SnapSet::generate_test_instances(list<SnapSet*>& o)
 {
   o.push_back(new SnapSet);
   o.push_back(new SnapSet);
-  o.back()->seq = 123;
-  o.back()->snaps.push_back(123);
-  o.back()->snaps.push_back(12);
+  o.back()->seq = snapid_t{123};
+  o.back()->snaps.push_back(snapid_t{123});
+  o.back()->snaps.push_back(snapid_t{12});
   o.push_back(new SnapSet);
-  o.back()->seq = 123;
-  o.back()->snaps.push_back(123);
-  o.back()->snaps.push_back(12);
-  o.back()->clones.push_back(12);
+  o.back()->seq = snapid_t{123};
+  o.back()->snaps.push_back(snapid_t{123});
+  o.back()->snaps.push_back(snapid_t{12});
+  o.back()->clones.push_back(snapid_t{12});
   o.back()->clone_size[12] = 12345;
   o.back()->clone_overlap[12];
   o.back()->clone_snaps[12] = {12, 10, 8};

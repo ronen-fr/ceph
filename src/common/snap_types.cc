@@ -46,11 +46,11 @@ void SnapRealmInfo::generate_test_instances(std::list<SnapRealmInfo*>& o)
   o.push_back(new SnapRealmInfo);
   o.push_back(new SnapRealmInfo(1, 10, 10, 0));
   o.push_back(new SnapRealmInfo(1, 10, 10, 0));
-  o.back()->my_snaps.push_back(10);
+  o.back()->my_snaps.push_back(snapid_t{10});
   o.push_back(new SnapRealmInfo(1, 10, 10, 5));
-  o.back()->my_snaps.push_back(10);
-  o.back()->prior_parent_snaps.push_back(3);
-  o.back()->prior_parent_snaps.push_back(5);
+  o.back()->my_snaps.push_back(snapid_t{10});
+  o.back()->prior_parent_snaps.push_back(snapid_t{3});
+  o.back()->prior_parent_snaps.push_back(snapid_t{5});
 }
 
 // -- "new" SnapRealmInfo --
