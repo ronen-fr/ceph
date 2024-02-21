@@ -342,6 +342,7 @@ public:
     return operator<=>(rhs) == 0;
   }
   friend struct ghobject_t;
+  friend struct test_hobject_fmt_t;
 };
 WRITE_CLASS_ENCODER(hobject_t)
 
@@ -364,7 +365,8 @@ struct formatter<hobject_t> {
   {
     for (auto i = in.cbegin(); i != in.cend(); ++i) {
       if (*i == '%' || *i == ':' || *i == '/' || *i < 32 || *i >= 127) {
-	fmt::format_to(ctx.out(), FMT_COMPILE("%{:02x}"), *i);
+	fmt::format_to(
+	    ctx.out(), FMT_COMPILE("%{:02x}"), static_cast<unsigned char>(*i));
       } else {
 	fmt::format_to(ctx.out(), FMT_COMPILE("{}"), *i);
       }
