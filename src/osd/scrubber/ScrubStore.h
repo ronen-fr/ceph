@@ -29,8 +29,14 @@ class Store {
   // and a variant-friendly interface:
   void add_error(int64_t pool, const inconsistent_obj_wrapper& e);
   void add_error(int64_t pool, const inconsistent_snapset_wrapper& e);
+
   bool empty() const;
-  void flush(ObjectStore::Transaction*);
+
+  /**
+   *  RRR
+   */
+  void flush(ObjectStore::Transaction*, XXX);
+
   void cleanup(ObjectStore::Transaction*,  scrub_level_t level);
 
   std::vector<ceph::buffer::list> get_snap_errors(
@@ -44,10 +50,17 @@ class Store {
     uint64_t max_return) const;
 
  private:
-  Store(const coll_t& coll, const ghobject_t& oid, const ghobject_t& deep_oid, ObjectStore* store);
-  std::vector<ceph::buffer::list> get_errors(const std::string& start,
-					     const std::string& end,
-					     uint64_t max_return) const;
+  Store(
+      const coll_t& coll,
+      const ghobject_t& oid,
+      const ghobject_t& deep_oid,
+      ObjectStore* store);
+
+  std::vector<ceph::buffer::list> get_errors(
+      const std::string& start,
+      const std::string& end,
+      uint64_t max_return) const;
+
  private:
   const coll_t coll;
   const ghobject_t hoid;
