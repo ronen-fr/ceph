@@ -1,10 +1,11 @@
 ---
 Language: Cpp
 BasedOnStyle: Google
-AlignAfterOpenBracket: AlwaysBreak
-AllowShortBlocksOnASingleLine: false
+AlignAfterOpenBracket: Align
+AllowShortBlocksOnASingleLine: Empty
 AllowShortCaseLabelsOnASingleLine: false
-AllowShortFunctionsOnASingleLine: Inline
+AllowShortFunctionsOnASingleLine: All
+#AllowShortFunctionsOnASingleLine: Inline
 #AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: false
 AllowShortLambdasOnASingleLine: All
@@ -17,6 +18,7 @@ ColumnLimit: 80
 MaxEmptyLinesToKeep: 2
 EmptyLineBeforeAccessModifier: Leave
 Cpp11BracedListStyle: true
+BracedInitializerIndentWidth: 2
 BinPackParameters: false
 BreakBeforeBraces: Custom
 BraceWrapping:
@@ -24,7 +26,7 @@ BraceWrapping:
   AfterCaseLabel: false
   AfterClass: false
   AfterStruct: false
-  AfterFunction: true
+  AfterFunction: false
   AfterControlStatement: Never
   BeforeCatch: false
   BeforeElse: false
@@ -33,6 +35,7 @@ DerivePointerAlignment: true
 IndentWrappedFunctionNames: false
 PointerAlignment: Left
 AlwaysBreakTemplateDeclarations: Yes
+#AlwaysBreakTemplateDeclarations: MultiLine
 BreakConstructorInitializers: BeforeComma
 KeepEmptyLinesAtTheStartOfBlocks: true
 ContinuationIndentWidth: 4
