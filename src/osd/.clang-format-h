@@ -11,9 +11,9 @@ AllowShortIfStatementsOnASingleLine: false
 AllowShortLambdasOnASingleLine: All
 AllowShortLoopsOnASingleLine: false
 AllowAllConstructorInitializersOnNextLine: false
-AllowAllArgumentsOnNextLine: true
+AllowAllArgumentsOnNextLine: false
 AllowAllParametersOfDeclarationOnNextLine: true
-BinPackArguments: true
+BinPackArguments: false
 ColumnLimit: 80
 MaxEmptyLinesToKeep: 2
 EmptyLineBeforeAccessModifier: Leave
@@ -31,9 +31,10 @@ BraceWrapping:
   BeforeCatch: false
   BeforeElse: false
   BeforeLambdaBody: false
-DerivePointerAlignment: true
+DerivePointerAlignment: false
 IndentWrappedFunctionNames: false
 PointerAlignment: Left
+ReferenceAlignment: Left
 AlwaysBreakTemplateDeclarations: Yes
 #AlwaysBreakTemplateDeclarations: MultiLine
 BreakConstructorInitializers: BeforeComma
@@ -42,7 +43,7 @@ ContinuationIndentWidth: 4
 TabWidth: 8
 #UseTab: Never
 UseTab: Always
-Standard: c++20
+Standard: Latest
 FixNamespaceComments: true
 #AllowAllParametersOfDeclarationOnNextLine: false
 LambdaBodyIndentation: Signature
@@ -53,6 +54,8 @@ SpacesInLineCommentPrefix:
 PenaltyBreakComment: 0
 SeparateDefinitionBlocks: Leave
 ReflowComments: false
+TypenameMacros: [ 'TrivialEvents' ]
+StatementMacros: [ 'TrivialEvent' ]
 SortIncludes:    true
 IncludeBlocks: Regroup
 IncludeCategories:
