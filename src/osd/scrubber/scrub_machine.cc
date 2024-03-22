@@ -49,7 +49,7 @@ void on_event_discard(std::string_view nm)
 
 void ScrubMachine::assert_not_in_session() const
 {
-  ceph_assert(!state_cast<const Session*>());
+  ceph_assert(!in_state_session);
 }
 
 bool ScrubMachine::is_reserving() const
@@ -87,6 +87,24 @@ std::ostream& ScrubMachine::gen_prefix(std::ostream& out) const
 
 ceph::timespan ScrubMachine::get_time_scrubbing() const
 {
+  dout(10) << fmt::format(
+		  "{}: in_state_session:{} dyn:{} down:{} outer:{}", __func__,
+		  in_state_session,
+		  (state_cast<const Session*>() ? "yes" : "no"),
+		  (state_downcast<const Session*>() ? "yes" : "no"),
+		  (state_begin() typeid(*state_begin()).name()
+		   : "no"))
+	   //(outer_state_ptr() ? "yes" : "no"))
+	   << dendl;
+
+  if (auto sbs = state_begin(); sbs != state_end()) {
+    dout(10) << fmt::format("\t-sbs-> {}", typeid(*sbs).name()) << dendl;
+    auto o = sbs->outer_state_ptr();
+    if (o) {
+      dout(10) << fmt::format("\t-o-> {}", typeid(*o).name()) << dendl;
+    }
+  }
+
   // note: the state_cast does not work in the Session ctor
   auto session = state_cast<const Session*>();
   if (!session) {
@@ -183,6 +201,8 @@ Session::Session(my_context ctx)
   dout(10) << "-- state -->> PrimaryActive/Session" << dendl;
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
 
+  machine.in_state_session = true;
+
   // while we've checked the 'someone is reserving' flag before queueing
   // the start-scrub event, it's possible that the flag was set in the meantime.
   // Handling this case here requires adding a new sub-state, and the
@@ -207,6 +227,7 @@ Session::~Session()
   // (re-triggered by resetting the 'queued' flag) must not resume before
   // the scrubber is reset.
   scrbr->clear_pgscrub_state();
+  machine.in_state_session = false;
 }
 
 sc::result Session::react(const IntervalChanged&)

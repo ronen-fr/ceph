@@ -540,6 +540,7 @@ function TEST_dump_scrub_schedule() {
             --osd_scrub_interval_randomize_ratio=0 \
             --osd_scrub_backoff_ratio=0.0 \
             --osd_op_queue=wpq \
+            --osd_pg_stat_report_interval_max_seconds=2 \
             --osd_stats_update_period_not_scrubbing=3 \
             --osd_stats_update_period_scrubbing=2 \
             --osd_scrub_sleep=0.2"

@@ -300,6 +300,9 @@ class ScrubMachine : public sc::state_machine<ScrubMachine, NotActive> {
 
 // ///////////////// aux declarations & functions //////////////////////// //
 
+  /// replacing static_cast<>, which cannot be used when handling an event -
+  /// not even during internal sub-states ctors
+  bool in_state_session{false};
 
 private:
   /**
