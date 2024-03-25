@@ -10,7 +10,6 @@
 #include <boost/statechart/event_base.hpp>
 #include <boost/statechart/in_state_reaction.hpp>
 #include <boost/statechart/simple_state.hpp>
-#include <boost/statechart/shallow_history.hpp>
 #include <boost/statechart/state.hpp>
 #include <boost/statechart/state_machine.hpp>
 #include <boost/statechart/transition.hpp>
@@ -764,8 +763,6 @@ struct WaitDigestUpdate : sc::state<WaitDigestUpdate, ActiveScrubbing>,
  *    - initial state of ReplicaActive
  *    - No scrubbing is performed in this state, but reservation-related
  *      events are handled.
- *    - uses 'shallow history', so that when returning from ReplicaActiveOp, we
- *       return to where we were - either reserved by our primary, or unreserved.
  *
  *    - sub-states:
  *      * ReplicaUnreserved - not reserved by a primary. In this state we
@@ -819,20 +816,7 @@ struct WaitDigestUpdate : sc::state<WaitDigestUpdate, ActiveScrubbing>,
 
 struct ReplicaIdle;
 
-// sc::result cannot be copied or moved, so we need to postpone
-// the creation of such objects to the moment where they are
-// returned from the react() function.
-enum class ReplicaReactCode {
-  discard,
-  goto_waiting_reservation,
-  goto_replica_reserved
-};
-
-struct ReplicaActive : sc::state<
-			   ReplicaActive,
-			   ScrubMachine,
-			   mpl::list<sc::shallow_history<ReplicaIdle>>,
-			   sc::has_shallow_history>,
+struct ReplicaActive : sc::state<ReplicaActive, ScrubMachine, ReplicaIdle>,
 		       NamedSimply {
   explicit ReplicaActive(my_context ctx);
   ~ReplicaActive();
@@ -937,8 +921,7 @@ struct ReplicaActive : sc::state<
 struct ReplicaIdle : sc::state<
 			 ReplicaIdle,
 			 ReplicaActive,
-			 ReplicaUnreserved,
-			 sc::has_shallow_history>,
+			 ReplicaUnreserved>,
 		     NamedSimply {
   explicit ReplicaIdle(my_context ctx);
   ~ReplicaIdle() = default;
