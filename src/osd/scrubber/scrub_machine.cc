@@ -948,6 +948,13 @@ sc::result ReplicaActive::react(const ReplicaRelease& ev)
 }
 
 
+void ReplicaActive::reset_ignored(const FullReset&)
+{
+  dout(10) << "ReplicaActive::react(const FullReset&): FullReset ignored"
+	   << dendl;
+}
+
+
 // ---------------- ReplicaActive/ReplicaIdle ---------------------------
 
 ReplicaIdle::ReplicaIdle(my_context ctx)
@@ -974,13 +981,6 @@ sc::result ReplicaIdle::react(const StartReplica& ev)
   }
   post_event(ReplicaPushesUpd{});
   return transit<ReplicaActiveOp>();
-}
-
-
-void ReplicaIdle::reset_ignored(const FullReset&)
-{
-  dout(10) << "ReplicaIdle::react(const FullReset&): FullReset ignored"
-	   << dendl;
 }
 
 
@@ -1084,7 +1084,6 @@ ReplicaBuildingMap::ReplicaBuildingMap(my_context ctx)
 	   << dendl;
   post_event(SchedReplica{});
 }
-
 
 sc::result ReplicaBuildingMap::react(const SchedReplica&)
 {
