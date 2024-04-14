@@ -350,7 +350,7 @@ options:
   level: advanced
   desc: Maximum number of objects to deep-scrub in a single chunk
   fmt_desc: The maximum number of object store chunks to scrub during single operation.
-  default: 25
+  default: 20
   see_also:
   - osd_scrub_chunk_min
   with_legacy: true
@@ -361,7 +361,7 @@ options:
   fmt_desc: The minimum number of object store chunks to scrub during single operation.
     Not applicable to deep scrubs.
     Ceph blocks writes to single chunk during scrub.
-  default: 50
+  default: 10
   see_also:
   - osd_shallow_scrub_chunk_max
   - osd_scrub_chunk_min
@@ -372,7 +372,7 @@ options:
   desc: Maximum number of objects to scrub in a single chunk
   fmt_desc: The maximum number of object store chunks to scrub during single operation.
     Not applicable to deep scrubs.
-  default: 100
+  default: 50
   see_also:
   - osd_shallow_scrub_chunk_min
   - osd_scrub_chunk_max
@@ -464,7 +464,7 @@ options:
   type: int
   level: advanced
   desc: Number of keys to read from an object at a time during deep scrub
-  default: 1024
+  default: 512
   with_legacy: true
 # objects must be this old (seconds) before we update the whole-object digest on scrub
 - name: osd_deep_scrub_update_digest_min_age
@@ -518,7 +518,7 @@ options:
   desc: Stats update period (seconds) when not scrubbing
   long_desc: A PG we are a primary of, publishes its
     stats (inc. scrub/block duration) every this many seconds.
-  default: 120
+  default: 30
   with_legacy: false
 - name: osd_scrub_disable_reservation_queuing
   type: bool
