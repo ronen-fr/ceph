@@ -201,17 +201,25 @@ TEST(TestOSDScrub, scrub_time_permit) {
 
 #include "messages/MOSDRepScrubMap.h"
 
+
+
+
+
+
+
+#include "messages/MOSDRepScrubMap.h"
+
 // reef constructs
 
 struct SMRR {
   struct object {
     std::map<std::string, ceph::buffer::ptr, std::less<>> attrs;
-    uint64_t size;//{0};
+    uint64_t size;
     __u32 omap_digest;         ///< omap crc32c
     __u32 digest;              ///< data crc32c
     bool negative:1;
     bool digest_present:1;
-    bool omap_digest_present:1{false};
+    bool omap_digest_present:1;
     bool read_error:1;
     bool stat_error:1;
     bool ec_hash_mismatch:1;
@@ -263,7 +271,7 @@ struct SMRR {
   void decode(ceph::buffer::list::const_iterator& bl, int64_t pool=-1);
   void dump(ceph::Formatter *f) const;
   static void generate_test_instances(std::list<SMRR*>& o);
-  static std::list<SMRR*> generate_test_instances();
+  static std::list<SMRR*> generate_test_instances();  // RRR added
 };
 WRITE_CLASS_ENCODER(SMRR::object)
 WRITE_CLASS_ENCODER(SMRR)
@@ -394,7 +402,7 @@ void SMRR::dump(Formatter *f) const
 
 void SMRR::generate_test_instances(list<SMRR*>& o)
 {
-  //o.push_back(new SMRR);
+  o.push_back(new SMRR);
   o.push_back(new SMRR);
   o.back()->valid_through = eversion_t(1, 2);
   o.back()->incr_since = eversion_t(3, 4);
@@ -426,25 +434,9 @@ void SMRR::object::encode(ceph::buffer::list& bl) const
 {
   bool compat_read_error = read_error || ec_hash_mismatch || ec_size_mismatch;
   ENCODE_START(10, 7, bl);
-  std::cout << "\nobbjec size " << size << std::endl;
   encode(size, bl);
   encode(negative, bl);
-  //encode(attrs, bl);
-
-  // encode((__u32)0xffff, bl);
-  encode((__u32)attrs.size(), bl);
-
-  std::cout << "\nencoding attrs " << attrs.size() << std::endl;
-  if (attrs.size() > 0) {
-  for (const auto& [k,v] : attrs) {
-   std::cout << "encoding attr " << k << " with value " << v.c_str() << std::endl;
-    encode(k, bl);
-    encode(v, bl);
-  }
-  }
-
-
-
+  encode(attrs, bl);
   encode(digest, bl);
   encode(digest_present, bl);
   encode((uint32_t)0, bl);  // obsolete nlinks
@@ -468,46 +460,10 @@ void SMRR::object::decode(ceph::buffer::list::const_iterator& bl)
 {
   DECODE_START(10, bl);
   decode(size, bl);
-  std::cout << "\nobbjec size " << size << std::endl;
   bool tmp, compat_read_error = false;
   decode(tmp, bl);
   negative = tmp;
-  //decode(attrs, bl);
-
-  attrs.clear();
-  //__u32 expect_0xffff;
-  //decode(expect_0xffff, bl);
-  //ceph_assert(expect_0xffff == 0xffff);
-  __u32 attr_len;
-  decode(attr_len, bl);
-  std::cout << "decoding " << attr_len << " attrs" << std::endl;
-  for (unsigned i = 0; i < attr_len; ++i) {
-    string k;
-    decode(k, bl);
-    ceph::buffer::ptr v;
-   __u32 len;
-    decode(len, bl);
-    std::cout << "\tl " << len << std::endl;
-    if (len == (uint32_t)-1) {
-      continue;
-    }
-    bufferlist s;
-    bl.copy(len, s);
-
-    if (len > 0) {
-      if (s.get_num_buffers() == 1) {
-        attrs[k] = s.front();
-      } else {
-        attrs[k] = buffer::copy(s.c_str(), s.length());
-      }
-    }
-   //decode(v, bl);
-    //attrs[k] = v;
-  }
-
-
-
-
+  decode(attrs, bl);
   decode(digest, bl);
   decode(tmp, bl);
   digest_present = tmp;
@@ -564,7 +520,6 @@ void SMRR::object::dump(Formatter *f) const
 void SMRR::object::generate_test_instances(list<object*>& o)
 {
   o.push_back(new object);
-  o.back()->size = 1;
   o.push_back(new object);
   o.back()->negative = true;
   o.push_back(new object);
@@ -624,6 +579,454 @@ struct fmt::formatter<SMRR> {
 
   template <typename FormatContext>
   auto format(const SMRR& smap, FormatContext& ctx)
+  {
+    fmt::format_to(ctx.out(),
+		   "smap{{ valid:{} incr-since:{} #:{}",
+		   smap.valid_through,
+		   smap.incr_since,
+		   smap.objects.size());
+    if (debug_log) {
+      fmt::format_to(ctx.out(), " objects:");
+      for (const auto& [ho, so] : smap.objects) {
+	fmt::format_to(ctx.out(), "\n\th.o<{}>:<{}> ", ho, so);
+      }
+      fmt::format_to(ctx.out(), "\n");
+    }
+    return fmt::format_to(ctx.out(), "}}");
+  }
+
+  bool debug_log{false};
+};
+
+}
+
+
+
+
+
+// -----------------------------------   modified reef constructs
+
+struct SM_REEF_MODIFIED {
+  struct object {
+    std::map<std::string, ceph::buffer::ptr, std::less<>> attrs;
+    uint64_t size;//{0};
+    __u32 omap_digest;         ///< omap crc32c
+    __u32 digest;              ///< data crc32c
+    bool negative:1;
+    bool digest_present:1;
+    bool omap_digest_present:1{false};
+    bool read_error:1;
+    bool stat_error:1;
+    bool ec_hash_mismatch:1;
+    bool ec_size_mismatch:1;
+    bool large_omap_object_found:1;
+    uint64_t large_omap_object_key_count = 0;
+    uint64_t large_omap_object_value_size = 0;
+    uint64_t object_omap_bytes = 0;
+    uint64_t object_omap_keys = 0;
+
+    object() :
+      // Init invalid size so it won't match if we get a stat EIO error
+      size(-1), omap_digest(0), digest(0),
+      negative(false), digest_present(false), omap_digest_present(false),
+      read_error(false), stat_error(false), ec_hash_mismatch(false),
+      ec_size_mismatch(false), large_omap_object_found(false) {}
+
+    void encode(ceph::buffer::list& bl) const;
+    void decode(ceph::buffer::list::const_iterator& bl);
+    void dump(ceph::Formatter *f) const;
+    static void generate_test_instances(std::list<object*>& o);
+    //static std::list<object*> generate_test_instances();
+  };
+  WRITE_CLASS_ENCODER(object)
+
+  std::map<hobject_t,object> objects;
+  eversion_t valid_through;
+  eversion_t incr_since;
+  bool has_large_omap_object_errors{false};
+  bool has_omap_keys{false};
+
+  void merge_incr(const SM_REEF_MODIFIED &l);
+  void clear_from(const hobject_t& start) {
+    objects.erase(objects.lower_bound(start), objects.end());
+  }
+  void insert(const SM_REEF_MODIFIED &r) {
+    objects.insert(r.objects.begin(), r.objects.end());
+  }
+  void swap(SM_REEF_MODIFIED &r) {
+    using std::swap;
+    swap(objects, r.objects);
+    swap(valid_through, r.valid_through);
+    swap(incr_since, r.incr_since);
+    swap(has_large_omap_object_errors, r.has_large_omap_object_errors);
+    swap(has_omap_keys, r.has_omap_keys);
+  }
+
+  void encode(ceph::buffer::list& bl) const;
+  void decode(ceph::buffer::list::const_iterator& bl, int64_t pool=-1);
+  void dump(ceph::Formatter *f) const;
+  static void generate_test_instances(std::list<SM_REEF_MODIFIED*>& o);
+  static std::list<SM_REEF_MODIFIED*> generate_test_instances();
+};
+WRITE_CLASS_ENCODER(SM_REEF_MODIFIED::object)
+WRITE_CLASS_ENCODER(SM_REEF_MODIFIED)
+
+void SM_REEF_MODIFIED::merge_incr(const SM_REEF_MODIFIED &l)
+{
+  ceph_assert(valid_through == l.incr_since);
+  valid_through = l.valid_through;
+
+  for (auto p = l.objects.cbegin(); p != l.objects.cend(); ++p){
+    if (p->second.negative) {
+      auto q = objects.find(p->first);
+      if (q != objects.end()) {
+	objects.erase(q);
+      }
+    } else {
+      objects[p->first] = p->second;
+    }
+  }
+}
+
+
+#include <algorithm>
+#include <list>
+#include <map>
+#include <ostream>
+#include <sstream>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+
+#include <boost/assign/list_of.hpp>
+
+#include "include/ceph_features.h"
+#include "include/encoding.h"
+#include "include/stringify.h"
+extern "C" {
+#include "crush/hash.h"
+}
+
+#include "common/Formatter.h"
+#include "common/StackStringStream.h"
+#include "include/utime_fmt.h"
+#include "osd/OSDMap.h"
+#include "osd/osd_types.h"
+//#include "osd_types_fmt.h"
+#include "os/Transaction.h"
+
+using std::list;
+using std::make_pair;
+using std::map;
+using std::ostream;
+using std::pair;
+using std::set;
+using std::shared_ptr;
+using std::string;
+using std::unique_ptr;
+using std::vector;
+
+using ceph::bufferlist;
+using ceph::decode;
+using ceph::decode_nohead;
+using ceph::encode;
+using ceph::encode_nohead;
+using ceph::Formatter;
+using ceph::make_timespan;
+using ceph::JSONFormatter;
+
+using namespace std::literals;
+
+void SM_REEF_MODIFIED::encode(ceph::buffer::list& bl) const
+{
+  ENCODE_START(3, 2, bl);
+  encode(objects, bl);
+  encode((__u32)0, bl); // used to be attrs; now deprecated
+  ceph::buffer::list old_logbl;  // not used
+  encode(old_logbl, bl);
+  encode(valid_through, bl);
+  encode(incr_since, bl);
+  ENCODE_FINISH(bl);
+}
+
+void SM_REEF_MODIFIED::decode(ceph::buffer::list::const_iterator& bl, int64_t pool)
+{
+  DECODE_START_LEGACY_COMPAT_LEN(3, 2, 2, bl);
+  decode(objects, bl);
+  {
+    map<string,string> attrs;  // deprecated
+    decode(attrs, bl);
+  }
+  ceph::buffer::list old_logbl;   // not used
+  decode(old_logbl, bl);
+  decode(valid_through, bl);
+  decode(incr_since, bl);
+  DECODE_FINISH(bl);
+
+  // handle hobject_t upgrade
+  if (struct_v < 3) {
+    map<hobject_t, object> tmp;
+    tmp.swap(objects);
+    for (auto i = tmp.begin(); i != tmp.end(); ++i) {
+      hobject_t first(i->first);
+      if (!first.is_max() && first.pool == -1)
+	first.pool = pool;
+      objects[first] = i->second;
+    }
+  }
+}
+
+void SM_REEF_MODIFIED::dump(Formatter *f) const
+{
+  f->dump_stream("valid_through") << valid_through;
+  f->dump_stream("incremental_since") << incr_since;
+  f->open_array_section("objects");
+  for (auto p = objects.cbegin(); p != objects.cend(); ++p) {
+    f->open_object_section("object");
+    f->dump_string("name", p->first.oid.name);
+    f->dump_unsigned("hash", p->first.get_hash());
+    f->dump_string("key", p->first.get_key());
+    f->dump_int("snapid", p->first.snap);
+    p->second.dump(f);
+    f->close_section();
+  }
+  f->close_section();
+}
+
+void SM_REEF_MODIFIED::generate_test_instances(list<SM_REEF_MODIFIED*>& o)
+{
+  //o.push_back(new SM_REEF_MODIFIED);
+  o.push_back(new SM_REEF_MODIFIED);
+  o.back()->valid_through = eversion_t(1, 2);
+  o.back()->incr_since = eversion_t(3, 4);
+  list<object*> obj;
+  object::generate_test_instances(obj);
+  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] = *obj.back();
+  obj.pop_back();
+  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] = *obj.back();
+}
+
+list<SM_REEF_MODIFIED*> SM_REEF_MODIFIED::generate_test_instances()
+{
+  list<SM_REEF_MODIFIED*> o;
+  //o.push_back(new SM_REEF_MODIFIED);
+  o.push_back(new SM_REEF_MODIFIED);
+  o.back()->valid_through = eversion_t(1, 2);
+  o.back()->incr_since = eversion_t(3, 4);
+  list<object*> obj;
+  object::generate_test_instances(obj);
+  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] = *obj.back();
+  obj.pop_back();
+  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] = *obj.back();
+  return o;
+}
+
+// -- SM_REEF_MODIFIED::object --
+
+void SM_REEF_MODIFIED::object::encode(ceph::buffer::list& bl) const
+{
+  bool compat_read_error = read_error || ec_hash_mismatch || ec_size_mismatch;
+  ENCODE_START(10, 7, bl);
+  std::cout << "\nobbjec size " << size << std::endl;
+  encode(size, bl);
+  encode(negative, bl);
+  //encode(attrs, bl);
+
+  // encode((__u32)0xffff, bl);
+  encode((__u32)attrs.size(), bl);
+
+  std::cout << "\nencoding attrs " << attrs.size() << std::endl;
+  if (attrs.size() > 0) {
+  for (const auto& [k,v] : attrs) {
+   std::cout << "encoding attr " << k << " with value " << v.c_str() << std::endl;
+    encode(k, bl);
+    encode(v, bl);
+  }
+  }
+
+
+
+  encode(digest, bl);
+  encode(digest_present, bl);
+  encode((uint32_t)0, bl);  // obsolete nlinks
+  encode((uint32_t)0, bl);  // snapcolls
+  encode(omap_digest, bl);
+  encode(omap_digest_present, bl);
+  encode(compat_read_error, bl);
+  encode(stat_error, bl);
+  encode(read_error, bl);
+  encode(ec_hash_mismatch, bl);
+  encode(ec_size_mismatch, bl);
+  encode(large_omap_object_found, bl);
+  encode(large_omap_object_key_count, bl);
+  encode(large_omap_object_value_size, bl);
+  encode(object_omap_bytes, bl);
+  encode(object_omap_keys, bl);
+  ENCODE_FINISH(bl);
+}
+
+void SM_REEF_MODIFIED::object::decode(ceph::buffer::list::const_iterator& bl)
+{
+  DECODE_START(10, bl);
+  decode(size, bl);
+  std::cout << "\nobbjec size " << size << std::endl;
+  bool tmp, compat_read_error = false;
+  decode(tmp, bl);
+  negative = tmp;
+  //decode(attrs, bl);
+
+  attrs.clear();
+  //__u32 expect_0xffff;
+  //decode(expect_0xffff, bl);
+  //ceph_assert(expect_0xffff == 0xffff);
+  __u32 attr_len;
+  decode(attr_len, bl);
+  std::cout << "decoding " << attr_len << " attrs" << std::endl;
+  for (unsigned i = 0; i < attr_len; ++i) {
+    string k;
+    decode(k, bl);
+    ceph::buffer::ptr v;
+   __u32 len;
+    decode(len, bl);
+    std::cout << "\tl " << len << std::endl;
+//     if (len == (uint32_t)-1) {
+//       continue;
+//     }
+    bufferlist s;
+    bl.copy(len, s);
+
+    if (len > 0) {
+      if (s.get_num_buffers() == 1) {
+        attrs[k] = s.front();
+      } else {
+        attrs[k] = buffer::copy(s.c_str(), s.length());
+      }
+    }
+   //decode(v, bl);
+    //attrs[k] = v;
+  }
+
+
+
+
+  decode(digest, bl);
+  decode(tmp, bl);
+  digest_present = tmp;
+  {
+    uint32_t nlinks;
+    decode(nlinks, bl);
+    set<snapid_t> snapcolls;
+    decode(snapcolls, bl);
+  }
+  decode(omap_digest, bl);
+  decode(tmp, bl);
+  omap_digest_present = tmp;
+  decode(compat_read_error, bl);
+  decode(tmp, bl);
+  stat_error = tmp;
+  if (struct_v >= 8) {
+    decode(tmp, bl);
+    read_error = tmp;
+    decode(tmp, bl);
+    ec_hash_mismatch = tmp;
+    decode(tmp, bl);
+    ec_size_mismatch = tmp;
+  }
+  // If older encoder found a read_error, set read_error
+  if (compat_read_error && !read_error && !ec_hash_mismatch && !ec_size_mismatch)
+    read_error = true;
+  if (struct_v >= 9) {
+    decode(tmp, bl);
+    large_omap_object_found = tmp;
+    decode(large_omap_object_key_count, bl);
+    decode(large_omap_object_value_size, bl);
+  }
+  if (struct_v >= 10) {
+    decode(object_omap_bytes, bl);
+    decode(object_omap_keys, bl);
+  }
+  DECODE_FINISH(bl);
+}
+
+void SM_REEF_MODIFIED::object::dump(Formatter *f) const
+{
+  f->dump_int("size", size);
+  f->dump_int("negative", negative);
+  f->open_array_section("attrs");
+  for (auto p = attrs.cbegin(); p != attrs.cend(); ++p) {
+    f->open_object_section("attr");
+    f->dump_string("name", p->first);
+    f->dump_int("length", p->second.length());
+    f->close_section();
+  }
+  f->close_section();
+}
+
+void SM_REEF_MODIFIED::object::generate_test_instances(list<object*>& o)
+{
+  o.push_back(new object);
+  o.back()->size = 1;
+  o.push_back(new object);
+  o.back()->negative = true;
+  o.push_back(new object);
+  o.back()->size = 123;
+  o.back()->attrs["foo"] = ceph::buffer::copy("foo", 3);
+  o.back()->attrs["bar"] = ceph::buffer::copy("barval", 6);
+}
+
+namespace fmt {
+template <>
+struct formatter<SM_REEF_MODIFIED::object> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  ///\todo: consider passing the 'D" flag to control snapset dump
+  template <typename FormatContext>
+  auto format(const SM_REEF_MODIFIED::object& so, FormatContext& ctx)
+  {
+    fmt::format_to(ctx.out(),
+		   "so{{ sz:{} dd:{} od:{} ",
+		   so.size,
+		   so.digest,
+		   so.digest_present);
+
+    // note the special handling of (1) OI_ATTR and (2) non-printables
+    for (auto [k, v] : so.attrs) {
+      std::string bkstr{v.raw_c_str(), v.raw_length()};
+      if (k == std::string{OI_ATTR}) {
+	/// \todo consider parsing the OI args here. Maybe add a specific format
+	/// specifier
+	fmt::format_to(ctx.out(), "{{{}:<<OI_ATTR>>({})}} ", k, bkstr.length());
+      } else if (k == std::string{SS_ATTR}) {
+	bufferlist bl;
+	bl.push_back(v);
+	SnapSet sns{bl};
+	fmt::format_to(ctx.out(), "{{{}:{:D}}} ", k, sns);
+      } else {
+	fmt::format_to(ctx.out(), "{{{}:{}({})}} ", k, bkstr, bkstr.length());
+      }
+    }
+
+    return fmt::format_to(ctx.out(), "}}");
+  }
+};
+
+template <>
+struct fmt::formatter<SM_REEF_MODIFIED> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    auto it = ctx.begin();
+    if (it != ctx.end() && *it == 'D') {
+      debug_log = true;	 // list the objects
+      ++it;
+    }
+    return it;
+  }
+
+  template <typename FormatContext>
+  auto format(const SM_REEF_MODIFIED& smap, FormatContext& ctx)
   {
     fmt::format_to(ctx.out(),
 		   "smap{{ valid:{} incr-since:{} #:{}",
@@ -990,15 +1393,15 @@ struct formatter<SMQD> {
 
 TEST(TestOSDScrub, attr_encoding) {
 //MOSDRepScrubMap reg_msg;
-  auto reefs = SMRR::generate_test_instances();
+  auto reefs = SM_REEF_MODIFIED::generate_test_instances();
   for (const auto& reef : reefs) {
-    std::cout << fmt::format("SMRR: {:D}\n", *reef);
+    std::cout << fmt::format("SM_REEF_MODIFIED: {:D}\n", *reef);
     ceph::buffer::list bl;
     encode(*reef, bl);
     bl.hexdump(std::cout);
-    std::cout << "bl: SMRR version" << bl << std::endl;
+    std::cout << "bl: SM_REEF_MODIFIED version" << bl << std::endl;
     ceph::buffer::list::const_iterator p = bl.cbegin();
-    SMRR reef2;
+    SM_REEF_MODIFIED reef2;
     decode(reef2, p);
     std::cout << fmt::format("SMRR2: {:D}\n", reef2);
     //std::cout << "reef2: " << reef2 << std::endl;
@@ -1018,23 +1421,50 @@ TEST(TestOSDScrub, r_to_r) {
     SMRR reef2;
     decode(reef2, bl);
     std::cout << fmt::format("SMRR2: {:D}\n", reef2);
-    //std::cout << "reef2: " << reef2 << std::endl;
-    //ASSERT_EQ(reef, reef2);
   }
 }
 
-TEST(TestOSDScrub, r_to_rs) {
-//MOSDRepScrubMap reg_msg;
-  auto reefs = SMRR::generate_test_instances();
-  reefs.pop_front();
-  //const auto& r = reefs.front();
+TEST(TestOSDScrub, mod_r_to_mod_r) {
+  auto reefs = SM_REEF_MODIFIED::generate_test_instances();
   for (const auto& reef : reefs) {
-    std::cout << fmt::format("SMRR: {:D}\n", *reef);
+    std::cout << fmt::format("-------  mod_r_to_mod_r\t\tSMRR: {:D}\n", *reef);
+    ceph::buffer::list bl;
+    encode(*reef, bl);
+    bl.hexdump(std::cout);
+    std::cout << "bl: SM_REEF_MODIFIED version" << bl << std::endl;
+    SM_REEF_MODIFIED reef2;
+    decode(reef2, bl);
+    std::cout << fmt::format("SMRR2 mod-reef: {:D}\n", reef2);
+  }
+}
+
+TEST(TestOSDScrub, r_to_mod_r) {
+  auto reefs = SMRR::generate_test_instances();
+  for (const auto& reef : reefs) {
+    std::cout << fmt::format("-------  r_to_mod_r\t\torig: {:D}\n", *reef);
     ceph::buffer::list bl;
     encode(*reef, bl);
     bl.hexdump(std::cout);
     std::cout << "bl: SMRR version" << bl << std::endl;
-    SMRR reef2;
+    SM_REEF_MODIFIED reef2;
+    decode(reef2, bl);
+    std::cout << fmt::format("SMRR2 mod-reef: {:D}\n", reef2);
+  }
+}
+
+#if 0
+TEST(TestOSDScrub, r_to_rs) {
+//MOSDRepScrubMap reg_msg;
+  auto reefs = SM_REEF_MODIFIED::generate_test_instances();
+  reefs.pop_front();
+  //const auto& r = reefs.front();
+  for (const auto& reef : reefs) {
+    std::cout << fmt::format("SM_REEF_MODIFIED: {:D}\n", *reef);
+    ceph::buffer::list bl;
+    encode(*reef, bl);
+    bl.hexdump(std::cout);
+    std::cout << "bl: SM_REEF_MODIFIED version" << bl << std::endl;
+    SM_REEF_MODIFIED reef2;
     //decode(reef2, bl);
     std::cout << fmt::format("SMRR2: {:D}\n", reef2);
     //std::cout << "reef2: " << reef2 << std::endl;
@@ -1045,9 +1475,9 @@ TEST(TestOSDScrub, r_to_rs) {
 
 TEST(TestOSDScrub, smap_r_to_s) {
 //MOSDRepScrubMap reg_msg;
-  auto reefs = SMRR::generate_test_instances();
+  auto reefs = SM_REEF_MODIFIED::generate_test_instances();
   for (const auto& reef : reefs) {
-    std::cout << fmt::format("SMRR: {:D}\n", *reef);
+    std::cout << fmt::format("SM_REEF_MODIFIED: {:D}\n", *reef);
     ceph::buffer::list bl;
     encode(*reef, bl);
     std::cout << "bl: " << bl << std::endl;
@@ -1090,7 +1520,7 @@ TEST(TestOSDScrub, s_to_r) {
     std::cout << "----------------------- bl: " << bl << std::endl;
     bl.hexdump(std::cout);
     ceph::buffer::list::const_iterator p = bl.cbegin();
-    SMRR reef2;
+    SM_REEF_MODIFIED reef2;
     decode(reef2, p);
     std::cout << fmt::format("SMRR2: {:D}\n", reef2);
 
@@ -1119,13 +1549,15 @@ TEST(TestOSDScrub, q_to_r) {
     std::cout << "bl: " << bl << std::endl;
     bl.hexdump(std::cout);
     ceph::buffer::list::const_iterator p = bl.cbegin();
-    SMRR reef2;
+    SM_REEF_MODIFIED reef2;
     decode(reef2, p);
     std::cout << fmt::format("SMRR2: {:D}\n", reef2);
     //std::cout << "reef2: " << reef2 << std::endl;
     //ASSERT_EQ(reef, reef2);
   }
 }
+
+#endif
 
 // Local Variables:
 // compile-command: "cd ../.. ; make unittest_osdscrub ; ./unittest_osdscrub --log-to-stderr=true  --debug-osd=20 # --gtest_filter=*.* "
