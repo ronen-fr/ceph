@@ -206,7 +206,7 @@ TEST(TestOSDScrub, scrub_time_permit) {
 struct SMRR {
   struct object {
     std::map<std::string, ceph::buffer::ptr, std::less<>> attrs;
-    uint64_t size{0};
+    uint64_t size;//{0};
     __u32 omap_digest;         ///< omap crc32c
     __u32 digest;              ///< data crc32c
     bool negative:1;
@@ -488,6 +488,9 @@ void SMRR::object::decode(ceph::buffer::list::const_iterator& bl)
    __u32 len;
     decode(len, bl);
     std::cout << "\tl " << len << std::endl;
+    if (len == (uint32_t)-1) {
+      continue;
+    }
     bufferlist s;
     bl.copy(len, s);
 
