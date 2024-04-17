@@ -206,12 +206,12 @@ TEST(TestOSDScrub, scrub_time_permit) {
 struct SMRR {
   struct object {
     std::map<std::string, ceph::buffer::ptr, std::less<>> attrs;
-    uint64_t size;
+    uint64_t size{0};
     __u32 omap_digest;         ///< omap crc32c
     __u32 digest;              ///< data crc32c
     bool negative:1;
     bool digest_present:1;
-    bool omap_digest_present:1;
+    bool omap_digest_present:1{false};
     bool read_error:1;
     bool stat_error:1;
     bool ec_hash_mismatch:1;
@@ -394,7 +394,7 @@ void SMRR::dump(Formatter *f) const
 
 void SMRR::generate_test_instances(list<SMRR*>& o)
 {
-  o.push_back(new SMRR);
+  //o.push_back(new SMRR);
   o.push_back(new SMRR);
   o.back()->valid_through = eversion_t(1, 2);
   o.back()->incr_since = eversion_t(3, 4);
@@ -426,9 +426,25 @@ void SMRR::object::encode(ceph::buffer::list& bl) const
 {
   bool compat_read_error = read_error || ec_hash_mismatch || ec_size_mismatch;
   ENCODE_START(10, 7, bl);
+  std::cout << "\nobbjec size " << size << std::endl;
   encode(size, bl);
   encode(negative, bl);
-  encode(attrs, bl);
+  //encode(attrs, bl);
+
+  // encode((__u32)0xffff, bl);
+  encode((__u32)attrs.size(), bl);
+
+  std::cout << "\nencoding attrs " << attrs.size() << std::endl;
+  if (attrs.size() > 0) {
+  for (const auto& [k,v] : attrs) {
+   std::cout << "encoding attr " << k << " with value " << v.c_str() << std::endl;
+    encode(k, bl);
+    encode(v, bl);
+  }
+  }
+
+
+
   encode(digest, bl);
   encode(digest_present, bl);
   encode((uint32_t)0, bl);  // obsolete nlinks
@@ -452,10 +468,43 @@ void SMRR::object::decode(ceph::buffer::list::const_iterator& bl)
 {
   DECODE_START(10, bl);
   decode(size, bl);
+  std::cout << "\nobbjec size " << size << std::endl;
   bool tmp, compat_read_error = false;
   decode(tmp, bl);
   negative = tmp;
-  decode(attrs, bl);
+  //decode(attrs, bl);
+
+  attrs.clear();
+  //__u32 expect_0xffff;
+  //decode(expect_0xffff, bl);
+  //ceph_assert(expect_0xffff == 0xffff);
+  __u32 attr_len;
+  decode(attr_len, bl);
+  std::cout << "decoding " << attr_len << " attrs" << std::endl;
+  for (unsigned i = 0; i < attr_len; ++i) {
+    string k;
+    decode(k, bl);
+    ceph::buffer::ptr v;
+   __u32 len;
+    decode(len, bl);
+    std::cout << "\tl " << len << std::endl;
+    bufferlist s;
+    bl.copy(len, s);
+
+    if (len > 0) {
+      if (s.get_num_buffers() == 1) {
+        attrs[k] = s.front();
+      } else {
+        attrs[k] = buffer::copy(s.c_str(), s.length());
+      }
+    }
+   //decode(v, bl);
+    //attrs[k] = v;
+  }
+
+
+
+
   decode(digest, bl);
   decode(tmp, bl);
   digest_present = tmp;
@@ -512,6 +561,7 @@ void SMRR::object::dump(Formatter *f) const
 void SMRR::object::generate_test_instances(list<object*>& o)
 {
   o.push_back(new object);
+  o.back()->size = 1;
   o.push_back(new object);
   o.back()->negative = true;
   o.push_back(new object);
@@ -597,7 +647,7 @@ struct fmt::formatter<SMRR> {
 struct SMQD {
   struct object {
     std::map<std::string, ceph::buffer::list, std::less<>> attrs;
-    uint64_t size;
+    uint64_t size{0};
     __u32 omap_digest;         ///< omap crc32c
     __u32 digest;              ///< data crc32c
     bool negative:1;
@@ -733,7 +783,7 @@ void SMQD::dump(Formatter *f) const
 
 void SMQD::generate_test_instances(list<SMQD*>& o)
 {
-  o.push_back(new SMQD);
+  //o.push_back(new SMQD);
   o.push_back(new SMQD);
   o.back()->valid_through = eversion_t(1, 2);
   o.back()->incr_since = eversion_t(3, 4);
@@ -752,6 +802,15 @@ void SMQD::object::encode(ceph::buffer::list& bl) const
   ENCODE_START(10, 7, bl);
   encode(size, bl);
   encode(negative, bl);
+
+  // fix?
+//   std::map<std::string, ceph::buffer::ptr, std::less<>> l_attrs;
+//   for (auto& [k, v] : attrs) {
+//     ceph::buffer::ptr x{v.raw_c_str(), v.raw_length()};
+//     l_attrs[k] = x;
+//     //l_attrs[k] = v.to_bufferptr();
+//   }
+
   encode(attrs, bl);
   encode(digest, bl);
   encode(digest_present, bl);
@@ -836,6 +895,7 @@ void SMQD::object::dump(Formatter *f) const
 void SMQD::object::generate_test_instances(list<object*>& o)
 {
   o.push_back(new object);
+  o.back()->size = 1;
   o.push_back(new object);
   o.back()->negative = true;
   o.push_back(new object);
@@ -932,15 +992,53 @@ TEST(TestOSDScrub, attr_encoding) {
     std::cout << fmt::format("SMRR: {:D}\n", *reef);
     ceph::buffer::list bl;
     encode(*reef, bl);
-    std::cout << "bl: " << bl << std::endl;
+    bl.hexdump(std::cout);
+    std::cout << "bl: SMRR version" << bl << std::endl;
     ceph::buffer::list::const_iterator p = bl.cbegin();
     SMRR reef2;
     decode(reef2, p);
-    std::cout << fmt::format("SMRR2: {:D}\n", *reef);
+    std::cout << fmt::format("SMRR2: {:D}\n", reef2);
     //std::cout << "reef2: " << reef2 << std::endl;
     //ASSERT_EQ(reef, reef2);
   }
 }
+
+TEST(TestOSDScrub, r_to_r) {
+//MOSDRepScrubMap reg_msg;
+  auto reefs = SMRR::generate_test_instances();
+  for (const auto& reef : reefs) {
+    std::cout << fmt::format("-------  r_to_r\t\tSMRR: {:D}\n", *reef);
+    ceph::buffer::list bl;
+    encode(*reef, bl);
+    bl.hexdump(std::cout);
+    std::cout << "bl: SMRR version" << bl << std::endl;
+    SMRR reef2;
+    decode(reef2, bl);
+    std::cout << fmt::format("SMRR2: {:D}\n", reef2);
+    //std::cout << "reef2: " << reef2 << std::endl;
+    //ASSERT_EQ(reef, reef2);
+  }
+}
+
+TEST(TestOSDScrub, r_to_rs) {
+//MOSDRepScrubMap reg_msg;
+  auto reefs = SMRR::generate_test_instances();
+  reefs.pop_front();
+  //const auto& r = reefs.front();
+  for (const auto& reef : reefs) {
+    std::cout << fmt::format("SMRR: {:D}\n", *reef);
+    ceph::buffer::list bl;
+    encode(*reef, bl);
+    bl.hexdump(std::cout);
+    std::cout << "bl: SMRR version" << bl << std::endl;
+    SMRR reef2;
+    //decode(reef2, bl);
+    std::cout << fmt::format("SMRR2: {:D}\n", reef2);
+    //std::cout << "reef2: " << reef2 << std::endl;
+    //ASSERT_EQ(reef, reef2);
+  }
+}
+
 
 TEST(TestOSDScrub, smap_r_to_s) {
 //MOSDRepScrubMap reg_msg;
@@ -964,7 +1062,7 @@ TEST(TestOSDScrub, s_to_s) {
   std::list<ScrubMap*> sqds;
   ScrubMap::generate_test_instances(sqds);
   for (const auto& sq : sqds) {
-    std::cout << fmt::format("ScrubMap: {:D}\n", *sq);
+    std::cout << fmt::format("--------- s_to_s\t\tScrubMap: {:D}\n", *sq);
     ceph::buffer::list bl;
     encode(*sq, bl);
     std::cout << "bl: " << bl << std::endl;
@@ -983,14 +1081,26 @@ TEST(TestOSDScrub, s_to_r) {
   std::list<ScrubMap*> sqds;
   ScrubMap::generate_test_instances(sqds);
   for (const auto& sq : sqds) {
-    std::cout << fmt::format("ScrubMap: {:D}\n", *sq);
+    std::cout << fmt::format("------- s_to_r\t\tScrubMap: {:D}\n", *sq);
     ceph::buffer::list bl;
     encode(*sq, bl);
-    std::cout << "bl: " << bl << std::endl;
+    std::cout << "----------------------- bl: " << bl << std::endl;
+    bl.hexdump(std::cout);
     ceph::buffer::list::const_iterator p = bl.cbegin();
     SMRR reef2;
     decode(reef2, p);
     std::cout << fmt::format("SMRR2: {:D}\n", reef2);
+
+    {
+        ceph::buffer::list bl2;
+        encode(reef2, bl2);
+        std::cout << "bl2: " << bl2 << std::endl;
+        bl2.hexdump(std::cout);
+        ceph::buffer::list::const_iterator p2 = bl2.cbegin();
+        ScrubMap squid3;
+        decode(squid3, p2);
+        std::cout << fmt::format("back squid3: {:D}\n", squid3);
+            }
     //std::cout << "reef2: " << reef2 << std::endl;
     //ASSERT_EQ(reef, reef2);
   }
@@ -1004,6 +1114,7 @@ TEST(TestOSDScrub, q_to_r) {
     ceph::buffer::list bl;
     encode(*sq, bl);
     std::cout << "bl: " << bl << std::endl;
+    bl.hexdump(std::cout);
     ceph::buffer::list::const_iterator p = bl.cbegin();
     SMRR reef2;
     decode(reef2, p);
