@@ -19,59 +19,77 @@
  *
  */
 
-#include <stdio.h>
-#include <signal.h>
 #include <gtest/gtest.h>
+#include <signal.h>
+#include <stdio.h>
+
 #include "common/async/context_pool.h"
-#include "osd/OSD.h"
-#include "os/ObjectStore.h"
-#include "mon/MonClient.h"
 #include "common/ceph_argparse.h"
+#include "mon/MonClient.h"
 #include "msg/Messenger.h"
+#include "os/ObjectStore.h"
+#include "osd/OSD.h"
 
-class TestOSDScrub: public OSD {
+class TestOSDScrub : public OSD {
 
-public:
-  TestOSDScrub(CephContext *cct_,
+ public:
+  TestOSDScrub(
+      CephContext* cct_,
       std::unique_ptr<ObjectStore> store_,
       int id,
-      Messenger *internal,
-      Messenger *external,
-      Messenger *hb_front_client,
-      Messenger *hb_back_client,
-      Messenger *hb_front_server,
-      Messenger *hb_back_server,
-      Messenger *osdc_messenger,
-      MonClient *mc, const std::string &dev, const std::string &jdev,
-      ceph::async::io_context_pool& ictx) :
-      OSD(cct_, std::move(store_), id, internal, external,
-	  hb_front_client, hb_back_client,
-	  hb_front_server, hb_back_server,
-	  osdc_messenger, mc, dev, jdev, ictx)
-  {
-  }
+      Messenger* internal,
+      Messenger* external,
+      Messenger* hb_front_client,
+      Messenger* hb_back_client,
+      Messenger* hb_front_server,
+      Messenger* hb_back_server,
+      Messenger* osdc_messenger,
+      MonClient* mc,
+      const std::string& dev,
+      const std::string& jdev,
+      ceph::async::io_context_pool& ictx)
+      : OSD(cct_,
+	    std::move(store_),
+	    id,
+	    internal,
+	    external,
+	    hb_front_client,
+	    hb_back_client,
+	    hb_front_server,
+	    hb_back_server,
+	    osdc_messenger,
+	    mc,
+	    dev,
+	    jdev,
+	    ictx)
+  {}
 
-  bool scrub_time_permit(utime_t now) {
+  bool scrub_time_permit(utime_t now)
+  {
     return service.get_scrub_services().scrub_time_permit(now);
   }
 };
 
-TEST(TestOSDScrub, scrub_time_permit) {
+TEST(TestOSDScrub, scrub_time_permit)
+{
   ceph::async::io_context_pool icp(1);
-  std::unique_ptr<ObjectStore> store = ObjectStore::create(g_ceph_context,
-             g_conf()->osd_objectstore,
-             g_conf()->osd_data,
-             g_conf()->osd_journal);
-  std::string cluster_msgr_type = g_conf()->ms_cluster_type.empty() ? g_conf().get_val<std::string>("ms_type") : g_conf()->ms_cluster_type;
-  Messenger *ms = Messenger::create(g_ceph_context, cluster_msgr_type,
-				    entity_name_t::OSD(0), "make_checker",
-				    getpid());
+  std::unique_ptr<ObjectStore> store = ObjectStore::create(
+      g_ceph_context, g_conf()->osd_objectstore, g_conf()->osd_data,
+      g_conf()->osd_journal);
+  std::string cluster_msgr_type = g_conf()->ms_cluster_type.empty()
+				      ? g_conf().get_val<std::string>("ms_type")
+				      : g_conf()->ms_cluster_type;
+  Messenger* ms = Messenger::create(
+      g_ceph_context, cluster_msgr_type, entity_name_t::OSD(0), "make_checker",
+      getpid());
   ms->set_cluster_protocol(CEPH_OSD_PROTOCOL);
   ms->set_default_policy(Messenger::Policy::stateless_server(0));
   ms->bind(g_conf()->public_addr);
   MonClient mc(g_ceph_context, icp);
   mc.build_initial_monmap();
-  TestOSDScrub* osd = new TestOSDScrub(g_ceph_context, std::move(store), 0, ms, ms, ms, ms, ms, ms, ms, &mc, "", "", icp);
+  TestOSDScrub* osd = new TestOSDScrub(
+      g_ceph_context, std::move(store), 0, ms, ms, ms, ms, ms, ms, ms, &mc, "",
+      "", icp);
 
   // These are now invalid
   int err = g_ceph_context->_conf.set_val("osd_scrub_begin_hour", "24");
@@ -152,8 +170,9 @@ TEST(TestOSDScrub, scrub_time_permit) {
   // Sun = 0, Mon = 1, Tue = 2, Wed = 3, Thu = 4m, Fri = 5, Sat = 6
   // Jan 16, 2015 is a Friday (5)
   // every day
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "0"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "0"); // not inclusive
+  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "0");  // inclusive
+  g_ceph_context->_conf.set_val(
+      "osd_scrub_end_week_day", "0");  // not inclusive
   g_ceph_context->_conf.apply_changes(nullptr);
   strptime("2015-01-16 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
   now = utime_t(mktime(&tm), 0);
@@ -161,8 +180,9 @@ TEST(TestOSDScrub, scrub_time_permit) {
   ASSERT_TRUE(ret);
 
   // test Sun - Thu
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "0"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "5"); // not inclusive
+  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "0");  // inclusive
+  g_ceph_context->_conf.set_val(
+      "osd_scrub_end_week_day", "5");  // not inclusive
   g_ceph_context->_conf.apply_changes(nullptr);
   strptime("2015-01-16 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
   now = utime_t(mktime(&tm), 0);
@@ -170,8 +190,9 @@ TEST(TestOSDScrub, scrub_time_permit) {
   ASSERT_FALSE(ret);
 
   // test Fri - Sat
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "5"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "0"); // not inclusive
+  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "5");  // inclusive
+  g_ceph_context->_conf.set_val(
+      "osd_scrub_end_week_day", "0");  // not inclusive
   g_ceph_context->_conf.apply_changes(nullptr);
   strptime("2015-01-16 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
   now = utime_t(mktime(&tm), 0);
@@ -180,8 +201,9 @@ TEST(TestOSDScrub, scrub_time_permit) {
 
   // Jan 14, 2015 is a Wednesday (3)
   // test Tue - Fri
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "2"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "6"); // not inclusive
+  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "2");  // inclusive
+  g_ceph_context->_conf.set_val(
+      "osd_scrub_end_week_day", "6");  // not inclusive
   g_ceph_context->_conf.apply_changes(nullptr);
   strptime("2015-01-14 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
   now = utime_t(mktime(&tm), 0);
@@ -189,8 +211,9 @@ TEST(TestOSDScrub, scrub_time_permit) {
   ASSERT_TRUE(ret);
 
   // Test Sat - Sun
-  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "6"); // inclusive
-  g_ceph_context->_conf.set_val("osd_scrub_end_week_day", "1"); // not inclusive
+  g_ceph_context->_conf.set_val("osd_scrub_begin_week day", "6");  // inclusive
+  g_ceph_context->_conf.set_val(
+      "osd_scrub_end_week_day", "1");  // not inclusive
   g_ceph_context->_conf.apply_changes(nullptr);
   strptime("2015-01-14 04:05:13", "%Y-%m-%d %H:%M:%S", &tm);
   now = utime_t(mktime(&tm), 0);
@@ -202,63 +225,67 @@ TEST(TestOSDScrub, scrub_time_permit) {
 #include "messages/MOSDRepScrubMap.h"
 
 
-
-
-
-
-
-#include "messages/MOSDRepScrubMap.h"
-
 // reef constructs
 
 struct SMRR {
   struct object {
     std::map<std::string, ceph::buffer::ptr, std::less<>> attrs;
     uint64_t size;
-    __u32 omap_digest;         ///< omap crc32c
-    __u32 digest;              ///< data crc32c
-    bool negative:1;
-    bool digest_present:1;
-    bool omap_digest_present:1;
-    bool read_error:1;
-    bool stat_error:1;
-    bool ec_hash_mismatch:1;
-    bool ec_size_mismatch:1;
-    bool large_omap_object_found:1;
+    __u32 omap_digest;	///< omap crc32c
+    __u32 digest;	///< data crc32c
+    bool negative : 1;
+    bool digest_present : 1;
+    bool omap_digest_present : 1;
+    bool read_error : 1;
+    bool stat_error : 1;
+    bool ec_hash_mismatch : 1;
+    bool ec_size_mismatch : 1;
+    bool large_omap_object_found : 1;
     uint64_t large_omap_object_key_count = 0;
     uint64_t large_omap_object_value_size = 0;
     uint64_t object_omap_bytes = 0;
     uint64_t object_omap_keys = 0;
 
-    object() :
-      // Init invalid size so it won't match if we get a stat EIO error
-      size(-1), omap_digest(0), digest(0),
-      negative(false), digest_present(false), omap_digest_present(false),
-      read_error(false), stat_error(false), ec_hash_mismatch(false),
-      ec_size_mismatch(false), large_omap_object_found(false) {}
+    object()
+	:  // Init invalid size so it won't match if we get a stat EIO error
+	size(-1)
+	, omap_digest(0)
+	, digest(0)
+	, negative(false)
+	, digest_present(false)
+	, omap_digest_present(false)
+	, read_error(false)
+	, stat_error(false)
+	, ec_hash_mismatch(false)
+	, ec_size_mismatch(false)
+	, large_omap_object_found(false)
+    {}
 
     void encode(ceph::buffer::list& bl) const;
     void decode(ceph::buffer::list::const_iterator& bl);
-    void dump(ceph::Formatter *f) const;
+    void dump(ceph::Formatter* f) const;
     static void generate_test_instances(std::list<object*>& o);
     //static std::list<object*> generate_test_instances();
   };
   WRITE_CLASS_ENCODER(object)
 
-  std::map<hobject_t,object> objects;
+  std::map<hobject_t, object> objects;
   eversion_t valid_through;
   eversion_t incr_since;
   bool has_large_omap_object_errors{false};
   bool has_omap_keys{false};
 
-  void merge_incr(const SMRR &l);
-  void clear_from(const hobject_t& start) {
+  void merge_incr(const SMRR& l);
+  void clear_from(const hobject_t& start)
+  {
     objects.erase(objects.lower_bound(start), objects.end());
   }
-  void insert(const SMRR &r) {
+  void insert(const SMRR& r)
+  {
     objects.insert(r.objects.begin(), r.objects.end());
   }
-  void swap(SMRR &r) {
+  void swap(SMRR& r)
+  {
     using std::swap;
     swap(objects, r.objects);
     swap(valid_through, r.valid_through);
@@ -268,20 +295,20 @@ struct SMRR {
   }
 
   void encode(ceph::buffer::list& bl) const;
-  void decode(ceph::buffer::list::const_iterator& bl, int64_t pool=-1);
-  void dump(ceph::Formatter *f) const;
+  void decode(ceph::buffer::list::const_iterator& bl, int64_t pool = -1);
+  void dump(ceph::Formatter* f) const;
   static void generate_test_instances(std::list<SMRR*>& o);
   static std::list<SMRR*> generate_test_instances();  // RRR added
 };
 WRITE_CLASS_ENCODER(SMRR::object)
 WRITE_CLASS_ENCODER(SMRR)
 
-void SMRR::merge_incr(const SMRR &l)
+void SMRR::merge_incr(const SMRR& l)
 {
   ceph_assert(valid_through == l.incr_since);
   valid_through = l.valid_through;
 
-  for (auto p = l.objects.cbegin(); p != l.objects.cend(); ++p){
+  for (auto p = l.objects.cbegin(); p != l.objects.cend(); ++p) {
     if (p->second.negative) {
       auto q = objects.find(p->first);
       if (q != objects.end()) {
@@ -298,12 +325,11 @@ void SMRR::merge_incr(const SMRR &l)
 #include <list>
 #include <map>
 #include <ostream>
-#include <sstream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
-
 
 #include <boost/assign/list_of.hpp>
 
@@ -339,17 +365,48 @@ using ceph::decode_nohead;
 using ceph::encode;
 using ceph::encode_nohead;
 using ceph::Formatter;
-using ceph::make_timespan;
 using ceph::JSONFormatter;
+using ceph::make_timespan;
 
 using namespace std::literals;
+
+
+bool validate_rr_v(const std::string& k, const ceph::buffer::ptr& bp, size_t len)
+{
+  if (k == "bar") {
+    return true;
+  }
+
+  // quick & dirty...
+  auto bp_as_str = std::string_view(bp.c_str(), bp.length());
+
+
+  if (k.starts_with("foo")) {
+    std::cout << fmt::format("\t\tvalidate_rr_v: k:{} v:{} len:{}\n", k, bp_as_str, len);
+    return true;
+  }
+
+  if (k == "_") {
+    return bp_as_str == "1234567890";
+  }
+
+  auto notd = bp_as_str.find_first_not_of("d");
+  if (notd != std::string::npos) {
+    return false;
+  }
+  if (bp.length() != len) {
+    return false;
+  }
+  return true;
+}
+
 
 void SMRR::encode(ceph::buffer::list& bl) const
 {
   ENCODE_START(3, 2, bl);
   encode(objects, bl);
-  encode((__u32)0, bl); // used to be attrs; now deprecated
-  ceph::buffer::list old_logbl;  // not used
+  encode((__u32)0, bl);		 // used to be attrs; now deprecated
+  ceph::buffer::list old_logbl;	 // not used
   encode(old_logbl, bl);
   encode(valid_through, bl);
   encode(incr_since, bl);
@@ -361,10 +418,10 @@ void SMRR::decode(ceph::buffer::list::const_iterator& bl, int64_t pool)
   DECODE_START_LEGACY_COMPAT_LEN(3, 2, 2, bl);
   decode(objects, bl);
   {
-    map<string,string> attrs;  // deprecated
+    map<string, string> attrs;	// deprecated
     decode(attrs, bl);
   }
-  ceph::buffer::list old_logbl;   // not used
+  ceph::buffer::list old_logbl;	 // not used
   decode(old_logbl, bl);
   decode(valid_through, bl);
   decode(incr_since, bl);
@@ -383,7 +440,7 @@ void SMRR::decode(ceph::buffer::list::const_iterator& bl, int64_t pool)
   }
 }
 
-void SMRR::dump(Formatter *f) const
+void SMRR::dump(Formatter* f) const
 {
   f->dump_stream("valid_through") << valid_through;
   f->dump_stream("incremental_since") << incr_since;
@@ -408,9 +465,11 @@ void SMRR::generate_test_instances(list<SMRR*>& o)
   o.back()->incr_since = eversion_t(3, 4);
   list<object*> obj;
   object::generate_test_instances(obj);
-  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] =
+      *obj.back();
   obj.pop_back();
-  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] =
+      *obj.back();
 }
 
 list<SMRR*> SMRR::generate_test_instances()
@@ -422,9 +481,11 @@ list<SMRR*> SMRR::generate_test_instances()
   o.back()->incr_since = eversion_t(3, 4);
   list<object*> obj;
   object::generate_test_instances(obj);
-  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] =
+      *obj.back();
   obj.pop_back();
-  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] =
+      *obj.back();
   return o;
 }
 
@@ -488,7 +549,8 @@ void SMRR::object::decode(ceph::buffer::list::const_iterator& bl)
     ec_size_mismatch = tmp;
   }
   // If older encoder found a read_error, set read_error
-  if (compat_read_error && !read_error && !ec_hash_mismatch && !ec_size_mismatch)
+  if (compat_read_error && !read_error && !ec_hash_mismatch &&
+      !ec_size_mismatch)
     read_error = true;
   if (struct_v >= 9) {
     decode(tmp, bl);
@@ -503,7 +565,7 @@ void SMRR::object::decode(ceph::buffer::list::const_iterator& bl)
   DECODE_FINISH(bl);
 }
 
-void SMRR::object::dump(Formatter *f) const
+void SMRR::object::dump(Formatter* f) const
 {
   f->dump_int("size", size);
   f->dump_int("negative", negative);
@@ -526,6 +588,12 @@ void SMRR::object::generate_test_instances(list<object*>& o)
   o.back()->size = 123;
   o.back()->attrs["foo"] = ceph::buffer::copy("foo", 3);
   o.back()->attrs["bar"] = ceph::buffer::copy("barval", 6);
+  o.back()->attrs["_"] = ceph::buffer::copy("1234567890", 10);
+  std::string dm(1000, 'd');
+  for (int i = 0; i < 10; ++i) {
+    o.back()->attrs[fmt::format("attr__{:03d}", i)] =
+	ceph::buffer::copy(dm.c_str(), 1000);
+  }
 }
 
 namespace fmt {
@@ -537,11 +605,9 @@ struct formatter<SMRR::object> {
   template <typename FormatContext>
   auto format(const SMRR::object& so, FormatContext& ctx)
   {
-    fmt::format_to(ctx.out(),
-		   "so{{ sz:{} dd:{} od:{} ",
-		   so.size,
-		   so.digest,
-		   so.digest_present);
+    fmt::format_to(
+	ctx.out(), "so{{ sz:{} dd:{} od:{} ", so.size, so.digest,
+	so.digest_present);
 
     // note the special handling of (1) OI_ATTR and (2) non-printables
     for (auto [k, v] : so.attrs) {
@@ -580,11 +646,9 @@ struct fmt::formatter<SMRR> {
   template <typename FormatContext>
   auto format(const SMRR& smap, FormatContext& ctx)
   {
-    fmt::format_to(ctx.out(),
-		   "smap{{ valid:{} incr-since:{} #:{}",
-		   smap.valid_through,
-		   smap.incr_since,
-		   smap.objects.size());
+    fmt::format_to(
+	ctx.out(), "smap{{ valid:{} incr-since:{} #:{}", smap.valid_through,
+	smap.incr_since, smap.objects.size());
     if (debug_log) {
       fmt::format_to(ctx.out(), " objects:");
       for (const auto& [ho, so] : smap.objects) {
@@ -598,10 +662,7 @@ struct fmt::formatter<SMRR> {
   bool debug_log{false};
 };
 
-}
-
-
-
+}  // namespace fmt
 
 
 // -----------------------------------   modified reef constructs
@@ -609,51 +670,62 @@ struct fmt::formatter<SMRR> {
 struct SM_REEF_MODIFIED {
   struct object {
     std::map<std::string, ceph::buffer::ptr, std::less<>> attrs;
-    uint64_t size;//{0};
-    __u32 omap_digest;         ///< omap crc32c
-    __u32 digest;              ///< data crc32c
-    bool negative:1;
-    bool digest_present:1;
-    bool omap_digest_present:1{false};
-    bool read_error:1;
-    bool stat_error:1;
-    bool ec_hash_mismatch:1;
-    bool ec_size_mismatch:1;
-    bool large_omap_object_found:1;
+    uint64_t size;	//{0};
+    __u32 omap_digest;	///< omap crc32c
+    __u32 digest;	///< data crc32c
+    bool negative : 1;
+    bool digest_present : 1;
+    bool omap_digest_present : 1 {false};
+    bool read_error : 1;
+    bool stat_error : 1;
+    bool ec_hash_mismatch : 1;
+    bool ec_size_mismatch : 1;
+    bool large_omap_object_found : 1;
     uint64_t large_omap_object_key_count = 0;
     uint64_t large_omap_object_value_size = 0;
     uint64_t object_omap_bytes = 0;
     uint64_t object_omap_keys = 0;
 
-    object() :
-      // Init invalid size so it won't match if we get a stat EIO error
-      size(-1), omap_digest(0), digest(0),
-      negative(false), digest_present(false), omap_digest_present(false),
-      read_error(false), stat_error(false), ec_hash_mismatch(false),
-      ec_size_mismatch(false), large_omap_object_found(false) {}
+    object()
+	:  // Init invalid size so it won't match if we get a stat EIO error
+	size(-1)
+	, omap_digest(0)
+	, digest(0)
+	, negative(false)
+	, digest_present(false)
+	, omap_digest_present(false)
+	, read_error(false)
+	, stat_error(false)
+	, ec_hash_mismatch(false)
+	, ec_size_mismatch(false)
+	, large_omap_object_found(false)
+    {}
 
     void encode(ceph::buffer::list& bl) const;
     void decode(ceph::buffer::list::const_iterator& bl);
-    void dump(ceph::Formatter *f) const;
+    void dump(ceph::Formatter* f) const;
     static void generate_test_instances(std::list<object*>& o);
     //static std::list<object*> generate_test_instances();
   };
   WRITE_CLASS_ENCODER(object)
 
-  std::map<hobject_t,object> objects;
+  std::map<hobject_t, object> objects;
   eversion_t valid_through;
   eversion_t incr_since;
   bool has_large_omap_object_errors{false};
   bool has_omap_keys{false};
 
-  void merge_incr(const SM_REEF_MODIFIED &l);
-  void clear_from(const hobject_t& start) {
+  void merge_incr(const SM_REEF_MODIFIED& l);
+  void clear_from(const hobject_t& start)
+  {
     objects.erase(objects.lower_bound(start), objects.end());
   }
-  void insert(const SM_REEF_MODIFIED &r) {
+  void insert(const SM_REEF_MODIFIED& r)
+  {
     objects.insert(r.objects.begin(), r.objects.end());
   }
-  void swap(SM_REEF_MODIFIED &r) {
+  void swap(SM_REEF_MODIFIED& r)
+  {
     using std::swap;
     swap(objects, r.objects);
     swap(valid_through, r.valid_through);
@@ -663,20 +735,20 @@ struct SM_REEF_MODIFIED {
   }
 
   void encode(ceph::buffer::list& bl) const;
-  void decode(ceph::buffer::list::const_iterator& bl, int64_t pool=-1);
-  void dump(ceph::Formatter *f) const;
+  void decode(ceph::buffer::list::const_iterator& bl, int64_t pool = -1);
+  void dump(ceph::Formatter* f) const;
   static void generate_test_instances(std::list<SM_REEF_MODIFIED*>& o);
   static std::list<SM_REEF_MODIFIED*> generate_test_instances();
 };
 WRITE_CLASS_ENCODER(SM_REEF_MODIFIED::object)
 WRITE_CLASS_ENCODER(SM_REEF_MODIFIED)
 
-void SM_REEF_MODIFIED::merge_incr(const SM_REEF_MODIFIED &l)
+void SM_REEF_MODIFIED::merge_incr(const SM_REEF_MODIFIED& l)
 {
   ceph_assert(valid_through == l.incr_since);
   valid_through = l.valid_through;
 
-  for (auto p = l.objects.cbegin(); p != l.objects.cend(); ++p){
+  for (auto p = l.objects.cbegin(); p != l.objects.cend(); ++p) {
     if (p->second.negative) {
       auto q = objects.find(p->first);
       if (q != objects.end()) {
@@ -693,12 +765,11 @@ void SM_REEF_MODIFIED::merge_incr(const SM_REEF_MODIFIED &l)
 #include <list>
 #include <map>
 #include <ostream>
-#include <sstream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
-
 
 #include <boost/assign/list_of.hpp>
 
@@ -734,8 +805,8 @@ using ceph::decode_nohead;
 using ceph::encode;
 using ceph::encode_nohead;
 using ceph::Formatter;
-using ceph::make_timespan;
 using ceph::JSONFormatter;
+using ceph::make_timespan;
 
 using namespace std::literals;
 
@@ -743,23 +814,25 @@ void SM_REEF_MODIFIED::encode(ceph::buffer::list& bl) const
 {
   ENCODE_START(3, 2, bl);
   encode(objects, bl);
-  encode((__u32)0, bl); // used to be attrs; now deprecated
-  ceph::buffer::list old_logbl;  // not used
+  encode((__u32)0, bl);		 // used to be attrs; now deprecated
+  ceph::buffer::list old_logbl;	 // not used
   encode(old_logbl, bl);
   encode(valid_through, bl);
   encode(incr_since, bl);
   ENCODE_FINISH(bl);
 }
 
-void SM_REEF_MODIFIED::decode(ceph::buffer::list::const_iterator& bl, int64_t pool)
+void SM_REEF_MODIFIED::decode(
+    ceph::buffer::list::const_iterator& bl,
+    int64_t pool)
 {
   DECODE_START_LEGACY_COMPAT_LEN(3, 2, 2, bl);
   decode(objects, bl);
   {
-    map<string,string> attrs;  // deprecated
+    map<string, string> attrs;	// deprecated
     decode(attrs, bl);
   }
-  ceph::buffer::list old_logbl;   // not used
+  ceph::buffer::list old_logbl;	 // not used
   decode(old_logbl, bl);
   decode(valid_through, bl);
   decode(incr_since, bl);
@@ -778,7 +851,7 @@ void SM_REEF_MODIFIED::decode(ceph::buffer::list::const_iterator& bl, int64_t po
   }
 }
 
-void SM_REEF_MODIFIED::dump(Formatter *f) const
+void SM_REEF_MODIFIED::dump(Formatter* f) const
 {
   f->dump_stream("valid_through") << valid_through;
   f->dump_stream("incremental_since") << incr_since;
@@ -803,9 +876,11 @@ void SM_REEF_MODIFIED::generate_test_instances(list<SM_REEF_MODIFIED*>& o)
   o.back()->incr_since = eversion_t(3, 4);
   list<object*> obj;
   object::generate_test_instances(obj);
-  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] =
+      *obj.back();
   obj.pop_back();
-  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] =
+      *obj.back();
 }
 
 list<SM_REEF_MODIFIED*> SM_REEF_MODIFIED::generate_test_instances()
@@ -817,9 +892,11 @@ list<SM_REEF_MODIFIED*> SM_REEF_MODIFIED::generate_test_instances()
   o.back()->incr_since = eversion_t(3, 4);
   list<object*> obj;
   object::generate_test_instances(obj);
-  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] =
+      *obj.back();
   obj.pop_back();
-  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] =
+      *obj.back();
   return o;
 }
 
@@ -839,13 +916,13 @@ void SM_REEF_MODIFIED::object::encode(ceph::buffer::list& bl) const
 
   std::cout << "\nencoding attrs " << attrs.size() << std::endl;
   if (attrs.size() > 0) {
-  for (const auto& [k,v] : attrs) {
-   std::cout << "encoding attr " << k << " with value " << v.c_str() << std::endl;
-    encode(k, bl);
-    encode(v, bl);
+    for (const auto& [k, v] : attrs) {
+      std::cout << "encoding attr " << k << " with value " << v.c_str()
+		<< std::endl;
+      encode(k, bl);
+      encode(v, bl);
+    }
   }
-  }
-
 
 
   encode(digest, bl);
@@ -888,27 +965,25 @@ void SM_REEF_MODIFIED::object::decode(ceph::buffer::list::const_iterator& bl)
     string k;
     decode(k, bl);
     ceph::buffer::ptr v;
-   __u32 len;
+    __u32 len;
     decode(len, bl);
     std::cout << "\tl " << len << std::endl;
-//     if (len == (uint32_t)-1) {
-//       continue;
-//     }
+    //     if (len == (uint32_t)-1) {
+    //       continue;
+    //     }
     bufferlist s;
     bl.copy(len, s);
 
     if (len > 0) {
       if (s.get_num_buffers() == 1) {
-        attrs[k] = s.front();
+	attrs[k] = s.front();
       } else {
-        attrs[k] = buffer::copy(s.c_str(), s.length());
+	attrs[k] = buffer::copy(s.c_str(), s.length());
       }
     }
-   //decode(v, bl);
+    //decode(v, bl);
     //attrs[k] = v;
   }
-
-
 
 
   decode(digest, bl);
@@ -935,7 +1010,8 @@ void SM_REEF_MODIFIED::object::decode(ceph::buffer::list::const_iterator& bl)
     ec_size_mismatch = tmp;
   }
   // If older encoder found a read_error, set read_error
-  if (compat_read_error && !read_error && !ec_hash_mismatch && !ec_size_mismatch)
+  if (compat_read_error && !read_error && !ec_hash_mismatch &&
+      !ec_size_mismatch)
     read_error = true;
   if (struct_v >= 9) {
     decode(tmp, bl);
@@ -950,7 +1026,7 @@ void SM_REEF_MODIFIED::object::decode(ceph::buffer::list::const_iterator& bl)
   DECODE_FINISH(bl);
 }
 
-void SM_REEF_MODIFIED::object::dump(Formatter *f) const
+void SM_REEF_MODIFIED::object::dump(Formatter* f) const
 {
   f->dump_int("size", size);
   f->dump_int("negative", negative);
@@ -985,11 +1061,9 @@ struct formatter<SM_REEF_MODIFIED::object> {
   template <typename FormatContext>
   auto format(const SM_REEF_MODIFIED::object& so, FormatContext& ctx)
   {
-    fmt::format_to(ctx.out(),
-		   "so{{ sz:{} dd:{} od:{} ",
-		   so.size,
-		   so.digest,
-		   so.digest_present);
+    fmt::format_to(
+	ctx.out(), "so{{ sz:{} dd:{} od:{} ", so.size, so.digest,
+	so.digest_present);
 
     // note the special handling of (1) OI_ATTR and (2) non-printables
     for (auto [k, v] : so.attrs) {
@@ -1028,11 +1102,9 @@ struct fmt::formatter<SM_REEF_MODIFIED> {
   template <typename FormatContext>
   auto format(const SM_REEF_MODIFIED& smap, FormatContext& ctx)
   {
-    fmt::format_to(ctx.out(),
-		   "smap{{ valid:{} incr-since:{} #:{}",
-		   smap.valid_through,
-		   smap.incr_since,
-		   smap.objects.size());
+    fmt::format_to(
+	ctx.out(), "smap{{ valid:{} incr-since:{} #:{}", smap.valid_through,
+	smap.incr_since, smap.objects.size());
     if (debug_log) {
       fmt::format_to(ctx.out(), " objects:");
       for (const auto& [ho, so] : smap.objects) {
@@ -1046,7 +1118,7 @@ struct fmt::formatter<SM_REEF_MODIFIED> {
   bool debug_log{false};
 };
 
-}
+}  // namespace fmt
 
 // ////////////////////////////////// the Squid version
 
@@ -1054,49 +1126,60 @@ struct SMQD {
   struct object {
     std::map<std::string, ceph::buffer::list, std::less<>> attrs;
     uint64_t size{0};
-    __u32 omap_digest;         ///< omap crc32c
-    __u32 digest;              ///< data crc32c
-    bool negative:1;
-    bool digest_present:1;
-    bool omap_digest_present:1;
-    bool read_error:1;
-    bool stat_error:1;
-    bool ec_hash_mismatch:1;
-    bool ec_size_mismatch:1;
-    bool large_omap_object_found:1;
+    __u32 omap_digest;	///< omap crc32c
+    __u32 digest;	///< data crc32c
+    bool negative : 1;
+    bool digest_present : 1;
+    bool omap_digest_present : 1;
+    bool read_error : 1;
+    bool stat_error : 1;
+    bool ec_hash_mismatch : 1;
+    bool ec_size_mismatch : 1;
+    bool large_omap_object_found : 1;
     uint64_t large_omap_object_key_count = 0;
     uint64_t large_omap_object_value_size = 0;
     uint64_t object_omap_bytes = 0;
     uint64_t object_omap_keys = 0;
 
-    object() :
-      // Init invalid size so it won't match if we get a stat EIO error
-      size(-1), omap_digest(0), digest(0),
-      negative(false), digest_present(false), omap_digest_present(false),
-      read_error(false), stat_error(false), ec_hash_mismatch(false),
-      ec_size_mismatch(false), large_omap_object_found(false) {}
+    object()
+	:  // Init invalid size so it won't match if we get a stat EIO error
+	size(-1)
+	, omap_digest(0)
+	, digest(0)
+	, negative(false)
+	, digest_present(false)
+	, omap_digest_present(false)
+	, read_error(false)
+	, stat_error(false)
+	, ec_hash_mismatch(false)
+	, ec_size_mismatch(false)
+	, large_omap_object_found(false)
+    {}
 
     void encode(ceph::buffer::list& bl) const;
     void decode(ceph::buffer::list::const_iterator& bl);
-    void dump(ceph::Formatter *f) const;
+    void dump(ceph::Formatter* f) const;
     static void generate_test_instances(std::list<object*>& o);
   };
   WRITE_CLASS_ENCODER(object)
 
-  std::map<hobject_t,object> objects;
+  std::map<hobject_t, object> objects;
   eversion_t valid_through;
   eversion_t incr_since;
   bool has_large_omap_object_errors{false};
   bool has_omap_keys{false};
 
-  void merge_incr(const SMQD &l);
-  void clear_from(const hobject_t& start) {
+  void merge_incr(const SMQD& l);
+  void clear_from(const hobject_t& start)
+  {
     objects.erase(objects.lower_bound(start), objects.end());
   }
-  void insert(const SMQD &r) {
+  void insert(const SMQD& r)
+  {
     objects.insert(r.objects.begin(), r.objects.end());
   }
-  void swap(SMQD &r) {
+  void swap(SMQD& r)
+  {
     using std::swap;
     swap(objects, r.objects);
     swap(valid_through, r.valid_through);
@@ -1106,20 +1189,20 @@ struct SMQD {
   }
 
   void encode(ceph::buffer::list& bl) const;
-  void decode(ceph::buffer::list::const_iterator& bl, int64_t pool=-1);
-  void dump(ceph::Formatter *f) const;
+  void decode(ceph::buffer::list::const_iterator& bl, int64_t pool = -1);
+  void dump(ceph::Formatter* f) const;
   static void generate_test_instances(std::list<SMQD*>& o);
 };
 WRITE_CLASS_ENCODER(SMQD::object)
 WRITE_CLASS_ENCODER(SMQD)
 
 
-void SMQD::merge_incr(const SMQD &l)
+void SMQD::merge_incr(const SMQD& l)
 {
   ceph_assert(valid_through == l.incr_since);
   valid_through = l.valid_through;
 
-  for (auto p = l.objects.cbegin(); p != l.objects.cend(); ++p){
+  for (auto p = l.objects.cbegin(); p != l.objects.cend(); ++p) {
     if (p->second.negative) {
       auto q = objects.find(p->first);
       if (q != objects.end()) {
@@ -1129,14 +1212,14 @@ void SMQD::merge_incr(const SMQD &l)
       objects[p->first] = p->second;
     }
   }
-}          
+}
 
 void SMQD::encode(ceph::buffer::list& bl) const
 {
   ENCODE_START(3, 2, bl);
   encode(objects, bl);
-  encode((__u32)0, bl); // used to be attrs; now deprecated
-  ceph::buffer::list old_logbl;  // not used
+  encode((__u32)0, bl);		 // used to be attrs; now deprecated
+  ceph::buffer::list old_logbl;	 // not used
   encode(old_logbl, bl);
   encode(valid_through, bl);
   encode(incr_since, bl);
@@ -1148,10 +1231,10 @@ void SMQD::decode(ceph::buffer::list::const_iterator& bl, int64_t pool)
   DECODE_START_LEGACY_COMPAT_LEN(3, 2, 2, bl);
   decode(objects, bl);
   {
-    map<string,string> attrs;  // deprecated
+    map<string, string> attrs;	// deprecated
     decode(attrs, bl);
   }
-  ceph::buffer::list old_logbl;   // not used
+  ceph::buffer::list old_logbl;	 // not used
   decode(old_logbl, bl);
   decode(valid_through, bl);
   decode(incr_since, bl);
@@ -1170,7 +1253,7 @@ void SMQD::decode(ceph::buffer::list::const_iterator& bl, int64_t pool)
   }
 }
 
-void SMQD::dump(Formatter *f) const
+void SMQD::dump(Formatter* f) const
 {
   f->dump_stream("valid_through") << valid_through;
   f->dump_stream("incremental_since") << incr_since;
@@ -1195,9 +1278,11 @@ void SMQD::generate_test_instances(list<SMQD*>& o)
   o.back()->incr_since = eversion_t(3, 4);
   list<object*> obj;
   object::generate_test_instances(obj);
-  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("foo"), "fookey", 123, 456, 0, "")] =
+      *obj.back();
   obj.pop_back();
-  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] = *obj.back();
+  o.back()->objects[hobject_t(object_t("bar"), string(), 123, 456, 0, "")] =
+      *obj.back();
 }
 
 // -- SMQD::object --
@@ -1210,12 +1295,12 @@ void SMQD::object::encode(ceph::buffer::list& bl) const
   encode(negative, bl);
 
   // fix?
-//   std::map<std::string, ceph::buffer::ptr, std::less<>> l_attrs;
-//   for (auto& [k, v] : attrs) {
-//     ceph::buffer::ptr x{v.raw_c_str(), v.raw_length()};
-//     l_attrs[k] = x;
-//     //l_attrs[k] = v.to_bufferptr();
-//   }
+  //   std::map<std::string, ceph::buffer::ptr, std::less<>> l_attrs;
+  //   for (auto& [k, v] : attrs) {
+  //     ceph::buffer::ptr x{v.raw_c_str(), v.raw_length()};
+  //     l_attrs[k] = x;
+  //     //l_attrs[k] = v.to_bufferptr();
+  //   }
 
   encode(attrs, bl);
   encode(digest, bl);
@@ -1269,7 +1354,8 @@ void SMQD::object::decode(ceph::buffer::list::const_iterator& bl)
     ec_size_mismatch = tmp;
   }
   // If older encoder found a read_error, set read_error
-  if (compat_read_error && !read_error && !ec_hash_mismatch && !ec_size_mismatch)
+  if (compat_read_error && !read_error && !ec_hash_mismatch &&
+      !ec_size_mismatch)
     read_error = true;
   if (struct_v >= 9) {
     decode(tmp, bl);
@@ -1284,7 +1370,7 @@ void SMQD::object::decode(ceph::buffer::list::const_iterator& bl)
   DECODE_FINISH(bl);
 }
 
-void SMQD::object::dump(Formatter *f) const
+void SMQD::object::dump(Formatter* f) const
 {
   f->dump_int("size", size);
   f->dump_int("negative", negative);
@@ -1327,11 +1413,9 @@ struct formatter<SMQD::object> {
   template <typename FormatContext>
   auto format(const SMQD::object& so, FormatContext& ctx) const
   {
-    fmt::format_to(ctx.out(),
-		   "so{{ sz:{} dd:{} od:{} ",
-		   so.size,
-		   so.digest,
-		   so.digest_present);
+    fmt::format_to(
+	ctx.out(), "so{{ sz:{} dd:{} od:{} ", so.size, so.digest,
+	so.digest_present);
 
     // note the special handling of (1) OI_ATTR and (2) non-printables
     for (auto [k, v] : so.attrs) {
@@ -1368,11 +1452,9 @@ struct formatter<SMQD> {
   template <typename FormatContext>
   auto format(const SMQD& smap, FormatContext& ctx) const
   {
-    fmt::format_to(ctx.out(),
-		   "smap{{ valid:{} incr-since:{} #:{}",
-		   smap.valid_through,
-		   smap.incr_since,
-		   smap.objects.size());
+    fmt::format_to(
+	ctx.out(), "smap{{ valid:{} incr-since:{} #:{}", smap.valid_through,
+	smap.incr_since, smap.objects.size());
     if (debug_log) {
       fmt::format_to(ctx.out(), " objects:");
       for (const auto& [ho, so] : smap.objects) {
@@ -1386,13 +1468,14 @@ struct formatter<SMQD> {
   bool debug_log{false};
 };
 
-}
+}  // namespace fmt
 
 
 // /////////////////////////////////////////////////////////// TESTS
 
-TEST(TestOSDScrub, attr_encoding) {
-//MOSDRepScrubMap reg_msg;
+TEST(TestOSDScrub, attr_encoding)
+{
+  //MOSDRepScrubMap reg_msg;
   auto reefs = SM_REEF_MODIFIED::generate_test_instances();
   for (const auto& reef : reefs) {
     std::cout << fmt::format("SM_REEF_MODIFIED: {:D}\n", *reef);
@@ -1409,22 +1492,46 @@ TEST(TestOSDScrub, attr_encoding) {
   }
 }
 
-TEST(TestOSDScrub, r_to_r) {
-//MOSDRepScrubMap reg_msg;
+TEST(TestOSDScrub, r_to_r)
+{
   auto reefs = SMRR::generate_test_instances();
   for (const auto& reef : reefs) {
-    std::cout << fmt::format("-------  r_to_r\t\tSMRR: {:D}\n", *reef);
+    std::cout << fmt::format("\n-------  r_to_r\t\tSMRR: {}\n", *reef);
+    // the specific smap has its objects:
+    for (const auto& [ho, so] : reef->objects) {
+      std::cout << fmt::format(
+	  "\t{} -> #{} attributes:\n", ho, so.attrs.size());
+      for (const auto& [k, v] : so.attrs) {
+	if (!validate_rr_v(k, v, v.length())) {
+	  std::cout << fmt::format(
+	      "\t\t% object:{} failed attr:{}: {}({}) %{}({})%\n", ho, k,
+	      v.c_str(), v.length(), v.raw_c_str(), v.raw_length());
+	  break;
+	}
+      }
+    }
     ceph::buffer::list bl;
     encode(*reef, bl);
     bl.hexdump(std::cout);
     std::cout << "bl: SMRR version" << bl << std::endl;
     SMRR reef2;
     decode(reef2, bl);
-    std::cout << fmt::format("SMRR2: {:D}\n", reef2);
+    for (const auto& [ho, so] : reef2.objects) {
+      std::cout << fmt::format("\t{} -> #{}\n", ho, so.attrs.size());
+      for (const auto& [k, v] : so.attrs) {
+	if (!validate_rr_v(k, v, v.length())) {
+	  std::cout << fmt::format(
+	      "\t\t% object:{} failed attr:{}: {}({}) %{}({})%\n", ho, k,
+	      v.c_str(), v.length(), v.raw_c_str(), v.raw_length());
+	  break;
+	}
+      }
+    }
   }
 }
 
-TEST(TestOSDScrub, mod_r_to_mod_r) {
+TEST(TestOSDScrub, mod_r_to_mod_r)
+{
   auto reefs = SM_REEF_MODIFIED::generate_test_instances();
   for (const auto& reef : reefs) {
     std::cout << fmt::format("-------  mod_r_to_mod_r\t\tSMRR: {:D}\n", *reef);
@@ -1438,7 +1545,8 @@ TEST(TestOSDScrub, mod_r_to_mod_r) {
   }
 }
 
-TEST(TestOSDScrub, r_to_mod_r) {
+TEST(TestOSDScrub, r_to_mod_r)
+{
   auto reefs = SMRR::generate_test_instances();
   for (const auto& reef : reefs) {
     std::cout << fmt::format("-------  r_to_mod_r\t\torig: {:D}\n", *reef);
