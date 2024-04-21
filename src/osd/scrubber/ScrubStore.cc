@@ -221,12 +221,66 @@ Store::get_object_errors(int64_t pool,
   return get_errors(begin, end, max_return);
 }
 
+using MT = tl::expected<std::pair<std::string, bufferlist>, std::string>;
+inline void decode(librados::inconsistent_obj_t& obj,
+		   ceph::buffer::list::const_iterator& bp) {
+  reinterpret_cast<inconsistent_obj_wrapper&>(obj).decode(bp);
+}
+
 std::vector<bufferlist>
-Store::get_errors(const string& begin,
-		  const string& end,
+Store::get_errors(const string& from_key,
+		  const string& end_key,
 		  uint64_t max_return) const
 {
   vector<bufferlist> errors;
+
+  // until enough errors are collected, merge the input from the
+  // two sorted DBs
+
+  //auto latest_sh = std::make_pair(begin, bufferlist{});
+  //auto latest_dp = std::make_pair(begin, bufferlist{});
+
+  using MT = tl::expected<std::pair<std::string, bufferlist>, std::string>;
+
+  MT latest_sh = shallow_backend.get_next_r(from_key);
+  MT latest_dp = shallow_backend.get_next_r(from_key);
+
+  while (max_return) {
+    if (!latest_sh && !latest_dp) {
+      break;
+    }
+    if (latest_sh == latest_dp) {
+      // if !has_value(), the '==' is never true
+
+      // combine the errors
+      librados::inconsistent_obj_t sh{latest_sh->first};
+      decode(sh, latest_sh->second.cbegin());
+
+
+      errors.push_back(latest_sh->second);
+      latest_sh = shallow_backend.get_next_r(latest_sh->first);
+      latest_dp = shallow_backend.get_next_r(latest_dp->first);
+      max_return--;
+    } else
+    if (latest_sh < latest_dp) {
+      if (latest_sh) {
+        errors.push_back(latest_dp.second);
+        latest_sh = shallow_backend.get_next_r(latest_sh);
+        max_return--;
+      } else {
+        errors.push_back(latest_sh.second);
+        latest_sh = shallow_backend.get_next_r(latest_sh);
+        max_return--;
+
+
+
+ if (latest_dp.first == 
+
+
+      if (latest_sh.first >= end)
+
+  }
+
   auto next = std::make_pair(begin, bufferlist{});
   while (max_return && !shallow_backend.get_next(next.first, &next)) {
     if (next.first >= end)
