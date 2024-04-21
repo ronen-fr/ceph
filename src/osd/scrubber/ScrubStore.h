@@ -16,6 +16,28 @@ struct inconsistent_snapset_wrapper;
 
 namespace Scrub {
 
+/**
+ * Storing errors detected during scrubbing.
+ *
+ * From both functional and internal perspectives, the store is a pair of key-value
+ * databases: one maps objects to shallow errors detected during their scrubbing,
+ * and other stores deep errors.
+ * Note that the first store is updated in both shallow and in deep scrubs. The
+ * second - only while deep scrubbing.
+ *
+ * The DBs can be consulted by the operator, when trying to list 'errors known
+ * at this point in time'. Whenever a scrub starts - the relevant entries in the
+ * DBs are removed. Specifically - the shallow errors DB is recreated each scrub,
+ * while the deep errors DB is recreated only when a deep scrub starts.
+ *
+ * When queried - the data from both DBs is merged for each named object, and
+ * returned to the operator.
+ *
+ * Implementation:
+ * Each of the two DBs is implemented as OMAP entries of a single, uniquely named,
+ * object. Both DBs are cached using the general KV Cache mechanism.
+ */
+
 class Store {
  public:
   ~Store();
@@ -49,18 +71,21 @@ class Store {
 					     const std::string& end,
 					     uint64_t max_return) const;
  private:
-  const coll_t coll;
-  const ghobject_t hoid;
-  const ghobject_t deep_hoid;
-  // a temp object holding mappings from seq-id to inconsistencies found in
-  // scrubbing
-  OSDriver driver;
-  OSDriver deep_driver;
-  mutable MapCacher::MapCacher<std::string, ceph::buffer::list> backend;
-  mutable MapCacher::MapCacher<std::string, ceph::buffer::list> deep_backend;
-  std::map<std::string, ceph::buffer::list> results;
-  std::map<std::string, ceph::buffer::list> deep_results;
+  const coll_t coll; //< the collection (i.e. - the PG store) in which the errors are stored
 
+  // the machinery for storing the shallow errors: a fake object in the PG store,
+  // caching mechanism, and the actual backend
+  const ghobject_t shallow_hoid;
+  OSDriver shallow_driver; //< a temp object mapping seq-id to inconsistencies
+  mutable MapCacher::MapCacher<std::string, ceph::buffer::list> shallow_backend;
+
+  // same for all deep errors
+  const ghobject_t deep_hoid;
+  OSDriver deep_driver;
+  mutable MapCacher::MapCacher<std::string, ceph::buffer::list> deep_backend;
+
+  std::map<std::string, ceph::buffer::list> shallow_results;
+  std::map<std::string, ceph::buffer::list> deep_results;
 };
 }  // namespace Scrub
 

@@ -13,49 +13,55 @@ using std::vector;
 using ceph::bufferlist;
 
 namespace {
-ghobject_t make_scrub_object(const spg_t& pgid, scrub_level_t level)
+/**
+ * create two special temp objects in the PG. Those are used to
+ * hold the last/ongoing scrub errors detected. The errors are
+ * coded as OMAP entries attached to the objects.
+ * One of the objects stores detected shallow errors, and the other -
+ * deep errors.
+ */
+auto make_scrub_objects(const spg_t& pgid)
 {
-// Creates a scrub object name based on the PG id and scrub level.
-  ostringstream ss;
-  ss << ((level==scrub_level_t::deep) ? "deep_scrub_" : "scrub_") << pgid;
-  return pgid.make_temp_ghobject(ss.str());
+  return std::pair{
+     pgid.make_temp_ghobject(fmt::format("scrub_{}", pgid)),
+     pgid.make_temp_ghobject(fmt::format("deep_scrub_{}", pgid))};
 }
 
 string first_object_key(int64_t pool)
 {
-  auto hoid = hobject_t(object_t(),
+  auto shallow_hoid = hobject_t(object_t(),
 			"",
 			0,
 			0x00000000,
 			pool,
 			"");
-  hoid.build_hash_cache();
-  return "SCRUB_OBJ_" + hoid.to_str();
+  shallow_hoid.build_hash_cache();
+  return "SCRUB_OBJ_" + shallow_hoid.to_str();
 }
 
 // the object_key should be unique across pools
 string to_object_key(int64_t pool, const librados::object_id_t& oid)
 {
-  auto hoid = hobject_t(object_t(oid.name),
+  auto shallow_hoid = hobject_t(object_t(oid.name),
 			oid.locator, // key
 			oid.snap,
 			0,		// hash
 			pool,
 			oid.nspace);
-  hoid.build_hash_cache();
-  return "SCRUB_OBJ_" + hoid.to_str();
+  shallow_hoid.build_hash_cache();
+  return "SCRUB_OBJ_" + shallow_hoid.to_str();
 }
 
 string last_object_key(int64_t pool)
 {
-  auto hoid = hobject_t(object_t(),
+  auto shallow_hoid = hobject_t(object_t(),
 			"",
 			0,
 			0xffffffff,
 			pool,
 			"");
-  hoid.build_hash_cache();
-  return "SCRUB_OBJ_" + hoid.to_str();
+  shallow_hoid.build_hash_cache();
+  return "SCRUB_OBJ_" + shallow_hoid.to_str();
 }
 
 string first_snap_key(int64_t pool)
@@ -63,38 +69,38 @@ string first_snap_key(int64_t pool)
   // scrub object is per spg_t object, so we can misuse the hash (pg.seed) for
   // the representing the minimal and maximum keys. and this relies on how
   // hobject_t::to_str() works: hex(pool).hex(revhash).
-  auto hoid = hobject_t(object_t(),
+  auto shallow_hoid = hobject_t(object_t(),
 			"",
 			0,
 			0x00000000,
 			pool,
 			"");
-  hoid.build_hash_cache();
-  return "SCRUB_SS_" + hoid.to_str();
+  shallow_hoid.build_hash_cache();
+  return "SCRUB_SS_" + shallow_hoid.to_str();
 }
 
 string to_snap_key(int64_t pool, const librados::object_id_t& oid)
 {
-  auto hoid = hobject_t(object_t(oid.name),
+  auto shallow_hoid = hobject_t(object_t(oid.name),
 			oid.locator, // key
 			oid.snap,
 			0x77777777, // hash
 			pool,
 			oid.nspace);
-  hoid.build_hash_cache();
-  return "SCRUB_SS_" + hoid.to_str();
+  shallow_hoid.build_hash_cache();
+  return "SCRUB_SS_" + shallow_hoid.to_str();
 }
 
 string last_snap_key(int64_t pool)
 {
-  auto hoid = hobject_t(object_t(),
+  auto shallow_hoid = hobject_t(object_t(),
 			"",
 			0,
 			0xffffffff,
 			pool,
 			"");
-  hoid.build_hash_cache();
-  return "SCRUB_SS_" + hoid.to_str();
+  shallow_hoid.build_hash_cache();
+  return "SCRUB_SS_" + shallow_hoid.to_str();
 }
 }
 
@@ -108,27 +114,31 @@ Store::create(ObjectStore* store,
 {
   ceph_assert(store);
   ceph_assert(t);
-  ghobject_t oid = make_scrub_object(pgid, scrub_level_t::shallow);
-  ghobject_t deep_oid = make_scrub_object(pgid, scrub_level_t::deep);
-  t->touch(coll, oid);
+  auto [shallow_oid, deep_oid] = make_scrub_objects(pgid);
+  t->touch(coll, shallow_oid);
   t->touch(coll, deep_oid);
 
-  return new Store{coll, oid, deep_oid, store};
+  return new Store{coll, shallow_oid, deep_oid, store};
 }
 
-Store::Store(const coll_t& coll, const ghobject_t& oid, const ghobject_t& deep_oid, ObjectStore* store)
-  : coll(coll),
-    hoid(oid),
-    deep_hoid(deep_oid),
-    driver(store, coll, hoid),
-    deep_driver(store, coll, deep_oid),
-    backend(&driver),
-    deep_backend(&deep_driver)
+Store::Store(
+    const coll_t& coll,
+    const ghobject_t& sh_oid,
+    const ghobject_t& dp_oid,
+    ObjectStore* store)
+    : coll(coll)
+    , shallow_hoid(sh_oid)
+    , shallow_driver(store, coll, sh_oid)
+    , shallow_backend(&shallow_driver)
+    , deep_hoid(dp_oid)
+    , deep_driver(store, coll, dp_oid)
+    , deep_backend(&deep_driver)
 {}
 
 Store::~Store()
 {
-  ceph_assert(results.empty());
+  ceph_assert(shallow_results.empty());
+  ceph_assert(deep_results.empty());
 }
 
 void Store::add_error(int64_t pool, const inconsistent_obj_wrapper& e)
@@ -143,7 +153,7 @@ void Store::add_object_error(int64_t pool, const inconsistent_obj_wrapper& e)
   if (e.has_deep_errors()) {
     deep_results[to_object_key(pool, e.object)] = bl;
   }
-    results[to_object_key(pool, e.object)] = bl;
+  shallow_results[to_object_key(pool, e.object)] = bl;
 }
 
 void Store::add_error(int64_t pool, const inconsistent_snapset_wrapper& e)
@@ -155,34 +165,37 @@ void Store::add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e)
 {
   bufferlist bl;
   e.encode(bl);
-  results[to_snap_key(pool, e.object)] = bl;
+  shallow_results[to_snap_key(pool, e.object)] = bl;
 }
 
 bool Store::empty() const
 {
-  return results.empty() && deep_results.empty();
+  return shallow_results.empty() && deep_results.empty();
 }
 
 void Store::flush(ObjectStore::Transaction* t)
 {
   if (t) {
-
-    OSDriver::OSTransaction txn = driver.get_transaction(t);
-    backend.set_keys(results, &txn);
+    OSDriver::OSTransaction txn = shallow_driver.get_transaction(t);
+    shallow_backend.set_keys(shallow_results, &txn);
 
     OSDriver::OSTransaction deep_txn = deep_driver.get_transaction(t);
     deep_backend.set_keys(deep_results, &deep_txn);
-
   }
-  results.clear();
+
+  shallow_results.clear();
   deep_results.clear();
 }
 
 void Store::cleanup(ObjectStore::Transaction* t, scrub_level_t level)
 {
-  t->remove(coll, hoid);  // Always clear the shallow+deep (original) error database
-  if (level==scrub_level_t::deep) {
-      t->remove(coll, deep_hoid);  // For deep scrubs, also clear the deep error database
+  // always clear the known shallow errors DB (as both shallow and deep scrubs
+  // would recreate it)
+  t->remove(coll, shallow_hoid);
+
+  // only a deep scrub recreates the deep errors DB
+  if (level == scrub_level_t::deep) {
+    t->remove(coll, deep_hoid);
   }
 }
 
@@ -215,7 +228,7 @@ Store::get_errors(const string& begin,
 {
   vector<bufferlist> errors;
   auto next = std::make_pair(begin, bufferlist{});
-  while (max_return && !backend.get_next(next.first, &next)) {
+  while (max_return && !shallow_backend.get_next(next.first, &next)) {
     if (next.first >= end)
       break;
     errors.push_back(next.second);
