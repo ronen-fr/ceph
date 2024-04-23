@@ -4,6 +4,7 @@
 #ifndef CEPH_SCRUB_RESULT_H
 #define CEPH_SCRUB_RESULT_H
 
+#include "common/LogClient.h"
 #include "common/map_cacher.hpp"
 #include "osd/SnapMapper.h"  // for OSDriver
 
@@ -41,10 +42,13 @@ namespace Scrub {
 class Store {
  public:
   ~Store();
-  static Store* create(ObjectStore* store,
-		       ObjectStore::Transaction* t,
-		       const spg_t& pgid,
-		       const coll_t& coll);
+  static Store* create(
+      ObjectStore* store,
+      ObjectStore::Transaction* t,
+      const spg_t& pgid,
+      const coll_t& coll,
+      LoggerSinkSet& logger);
+
   void add_object_error(int64_t pool, const inconsistent_obj_wrapper& e);
   void add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e);
 
@@ -53,30 +57,28 @@ class Store {
   void add_error(int64_t pool, const inconsistent_snapset_wrapper& e);
   bool empty() const;
   void flush(ObjectStore::Transaction*);
-  void cleanup(ObjectStore::Transaction*,  scrub_level_t level);
+  void cleanup(ObjectStore::Transaction*, scrub_level_t level);
 
   std::vector<ceph::buffer::list> get_snap_errors(
-    int64_t pool,
-    const librados::object_id_t& start,
-    uint64_t max_return) const;
+      int64_t pool,
+      const librados::object_id_t& start,
+      uint64_t max_return) const;
 
   std::vector<ceph::buffer::list> get_object_errors(
-    int64_t pool,
-    const librados::object_id_t& start,
-    uint64_t max_return) const;
+      int64_t pool,
+      const librados::object_id_t& start,
+      uint64_t max_return) const;
 
  private:
-  Store(const coll_t& coll, const ghobject_t& oid, const ghobject_t& deep_oid, ObjectStore* store);
-  std::vector<ceph::buffer::list> get_errors(const std::string& start,
-					     const std::string& end,
-					     uint64_t max_return) const;
- private:
-  const coll_t coll; //< the collection (i.e. - the PG store) in which the errors are stored
+  // the collection (i.e. - the PG store) in which the errors are stored
+  const coll_t coll;
+
+  LoggerSinkSet& clog;
 
   // the machinery for storing the shallow errors: a fake object in the PG store,
   // caching mechanism, and the actual backend
   const ghobject_t shallow_hoid;
-  OSDriver shallow_driver; //< a temp object mapping seq-id to inconsistencies
+  OSDriver shallow_driver;  //< a temp object mapping seq-id to inconsistencies
   mutable MapCacher::MapCacher<std::string, ceph::buffer::list> shallow_backend;
 
   // same for all deep errors
@@ -86,6 +88,28 @@ class Store {
 
   std::map<std::string, ceph::buffer::list> shallow_results;
   std::map<std::string, ceph::buffer::list> deep_results;
+  using CacherPosData =
+      MapCacher::MapCacher<std::string, ceph::buffer::list>::PosAndData;
+  using ExpCacherPosData = tl::expected<CacherPosData, int>;
+
+  Store(
+      const coll_t& coll,
+      const ghobject_t& oid,
+      const ghobject_t& deep_oid,
+      ObjectStore* store,
+      LoggerSinkSet& logger);
+
+  std::vector<ceph::buffer::list> get_errors(
+      const std::string& start,
+      const std::string& end,
+      uint64_t max_return) const;
+
+  void collect_specific_store(
+      MapCacher::MapCacher<std::string, ceph::buffer::list>& backend,
+      ExpCacherPosData& latest,
+      std::vector<bufferlist>& errors,
+      const std::string& end_key,
+      uint64_t& max_return) const;
 };
 }  // namespace Scrub
 
