@@ -74,6 +74,57 @@ bool OsdScrub::scrub_random_backoff() const
   return false;
 }
 
+Scrub::schedule_result_t OsdScrub::initiate_a_scrub(
+    const Scrub::SchedEntry& trgt,
+    Scrub::OSDRestrictions restrictions)
+{
+  dout(20) << fmt::format("trying pg[{}] (target: {})", trgt.pgid, trgt)
+	   << dendl;
+
+  // Fetch an up-to-date version of the target, and dequeue both targets of
+  // this PG. Note that this won't be needed after the followup commits, as
+  // we will only 'process' the queue top - and thus will maintain the lock
+  // to this moment.
+  std::unique_lock l{m_scrub_queue_lock};
+  auto qu_entry = m_queue.dequeue_target(trgt.pgid, trgt.level);
+  if (!qu_entry) {
+    // we were out-raced, and the PG was just dequeued
+    dout(5) << fmt::format("designated target ({}) not in queue", trgt)
+	    << dendl;
+    return Scrub::schedule_result_t::target_not_there;
+  }
+  l.unlock();
+
+  // there is no way for us to see a wrong target here, as we just dequeued
+  ceph_assert(qu_entry->level == trgt.level);
+  // continue with the updated target, as the urgency may have changed. We
+  // can validate the other fields of the SchedEntry as well. ?
+
+  // so we have a candidate to scrub. We need some PG information to
+  // know if scrubbing is allowed
+
+  auto locked_pg = m_osd_svc.get_locked_pg(qu_entry->pgid);
+  if (!locked_pg) {
+    // the PG was dequeued in the short timespan between creating the
+    // candidates list (ready_to_scrub()) and here
+    dout(5) << fmt::format(
+		   "pg[{}] (for target {}) not found", qu_entry->pgid,
+		   *qu_entry)
+	    << dendl;
+    return Scrub::schedule_result_t::target_not_there;
+  }
+
+  locked_pg->pg()->mark_scrub_target_dequeued(qu_entry->level); // RRR
+mark_target_dequeued(scrub_level);
+  // This one is already scrubbing, so go on to the next scrub job
+  if (locked_pg->pg()->is_scrub_queued_or_active()) {
+    dout(10) << fmt::format("pg[{}]: scrub already in progress", qu_entry->pgid)
+	     << dendl;
+    // no need to requeue, as scrub_finish() would handle that
+    return Scrub::schedule_result_t::target_specific_failure;
+  }
+
+}
 
 void OsdScrub::initiate_scrub(bool is_recovery_active)
 {

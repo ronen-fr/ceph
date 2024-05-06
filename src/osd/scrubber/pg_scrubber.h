@@ -250,6 +250,8 @@ class PgScrubber : public ScrubPgIF,
 
   void update_scrub_job(const requested_scrub_t& request_flags) final;
 
+  void mark_target_dequeued(scrub_level_t scrub_level) final;
+
   void rm_from_osd_scrubbing() final;
 
   void schedule_scrub_with_osd() final;
@@ -650,6 +652,12 @@ class PgScrubber : public ScrubPgIF,
 
   epoch_t m_interval_start{0};	///< interval's 'from' of when scrubbing was
 				///< first scheduled
+
+  /**
+   * A copy of the specific scheduling target (either shallow_target or
+   * deep_target in the scrub_job) that was selected for this active scrub
+   */
+  std::optional<Scrub::SchedTarget> m_active_target;
 
   void repair_oinfo_oid(ScrubMap& smap);
 

@@ -158,9 +158,9 @@ class SchedTarget {
    */
   bool is_periodic() const;
 
-//   // scrub flags
-//   bool get_auto_repair() const { return auto_repairing; }
-//   bool get_do_repair() const { return do_repair; }
+  // scrub flags
+  bool get_auto_repair() const { return auto_repairing; }
+  bool get_do_repair() const { return do_repair; }
 
   /**
    * urgency==off is only expected for SchedTarget objects belonging to
@@ -182,7 +182,7 @@ class SchedTarget {
   void update_periodic_shallow(
       const pg_info_t& pg_info,
       const Scrub::sched_conf_t& config,
-      utime_t scrub_time_now);
+      utime_t scrub_clock_now);
 
   void update_periodic_deep(
       const pg_info_t& pg_info,
@@ -209,24 +209,24 @@ class SchedTarget {
   /// the reason for the latest failure/delay (for logging/reporting purposes)
   delay_cause_t last_issue{delay_cause_t::none};
 
-//   // the flags affecting the scrub that will result from this target
-// 
-//   /**
-//    * (deep-scrub entries only:)
-//    * Supporting the equivalent of 'need-auto', which translated into:
-//    * - performing a deep scrub (taken care of by raising the priority of the
-//    *   deep target);
-//    * - marking that scrub as 'do_repair' (the next flag here);
-//    */
-//   bool auto_repairing{false};
-// 
-//   /**
-//    * (deep-scrub entries only:)
-//    * Set for scrub_requested() scrubs with the 'repair' flag set.
-//    * Translated (in set_op_parameters()) into a deep scrub with
-//    * m_is_repair & PG_REPAIR_SCRUB.
-//    */
-//   bool do_repair{false};
+  // the flags affecting the scrub that will result from this target
+
+  /**
+   * (deep-scrub entries only:)
+   * Supporting the equivalent of 'need-auto', which translated into:
+   * - performing a deep scrub (taken care of by raising the priority of the
+   *   deep target);
+   * - marking that scrub as 'do_repair' (the next flag here);
+   */
+  bool auto_repairing{false};
+
+  /**
+   * (deep-scrub entries only:)
+   * Set for scrub_requested() scrubs with the 'repair' flag set.
+   * Translated (in set_op_parameters()) into a deep scrub with
+   * m_is_repair & PG_REPAIR_SCRUB.
+   */
+  bool do_repair{false};
 };
 
 
@@ -274,6 +274,11 @@ class ScrubJob {
   void init_and_register(
       const Scrub::sched_conf_t& aconf,
       utime_t scrub_time_now);
+
+  void operator_forced_targets(
+    scrub_level_t level,
+    scrub_type_t scrub_type,
+    utime_t scrub_time_now);
 
   /**
    * recalculate the scheduling parameters for the periodic scrub targets.

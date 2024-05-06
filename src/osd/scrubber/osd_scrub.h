@@ -220,6 +220,10 @@ class OsdScrub {
   /// the queue of PGs waiting to be scrubbed
   ScrubQueue m_queue;
 
+  /// and its lock
+  mutable ceph::mutex m_scrub_queue_lock =
+      ceph::make_mutex("OsdScrub::scrub_queue_lock");
+
   const std::string m_log_prefix{};
 
   /// number of PGs stuck while scrubbing, waiting for objects

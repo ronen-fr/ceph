@@ -120,6 +120,7 @@ using namespace ::std::literals;
 enum class schedule_result_t {
   scrub_initiated,	    // successfully started a scrub
   target_specific_failure,  // failed to scrub this specific target
+  target_not_there,         // the target is not there (e.g. PG was removed)
   osd_wide_failure	    // failed to scrub any target
 };
 
@@ -146,14 +147,31 @@ class ScrubSchedListener {
  * Main operations are scheduling/unscheduling a PG to be scrubbed at a certain
  * time.
  */
-class ScrubQueue {
+class ScrubQueue : public Scrub::QueueInterface {
  public:
   ScrubQueue(CephContext* cct, Scrub::ScrubSchedListener& osds);
   virtual ~ScrubQueue() = default;
 
   friend class TestOSDScrub;
-  friend class ScrubSchedTestWrapper; ///< unit-tests structure
+  friend class ScrubSchedTestWrapper;  ///< unit-tests structure
   using sched_params_t = Scrub::sched_params_t;
+
+
+  int dequeue_pg(spg_t pgid) final;
+
+  std::optional<Scrub::SchedEntry> dequeue_target(
+      spg_t pgid,
+      scrub_level_t level) final;
+
+  int count_queued(spg_t pgid) final;
+
+  void enqueue_target(spg_t pgid, const Scrub::SchedEntry& e) final;
+
+  void enqueue_targets(
+      spg_t pgid,
+      const Scrub::SchedEntry& shallow,
+      const Scrub::SchedEntry& deep) final;
+
 
   /**
    *  returns the list of all scrub targets that are ready to be scrubbed.

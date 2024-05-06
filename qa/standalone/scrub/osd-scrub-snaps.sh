@@ -209,14 +209,14 @@ function TEST_scrub_snaps() {
     done
     ceph tell osd.* config set osd_shallow_scrub_chunk_max 25
     ceph tell osd.* config set osd_shallow_scrub_chunk_min 5
-    ceph tell osd.* config set osd_pg_stat_report_interval_max 1
+    ceph tell osd.* config set osd_pg_stat_report_interval_max_seconds 1
 
 
     wait_for_clean || return 1
 
     ceph tell osd.* config get osd_shallow_scrub_chunk_max
     ceph tell osd.* config get osd_shallow_scrub_chunk_min
-    ceph tell osd.* config get osd_pg_stat_report_interval_max
+    ceph tell osd.* config get osd_pg_stat_report_interval_max_seconds
     ceph tell osd.* config get osd_scrub_chunk_max
     ceph tell osd.* config get osd_scrub_chunk_min
 
