@@ -187,6 +187,11 @@ class PgScrubber : public ScrubPgIF,
   /// are we waiting for resource reservation grants form our replicas?
   [[nodiscard]] bool is_reserving() const final;
 
+  Scrub::schedule_result_t start_scrub_session(
+      Scrub::OSDRestrictions osd_restrictions,
+      Scrub::ScrubPGPreconds,
+      std::optional<requested_scrub_t> temp_request) final;
+
   void initiate_regular_scrub(epoch_t epoch_queued) final;
 
   void initiate_scrub_after_repair(epoch_t epoch_queued) final;
