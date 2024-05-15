@@ -169,9 +169,9 @@ class ScrubQueue {
    * @param restrictions: what types of scrub are allowed, given system status
    *               & config. Some of the preconditions are calculated here.
    */
-  std::vector<ScrubTargetId> ready_to_scrub(
-      Scrub::OSDRestrictions restrictions, // 4B! copy
-      utime_t scrub_tick);
+//   std::vector<ScrubTargetId> ready_to_scrub(
+//       Scrub::OSDRestrictions restrictions, // 4B! copy
+//       utime_t scrub_tick);
 
   /**
    * remove the pg from set of PGs to be scanned for scrubbing.
@@ -313,27 +313,6 @@ class ScrubQueue {
   static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
     return jobref->state == Scrub::qu_state_t::not_registered;
   };
-
-  /**
-   * clear dead entries (unregistered, or belonging to removed PGs) from a
-   * queue. Job state is changed to match new status.
-   */
-  void rm_unregistered_jobs(Scrub::ScrubQContainer& group);
-
-  /**
-   * the set of all scrub jobs in 'group' which are ready to be scrubbed
-   * (ready = their scheduled time has passed).
-   * The scrub jobs in the new collection are sorted according to
-   * their scheduled time.
-   *
-   * Note that the returned container holds independent refs to the
-   * scrub jobs.
-   * Note also that OSDRestrictions is 1L size, thus copied.
-   */
-  Scrub::ScrubQContainer collect_ripe_jobs(
-      Scrub::ScrubQContainer& group,
-      Scrub::OSDRestrictions restrictions,
-      utime_t time_now);
 
   /**
    * The scrubbing of PGs might be delayed if the scrubbed chunk of objects is
