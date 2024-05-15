@@ -243,8 +243,8 @@ Scrub::schedule_result_t OsdScrub::initiate_a_scrub(
 
   auto locked_pg = m_osd_svc.get_locked_pg(pgid);
   if (!locked_pg) {
-    // the PG was dequeued in the short timespan between creating the
-    // candidates list (ready_to_scrub()) and here
+    // the PG was dequeued in the short timespan between querying the
+    // scrub queue - and now.
     dout(5) << fmt::format("pg[{}] not found", pgid) << dendl;
     return Scrub::schedule_result_t::target_specific_failure;
   }

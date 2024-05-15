@@ -257,7 +257,6 @@ std::optional<ScrubJob> ScrubQueue::pop_ready_pg(
   //     return true;
   //   };
 
-  std::vector<ScrubJob> stam;
   auto not_ripes = rng::partition(to_scrub, filtr);
   if (not_ripes.begin() == to_scrub.begin()) {
     return std::nullopt;
@@ -275,51 +274,6 @@ std::optional<ScrubJob> ScrubQueue::pop_ready_pg(
   return top_job;
 }
 
-// 
-//   rm_unregistered_jobs(group);
-//   // copy ripe jobs (unless prohibited by 'restrictions')
-//   ScrubQContainer ripes;
-//   ripes.reserve(group.size());
-// 
-//   std::copy_if(group.begin(), group.end(), std::back_inserter(ripes), filtr);
-//   std::sort(ripes.begin(), ripes.end(), cmp_time_n_priority_t{});
-// 
-//   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
-//     for (const auto& jobref : group) {
-//       if (!filtr(jobref)) {
-// 	dout(20) << fmt::format(
-// 			" not eligible: {} @ {:s} ({:s},{:s})", jobref->pgid,
-// 			jobref->schedule.not_before,
-// 			jobref->schedule.scheduled_at, jobref->last_issue)
-// 		 << dendl;
-//       }
-//     }
-//   }
-// 
-//   return ripes;
-// }
-
-
-// std::optional<ScrubJob> ScrubQueue::pop_ready_pg(
-//     OSDRestrictions restrictions,  // note: 4B in size! (copy)
-//     utime_t time_now)
-// {
-//   std::unique_lock lck{jobs_lock};
-// 
-//   auto ripe_jobs = collect_ripe_jobs(to_scrub, OSDRestrictions{}, time_now);
-//   if (ripe_jobs.empty()) {
-//     return std::nullopt;
-//   }
-// 
-//   auto pgid = ripe_jobs.front()->pgid;
-//   to_scrub.erase(
-//       std::remove_if(
-// 	  to_scrub.begin(), to_scrub.end(),
-// 	  [&pgid](const auto& job) { return job->pgid == pgid; }),
-//       to_scrub.end());
-//   return pgid;
-// }
-
 void ScrubQueue::restore_job(Scrub::ScrubJob&& sjob)
 {
   std::lock_guard lck{jobs_lock};
@@ -328,22 +282,6 @@ void ScrubQueue::restore_job(Scrub::ScrubJob&& sjob)
   //sjob.state = qu_state_t::registered;
 }
 
-
-// must be called under lock
-// void ScrubQueue::rm_unregistered_jobs(ScrubQContainer& group)
-// {
-//   std::for_each(group.begin(), group.end(), [](auto& job) {
-//     if (job->state == qu_state_t::unregistering) {
-//       job->in_queues = false;
-//       job->state = qu_state_t::not_registered;
-//     } else if (job->state == qu_state_t::not_registered) {
-//       job->in_queues = false;
-//     }
-//   });
-// 
-//   group.erase(std::remove_if(group.begin(), group.end(), invalid_state),
-// 	      group.end());
-// }
 
 namespace {
 struct cmp_time_n_priority_t {
@@ -356,42 +294,6 @@ struct cmp_time_n_priority_t {
   }
 };
 }  // namespace
-
-// called under lock
-ScrubQContainer ScrubQueue::collect_ripe_jobs(
-    ScrubQContainer& group,
-    OSDRestrictions restrictions,
-    utime_t time_now)
-{
-//   auto filtr = [time_now, rst = restrictions](const auto& job) -> bool {
-//     return job.schedule.not_before <= time_now &&
-// 	   (!rst.high_priority_only || job.high_priority) &&
-// 	   (!rst.only_deadlined || (!job.schedule.deadline.is_zero() &&
-// 				    job.schedule.deadline <= time_now));
-//   };
-// 
-//   rm_unregistered_jobs(group);
-  // copy ripe jobs (unless prohibited by 'restrictions')
-  ScrubQContainer ripes;
-//   ripes.reserve(group.size());
-// 
-//   std::copy_if(group.begin(), group.end(), std::back_inserter(ripes), filtr);
-//   std::sort(ripes.begin(), ripes.end(), cmp_time_n_priority_t{});
-// 
-//   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
-//     for (const auto& job : group) {
-//       if (!filtr(jobref)) {
-// 	dout(20) << fmt::format(
-// 			" not eligible: {} @ {:s} ({:s},{:s})", job.pgid,
-// 			job.schedule.not_before,
-// 			job.schedule.scheduled_at, job.last_issue)
-// 		 << dendl;
-//       }
-//     }
-//   }
-
-  return ripes;
-}
 
 
 Scrub::scrub_schedule_t ScrubQueue::adjust_target_time(
