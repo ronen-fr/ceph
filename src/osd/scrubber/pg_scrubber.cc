@@ -497,7 +497,7 @@ void PgScrubber::rm_from_osd_scrubbing()
     dout(15) << fmt::format(
 		    "{}: prev. state: {}", __func__, registration_state())
 	     << dendl;
-    m_osds->get_scrub_services().remove_from_osd_queue(m_scrub_job);
+    m_osds->get_scrub_services().remove_from_osd_queue(*m_scrub_job);
   }
 }
 
@@ -551,7 +551,7 @@ void PgScrubber::schedule_scrub_with_osd()
   auto pre_reg = registration_state();
 
   auto suggested = determine_scrub_time(m_pg->get_pgpool().info.opts);
-  m_osds->get_scrub_services().register_with_osd(m_scrub_job, suggested);
+  m_osds->get_scrub_services().register_with_osd(*m_scrub_job, suggested);
 
   dout(10) << fmt::format(
 		  "{}: <flags:{}> {} <{:.5}>&<{:.10}> --> <{:.5}>&<{:.14}>",
@@ -591,7 +591,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
   if (is_primary() && m_scrub_job) {
     ceph_assert(m_pg->is_locked());
     auto suggested = determine_scrub_time(m_pg->get_pgpool().info.opts);
-    m_osds->get_scrub_services().update_job(m_scrub_job, suggested, true);
+    m_osds->get_scrub_services().update_job(*m_scrub_job, suggested, true);
     m_pg->publish_stats_to_osd();
   }
 
@@ -2018,7 +2018,7 @@ void PgScrubber::scrub_finish()
 void PgScrubber::penalize_next_scrub(Scrub::delay_cause_t cause)
 {
   m_osds->get_scrub_services().delay_on_failure(
-      m_scrub_job, 5s, cause, ceph_clock_now());
+      *m_scrub_job, 5s, cause, ceph_clock_now());
 }
 
 void PgScrubber::on_digest_updates()
@@ -2316,7 +2316,7 @@ PgScrubber::PgScrubber(PG* pg)
   m_fsm = std::make_unique<ScrubMachine>(m_pg, this);
   m_fsm->initiate();
 
-  m_scrub_job = ceph::make_ref<Scrub::ScrubJob>(
+  m_scrub_job = std::make_optional<Scrub::ScrubJob>(
       m_osds->cct, m_pg->pg_id, m_osds->get_nodeid());
 }
 

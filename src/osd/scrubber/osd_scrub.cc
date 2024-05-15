@@ -87,8 +87,8 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
 {
   const utime_t scrub_time = ceph_clock_now();
   dout(10) << fmt::format(
-		  "time now:{:s}, recovery is active?:{}", scrub_time,
-		  is_recovery_active)
+		  "time now:{:s}, recovery is active?:{} RRR so:{}", scrub_time,
+		  is_recovery_active, sizeof(Scrub::ScrubJob))
 	   << dendl;
 
   if (auto blocked_pgs = get_blocked_pgs_count(); blocked_pgs > 0) {
@@ -112,20 +112,48 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
     dout(20) << "scrub scheduling (@tick) starts" << dendl;
     auto all_jobs = m_queue.list_registered_jobs();
     for (const auto& sj : all_jobs) {
-      dout(20) << fmt::format("\tscrub-queue jobs: {}", *sj) << dendl;
+      dout(20) << fmt::format("\tscrub-queue jobs: {}", sj) << dendl;
     }
   }
 
-  // at this phase of the refactoring: minimal changes to the
-  // queue interface used here: we ask for a list of
-  // eligible targets (based on the known restrictions).
-  // We try all elements of this list until a (possibly temporary) success.
-  auto candidates = m_queue.ready_to_scrub(env_restrictions, scrub_time);
-  if (candidates.empty()) {
+  // RRR high priority - do not pass env_restrictions to the queue
+  auto candidate = m_queue.pop_ready_pg(env_restrictions, scrub_time);
+  if (!candidate) {
     dout(20) << "no PGs are ready for scrubbing" << dendl;
     return;
   }
 
+  // we only try the first candidate in this round. We know that if that
+  // candidate fails - it will be pushed towards the end of the queue (by
+  // having its not_before time updated). We will try it again in the next
+  // round.
+  dout(20) << fmt::format("initiating scrub on pg[{}]", candidate->pgid)
+	   << dendl;
+
+  // we have a candidate to scrub. But we may fail when trying to initiate that
+  // scrub. For some failures - we can continue with the next candidate. For
+  // others - we should stop trying to scrub at this tick.
+  auto res = initiate_a_scrub(candidate->pgid, env_restrictions);
+
+  switch (res) {
+    case schedule_result_t::target_specific_failure:
+      // No scrub this tick.
+      // someone else will requeue the target, if needed.
+      break;
+
+    case schedule_result_t::osd_wide_failure:
+      // the candidate should be re-pushed unchanged.
+      m_queue.restore_job(std::move(*candidate));
+      break;
+
+    case schedule_result_t::scrub_initiated:
+      dout(20) << fmt::format("scrub initiated for pg[{}]", candidate->pgid)
+	       << dendl;
+      break;
+  }
+}
+
+#if 0
   for (const auto& candidate : candidates) {
     dout(20) << fmt::format("initiating scrub on pg[{}]", candidate) << dendl;
 
@@ -149,7 +177,8 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
       break;
     }
   }
-}
+#endif
+
 
 
 Scrub::OSDRestrictions OsdScrub::restrictions_on_scrubbing(
@@ -226,11 +255,21 @@ Scrub::schedule_result_t OsdScrub::initiate_a_scrub(
 
 void OsdScrub::on_config_change()
 {
-  auto to_notify = m_queue.list_registered_jobs();
+  ScrubQueue::EntryPred pred{[](const Scrub::ScrubJob& sj) -> bool {
+    ceph_assert(sj.state == Scrub::qu_state_t::registered);
+    return sj.state == Scrub::qu_state_t::registered;
+  }};
+
+
+  auto to_notify = m_queue.get_pgs([](const Scrub::ScrubJob& sj) -> bool {
+    //return sj->state == qu_state_t::registered;
+    ceph_assert(sj.state == Scrub::qu_state_t::registered);
+    return true;
+  });
 
   for (const auto& p : to_notify) {
-    dout(30) << fmt::format("rescheduling pg[{}] scrubs", *p) << dendl;
-    auto locked_pg = m_osd_svc.get_locked_pg(p->pgid);
+    dout(30) << fmt::format("rescheduling pg[{}] scrubs", p) << dendl;
+    auto locked_pg = m_osd_svc.get_locked_pg(p);
     if (!locked_pg)
       continue;
 
@@ -428,7 +467,7 @@ PerfCounters* OsdScrub::get_perf_counters(int pool_type, scrub_level_t level)
 // forwarders to the queue
 
 void OsdScrub::update_job(
-    Scrub::ScrubJobRef sjob,
+    Scrub::ScrubJob& sjob,
     const Scrub::sched_params_t& suggested,
     bool reset_notbefore)
 {
@@ -436,7 +475,7 @@ void OsdScrub::update_job(
 }
 
 void OsdScrub::delay_on_failure(
-      Scrub::ScrubJobRef sjob,
+      Scrub::ScrubJob& sjob,
       std::chrono::seconds delay,
       Scrub::delay_cause_t delay_cause,
       utime_t now_is)
@@ -446,13 +485,13 @@ void OsdScrub::delay_on_failure(
 
 
 void OsdScrub::register_with_osd(
-    Scrub::ScrubJobRef sjob,
+    Scrub::ScrubJob& sjob,
     const Scrub::sched_params_t& suggested)
 {
   m_queue.register_with_osd(sjob, suggested);
 }
 
-void OsdScrub::remove_from_osd_queue(Scrub::ScrubJobRef sjob)
+void OsdScrub::remove_from_osd_queue(Scrub::ScrubJob& sjob)
 {
   m_queue.remove_from_osd_queue(sjob);
 }

@@ -108,7 +108,10 @@ ScrubQueue interfaces (main functions):
  */
 // clang-format on
 
+#include <algorithm>
 #include <optional>
+//#include <ranges>
+
 #include "common/AsyncReserver.h"
 #include "utime.h"
 #include "osd/scrubber/scrub_job.h"
@@ -175,13 +178,20 @@ class ScrubQueue {
    * remove the pg from set of PGs to be scanned for scrubbing.
    * To be used if we are no longer the PG's primary, or if the PG is removed.
    */
-  void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
+  void remove_from_osd_queue(Scrub::ScrubJob& sjob);
 
   /**
    * @return the list (not std::set!) of all scrub jobs registered
-   *   (apart from PGs in the process of being removed)
    */
   Scrub::ScrubQContainer list_registered_jobs() const;
+
+  // A way to specify a predicate over the entries in the queue
+  using EntryPred = std::function<bool(const Scrub::ScrubJob&)>;
+  /**
+   * the set of all PGs named by the entries in the queue (but only those
+   * entries that satisfy the predicate)
+   */
+  std::set<spg_t> get_pgs(const EntryPred&) const;
 
   /**
    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
@@ -193,7 +203,7 @@ class ScrubQueue {
    *
    * locking: might lock jobs_lock
    */
-  void register_with_osd(Scrub::ScrubJobRef sjob, const sched_params_t& suggested);
+  void register_with_osd(Scrub::ScrubJob& sjob, const sched_params_t& suggested);
 
   /**
    * modify a scrub-job's scheduled time and deadline
@@ -217,12 +227,12 @@ class ScrubQueue {
    *  locking: not using the jobs_lock
    */
   void update_job(
-      Scrub::ScrubJobRef sjob,
+      Scrub::ScrubJob& sjob,
       const sched_params_t& suggested,
       bool reset_notbefore);
 
   void delay_on_failure(
-      Scrub::ScrubJobRef sjob,
+      Scrub::ScrubJob& sjob,
       std::chrono::seconds delay,
       Scrub::delay_cause_t delay_cause,
       utime_t now_is);
@@ -261,6 +271,19 @@ class ScrubQueue {
   void clear_pg_scrub_blocked(spg_t blocked_pg);
   int get_blocked_pgs_count() const;
 
+  /// in this temporary version: as the 'targets' in the queue are the full
+  /// ScrubJob-s, pop_ready_pg() is tasked with extracting the correct level
+  /// from the selected ScrubJob.
+
+  /// RRR or not?
+  /// and should we return the PG or the ScrubJob?
+  std::optional<Scrub::ScrubJob> pop_ready_pg(
+      Scrub::OSDRestrictions restrictions,  // note: 4B in size! (copy)
+      utime_t time_now);
+
+  void restore_job(Scrub::ScrubJob&& sjob);
+
+
  private:
   CephContext* cct;
   Scrub::ScrubSchedListener& osd_service;
@@ -284,9 +307,9 @@ class ScrubQueue {
 
   Scrub::ScrubQContainer to_scrub;   ///< scrub jobs (i.e. PGs) to scrub
 
-  static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
-    return jobref->state == Scrub::qu_state_t::registered;
-  };
+//   static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
+//     return jobref->state == Scrub::qu_state_t::registered;
+//   };
 
   static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
     return jobref->state == Scrub::qu_state_t::not_registered;
