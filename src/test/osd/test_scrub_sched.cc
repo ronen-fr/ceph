@@ -44,10 +44,10 @@ int main(int argc, char** argv)
 }
 
 using schedule_result_t = Scrub::schedule_result_t;
-using ScrubJobRef = Scrub::ScrubJobRef;
+//using ScrubJobRef = Scrub::ScrubJobRef;
 using qu_state_t = Scrub::qu_state_t;
 using scrub_schedule_t = Scrub::scrub_schedule_t;
-using ScrubQContainer = Scrub::ScrubQContainer;
+//using ScrubQContainer = Scrub::ScrubQContainer;
 using sched_params_t = Scrub::sched_params_t;
 
 

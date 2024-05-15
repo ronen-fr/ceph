@@ -28,8 +28,7 @@ static std::ostream& _prefix_fn(std::ostream* _dout, T* t, std::string fn = "")
 }
 
 ScrubJob::ScrubJob(CephContext* cct, const spg_t& pg, int node_id)
-    : RefCountedObject{cct}
-    , pgid{pg}
+    : pgid{pg}
     , whoami{node_id}
     , cct{cct}
     , log_msg_prefix{fmt::format("osd.{}: scrub-job:pg[{}]:", node_id, pgid)}

@@ -98,7 +98,7 @@ class OsdScrub {
    *  locking: not using the jobs_lock
    */
   void update_job(
-      Scrub::ScrubJobRef sjob,
+      Scrub::ScrubJob& sjob,
       const Scrub::sched_params_t& suggested,
       bool reset_notbefore);
 
@@ -113,14 +113,14 @@ class OsdScrub {
    * locking: might lock jobs_lock
    */
   void register_with_osd(
-      Scrub::ScrubJobRef sjob,
+      Scrub::ScrubJob& sjob,
       const Scrub::sched_params_t& suggested);
 
   /**
    * remove the pg from set of PGs to be scanned for scrubbing.
    * To be used if we are no longer the PG's primary, or if the PG is removed.
    */
-  void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
+  void remove_from_osd_queue(Scrub::ScrubJob& sjob);
 
   /**
    * \returns std::chrono::milliseconds indicating how long to wait between
@@ -148,7 +148,7 @@ class OsdScrub {
    * would not be retried before 'delay' seconds have passed.
    */
   void delay_on_failure(
-      Scrub::ScrubJobRef sjob,
+      Scrub::ScrubJob& sjob,
       std::chrono::seconds delay,
       Scrub::delay_cause_t delay_cause,
       utime_t now_is);
