@@ -87,8 +87,8 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
 {
   const utime_t scrub_time = ceph_clock_now();
   dout(10) << fmt::format(
-		  "time now:{:s}, recovery is active?:{} RRR so:{}", scrub_time,
-		  is_recovery_active, sizeof(Scrub::ScrubJob))
+		  "time now:{:s}, recovery is active?:{}", scrub_time,
+		  is_recovery_active)
 	   << dendl;
 
   if (auto blocked_pgs = get_blocked_pgs_count(); blocked_pgs > 0) {

@@ -1323,7 +1323,39 @@ unsigned int PG::scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsig
 // ==========================================================================================
 // SCRUB
 
+Scrub::schedule_result_t PG::start_scrubbing(
+    Scrub::OSDRestrictions osd_restrictions)
+{
+  dout(10) << fmt::format(
+		  "{}: {}+{} (env restrictions:{})", __func__,
+		  (is_active() ? "<active>" : "<not-active>"),
+		  (is_clean() ? "<clean>" : "<not-clean>"), osd_restrictions)
+	   << dendl;
+  ceph_assert(ceph_mutex_is_locked(_lock));
+  ceph_assert(m_scrubber);
 
+  Scrub::ScrubPGPreconds pg_cond{};
+  pg_cond.allow_shallow =
+      !(get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) ||
+	pool.info.has_flag(pg_pool_t::FLAG_NOSCRUB));
+  pg_cond.allow_deep =
+      !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
+	pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
+  pg_cond.has_deep_errors = (info.stats.stats.sum.num_deep_scrub_errors > 0);
+  pg_cond.can_autorepair =
+      (cct->_conf->osd_scrub_auto_repair &&
+       get_pgbackend()->auto_repair_supported());
+
+  // analyze the combination of the requested scrub flags, the osd/pool
+  // configuration and the PG status to determine whether we should scrub
+  // now, and what type of scrub should that be.
+  auto updated_flags = validate_scrub_mode();
+
+  return m_scrubber->start_scrub_session(osd_restrictions, pg_cond, updated_flags);
+}
+
+
+#if 0
 /*
  *  implementation note:
  *  PG::start_scrubbing() is called only once per a specific scrub session.
@@ -1399,6 +1431,9 @@ Scrub::schedule_result_t PG::start_scrubbing(
   }
 
   // can commit to the updated flags now, as nothing will stop the scrub
+
+RRRR must execute the next lin, dep on the result
+
   m_planned_scrub = *updated_flags;
 
   // An interrupted recovery repair could leave this set.
@@ -1413,6 +1448,7 @@ Scrub::schedule_result_t PG::start_scrubbing(
   osd->queue_for_scrub(this, Scrub::scrub_prio_t::low_priority);
   return schedule_result_t::scrub_initiated;
 }
+#endif
 
 
 double PG::next_deepscrub_interval() const
