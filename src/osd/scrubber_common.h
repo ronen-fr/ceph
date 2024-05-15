@@ -90,6 +90,24 @@ struct OSDRestrictions {
 };
 static_assert(sizeof(Scrub::OSDRestrictions) <= sizeof(uint32_t));
 
+/// concise passing of PG state re scrubbing to the
+/// scrubber at initiation of a scrub
+struct ScrubPGPreconds {
+  bool allow_shallow{true};
+  bool allow_deep{true};
+  bool has_deep_errors{false};
+  bool can_autorepair{false};
+};
+static_assert(sizeof(Scrub::ScrubPGPreconds) <= sizeof(uint32_t));
+
+/// possible outcome when trying to select a PG and scrub it
+enum class schedule_result_t {
+  scrub_initiated,	    // successfully started a scrub
+  target_specific_failure,  // failed to scrub this specific target
+  osd_wide_failure	    // failed to scrub any target
+};
+
+
 }  // namespace Scrub
 
 namespace fmt {
@@ -388,6 +406,11 @@ struct ScrubPgIF {
   virtual void map_from_replica(OpRequestRef op) = 0;
 
   virtual void replica_scrub_op(OpRequestRef op) = 0;
+
+  virtual Scrub::schedule_result_t start_scrub_session(
+      Scrub::OSDRestrictions osd_restrictions,
+      Scrub::ScrubPGPreconds,
+      std::optional<requested_scrub_t> temp_request) = 0;
 
   virtual void set_op_parameters(const requested_scrub_t&) = 0;
 
