@@ -4,8 +4,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <compare>
 #include <iostream>
 #include <memory>
+#include <ranges>
 #include <vector>
 
 #include "common/RefCountedObj.h"
@@ -39,6 +41,17 @@ struct scrub_schedule_t {
   utime_t scheduled_at{};
   utime_t deadline{0, 0};
   utime_t not_before{utime_t::max()};
+  // when compared - the 'not_before' is ignored, assuming
+  // we never compare jobs with different eligibility status.
+  std::partial_ordering operator<=>(const scrub_schedule_t& rhs) const
+  {
+    auto cmp1 = scheduled_at <=> rhs.scheduled_at;
+    if (cmp1 != 0) {
+      return cmp1;
+    }
+    return deadline <=> rhs.deadline;
+  };
+  bool operator==(const scrub_schedule_t& rhs) const = default;
 };
 
 struct sched_params_t {
@@ -48,7 +61,7 @@ struct sched_params_t {
   must_scrub_t is_must{must_scrub_t::not_mandatory};
 };
 
-class ScrubJob final : public RefCountedObject {
+class ScrubJob {
  public:
   /**
    * a time scheduled for scrub, and a deadline: The scrub could be delayed
@@ -58,18 +71,19 @@ class ScrubJob final : public RefCountedObject {
   scrub_schedule_t schedule;
 
   /// pg to be scrubbed
-  const spg_t pgid;
+  spg_t pgid;
 
   /// the OSD id (for the log)
-  const int whoami;
+  int whoami;
 
-  ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
+  //ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
+  qu_state_t state{qu_state_t::not_registered};
 
   /**
    * the old 'is_registered'. Set whenever the job is registered with the OSD,
    * i.e. is in 'to_scrub'.
    */
-  std::atomic_bool in_queues{false};
+  bool in_queues{false};
 
   /// how the last attempt to scrub this PG ended
   delay_cause_t last_issue{delay_cause_t::none};
@@ -79,7 +93,8 @@ class ScrubJob final : public RefCountedObject {
    * 'sched_time' and 'deadline' (or any other job entry) were modified by
    * different task.
    */
-  std::atomic_bool updated{false};
+  //std::atomic_bool updated{false};
+  bool updated{false};
 
   /**
     * the scrubber is waiting for locked objects to be unlocked.
@@ -98,14 +113,10 @@ class ScrubJob final : public RefCountedObject {
 
   static std::string_view qu_state_text(qu_state_t st);
 
-  /**
-   * relatively low-cost(*) access to the scrub job's state, to be used in
-   * logging.
-   *  (*) not a low-cost access on x64 architecture
-   */
   std::string_view state_desc() const
   {
-    return qu_state_text(state.load(std::memory_order_relaxed));
+    //return qu_state_text(state.load(std::memory_order_relaxed));
+    return qu_state_text(state);
   }
 
   /**
@@ -136,7 +147,7 @@ class ScrubJob final : public RefCountedObject {
    */
   std::string_view registration_state() const
   {
-    return in_queues.load(std::memory_order_relaxed) ? "in-queue"
+    return in_queues ? "in-queue"
 						     : "not-queued";
   }
 
@@ -159,11 +170,21 @@ class ScrubJob final : public RefCountedObject {
   std::string scheduling_state(utime_t now_is, bool is_deep_expected) const;
 
   std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
-  const std::string log_msg_prefix;
+  std::string log_msg_prefix;
+
+  // the comparison operator is used to sort the scrub jobs in the queue.
+  // Note that it would not be needed in the iteration of this code, as the
+  // queue would *not* hold the full ScrubJob objects, but rather -
+  // SchedTarget(s).
+
+    std::partial_ordering operator<=>(const ScrubJob& rhs) const {
+      return schedule <=> rhs.schedule;
+    };
+    //bool operator==(const ScrubJob& rhs) const = default;
 };
 
-using ScrubJobRef = ceph::ref_t<ScrubJob>;
-using ScrubQContainer = std::vector<ScrubJobRef>;
+//using ScrubJobRef = ceph::ref_t<ScrubJob>;
+using ScrubQContainer = std::vector<ScrubJob>;
 
 /**
  *  A collection of the configuration parameters (pool & OSD) that affect
@@ -262,7 +283,7 @@ struct formatter<Scrub::ScrubJob> {
 	ctx.out(), "pg[{}] @ nb:{:s} ({:s}) (dl:{:s}) - <{}> queue state:{:.7}",
 	sjob.pgid, sjob.schedule.not_before, sjob.schedule.scheduled_at,
 	sjob.schedule.deadline, sjob.registration_state(),
-	sjob.state.load(std::memory_order_relaxed));
+	sjob.state);
   }
 };
 
