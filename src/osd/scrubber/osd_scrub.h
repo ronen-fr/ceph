@@ -97,10 +97,10 @@ class OsdScrub {
    *
    *  locking: not using the jobs_lock
    */
-  void update_job(
-      Scrub::ScrubJob& sjob,
-      const Scrub::sched_params_t& suggested,
-      bool reset_notbefore);
+//   void update_job(
+//       Scrub::ScrubJob& sjob,
+//       const Scrub::sched_params_t& suggested,
+//       bool reset_notbefore);
 
   /**
    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
@@ -118,9 +118,9 @@ class OsdScrub {
    *
    * locking: might lock jobs_lock
    */
-  void register_with_osd(
-      Scrub::ScrubJob& sjob,
-      const Scrub::sched_params_t& suggested);
+//   void register_with_osd(
+//       Scrub::ScrubJob& sjob,
+//       const Scrub::sched_params_t& suggested);
 
   /**
    * remove the pg from set of PGs to be scanned for scrubbing.

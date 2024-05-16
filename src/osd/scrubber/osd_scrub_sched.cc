@@ -95,33 +95,33 @@ std::optional<Scrub::ScrubJob> ScrubQueue::dequeue_target(spg_t pgid)
 }
 
 
-void ScrubQueue::register_with_osd(
-    Scrub::ScrubJob& scrub_job,
-    const sched_params_t& suggested)
-{
-  bool was_registered = scrub_job.in_queues;
-
-  if (was_registered) {
-    // just updating the schedule?
-    update_job(scrub_job, suggested, false /* keep n.b. delay */);
-  } else {
-    // insertion under lock
-    {
-      std::unique_lock lck{jobs_lock};
-
-      update_job(scrub_job, suggested, true /* reset not_before */);
-      to_scrub.push_back(scrub_job);
-      scrub_job.in_queues = true;
-    }
-  }
-
-  dout(10)
-      << fmt::format(
-	     "pg[{}] sched-state changed from <{:.14}> to <{:.14}> (@{:s})",
-	     scrub_job.pgid, ScrubJob::qu_state_text(was_registered),
-	     ScrubJob::qu_state_text(true), scrub_job.schedule.not_before)
-      << dendl;
-}
+// void ScrubQueue::register_with_osd(
+//     Scrub::ScrubJob& scrub_job,
+//     const sched_params_t& suggested)
+// {
+//   bool was_registered = scrub_job.in_queues;
+// 
+//   if (was_registered) {
+//     // just updating the schedule?
+//     update_job(scrub_job, suggested, false /* keep n.b. delay */);
+//   } else {
+//     // insertion under lock
+//     {
+//       std::unique_lock lck{jobs_lock};
+// 
+//       update_job(scrub_job, suggested, true /* reset not_before */);
+//       to_scrub.push_back(scrub_job);
+//       scrub_job.in_queues = true;
+//     }
+//   }
+// 
+//   dout(10)
+//       << fmt::format(
+// 	     "pg[{}] sched-state changed from <{:.14}> to <{:.14}> (@{:s})",
+// 	     scrub_job.pgid, ScrubJob::qu_state_text(was_registered),
+// 	     ScrubJob::qu_state_text(true), scrub_job.schedule.not_before)
+//       << dendl;
+// }
 
 
 // void ScrubQueue::update_job(Scrub::ScrubJob& scrub_job,
