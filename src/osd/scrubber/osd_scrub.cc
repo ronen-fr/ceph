@@ -432,13 +432,13 @@ PerfCounters* OsdScrub::get_perf_counters(int pool_type, scrub_level_t level)
 // ////////////////////////////////////////////////////////////////////////// //
 // forwarders to the queue
 
-void OsdScrub::update_job(
-    Scrub::ScrubJob& sjob,
-    const Scrub::sched_params_t& suggested,
-    bool reset_notbefore)
-{
-  m_queue.update_job(sjob, suggested, reset_notbefore);
-}
+// void OsdScrub::update_job(
+//     Scrub::ScrubJob& sjob,
+//     const Scrub::sched_params_t& suggested,
+//     bool reset_notbefore)
+// {
+//   m_queue.update_job(sjob, suggested, reset_notbefore);
+// }
 
 void OsdScrub::delay_on_failure(
       Scrub::ScrubJob& sjob,
@@ -456,12 +456,12 @@ void OsdScrub::enqueue_target(Scrub::ScrubJob& sjob)
 }
 
 
-void OsdScrub::register_with_osd(
-    Scrub::ScrubJob& sjob,
-    const Scrub::sched_params_t& suggested)
-{
-  m_queue.register_with_osd(sjob, suggested);
-}
+// void OsdScrub::register_with_osd(
+//     Scrub::ScrubJob& sjob,
+//     const Scrub::sched_params_t& suggested)
+// {
+//   m_queue.register_with_osd(sjob, suggested);
+// }
 
 void OsdScrub::remove_from_osd_queue(Scrub::ScrubJob& sjob)
 {

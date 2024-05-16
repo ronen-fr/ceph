@@ -578,6 +578,8 @@ void PgScrubber::on_primary_active_clean()
 */
 void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 {
+  // disabled in this commit
+#if 0
   dout(10) << fmt::format("{}: flags:<{}>", __func__, request_flags) << dendl;
   // verify that the 'in_q' status matches our "Primariority"
   if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) { // RRR consider restore this to some 'registered' state
@@ -593,6 +595,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
   }
 
   dout(15) << __func__ << ": done " << registration_state() << dendl;
+#endif
 }
 
 scrub_level_t PgScrubber::scrub_requested(
