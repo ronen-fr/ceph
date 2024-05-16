@@ -538,29 +538,25 @@ sched_params_t PgScrubber::determine_scrub_time(
 }
 
 
-/*
- * Note: referring to m_planned_scrub here is temporary, as this set of
- * scheduling flags will be removed in a followup PR.
- */
 void PgScrubber::schedule_scrub_with_osd()
 {
   ceph_assert(is_primary());
   ceph_assert(m_scrub_job);
 
-  auto pre_state = m_scrub_job->state_desc();
-  auto pre_reg = registration_state();
-
+  auto applicable_conf = populate_config_params();
   auto suggested = determine_scrub_time(m_pg->get_pgpool().info.opts);
-  m_osds->get_scrub_services().register_with_osd(*m_scrub_job, suggested);
+  m_scrub_job->init_targets(suggested, m_pg->info, applicable_conf,
+                           ceph_clock_now());
 
+  auto pre_reg = registration_state();
+  m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
   dout(10) << fmt::format(
-		  "{}: <flags:{}> {} <{:.5}>&<{:.10}> --> <{:.5}>&<{:.14}>",
+		  "{}: <flags:{}> {} <{:.10}> --> <{:.14}>",
 		  __func__, m_planned_scrub,
 		  (is_primary() ? "Primary" : "Replica/other"), pre_reg,
-		  pre_state, registration_state(), m_scrub_job->state_desc())
+		  registration_state())
 	   << dendl;
 }
-
 
 void PgScrubber::on_primary_active_clean()
 {
@@ -584,7 +580,8 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 {
   dout(10) << fmt::format("{}: flags:<{}>", __func__, request_flags) << dendl;
   // verify that the 'in_q' status matches our "Primariority"
-  if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) {
+  if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) { // RRR consider restore this to some 'registered' state
+// that is not just 'in_queues' but also when scrubbing is active
     dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
   }
 

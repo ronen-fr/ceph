@@ -206,6 +206,14 @@ class ScrubQueue {
   void register_with_osd(Scrub::ScrubJob& sjob, const sched_params_t& suggested);
 
   /**
+   * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
+   * scrubbed by the OSD.
+   */
+  void enqueue_target(Scrub::ScrubJob& sjob);
+
+  std::optional<Scrub::ScrubJob> dequeue_target(spg_t pgid);
+
+  /**
    * modify a scrub-job's scheduled time and deadline
    *
    * There are 3 argument combinations to consider:
@@ -228,6 +236,10 @@ class ScrubQueue {
    */
   void update_job(
       Scrub::ScrubJob& sjob,
+      const sched_params_t& suggested,
+      bool reset_notbefore);
+
+  void adjust_schedule(
       const sched_params_t& suggested,
       bool reset_notbefore);
 
@@ -330,17 +342,17 @@ class ScrubQueue {
   std::optional<spg_t> reserving_pg;
   utime_t reserving_since;
 
-  /**
-   * If the scrub job was not explicitly requested, we postpone it by some
-   * random length of time.
-   * And if delaying the scrub - we calculate, based on pool parameters, a
-   * deadline we should scrub before.
-   *
-   * @return a pair of values: the determined scrub time, and the deadline
-   */
-  Scrub::scrub_schedule_t adjust_target_time(
-    const Scrub::sched_params_t& recomputed_params) const;
-
+//   /**
+//    * If the scrub job was not explicitly requested, we postpone it by some
+//    * random length of time.
+//    * And if delaying the scrub - we calculate, based on pool parameters, a
+//    * deadline we should scrub before.
+//    *
+//    * @return a pair of values: the determined scrub time, and the deadline
+//    */
+//   Scrub::scrub_schedule_t adjust_target_time(
+//     const Scrub::sched_params_t& recomputed_params) const;
+// 
 protected: // used by the unit-tests
   /**
    * unit-tests will override this function to return a mock time
