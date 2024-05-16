@@ -29,14 +29,6 @@ namespace Scrub {
 
 enum class must_scrub_t { not_mandatory, mandatory };
 
-enum class qu_state_t {
-  not_registered,  // not a primary, thus not considered for scrubbing by this
-		   // OSD (also the temporary state when just created)
-  registered,	   // in either of the two queues ('to_scrub' or 'penalized')
-  unregistering	   // in the process of being unregistered. Will be finalized
-		   // under lock
-};
-
 struct scrub_schedule_t {
   utime_t scheduled_at{};
   utime_t deadline{0, 0};
@@ -76,9 +68,6 @@ class ScrubJob {
   /// the OSD id (for the log)
   int whoami;
 
-  //ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
-  qu_state_t state{qu_state_t::not_registered};
-
   /**
    * the old 'is_registered'. Set whenever the job is registered with the OSD,
    * i.e. is in 'to_scrub'.
@@ -111,12 +100,11 @@ class ScrubJob {
 
   utime_t get_sched_time() const { return schedule.not_before; }
 
-  static std::string_view qu_state_text(qu_state_t st);
+  static std::string_view qu_state_text(bool is_queueud);
 
   std::string_view state_desc() const
   {
-    //return qu_state_text(state.load(std::memory_order_relaxed));
-    return qu_state_text(state);
+    return qu_state_text(in_queues);
   }
 
   /**
@@ -147,15 +135,10 @@ class ScrubJob {
    */
   std::string_view registration_state() const
   {
-    return in_queues ? "in-queue"
-						     : "not-queued";
+    return in_queues ? "registered" : "not-registered";
   }
 
-  /**
-   * access the 'state' directly, for when a distinction between 'registered'
-   * and 'unregistering' is needed (both have in_queues() == true)
-   */
-  bool is_state_registered() const { return state == qu_state_t::registered; }
+  bool is_registered() const { return in_queues; }
 
   /**
    * is this a high priority scrub job?
@@ -177,13 +160,12 @@ class ScrubJob {
   // queue would *not* hold the full ScrubJob objects, but rather -
   // SchedTarget(s).
 
-    std::partial_ordering operator<=>(const ScrubJob& rhs) const {
-      return schedule <=> rhs.schedule;
-    };
-    //bool operator==(const ScrubJob& rhs) const = default;
+  std::partial_ordering operator<=>(const ScrubJob& rhs) const
+  {
+    return schedule <=> rhs.schedule;
+  };
 };
 
-//using ScrubJobRef = ceph::ref_t<ScrubJob>;
 using ScrubQContainer = std::vector<ScrubJob>;
 
 /**
@@ -246,17 +228,6 @@ std::ostream& operator<<(std::ostream& out, const Scrub::ScrubJob& pg);
 }  // namespace std
 
 namespace fmt {
-template <>
-struct formatter<Scrub::qu_state_t> : formatter<std::string_view> {
-  template <typename FormatContext>
-  auto format(const Scrub::qu_state_t& s, FormatContext& ctx)
-  {
-    auto out = ctx.out();
-    out = fmt::formatter<string_view>::format(
-	std::string{Scrub::ScrubJob::qu_state_text(s)}, ctx);
-    return out;
-  }
-};
 
 template <>
 struct formatter<Scrub::sched_params_t> {
@@ -280,10 +251,9 @@ struct formatter<Scrub::ScrubJob> {
   auto format(const Scrub::ScrubJob& sjob, FormatContext& ctx)
   {
     return fmt::format_to(
-	ctx.out(), "pg[{}] @ nb:{:s} ({:s}) (dl:{:s}) - <{}> queue state:{:.7}",
+	ctx.out(), "pg[{}] @ nb:{:s} ({:s}) (dl:{:s}) - <{}>",
 	sjob.pgid, sjob.schedule.not_before, sjob.schedule.scheduled_at,
-	sjob.schedule.deadline, sjob.registration_state(),
-	sjob.state);
+	sjob.schedule.deadline, sjob.registration_state());
   }
 };
 

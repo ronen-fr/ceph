@@ -14,7 +14,7 @@ namespace rng = std::ranges;
 
 
 
-using qu_state_t = Scrub::qu_state_t;
+//using qu_state_t = Scrub::qu_state_t;
 using must_scrub_t = Scrub::must_scrub_t;
 using ScrubQContainer = Scrub::ScrubQContainer;
 using sched_params_t = Scrub::sched_params_t;
@@ -72,100 +72,32 @@ void ScrubQueue::remove_from_osd_queue(Scrub::ScrubJob& scrub_job)
 }
 
 
-// /*
-//  * Modify the scrub job state:
-//  * - if 'registered' (as expected): mark as 'unregistering'. The job will be
-//  *   dequeued the next time sched_scrub() is called.
-//  * - if already 'not_registered': shouldn't really happen, but not a problem.
-//  *   The state will not be modified.
-//  * - same for 'unregistering'.
-//  *
-//  * Note: not holding the jobs lock
-//  */
-// void ScrubQueue::remove_from_osd_queue(const Scrub::ScrubJob& scrub_job)
-// {
-//   dout(15) << "removing pg[" << scrub_job->pgid << "] from OSD scrub queue"
-// 	   << dendl;
-// 
-//   qu_state_t expected_state{qu_state_t::registered};
-//   auto ret =
-//     scrub_job->state.compare_exchange_strong(expected_state,
-// 					     qu_state_t::unregistering);
-// 
-//   if (ret) {
-// 
-//     dout(10) << "pg[" << scrub_job->pgid << "] sched-state changed from "
-// 	     << ScrubJob::qu_state_text(expected_state) << " to "
-// 	     << ScrubJob::qu_state_text(scrub_job->state) << dendl;
-// 
-//   } else {
-// 
-//     // job wasn't in state 'registered' coming in
-//     dout(5) << "removing pg[" << scrub_job->pgid
-// 	    << "] failed. State was: " << ScrubJob::qu_state_text(expected_state)
-// 	    << dendl;
-//   }
-// }
-
 void ScrubQueue::register_with_osd(
-  Scrub::ScrubJob& scrub_job,
-  const sched_params_t& suggested)
+    Scrub::ScrubJob& scrub_job,
+    const sched_params_t& suggested)
 {
-  qu_state_t state_at_entry = scrub_job.state;
-  dout(20) << fmt::format(
-		"pg[{}] state at entry: <{:.14}>", scrub_job.pgid,
-		"RRR"/*state_at_entry*/)
-	   << dendl;
+  bool was_registered = scrub_job.in_queues;
 
-  switch (state_at_entry) {
-    case qu_state_t::registered:
-      // just updating the schedule?
-      update_job(scrub_job, suggested, false /* keep n.b. delay */);
-      break;
+  if (was_registered) {
+    // just updating the schedule?
+    update_job(scrub_job, suggested, false /* keep n.b. delay */);
+  } else {
+    // insertion under lock
+    {
+      std::unique_lock lck{jobs_lock};
 
-    case qu_state_t::not_registered:
-      // insertion under lock
-      {
-	std::unique_lock lck{jobs_lock};
-
-	if (state_at_entry != scrub_job.state) {
-	  lck.unlock();
-	  dout(5) << " scrub job state changed. Retrying." << dendl;
-	  // retry
-	  register_with_osd(scrub_job, suggested);
-	  break;
-	}
-
-	update_job(scrub_job, suggested, true /* resets not_before */);
-	to_scrub.push_back(scrub_job);
-	scrub_job.in_queues = true;
-	scrub_job.state = qu_state_t::registered;
-      }
-      break;
-
-    case qu_state_t::unregistering:
-      // restore to the to_sched queue
-      {
-	// must be under lock, as the job might be removed from the queue
-	// at any minute
-	std::lock_guard lck{jobs_lock};
-
-	update_job(scrub_job, suggested, true /* resets not_before */);
-	if (scrub_job.state == qu_state_t::not_registered) {
-	  dout(5) << " scrub job state changed to 'not registered'" << dendl;
-	  to_scrub.push_back(scrub_job);
-	}
-	scrub_job.in_queues = true;
-	scrub_job.state = qu_state_t::registered;
-      }
-      break;
+      update_job(scrub_job, suggested, true /* reset not_before */);
+      to_scrub.push_back(scrub_job);
+      scrub_job.in_queues = true;
+    }
   }
 
-  dout(10) << fmt::format(
-		"pg[{}] sched-state changed from <{:.14}> to <{:.14}> (@{:s})",
-		scrub_job.pgid, state_at_entry, "RRR"/*scrub_job.state*/,
-		scrub_job.schedule.not_before)
-	   << dendl;
+  dout(10)
+      << fmt::format(
+	     "pg[{}] sched-state changed from <{:.14}> to <{:.14}> (@{:s})",
+	     scrub_job.pgid, ScrubJob::qu_state_text(was_registered),
+	     ScrubJob::qu_state_text(true), scrub_job.schedule.not_before)
+      << dendl;
 }
 
 
@@ -245,26 +177,14 @@ std::optional<ScrubJob> ScrubQueue::pop_ready_pg(
 				    jb.schedule.deadline <= time_now));
   };
 
-  //   auto filtr2 = [x=time_now](const ScrubJob& jb) -> bool {
-  //     return jb.get_sched_time() <= utime_t{}/*time_now*/;
-  //   };
-  //
-  //   std::function f = [time_now](const ScrubJob& jb) -> bool {
-  //     return jb.get_sched_time() <= time_now;
-  //   };
-  //
-  //   auto filtr3 = [](const ScrubJob& jb) -> bool {
-  //     return true;
-  //   };
-
   auto not_ripes = rng::partition(to_scrub, filtr);
   if (not_ripes.begin() == to_scrub.begin()) {
     return std::nullopt;
   }
-
   auto top = rng::min_element(
       to_scrub.begin(), not_ripes.begin(), rng::less(),
       [](const ScrubJob& jb) -> utime_t { return jb.get_sched_time(); });
+
   if (top == not_ripes.begin()) {
     return std::nullopt;
   }

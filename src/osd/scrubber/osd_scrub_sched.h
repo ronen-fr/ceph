@@ -307,14 +307,6 @@ class ScrubQueue {
 
   Scrub::ScrubQContainer to_scrub;   ///< scrub jobs (i.e. PGs) to scrub
 
-//   static inline constexpr auto registered_job = [](const auto& jobref) -> bool {
-//     return jobref->state == Scrub::qu_state_t::registered;
-//   };
-
-  static inline constexpr auto invalid_state = [](const auto& jobref) -> bool {
-    return jobref->state == Scrub::qu_state_t::not_registered;
-  };
-
   /**
    * The scrubbing of PGs might be delayed if the scrubbed chunk of objects is
    * locked by some other operation. A bug might cause this to be an infinite
