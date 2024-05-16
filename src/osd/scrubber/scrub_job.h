@@ -53,6 +53,61 @@ struct sched_params_t {
   must_scrub_t is_must{must_scrub_t::not_mandatory};
 };
 
+
+/**
+ *  A collection of the configuration parameters (pool & OSD) that affect
+ *  scrub scheduling.
+ */
+struct sched_conf_t {
+  /// the desired interval between shallow scrubs
+  double shallow_interval{0.0};
+
+  /// the desired interval between deep scrubs
+  double deep_interval{0.0};
+
+  /**
+   * the maximum interval between shallow scrubs, as determined by either the
+   * OSD or the pool configuration. Empty if no limit is configured.
+   */
+  std::optional<double> max_shallow;
+
+  /**
+   * the maximum interval between deep scrubs.
+   * For deep scrubs - there is no equivalent of scrub_max_interval. Per the
+   * documentation, once deep_scrub_interval has passed, we are already
+   * "overdue", at least as far as the "ignore allowed load" window is
+   * concerned. \todo based on users complaints (and the fact that the
+   * interaction between the configuration parameters is clear to no one),
+   * this will be revised shortly.
+   */
+  double max_deep{0.0};
+
+  /**
+   * interval_randomize_ratio
+   *
+   * We add an extra random duration to the configured times when doing
+   * scheduling. An event configured with an interval of <interval> will
+   * actually be scheduled at a time selected uniformly from
+   * [<interval>, (1+<interval_randomize_ratio>) * <interval>)
+   */
+  double interval_randomize_ratio{0.0};
+
+  /**
+   * a randomization factor aimed at preventing 'thundering herd' problems
+   * upon deep-scrubs common intervals. The actual deep scrub interval will
+   * be selected with a normal distribution around the configured interval,
+   * with a standard deviation of <deep_randomize_ratio> * <interval>.
+   */
+  double deep_randomize_ratio{0.0};
+
+  /**
+   * must we schedule a scrub with high urgency if we do not have a valid
+   * last scrub stamp?
+   */
+  bool mandatory_on_invalid{true};
+};
+
+
 class ScrubJob {
  public:
   /**
@@ -118,12 +173,29 @@ class ScrubJob {
       bool reset_failure_penalty);
 
   /**
+   * If the scrub job was not explicitly requested, we postpone it by some
+   * random length of time.
+   * And if delaying the scrub - we calculate, based on pool parameters, a
+   * deadline we should scrub before.
+   *
+   * @return a pair of values: the determined scrub time, and the deadline
+   */
+  Scrub::scrub_schedule_t adjust_target_time(
+    const Scrub::sched_params_t& recomputed_params) const;
+
+  /**
    * push the 'not_before' time out by 'delay' seconds, so that this scrub target
    * would not be retried before 'delay' seconds have passed.
    */
   void delay_on_failure(
       std::chrono::seconds delay,
       delay_cause_t delay_cause,
+      utime_t scrub_clock_now);
+
+  void init_targets(
+      const sched_params_t& suggested,
+      const pg_info_t& info,
+      const Scrub::sched_conf_t& aconf,
       utime_t scrub_clock_now);
 
   void dump(ceph::Formatter* f) const;
@@ -167,59 +239,6 @@ class ScrubJob {
 };
 
 using ScrubQContainer = std::vector<ScrubJob>;
-
-/**
- *  A collection of the configuration parameters (pool & OSD) that affect
- *  scrub scheduling.
- */
-struct sched_conf_t {
-  /// the desired interval between shallow scrubs
-  double shallow_interval{0.0};
-
-  /// the desired interval between deep scrubs
-  double deep_interval{0.0};
-
-  /**
-   * the maximum interval between shallow scrubs, as determined by either the
-   * OSD or the pool configuration. Empty if no limit is configured.
-   */
-  std::optional<double> max_shallow;
-
-  /**
-   * the maximum interval between deep scrubs.
-   * For deep scrubs - there is no equivalent of scrub_max_interval. Per the
-   * documentation, once deep_scrub_interval has passed, we are already
-   * "overdue", at least as far as the "ignore allowed load" window is
-   * concerned. \todo based on users complaints (and the fact that the
-   * interaction between the configuration parameters is clear to no one),
-   * this will be revised shortly.
-   */
-  double max_deep{0.0};
-
-  /**
-   * interval_randomize_ratio
-   *
-   * We add an extra random duration to the configured times when doing
-   * scheduling. An event configured with an interval of <interval> will
-   * actually be scheduled at a time selected uniformly from
-   * [<interval>, (1+<interval_randomize_ratio>) * <interval>)
-   */
-  double interval_randomize_ratio{0.0};
-
-  /**
-   * a randomization factor aimed at preventing 'thundering herd' problems
-   * upon deep-scrubs common intervals. The actual deep scrub interval will
-   * be selected with a normal distribution around the configured interval,
-   * with a standard deviation of <deep_randomize_ratio> * <interval>.
-   */
-  double deep_randomize_ratio{0.0};
-
-  /**
-   * must we schedule a scrub with high urgency if we do not have a valid
-   * last scrub stamp?
-   */
-  bool mandatory_on_invalid{true};
-};
 
 }  // namespace Scrub
 
