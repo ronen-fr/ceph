@@ -4,7 +4,6 @@
 #include "./scrub_job.h"
 #include "pg_scrubber.h"
 
-using qu_state_t = Scrub::qu_state_t;
 using must_scrub_t = Scrub::must_scrub_t;
 using ScrubQContainer = Scrub::ScrubQContainer;
 using sched_params_t = Scrub::sched_params_t;
@@ -80,7 +79,7 @@ std::string ScrubJob::scheduling_state(utime_t now_is, bool is_deep_expected)
     const
 {
   // if not in the OSD scheduling queues, not a candidate for scrubbing
-  if (state != qu_state_t::registered) {
+  if (!in_queues) {
     return "no scrub is scheduled";
   }
 
@@ -100,18 +99,10 @@ std::ostream& ScrubJob::gen_prefix(std::ostream& out, std::string_view fn) const
   return out << log_msg_prefix << fn << ": ";
 }
 
-// clang-format off
-std::string_view ScrubJob::qu_state_text(qu_state_t st)
+std::string_view ScrubJob::qu_state_text(bool is_queued)
 {
-  switch (st) {
-    case qu_state_t::not_registered: return "not registered w/ OSD"sv;
-    case qu_state_t::registered: return "registered"sv;
-    case qu_state_t::unregistering: return "unregistering"sv;
-  }
-  // g++ (unlike CLANG), requires an extra 'return' here
-  return "(unknown)"sv;
+  return is_queued ? "queued"sv : "not queued"sv;
 }
-// clang-format on
 
 void ScrubJob::dump(ceph::Formatter* f) const
 {

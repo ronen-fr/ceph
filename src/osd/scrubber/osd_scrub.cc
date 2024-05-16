@@ -153,33 +153,6 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
   }
 }
 
-#if 0
-  for (const auto& candidate : candidates) {
-    dout(20) << fmt::format("initiating scrub on pg[{}]", candidate) << dendl;
-
-    // we have a candidate to scrub. But we may fail when trying to initiate that
-    // scrub. For some failures - we can continue with the next candidate. For
-    // others - we should stop trying to scrub at this tick.
-    auto res = initiate_a_scrub(candidate, env_restrictions);
-
-    if (res == schedule_result_t::target_specific_failure) {
-      // continue with the next job.
-      // \todo: consider separate handling of "no such PG", as - later on -
-      // we should be removing both related targets.
-      continue;
-    } else if (res == schedule_result_t::osd_wide_failure) {
-      // no point in trying the other candidates at this time
-      break;
-    } else {
-      // the happy path. We are done
-      dout(20) << fmt::format("scrub initiated for pg[{}]", candidate.pgid)
-               << dendl;
-      break;
-    }
-  }
-#endif
-
-
 
 Scrub::OSDRestrictions OsdScrub::restrictions_on_scrubbing(
     bool is_recovery_active,
@@ -255,15 +228,8 @@ Scrub::schedule_result_t OsdScrub::initiate_a_scrub(
 
 void OsdScrub::on_config_change()
 {
-  ScrubQueue::EntryPred pred{[](const Scrub::ScrubJob& sj) -> bool {
-    ceph_assert(sj.state == Scrub::qu_state_t::registered);
-    return sj.state == Scrub::qu_state_t::registered;
-  }};
-
-
   auto to_notify = m_queue.get_pgs([](const Scrub::ScrubJob& sj) -> bool {
-    //return sj->state == qu_state_t::registered;
-    ceph_assert(sj.state == Scrub::qu_state_t::registered);
+    ceph_assert(sj.in_queues);
     return true;
   });
 

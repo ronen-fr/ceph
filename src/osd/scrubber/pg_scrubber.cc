@@ -493,7 +493,7 @@ std::string_view PgScrubber::registration_state() const
 
 void PgScrubber::rm_from_osd_scrubbing()
 {
-  if (m_scrub_job && m_scrub_job->is_state_registered()) {
+  if (m_scrub_job && m_scrub_job->is_registered()) {
     dout(15) << fmt::format(
 		    "{}: prev. state: {}", __func__, registration_state())
 	     << dendl;
@@ -2236,7 +2236,7 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 	  false /* is periodic? unknown, actually */};
     }
   }
-  if (m_scrub_job->state != Scrub::qu_state_t::registered) {
+  if (!m_scrub_job->is_registered()) {
     return pg_scrubbing_status_t{utime_t{},
 				 0,
 				 pg_scrub_sched_status_t::not_queued,
