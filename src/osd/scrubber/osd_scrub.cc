@@ -449,6 +449,12 @@ void OsdScrub::delay_on_failure(
   m_queue.delay_on_failure(sjob, delay, delay_cause, now_is);
 }
 
+void OsdScrub::enqueue_target(Scrub::ScrubJob& sjob)
+{
+  m_queue.enqueue_target(sjob);
+  sjob.in_queues = true;
+}
+
 
 void OsdScrub::register_with_osd(
     Scrub::ScrubJob& sjob,

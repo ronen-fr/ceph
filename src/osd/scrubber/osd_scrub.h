@@ -105,6 +105,12 @@ class OsdScrub {
   /**
    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
    * scrubbed by the OSD.
+   */
+  void enqueue_target(Scrub::ScrubJob& sjob);
+
+  /**
+   * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
+   * scrubbed by the OSD.
    * The registration is active as long as the PG exists and the OSD is its
    * primary.
    *
