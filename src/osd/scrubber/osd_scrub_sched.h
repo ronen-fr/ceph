@@ -203,7 +203,7 @@ class ScrubQueue {
    *
    * locking: might lock jobs_lock
    */
-  void register_with_osd(Scrub::ScrubJob& sjob, const sched_params_t& suggested);
+  //void register_with_osd(Scrub::ScrubJob& sjob, const sched_params_t& suggested);
 
   /**
    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
