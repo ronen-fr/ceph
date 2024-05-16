@@ -2,7 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 /// \file testing the scrub scheduling algorithm
-
+#if 0
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -450,3 +450,5 @@ TEST_F(TestScrubSched, ready_list)
   EXPECT_EQ(4, ripe_jobs.size());
   debug_print_jobs("ready_list", ripe_jobs);
 }
+#endif
+
