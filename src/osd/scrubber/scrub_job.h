@@ -178,10 +178,12 @@ class ScrubJob {
    * And if delaying the scrub - we calculate, based on pool parameters, a
    * deadline we should scrub before.
    *
-   * @return a pair of values: the determined scrub time, and the deadline
+   * @return updated (i.e. - possibly delayed) scrub schedule (schedule,
+   * deadline, not_before)
    */
   Scrub::scrub_schedule_t adjust_target_time(
-    const Scrub::sched_params_t& recomputed_params) const;
+    const Scrub::sched_conf_t& app_conf,
+    const Scrub::sched_params_t& proposed_schedule) const;
 
   /**
    * push the 'not_before' time out by 'delay' seconds, so that this scrub target
