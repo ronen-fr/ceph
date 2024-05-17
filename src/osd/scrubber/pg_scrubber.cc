@@ -2048,7 +2048,14 @@ void PgScrubber::on_digest_updates()
   }
 }
 
-void requeue_penalized(Scrub::delay_cause_t cause) {} // RRR
+
+void PgScrubber::requeue_penalized(Scrub::delay_cause_t cause)
+{
+  // RRR fix the 5s' to use a cause-specific delay parameter
+  m_scrub_job->delay_on_failure(5s, cause, ceph_clock_now());
+  m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
+}
+
 
 Scrub::schedule_result_t PgScrubber::start_scrub_session(
     Scrub::OSDRestrictions osd_restrictions,
