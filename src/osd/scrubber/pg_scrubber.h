@@ -801,6 +801,15 @@ class PgScrubber : public ScrubPgIF,
   Scrub::sched_params_t determine_scrub_time(
       const pool_opts_t& pool_conf) const;
 
+  /**
+   * delay and requeue:
+   * - modify the scrub-job not-before time;
+   * - requeue the scrub-job.
+   * Note: we are called after a failure during a scrub session. Which means
+   * that the scrub-job is not in the queue.
+   */
+  void requeue_penalized(Scrub::delay_cause_t cause);
+
   /*
    * Select a range of objects to scrub.
    *
