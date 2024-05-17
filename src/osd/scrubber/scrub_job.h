@@ -200,6 +200,11 @@ class ScrubJob {
       const Scrub::sched_conf_t& aconf,
       utime_t scrub_clock_now);
 
+  void at_scrub_completion(
+      const sched_params_t& suggested,
+      const sched_conf_t& aconf,
+      utime_t scrub_clock_now);
+
   void dump(ceph::Formatter* f) const;
 
   /*
