@@ -239,10 +239,6 @@ class ScrubQueue {
       const sched_params_t& suggested,
       bool reset_notbefore);
 
-  void adjust_schedule(
-      const sched_params_t& suggested,
-      bool reset_notbefore);
-
   void delay_on_failure(
       Scrub::ScrubJob& sjob,
       std::chrono::seconds delay,
@@ -283,12 +279,7 @@ class ScrubQueue {
   void clear_pg_scrub_blocked(spg_t blocked_pg);
   int get_blocked_pgs_count() const;
 
-  /// in this temporary version: as the 'targets' in the queue are the full
-  /// ScrubJob-s, pop_ready_pg() is tasked with extracting the correct level
-  /// from the selected ScrubJob.
-
-  /// RRR or not?
-  /// and should we return the PG or the ScrubJob?
+  /// RRR document
   std::optional<Scrub::ScrubJob> pop_ready_pg(
       Scrub::OSDRestrictions restrictions,  // note: 4B in size! (copy)
       utime_t time_now);
@@ -342,17 +333,6 @@ class ScrubQueue {
   std::optional<spg_t> reserving_pg;
   utime_t reserving_since;
 
-//   /**
-//    * If the scrub job was not explicitly requested, we postpone it by some
-//    * random length of time.
-//    * And if delaying the scrub - we calculate, based on pool parameters, a
-//    * deadline we should scrub before.
-//    *
-//    * @return a pair of values: the determined scrub time, and the deadline
-//    */
-//   Scrub::scrub_schedule_t adjust_target_time(
-//     const Scrub::sched_params_t& recomputed_params) const;
-// 
 protected: // used by the unit-tests
   /**
    * unit-tests will override this function to return a mock time

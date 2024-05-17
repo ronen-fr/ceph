@@ -95,17 +95,6 @@ std::optional<Scrub::ScrubJob> ScrubQueue::dequeue_target(spg_t pgid)
 }
 
 
-// void ScrubQueue::update_job(Scrub::ScrubJob& scrub_job,
-// 			    const sched_params_t& suggested,
-//                             bool reset_nb)
-// {
-//   // adjust the suggested scrub time according to OSD-wide status
-//   auto adjusted = adjust_target_time(suggested);
-//   scrub_job.high_priority = suggested.is_must == must_scrub_t::mandatory;
-//   scrub_job.update_schedule(adjusted, reset_nb);
-// }
-
-
 void ScrubQueue::delay_on_failure(
     Scrub::ScrubJob& sjob,
     std::chrono::seconds delay,
@@ -120,44 +109,6 @@ void ScrubQueue::delay_on_failure(
 }
 
 
-// std::vector<ScrubTargetId> ScrubQueue::ready_to_scrub(
-//     OSDRestrictions restrictions,  // note: 4B in size! (copy)
-//     utime_t scrub_tick)
-// {
-//   dout(10) << fmt::format(
-// 		  " @{:s}: registered: {} ({})", scrub_tick,
-// 		  to_scrub.size(), restrictions)
-// 	   << dendl;
-// 
-//   //  create a list of candidates (copying, as otherwise creating a deadlock):
-//   //  - (if we didn't handle directly) remove invalid jobs
-//   //  - create a copy of the to_scrub (possibly up to first not-ripe)
-//   //  unlock, then try the lists
-//   std::unique_lock lck{jobs_lock};
-// 
-//   // remove the 'updated' flag from all entries
-//   std::for_each(
-//       to_scrub.begin(), to_scrub.end(),
-//       [](const auto& jobref) -> void { jobref->updated = false; });
-// 
-//   // collect all valid & ripe jobs. Note that we must copy,
-//   // as when we use the lists we will not be holding jobs_lock (see
-//   // explanation above)
-// 
-//   // and in this step 1 of the refactoring (Aug 2023): the set returned must be
-//   // transformed into a vector of targets (which, in this phase, are
-//   // the PG id-s).
-//   auto to_scrub_copy = collect_ripe_jobs(to_scrub, restrictions, scrub_tick);
-//   lck.unlock();
-// 
-//   std::vector<ScrubTargetId> all_ready;
-//   std::transform(
-//       to_scrub_copy.cbegin(), to_scrub_copy.cend(),
-//       std::back_inserter(all_ready),
-//       [](const auto& jobref) -> ScrubTargetId { return jobref->pgid; });
-//   return all_ready;
-// }
-//
 std::optional<ScrubJob> ScrubQueue::pop_ready_pg(
     OSDRestrictions restrictions,  // note: 4B in size! (copy)
     utime_t time_now)
