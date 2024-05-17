@@ -8,6 +8,8 @@ using must_scrub_t = Scrub::must_scrub_t;
 using ScrubQContainer = Scrub::ScrubQContainer;
 using sched_params_t = Scrub::sched_params_t;
 using OSDRestrictions = Scrub::OSDRestrictions;
+using sched_conf_t = Scrub::sched_conf_t;
+using scrub_schedule_t = Scrub::scrub_schedule_t;
 using ScrubJob = Scrub::ScrubJob;
 
 
@@ -43,45 +45,37 @@ ostream& operator<<(ostream& out, const ScrubJob& sjob)
 
 
 Scrub::scrub_schedule_t ScrubJob::adjust_target_time(
-  const sched_params_t& times) const
+    const sched_conf_t& app_conf,
+    const sched_params_t& times) const
 {
   Scrub::scrub_schedule_t sched_n_dead{
-    times.proposed_time, times.proposed_time, times.proposed_time};
-
-  const auto& conf = cct->_conf;
+      times.proposed_time, times.proposed_time, times.proposed_time};
 
   if (times.is_must == Scrub::must_scrub_t::not_mandatory) {
     // unless explicitly requested, postpone the scrub with a random delay
-    double scrub_min_interval = times.min_interval > 0
-				  ? times.min_interval
-				  : conf->osd_scrub_min_interval;
-    double scrub_max_interval = times.max_interval > 0
-				  ? times.max_interval
-				  : conf->osd_scrub_max_interval;
-
-    sched_n_dead.scheduled_at += scrub_min_interval;
+    sched_n_dead.scheduled_at += app_conf.shallow_interval;
     double r = rand() / (double)RAND_MAX;
     sched_n_dead.scheduled_at +=
-      scrub_min_interval * conf->osd_scrub_interval_randomize_ratio * r;
+	app_conf.shallow_interval * app_conf.interval_randomize_ratio * r;
 
-    if (scrub_max_interval <= 0) {
-      sched_n_dead.deadline = utime_t{};
+    if (app_conf.max_shallow) {
+      sched_n_dead.deadline += *app_conf.max_shallow;
     } else {
-      sched_n_dead.deadline += scrub_max_interval;
+      sched_n_dead.deadline = utime_t{};
     }
     // note: no specific job can be named in the log message
     dout(20) << fmt::format(
-		  "not-must. Was:{:s} {{min:{}/{} max:{}/{} ratio:{}}} "
-		  "Adjusted:{:s} ({:s})",
-		  times.proposed_time, fmt::group_digits(times.min_interval),
-		  fmt::group_digits(conf->osd_scrub_min_interval),
-		  fmt::group_digits(times.max_interval),
-		  fmt::group_digits(conf->osd_scrub_max_interval),
-		  conf->osd_scrub_interval_randomize_ratio,
-		  sched_n_dead.scheduled_at, sched_n_dead.deadline)
+		    "not-must. Was:{:s} {{min:{}/{} max:{} ratio:{}}} "
+		    "Adjusted:{:s} ({:s})",
+		    times.proposed_time, fmt::group_digits(times.min_interval),
+		    fmt::group_digits(app_conf.shallow_interval),
+		    fmt::group_digits(times.max_interval),
+		    app_conf.interval_randomize_ratio,
+		    sched_n_dead.scheduled_at, sched_n_dead.deadline)
 	     << dendl;
   }
-  // else - no log needed. All relevant data will be logged by the caller
+  // else - no log is needed. All relevant data will be logged by the caller
+
   return sched_n_dead;
 }
 
