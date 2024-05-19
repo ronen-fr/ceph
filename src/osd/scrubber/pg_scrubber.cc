@@ -152,6 +152,7 @@ bool PgScrubber::verify_against_abort(epoch_t epoch_to_verify)
 
   // if we were not aware of the abort before - kill the scrub.
   if (epoch_to_verify >= m_last_aborted) {
+    on_mid_scrub_abort(delay_cause_t::aborted);
     m_fsm->process_event(FullReset{});
     m_last_aborted = std::max(epoch_to_verify, m_epoch_start);
   }
@@ -1799,7 +1800,7 @@ void PgScrubber::flag_reservations_failure()
 {
   dout(10) << __func__ << dendl;
   // delay the next invocation of the scrubber on this target
-  penalize_next_scrub(Scrub::delay_cause_t::replicas);
+  requeue_penalized(Scrub::delay_cause_t::replicas);
 }
 
 /*
@@ -2016,16 +2017,6 @@ void PgScrubber::scrub_finish()
   }
 }
 
-/*
- * note: arbitrary delay used in this early version of the
- * scheduler refactoring.
- */
-void PgScrubber::penalize_next_scrub(Scrub::delay_cause_t cause)
-{
-  m_osds->get_scrub_services().delay_on_failure(
-      *m_scrub_job, 5s, cause, ceph_clock_now());
-}
-
 void PgScrubber::on_digest_updates()
 {
   dout(10) << __func__ << " #pending: " << num_digest_updates_pending << " "
@@ -2048,6 +2039,56 @@ void PgScrubber::on_digest_updates()
   }
 }
 
+
+/*
+ * note: arbitrary delay used in this early version of the
+ * scheduler refactoring.
+ */
+
+/**
+ * The scrub session was aborted. We are left with two sets of parameters
+ * as to when the next scrub of this PG should take place, and what should
+ * it be like. One set of parameters is the one that was used to start the
+ * scrub, and that was 'frozen' by set_op_parameters(). It has its own
+ * scheduling target, priority, not-before, etc'.
+ * The other set is the updated state of the current scrub-job. It may
+ * have had its priority, flags, or schedule modified in the meantime.
+ * And - it does not (at least initially, i.e. immediately after
+ * set_op_parameters()), have high priority.
+ *
+ * Alas, the scrub session that was initiated was aborted. We must now
+ * merge the two sets of parameters, using the highest priority and the
+ * nearest target time for the next scrub.
+ *
+ * Note: only half-functioning in this commit. As we did not pass the
+ * selected target (i.e. - the ScrubTarget with its 'urgency' parameter
+ * covering the original request details) to the scrubber in this version,
+ * we are missing some information that is available with the full designed
+ * change.
+ */
+void PgScrubber::on_mid_scrub_abort(Scrub::delay_cause_t issue)
+{
+  // assuming we can still depend on the 'scrubbing' flag being set;
+  // Also on Queued&Active.
+
+  // note again: this is not how merging should work in the final version:
+  // e.g. - the 'aborted_schedule' data should be passed thru the scrubber.
+  m_planned_scrub.must_scrub = m_planned_scrub.must_scrub || m_flags.required;
+  m_planned_scrub.must_deep_scrub =
+      m_planned_scrub.must_deep_scrub || m_is_deep;
+  m_planned_scrub.must_repair = m_planned_scrub.must_repair || m_is_repair;
+  m_planned_scrub.need_auto = m_planned_scrub.need_auto || m_flags.auto_repair;
+  m_planned_scrub.deep_scrub_on_error =
+      m_planned_scrub.deep_scrub_on_error || m_flags.deep_scrub_on_error;
+  m_planned_scrub.check_repair =
+      m_planned_scrub.check_repair || m_flags.check_repair;
+
+  // fake for now:
+  scrub_schedule_t aborted_schedule{};
+
+  m_scrub_job->merge_and_delay(aborted_schedule, issue, ceph_clock_now());
+  m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
+}
 
 void PgScrubber::requeue_penalized(Scrub::delay_cause_t cause)
 {
