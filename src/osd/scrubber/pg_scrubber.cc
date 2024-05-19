@@ -567,6 +567,7 @@ void PgScrubber::on_primary_active_clean()
   m_fsm->process_event(PrimaryActivate{});
 }
 
+
 /*
  * A note re the call to publish_stats_to_osd() below:
  * - we are called from either request_rescrubbing() or scrub_requested().
@@ -579,25 +580,36 @@ void PgScrubber::on_primary_active_clean()
 */
 void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 {
-  // disabled in this commit
-#if 0
-  dout(10) << fmt::format("{}: flags:<{}>", __func__, request_flags) << dendl;
-  // verify that the 'in_q' status matches our "Primariority"
-  if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) { // RRR consider restore this to some 'registered' state
-// that is not just 'in_queues' but also when scrubbing is active
-    dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
+  //   // verify that the 'in_q' status matches our "Primariority"
+  // // RRR consider restore this to some 'registered' state
+  //   if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) { 
+  //   // that is not just 'in_queues' but also when scrubbing is active
+  //     dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
+  //   }
+
+  if (!is_primary() || !m_scrub_job) {
+    dout(10) << __func__ << ": not Primary or no scrub-job" << dendl;
+    return;
   }
 
-  if (is_primary() && m_scrub_job) {
-    ceph_assert(m_pg->is_locked());
-    auto suggested = determine_scrub_time(m_pg->get_pgpool().info.opts);
-    m_osds->get_scrub_services().update_job(*m_scrub_job, suggested, true);
-    m_pg->publish_stats_to_osd();
-  }
+  dout(15) << fmt::format(
+		  "{}: flags:<{}> sjob entering:{}", __func__, request_flags,
+		  *m_scrub_job)
+	   << dendl;
+  ceph_assert(m_pg->is_locked());
+  auto applicable_conf = populate_config_params();
+  auto suggested = determine_scrub_time(m_pg->get_pgpool().info.opts);
+  m_scrub_job->on_periods_change(suggested, applicable_conf, ceph_clock_now());
+  m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
+  m_pg->publish_stats_to_osd();
 
-  dout(15) << __func__ << ": done " << registration_state() << dendl;
-#endif
+  dout(10) << fmt::format(
+		  "{}: flags:<{}> conf:{} suggested:{} updated sjob:{}",
+		  __func__, request_flags, applicable_conf, suggested,
+		  *m_scrub_job)
+	   << dendl;
 }
+
 
 scrub_level_t PgScrubber::scrub_requested(
     scrub_level_t scrub_level,
