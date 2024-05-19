@@ -121,6 +121,19 @@ void ScrubJob::update_schedule(
 	   << dendl;
 }
 
+void ScrubJob::on_periods_change(
+    const sched_params_t& suggested,
+    const Scrub::sched_conf_t& aconf,
+    utime_t scrub_clock_now)
+{
+  // RRR fix to reinstate the code that avoids changing n.b. for ripe jobs
+  auto adjusted = adjust_target_time(aconf, suggested);
+  high_priority = suggested.is_must == must_scrub_t::mandatory;
+  // if high_priority, we clear any added 'not-before' delay:
+  update_schedule(adjusted, high_priority);
+}
+
+
 /*
  * Process: we were called after the successful completion of a scrub session.
  * The 'last' stamps were already updated. We should now calculate the target
@@ -135,6 +148,7 @@ void ScrubJob::at_scrub_completion(
 {
   auto adjusted = adjust_target_time(aconf, suggested);
   high_priority = suggested.is_must == must_scrub_t::mandatory;
+  // for this commit - clearing n.b. delay for both shallow & deep
   update_schedule(adjusted, true);
 }
 
