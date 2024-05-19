@@ -164,7 +164,8 @@ struct ScrubMachineListener {
 
   /// notify the scrubber about a scrub failure
   /// (note: temporary implementation)
-  virtual void penalize_next_scrub(Scrub::delay_cause_t cause) = 0;
+  /// RRR document
+  virtual void on_mid_scrub_abort(Scrub::delay_cause_t cause) = 0;
 
   /**
    * Prepare a MOSDRepScrubMap message carrying the requested scrub map

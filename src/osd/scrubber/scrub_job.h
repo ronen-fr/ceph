@@ -205,6 +205,11 @@ class ScrubJob {
       const sched_conf_t& aconf,
       utime_t scrub_clock_now);
 
+  void merge_and_delay(
+      const scrub_schedule_t& aborted_schedule,
+      Scrub::delay_cause_t issue,
+      utime_t scrub_clock_now);
+
   void dump(ceph::Formatter* f) const;
 
   /*
