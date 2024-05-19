@@ -139,6 +139,16 @@ void ScrubJob::at_scrub_completion(
 }
 
 
+  void ScrubJob::merge_and_delay(
+      const scrub_schedule_t& aborted_schedule,
+      delay_cause_t issue,
+      utime_t scrub_clock_now)
+{
+  // RRR
+
+}
+
+
 void ScrubJob::delay_on_failure(
     std::chrono::seconds delay,
     Scrub::delay_cause_t delay_cause,
