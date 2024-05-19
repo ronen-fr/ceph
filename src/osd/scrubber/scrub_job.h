@@ -210,6 +210,20 @@ class ScrubJob {
       Scrub::delay_cause_t issue,
       utime_t scrub_clock_now);
 
+ /**
+   * recalculate the scheduling parameters for the periodic scrub targets.
+   * Used whenever the "external state" of the PG changes, e.g. when made
+   * primary - or indeed when the configuration changes.
+   *
+   * Does not modify ripe targets.
+   * (why? for example, a 'scrub pg' command following a 'deepscrub pg'
+   * would otherwise push the deep scrub to the future).
+   */
+  void on_periods_change(
+      const sched_params_t& suggested,
+      const Scrub::sched_conf_t& aconf,
+      utime_t scrub_clock_now);
+
   void dump(ceph::Formatter* f) const;
 
   /*
