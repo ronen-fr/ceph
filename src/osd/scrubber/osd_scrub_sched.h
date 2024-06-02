@@ -231,13 +231,11 @@ class ScrubQueue {
    *  'reset_notbefore' is used to reset the 'not_before' time to the updated
    *  'scheduled_at' time. This is used whenever the scrub-job schedule is
    *  updated not as a result of a scrub attempt failure.
-   *
-   *  locking: not using the jobs_lock
    */
-  void update_job(
-      Scrub::ScrubJob& sjob,
-      const sched_params_t& suggested,
-      bool reset_notbefore);
+//   void update_job(
+//       Scrub::ScrubJob& sjob,
+//       const sched_params_t& suggested,
+//       bool reset_notbefore);
 
   void delay_on_failure(
       Scrub::ScrubJob& sjob,
