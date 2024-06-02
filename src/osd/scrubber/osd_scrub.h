@@ -196,6 +196,9 @@ class OsdScrub {
 
   const std::string m_log_prefix{};
 
+  /// list all scrub queue entries
+  void debug_log_all_jobs() const;
+
   /// number of PGs stuck while scrubbing, waiting for objects
   int get_blocked_pgs_count() const;
 

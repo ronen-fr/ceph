@@ -82,15 +82,16 @@ bool OsdScrub::scrub_random_backoff() const
   return false;
 }
 
+void OsdScrub::debug_log_all_jobs() const
+{
+  m_queue.for_each_job([this](const Scrub::ScrubJob& sj) {
+    dout(20) << fmt::format("scrub-queue jobs: {}", sj) << dendl;
+  }, 20);
+}
+
 
 void OsdScrub::initiate_scrub(bool is_recovery_active)
 {
-  const utime_t scrub_time = ceph_clock_now();
-  dout(10) << fmt::format(
-		  "time now:{:s}, recovery is active?:{} RRR so:{}", scrub_time,
-		  is_recovery_active, sizeof(Scrub::ScrubJob))
-	   << dendl;
-
   if (auto blocked_pgs = get_blocked_pgs_count(); blocked_pgs > 0) {
     // some PGs managed by this OSD were blocked by a locked object during
     // scrub. This means we might not have the resources needed to scrub now.
@@ -101,22 +102,37 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
 	<< dendl;
   }
 
+  const utime_t scrub_time = ceph_clock_now();
+
   // check the OSD-wide environment conditions (scrub resources, time, etc.).
   // These may restrict the type of scrubs we are allowed to start, or just
   // prevent us from starting any non-operator-initiated scrub at all.
-  auto env_restrictions =
+  const auto env_restrictions =
       restrictions_on_scrubbing(is_recovery_active, scrub_time);
+
+  dout(10/*20*/) << fmt::format("scrub scheduling (@tick) starts. "
+                          "time now:{:s}, recovery is active?:{} restrictions:{}",
+                          scrub_time, is_recovery_active, env_restrictions)
+	   << dendl;
 
   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>() &&
       !env_restrictions.high_priority_only) {
-    dout(20) << "scrub scheduling (@tick) starts" << dendl;
-    auto all_jobs = m_queue.list_registered_jobs();
-    for (const auto& sj : all_jobs) {
-      dout(20) << fmt::format("\tscrub-queue jobs: {}", sj) << dendl;
-    }
+    debug_log_all_jobs();
   }
 
-  // RRR high priority - do not pass env_restrictions to the queue
+  ///\todo: consider (with high priority) whether to continue passing
+  /// 'env_restrictions' to pop_ready_pg(). In other words: there are two
+  /// options to consider:
+  // A. as it is now: pop_ready_pg() is called with no restrictions. So there
+  //  entries - possibly in the top of the queue - that are not really allowed
+  //  to scrub now. The handling of the returned value is simplified, as
+  //  we'll never get an ineligible entry (and a null return meaning is
+  //  simple. On the other hand - we do have to recheck the restrictions time
+  //  and again in the loop.
+  // B. the way it could be: pop_ready_pg() is called without specifying the
+  //  limits. These are checked by the caller, and - if failing the tests -
+  //  the n.b. must be modified. The only problem: identifying the case of
+  //  no eligible entries in the queue.
   auto candidate = m_queue.pop_ready_pg(env_restrictions, scrub_time);
   if (!candidate) {
     dout(20) << "no PGs are ready for scrubbing" << dendl;
@@ -143,7 +159,7 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
 
     case schedule_result_t::osd_wide_failure:
       // the candidate should be re-pushed unchanged.
-      m_queue.restore_job(std::move(*candidate));
+      m_queue.restore_job(std::move(candidate));
       break;
 
     case schedule_result_t::scrub_initiated:

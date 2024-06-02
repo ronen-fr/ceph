@@ -110,7 +110,6 @@ ScrubQueue interfaces (main functions):
 
 #include <algorithm>
 #include <optional>
-//#include <ranges>
 
 #include "common/AsyncReserver.h"
 #include "utime.h"
@@ -180,11 +179,6 @@ class ScrubQueue {
    */
   void remove_from_osd_queue(Scrub::ScrubJob& sjob);
 
-  /**
-   * @return the list (not std::set!) of all scrub jobs registered
-   */
-  Scrub::ScrubQContainer list_registered_jobs() const;
-
   // A way to specify a predicate over the entries in the queue
   using EntryPred = std::function<bool(const Scrub::ScrubJob&)>;
   /**
@@ -248,6 +242,10 @@ class ScrubQueue {
  public:
   void dump_scrubs(ceph::Formatter* f) const;
 
+  void for_each_job(
+      std::function<void(const Scrub::ScrubJob&)> fn,
+      int max_jobs) const;
+
   /**
    * No new scrub session will start while a scrub was initiated on a PG,
    * and that PG is trying to acquire replica resources.
@@ -278,11 +276,12 @@ class ScrubQueue {
   int get_blocked_pgs_count() const;
 
   /// RRR document
-  std::optional<Scrub::ScrubJob> pop_ready_pg(
+  std::unique_ptr<Scrub::ScrubJob> pop_ready_pg(
       Scrub::OSDRestrictions restrictions,  // note: 4B in size! (copy)
       utime_t time_now);
 
-  void restore_job(Scrub::ScrubJob&& sjob);
+  /// \todo doc
+  void restore_job(std::unique_ptr<Scrub::ScrubJob> sjob);
 
 
  private:

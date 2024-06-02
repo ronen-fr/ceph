@@ -264,7 +264,7 @@ class ScrubJob {
   };
 };
 
-using ScrubQContainer = std::vector<ScrubJob>;
+using ScrubQContainer = std::vector<std::unique_ptr<ScrubJob>>;
 
 }  // namespace Scrub
 
