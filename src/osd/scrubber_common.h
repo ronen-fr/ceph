@@ -23,6 +23,7 @@ using ScrubTimePoint = ScrubClock::time_point;
 namespace Scrub {
   class ReplicaReservations;
   struct ReplicaActive;
+  class ScrubJob;
 }
 
 /// reservation-related data sent by the primary to the replicas,
@@ -408,6 +409,7 @@ struct ScrubPgIF {
   virtual void replica_scrub_op(OpRequestRef op) = 0;
 
   virtual Scrub::schedule_result_t start_scrub_session(
+      std::unique_ptr<Scrub::ScrubJob> candidate,
       Scrub::OSDRestrictions osd_restrictions,
       Scrub::ScrubPGPreconds,
       std::optional<requested_scrub_t> temp_request) = 0;

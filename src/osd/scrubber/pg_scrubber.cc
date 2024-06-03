@@ -2072,11 +2072,11 @@ void PgScrubber::on_digest_updates()
  * merge the two sets of parameters, using the highest priority and the
  * nearest target time for the next scrub.
  *
- * Note: only half-functioning in this commit. As we did not pass the
- * selected target (i.e. - the ScrubTarget with its 'urgency' parameter
- * covering the original request details) to the scrubber in this version,
- * we are missing some information that is available with the full designed
- * change.
+ * Note: only half-functioning in this commit. As the scrub-job copy
+ * (the one that was in the scheduling queue, and was passed to the scrubber)
+ * does not have the 'urgency' parameter, we are missing some information
+ * that is still encoded in the 'planned scrub' flags. This will be fixed in
+ * the next step.
  */
 void PgScrubber::on_mid_scrub_abort(Scrub::delay_cause_t issue)
 {
@@ -2096,10 +2096,8 @@ void PgScrubber::on_mid_scrub_abort(Scrub::delay_cause_t issue)
   m_planned_scrub.check_repair =
       m_planned_scrub.check_repair || m_flags.check_repair;
 
-  // fake for now:
-  scrub_schedule_t aborted_schedule{};
-
-  m_scrub_job->merge_and_delay(aborted_schedule, issue, ceph_clock_now());
+  m_scrub_job->merge_and_delay(
+      m_active_target->schedule, issue, ceph_clock_now());
   m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
 }
 
@@ -2112,6 +2110,7 @@ void PgScrubber::requeue_penalized(Scrub::delay_cause_t cause)
 
 
 Scrub::schedule_result_t PgScrubber::start_scrub_session(
+    std::unique_ptr<Scrub::ScrubJob> candidate,
     Scrub::OSDRestrictions osd_restrictions,
     Scrub::ScrubPGPreconds,
     std::optional<requested_scrub_t> suggested_flags)
@@ -2122,6 +2121,8 @@ Scrub::schedule_result_t PgScrubber::start_scrub_session(
     dout(10) << __func__ << ": scrub already in progress" << dendl;
     return schedule_result_t::target_specific_failure;
   }
+
+  m_active_target = std::move(candidate);
 
   // for all other failures - we must reinstate our entry in the Scrub Queue
   if (!is_primary() || !m_pg->is_active() || !m_pg->is_clean()) {

@@ -120,7 +120,7 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
     debug_log_all_jobs();
   }
 
-  ///\todo: consider (with high priority) whether to continue passing
+  /// RRR \todo: consider (with high priority) whether to continue passing
   /// 'env_restrictions' to pop_ready_pg(). In other words: there are two
   /// options to consider:
   // A. as it is now: pop_ready_pg() is called with no restrictions. So there
@@ -131,8 +131,9 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
   //  and again in the loop.
   // B. the way it could be: pop_ready_pg() is called without specifying the
   //  limits. These are checked by the caller, and - if failing the tests -
-  //  the n.b. must be modified. The only problem: identifying the case of
-  //  no eligible entries in the queue.
+  //  the n.b. must be modified. One problem: identifying the case of
+  //  no eligible entries in the queue. Another: modifying the original copy
+  //  of the sjob, as we currently do not yet have the PG locked.
   auto candidate = m_queue.pop_ready_pg(env_restrictions, scrub_time);
   if (!candidate) {
     dout(20) << "no PGs are ready for scrubbing" << dendl;
@@ -149,21 +150,19 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
   // we have a candidate to scrub. But we may fail when trying to initiate that
   // scrub. For some failures - we can continue with the next candidate. For
   // others - we should stop trying to scrub at this tick.
-  auto res = initiate_a_scrub(candidate->pgid, env_restrictions);
+  auto candidate_pg = candidate->pgid;
+  auto res = initiate_a_scrub(std::move(candidate), env_restrictions);
 
   switch (res) {
     case schedule_result_t::target_specific_failure:
-      // No scrub this tick.
-      // someone else will requeue the target, if needed.
-      break;
-
     case schedule_result_t::osd_wide_failure:
-      // the candidate should be re-pushed unchanged.
-      m_queue.restore_job(std::move(candidate));
+      // No scrub this tick.
+      // someone else requeued or will requeue the target (unless the
+      // candidate PG is no longer available as clean primary)
       break;
 
     case schedule_result_t::scrub_initiated:
-      dout(20) << fmt::format("scrub initiated for pg[{}]", candidate->pgid)
+      dout(20) << fmt::format("scrub initiated for pg[{}]", candidate_pg)
 	       << dendl;
       break;
   }
@@ -222,25 +221,26 @@ Scrub::OSDRestrictions OsdScrub::restrictions_on_scrubbing(
 
 
 Scrub::schedule_result_t OsdScrub::initiate_a_scrub(
-    spg_t pgid,
+    std::unique_ptr<Scrub::ScrubJob> candidate,
     Scrub::OSDRestrictions restrictions)
 {
-  dout(20) << fmt::format("trying pg[{}]", pgid) << dendl;
+  dout(20) << fmt::format("trying pg[{}]", candidate->pgid) << dendl;
 
   // we have a candidate to scrub. We need some PG information to
   // know if scrubbing is allowed
 
-  auto locked_pg = m_osd_svc.get_locked_pg(pgid);
+  auto locked_pg = m_osd_svc.get_locked_pg(candidate->pgid);
   if (!locked_pg) {
     // the PG was dequeued in the short timespan between querying the
     // scrub queue - and now.
-    dout(5) << fmt::format("pg[{}] not found", pgid) << dendl;
+    dout(5) << fmt::format("pg[{}] not found", candidate->pgid) << dendl;
     return Scrub::schedule_result_t::target_specific_failure;
   }
 
   // later on, here is where the scrub target would be dequeued
-  return locked_pg->pg()->start_scrubbing(restrictions);
+  return locked_pg->pg()->start_scrubbing(std::move(candidate), restrictions);
 }
+
 
 void OsdScrub::on_config_change()
 {

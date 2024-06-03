@@ -1323,7 +1323,9 @@ unsigned int PG::scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsig
 // ==========================================================================================
 // SCRUB
 
+
 Scrub::schedule_result_t PG::start_scrubbing(
+    std::unique_ptr<Scrub::ScrubJob> candidate,
     Scrub::OSDRestrictions osd_restrictions)
 {
   dout(10) << fmt::format(
@@ -1351,7 +1353,8 @@ Scrub::schedule_result_t PG::start_scrubbing(
   // now, and what type of scrub should that be.
   auto updated_flags = validate_scrub_mode();
 
-  return m_scrubber->start_scrub_session(osd_restrictions, pg_cond, updated_flags);
+  return m_scrubber->start_scrub_session(
+      std::move(candidate), osd_restrictions, pg_cond, updated_flags);
 }
 
 
