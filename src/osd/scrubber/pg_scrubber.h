@@ -188,6 +188,7 @@ class PgScrubber : public ScrubPgIF,
   [[nodiscard]] bool is_reserving() const final;
 
   Scrub::schedule_result_t start_scrub_session(
+      std::unique_ptr<Scrub::ScrubJob> candidate,
       Scrub::OSDRestrictions osd_restrictions,
       Scrub::ScrubPGPreconds,
       std::optional<requested_scrub_t> temp_request) final;
@@ -728,6 +729,15 @@ class PgScrubber : public ScrubPgIF,
    * longer.
    */
   bool m_queued_or_active{false};
+
+  /**
+   * A copy of the specific scheduling target (either shallow_target or
+   * deep_target in the scrub_job) that was selected for this active scrub
+   * session.
+   * \ATTN: in this initial step - a copy of the whole scrub-job is passed
+   * around. Later on this would be just a part of a Scrub::SchedTarget
+   */
+  std::unique_ptr<Scrub::ScrubJob> m_active_target;
 
   eversion_t m_subset_last_update{};
 
