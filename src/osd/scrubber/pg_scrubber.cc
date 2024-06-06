@@ -481,13 +481,13 @@ void PgScrubber::on_new_interval()
 
 bool PgScrubber::is_scrub_registered() const
 {
-  return m_scrub_job && m_scrub_job->in_queues;
+  return m_scrub_job && m_scrub_job->registered;
 }
 
 std::string_view PgScrubber::registration_state() const
 {
   if (m_scrub_job) {
-    return m_scrub_job->registration_state();
+    return m_scrub_job->state_desc();
   }
   return "(no sched job)"sv;
 }
@@ -499,6 +499,7 @@ void PgScrubber::rm_from_osd_scrubbing()
 		    "{}: prev. state: {}", __func__, registration_state())
 	     << dendl;
     m_osds->get_scrub_services().remove_from_osd_queue(*m_scrub_job);
+    m_scrub_job->registered = false;
   }
 }
 
@@ -544,12 +545,14 @@ void PgScrubber::schedule_scrub_with_osd()
   ceph_assert(is_primary());
   ceph_assert(m_scrub_job);
 
+  auto pre_reg = registration_state();
+  m_scrub_job->registered = true;
+
   auto applicable_conf = populate_config_params();
   auto suggested = determine_scrub_time(m_pg->get_pgpool().info.opts);
   m_scrub_job->init_targets(suggested, m_pg->info, applicable_conf,
                            ceph_clock_now());
 
-  auto pre_reg = registration_state();
   m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
   dout(10) << fmt::format(
 		  "{}: <flags:{}> {} <{:.10}> --> <{:.14}>",
@@ -580,22 +583,33 @@ void PgScrubber::on_primary_active_clean()
 */
 void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 {
-  //   // verify that the 'in_q' status matches our "Primariority"
-  // // RRR consider restore this to some 'registered' state
-  //   if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) { 
-  //   // that is not just 'in_queues' but also when scrubbing is active
-  //     dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
-  //   }
-
   if (!is_primary() || !m_scrub_job) {
-    dout(10) << __func__ << ": not Primary or no scrub-job" << dendl;
+    dout(10) << fmt::format(
+		    "{}: pg[{}]: not Primary or no scrub-job", __func__,
+		    m_pg_id)
+	     << dendl;
+    return;
+  }
+
+  // if we were marked as 'not registered' - do not try to push into
+  // the queue. And if we are already in the queue - do not push again.
+  if (!m_scrub_job->registered) {
+    dout(10) << fmt::format("{}: PG[{}] not registered", __func__, m_pg_id)
+	     << dendl;
     return;
   }
 
   dout(15) << fmt::format(
-		  "{}: flags:<{}> sjob entering:{}", __func__, request_flags,
+		  "{}: flags:<{}> job on entry:{}", __func__, request_flags,
 		  *m_scrub_job)
 	   << dendl;
+  if (m_scrub_job->target_queued) {
+    m_osds->get_scrub_services().remove_from_osd_queue(*m_scrub_job);
+    dout(20) << fmt::format(
+		    "{}: PG[{}] dequeuing for an update", __func__, m_pg_id)
+	     << dendl;
+  }
+
   ceph_assert(m_pg->is_locked());
   auto applicable_conf = populate_config_params();
   auto suggested = determine_scrub_time(m_pg->get_pgpool().info.opts);

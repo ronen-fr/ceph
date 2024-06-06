@@ -245,7 +245,7 @@ Scrub::schedule_result_t OsdScrub::initiate_a_scrub(
 void OsdScrub::on_config_change()
 {
   auto to_notify = m_queue.get_pgs([](const Scrub::ScrubJob& sj) -> bool {
-    ceph_assert(sj.in_queues);
+    ceph_assert(sj.registered);
     return true;
   });
 
@@ -461,13 +461,13 @@ void OsdScrub::delay_on_failure(
 void OsdScrub::enqueue_target(Scrub::ScrubJob& sjob)
 {
   m_queue.enqueue_target(sjob);
-  sjob.in_queues = true;
+  sjob.target_queued = true;
 }
-
 
 void OsdScrub::remove_from_osd_queue(Scrub::ScrubJob& sjob)
 {
   m_queue.remove_from_osd_queue(sjob);
+  sjob.target_queued = false;
 }
 
 std::unique_ptr<Scrub::LocalResourceWrapper> OsdScrub::inc_scrubs_local(

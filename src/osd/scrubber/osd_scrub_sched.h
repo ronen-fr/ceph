@@ -295,11 +295,7 @@ class ScrubQueue {
 #endif
 
   /**
-   *  jobs_lock protects the job containers and the relevant scrub-jobs state
-   *  variables. Specifically, the following are guaranteed:
-   *  - 'in_queues' is asserted only if the job is in one of the queues;
-   *  - a job will only be in state 'registered' if in one of the queues;
-   *  - no job will be in the two queues simultaneously;
+   *  jobs_lock protects the job containers.
    *
    *  Note that PG locks should not be acquired while holding jobs_lock.
    */
