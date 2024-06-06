@@ -117,11 +117,11 @@ struct formatter<Scrub::OSDRestrictions> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
   template <typename FormatContext>
-  auto format(const Scrub::OSDRestrictions& conds, FormatContext& ctx)
+  auto format(const Scrub::OSDRestrictions& conds, FormatContext& ctx) const
   {
     return fmt::format_to(
       ctx.out(),
-      "priority-only:{} overdue-only:{} load:{} time:{} repair-only:{}",
+      "priority-only:{},overdue-only:{},load:{},time:{},repair-only:{}",
         conds.high_priority_only,
         conds.only_deadlined,
         conds.load_is_low ? "ok" : "high",

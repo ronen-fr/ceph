@@ -52,7 +52,7 @@ std::ostream& ScrubQueue::gen_prefix(std::ostream& out, std::string_view fn)
 
 /*
  * Remove the scrub job from the OSD scrub queue.
- * Mark the Scrubber-owned job as 'not_registered'.
+ * Caller should mark the Scrubber-owned job as 'not_registered'.
  */
 void ScrubQueue::remove_from_osd_queue(Scrub::ScrubJob& scrub_job)
 {
@@ -61,18 +61,19 @@ void ScrubQueue::remove_from_osd_queue(Scrub::ScrubJob& scrub_job)
           << dendl;
 
   std::unique_lock lck{jobs_lock};
-
   to_scrub.erase(std::remove_if(to_scrub.begin(), to_scrub.end(),
                                 [&scrub_job](const auto& job) {
                                   return job->pgid == scrub_job.pgid;
                                 }),
                  to_scrub.end());
-  scrub_job.in_queues = false;
-  // RRR a good time to reset / recreate the original sjob?
 }
 
 void ScrubQueue::enqueue_target(Scrub::ScrubJob& sjob)
 {
+  if (!sjob.is_registered()) {
+    dout(10) << fmt::format("pg[{}] not scrub-able by this OSD", sjob.pgid) << dendl;
+    return;
+  }
   std::unique_lock lck{jobs_lock};
   // the costly copying is only for this stage
   to_scrub.push_back(std::make_unique<ScrubJob>(sjob));
@@ -198,6 +199,9 @@ void ScrubQueue::for_each_job(
     int max_jobs) const
 {
   std::lock_guard lck(jobs_lock);
+//   if (to_scrub.empty()) {
+//     return;
+//   }
   std::ranges::for_each(
       to_scrub | std::views::take(max_jobs),
       [fn](const auto& job) { fn(*job); });

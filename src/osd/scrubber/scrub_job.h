@@ -124,10 +124,17 @@ class ScrubJob {
   int whoami;
 
   /**
-   * the old 'is_registered'. Set whenever the job is registered with the OSD,
-   * i.e. is in 'to_scrub'.
+   * Set whenever the PG scrubs are managed by the OSD (i.e. - from becoming
+   * and active Primary till the end of the interval).
    */
-  bool in_queues{false};
+  bool registered{false};
+
+  /**
+   * there is a scrub target for this PG in the queue.
+   * \attn: temporary. Will be replaced with a pair of flags in the
+   * two level-specific scheduling targets.
+   */
+  bool target_queued{false};
 
   /// how the last attempt to scrub this PG ended
   delay_cause_t last_issue{delay_cause_t::none};
@@ -155,11 +162,10 @@ class ScrubJob {
 
   utime_t get_sched_time() const { return schedule.not_before; }
 
-  static std::string_view qu_state_text(bool is_queueud);
-
   std::string_view state_desc() const
   {
-    return qu_state_text(in_queues);
+    return registered ? (target_queued ? "queued" : "registered")
+		      : "not-registered";
   }
 
   /**
@@ -226,17 +232,7 @@ class ScrubJob {
 
   void dump(ceph::Formatter* f) const;
 
-  /*
-   * as the atomic 'in_queues' appears in many log prints, accessing it for
-   * display-only should be made less expensive (on ARM. On x86 the _relaxed
-   * produces the same code as '_cs')
-   */
-  std::string_view registration_state() const
-  {
-    return in_queues ? "registered" : "not-registered";
-  }
-
-  bool is_registered() const { return in_queues; }
+  bool is_registered() const { return registered; }
 
   /**
    * is this a high priority scrub job?
@@ -298,7 +294,7 @@ struct formatter<Scrub::ScrubJob> {
     return fmt::format_to(
 	ctx.out(), "pg[{}] @ nb:{:s} ({:s}) (dl:{:s}) - <{}>",
 	sjob.pgid, sjob.schedule.not_before, sjob.schedule.scheduled_at,
-	sjob.schedule.deadline, sjob.registration_state());
+	sjob.schedule.deadline, sjob.state_desc());
   }
 };
 
@@ -310,7 +306,7 @@ struct formatter<Scrub::sched_conf_t> {
   {
     return fmt::format_to(
 	ctx.out(),
-	"periods: s:{}/{} d:{}/{} iv-ratio:{} deep-rand:{} on-inv:{}",
+	"periods:s:{}/{},d:{}/{},iv-ratio:{},deep-rand:{},on-inv:{}",
 	cf.shallow_interval, cf.max_shallow.value_or(-1.0), cf.deep_interval,
 	cf.max_deep, cf.interval_randomize_ratio, cf.deep_randomize_ratio,
 	cf.mandatory_on_invalid);

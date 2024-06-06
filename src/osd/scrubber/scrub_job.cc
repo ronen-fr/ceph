@@ -101,12 +101,12 @@ void ScrubJob::update_schedule(
     const Scrub::scrub_schedule_t& adjusted,
     bool reset_failure_penalty)
 {
-  dout(15) << fmt::format(
-		  "was: nb:{:s}({:s}). Called with: rest?{} {:s} ({})",
-		  schedule.not_before, schedule.scheduled_at,
-		  reset_failure_penalty, adjusted.scheduled_at,
-		  registration_state())
-	   << dendl;
+  dout(15)
+      << fmt::format(
+	     "was: nb:{:s}({:s}). Called with: reset?{},adjusted:{:s} ({})",
+	     schedule.not_before, schedule.scheduled_at, reset_failure_penalty,
+	     adjusted.scheduled_at, state_desc())
+      << dendl;
   schedule.scheduled_at = adjusted.scheduled_at;
   schedule.deadline = adjusted.deadline;
 
@@ -117,14 +117,14 @@ void ScrubJob::update_schedule(
   updated = true;
   dout(10) << fmt::format(
 		  "adjusted: nb:{:s} ({:s}) ({})", schedule.not_before,
-		  schedule.scheduled_at, registration_state())
+		  schedule.scheduled_at, state_desc())
 	   << dendl;
 }
 
 void ScrubJob::on_periods_change(
     const sched_params_t& suggested,
     const Scrub::sched_conf_t& aconf,
-    utime_t scrub_clock_now)
+    utime_t scrub_clock_now) // RRR why the clock?
 {
   // RRR fix to reinstate the code that avoids changing n.b. for ripe jobs
   auto adjusted = adjust_target_time(aconf, suggested);
@@ -177,7 +177,7 @@ std::string ScrubJob::scheduling_state(utime_t now_is, bool is_deep_expected)
     const
 {
   // if not in the OSD scheduling queues, not a candidate for scrubbing
-  if (!in_queues) {
+  if (!registered) {
     return "no scrub is scheduled";
   }
 
@@ -195,11 +195,6 @@ std::string ScrubJob::scheduling_state(utime_t now_is, bool is_deep_expected)
 std::ostream& ScrubJob::gen_prefix(std::ostream& out, std::string_view fn) const
 {
   return out << log_msg_prefix << fn << ": ";
-}
-
-std::string_view ScrubJob::qu_state_text(bool is_queued)
-{
-  return is_queued ? "queued"sv : "not queued"sv;
 }
 
 void ScrubJob::dump(ceph::Formatter* f) const
