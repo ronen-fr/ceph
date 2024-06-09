@@ -130,7 +130,7 @@ void ScrubJob::on_periods_change(
   auto adjusted = adjust_target_time(aconf, suggested);
   high_priority = suggested.is_must == must_scrub_t::mandatory;
   // if high_priority, we clear any added 'not-before' delay:
-  update_schedule(adjusted, high_priority);
+  update_schedule(adjusted, true/*high_priority RRR */);
 }
 
 

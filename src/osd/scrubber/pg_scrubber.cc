@@ -2099,8 +2099,10 @@ void PgScrubber::on_mid_scrub_abort(Scrub::delay_cause_t issue)
 
   // note again: this is not how merging should work in the final version:
   // e.g. - the 'aborted_schedule' data should be passed thru the scrubber.
+  // In this current patchworik, for example, we are only guessing at
+  // the original value of 'must_deep_scrub'.
   m_planned_scrub.must_deep_scrub =
-      m_planned_scrub.must_deep_scrub || m_is_deep;
+      m_planned_scrub.must_deep_scrub || (m_flags.required && m_is_deep);
   m_planned_scrub.must_scrub = m_planned_scrub.must_deep_scrub ||
 			       m_planned_scrub.must_scrub || m_flags.required;
   m_planned_scrub.must_repair = m_planned_scrub.must_repair || m_is_repair;
