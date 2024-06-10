@@ -113,6 +113,20 @@ enum class schedule_result_t {
 
 namespace fmt {
 template <>
+struct formatter<Scrub::ScrubPGPreconds> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const Scrub::ScrubPGPreconds& conds, FormatContext& ctx) const
+  {
+    return fmt::format_to(
+	ctx.out(), "allowed(shallow/deep):{:1}/{:1},deep-err:{:1},can-autorepair:{:1}",
+	conds.allow_shallow, conds.allow_deep, conds.has_deep_errors,
+	conds.can_autorepair);
+  }
+};
+
+template <>
 struct formatter<Scrub::OSDRestrictions> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
@@ -408,11 +422,28 @@ struct ScrubPgIF {
 
   virtual void replica_scrub_op(OpRequestRef op) = 0;
 
+  /**
+   * attempt to initiate a scrub session.
+   * @param candidate the scrub job to start. Later on - this will be the
+   *   specific queue entry (that carries the information about the level,
+   *   priority, etc. of the scrub that should be initiated on this PG).
+   *   This parameter is saved by the scrubber for the whole duration of
+   *   the scrub session (to be used if the scrub is aborted).
+   * @param osd_restrictions limitations on the types of scrubs that can
+   *   be initiated on this OSD at this time.
+   * @param preconds the PG state re scrubbing at the time of the request,
+   *   affecting scrub parameters.
+   * @param requested_flags the set of flags that determine the scrub type
+   *   and attributes (to be removed in the next iteration).
+   * @return the result of the scrub initiation attempt. A success,
+   *   or either a failure due to the specific PG, or a failure due to
+   *   external reasons.
+   */
   virtual Scrub::schedule_result_t start_scrub_session(
       std::unique_ptr<Scrub::ScrubJob> candidate,
       Scrub::OSDRestrictions osd_restrictions,
       Scrub::ScrubPGPreconds,
-      std::optional<requested_scrub_t> temp_request) = 0;
+      requested_scrub_t requested_flags) = 0;
 
   virtual void set_op_parameters(const requested_scrub_t&) = 0;
 
