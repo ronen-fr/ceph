@@ -4,8 +4,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <compare>
 #include <iostream>
 #include <memory>
+#include <ranges>
 #include <vector>
 
 #include "common/RefCountedObj.h"
@@ -27,18 +29,21 @@ namespace Scrub {
 
 enum class must_scrub_t { not_mandatory, mandatory };
 
-enum class qu_state_t {
-  not_registered,  // not a primary, thus not considered for scrubbing by this
-		   // OSD (also the temporary state when just created)
-  registered,	   // in either of the two queues ('to_scrub' or 'penalized')
-  unregistering	   // in the process of being unregistered. Will be finalized
-		   // under lock
-};
-
 struct scrub_schedule_t {
   utime_t scheduled_at{};
   utime_t deadline{0, 0};
   utime_t not_before{utime_t::max()};
+  // when compared - the 'not_before' is ignored, assuming
+  // we never compare jobs with different eligibility status.
+  std::partial_ordering operator<=>(const scrub_schedule_t& rhs) const
+  {
+    auto cmp1 = scheduled_at <=> rhs.scheduled_at;
+    if (cmp1 != 0) {
+      return cmp1;
+    }
+    return deadline <=> rhs.deadline;
+  };
+  bool operator==(const scrub_schedule_t& rhs) const = default;
 };
 
 struct sched_params_t {
@@ -48,7 +53,7 @@ struct sched_params_t {
   must_scrub_t is_must{must_scrub_t::not_mandatory};
 };
 
-**
+/**
  *  A collection of the configuration parameters (pool & OSD) that affect
  *  scrub scheduling.
  */
@@ -101,7 +106,7 @@ struct sched_conf_t {
 };
 
 
-class ScrubJob final : public RefCountedObject {
+class ScrubJob {
  public:
   /**
    * a time scheduled for scrub, and a deadline: The scrub could be delayed
@@ -111,28 +116,26 @@ class ScrubJob final : public RefCountedObject {
   scrub_schedule_t schedule;
 
   /// pg to be scrubbed
-  const spg_t pgid;
+  spg_t pgid;
 
   /// the OSD id (for the log)
-  const int whoami;
-
-  ceph::atomic<qu_state_t> state{qu_state_t::not_registered};
+  int whoami;
 
   /**
-   * the old 'is_registered'. Set whenever the job is registered with the OSD,
-   * i.e. is in 'to_scrub'.
+   * Set whenever the PG scrubs are managed by the OSD (i.e. - from becoming
+   * and active Primary till the end of the interval).
    */
-  std::atomic_bool in_queues{false};
+  bool registered{false};
+
+  /**
+   * there is a scrub target for this PG in the queue.
+   * \attn: temporary. Will be replaced with a pair of flags in the
+   * two level-specific scheduling targets.
+   */
+  bool target_queued{false};
 
   /// how the last attempt to scrub this PG ended
   delay_cause_t last_issue{delay_cause_t::none};
-
-  /**
-   * 'updated' is a temporary flag, used to create a barrier after
-   * 'sched_time' and 'deadline' (or any other job entry) were modified by
-   * different task.
-   */
-  std::atomic_bool updated{false};
 
   /**
     * the scrubber is waiting for locked objects to be unlocked.
@@ -149,16 +152,10 @@ class ScrubJob final : public RefCountedObject {
 
   utime_t get_sched_time() const { return schedule.not_before; }
 
-  static std::string_view qu_state_text(qu_state_t st);
-
-  /**
-   * relatively low-cost(*) access to the scrub job's state, to be used in
-   * logging.
-   *  (*) not a low-cost access on x64 architecture
-   */
   std::string_view state_desc() const
   {
-    return qu_state_text(state.load(std::memory_order_relaxed));
+    return registered ? (target_queued ? "queued" : "registered")
+		      : "not-registered";
   }
 
   /**
@@ -182,22 +179,8 @@ class ScrubJob final : public RefCountedObject {
 
   void dump(ceph::Formatter* f) const;
 
-  /*
-   * as the atomic 'in_queues' appears in many log prints, accessing it for
-   * display-only should be made less expensive (on ARM. On x86 the _relaxed
-   * produces the same code as '_cs')
-   */
-  std::string_view registration_state() const
-  {
-    return in_queues.load(std::memory_order_relaxed) ? "in-queue"
-						     : "not-queued";
-  }
 
-  /**
-   * access the 'state' directly, for when a distinction between 'registered'
-   * and 'unregistering' is needed (both have in_queues() == true)
-   */
-  bool is_state_registered() const { return state == qu_state_t::registered; }
+  bool is_registered() const { return registered; }
 
   /**
    * is this a high priority scrub job?
@@ -212,13 +195,20 @@ class ScrubJob final : public RefCountedObject {
   std::string scheduling_state(utime_t now_is, bool is_deep_expected) const;
 
   std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
-  const std::string log_msg_prefix;
+  std::string log_msg_prefix;
+
+  // the comparison operator is used to sort the scrub jobs in the queue.
+  // Note that it would not be needed in the next iteration of this code, as
+  // the queue would *not* hold the full ScrubJob objects, but rather -
+  // SchedTarget(s).
+  std::partial_ordering operator<=>(const ScrubJob& rhs) const
+  {
+    return schedule <=> rhs.schedule;
+  };
 };
 
-using ScrubJobRef = ceph::ref_t<ScrubJob>;
-using ScrubQContainer = std::vector<ScrubJobRef>;
+using ScrubQContainer = std::vector<std::unique_ptr<ScrubJob>>;
 
-/
 }  // namespace Scrub
 
 namespace std {
@@ -226,17 +216,6 @@ std::ostream& operator<<(std::ostream& out, const Scrub::ScrubJob& pg);
 }  // namespace std
 
 namespace fmt {
-template <>
-struct formatter<Scrub::qu_state_t> : formatter<std::string_view> {
-  template <typename FormatContext>
-  auto format(const Scrub::qu_state_t& s, FormatContext& ctx)
-  {
-    auto out = ctx.out();
-    out = fmt::formatter<string_view>::format(
-	std::string{Scrub::ScrubJob::qu_state_text(s)}, ctx);
-    return out;
-  }
-};
 
 template <>
 struct formatter<Scrub::sched_params_t> {
@@ -260,10 +239,9 @@ struct formatter<Scrub::ScrubJob> {
   auto format(const Scrub::ScrubJob& sjob, FormatContext& ctx)
   {
     return fmt::format_to(
-	ctx.out(), "pg[{}] @ nb:{:s} ({:s}) (dl:{:s}) - <{}> queue state:{:.7}",
+	ctx.out(), "pg[{}] @ nb:{:s} ({:s}) (dl:{:s}) - <{}>",
 	sjob.pgid, sjob.schedule.not_before, sjob.schedule.scheduled_at,
-	sjob.schedule.deadline, sjob.registration_state(),
-	sjob.state.load(std::memory_order_relaxed));
+	sjob.schedule.deadline, sjob.state_desc());
   }
 };
 
@@ -275,7 +253,7 @@ struct formatter<Scrub::sched_conf_t> {
   {
     return fmt::format_to(
 	ctx.out(),
-	"periods: s:{}/{} d:{}/{} iv-ratio:{} deep-rand:{} on-inv:{}",
+	"periods:s:{}/{},d:{}/{},iv-ratio:{},deep-rand:{},on-inv:{}",
 	cf.shallow_interval, cf.max_shallow.value_or(-1.0), cf.deep_interval,
 	cf.max_deep, cf.interval_randomize_ratio, cf.deep_randomize_ratio,
 	cf.mandatory_on_invalid);
