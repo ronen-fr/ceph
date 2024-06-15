@@ -49,7 +49,12 @@ OsdScrub::~OsdScrub()
 
 std::ostream& OsdScrub::gen_prefix(std::ostream& out, std::string_view fn) const
 {
-  return out << m_log_prefix << fn << ": ";
+  if (fn.starts_with("operator")) {
+    // it's a lambda, and __func__ is not available
+    return out << m_log_prefix;
+  } else {
+    return out << m_log_prefix << fn << ": ";
+  }
 }
 
 void OsdScrub::dump_scrubs(ceph::Formatter* f) const
@@ -418,13 +423,6 @@ PerfCounters* OsdScrub::get_perf_counters(int pool_type, scrub_level_t level)
 // ////////////////////////////////////////////////////////////////////////// //
 // forwarders to the queue
 
-void OsdScrub::update_job(
-    Scrub::ScrubJob& sjob,
-    const Scrub::sched_params_t& suggested,
-    bool reset_notbefore)
-{
-  m_queue.update_job(sjob, suggested, reset_notbefore);
-}
 
 void OsdScrub::delay_on_failure(
       Scrub::ScrubJob& sjob,
@@ -435,12 +433,10 @@ void OsdScrub::delay_on_failure(
   m_queue.delay_on_failure(sjob, delay, delay_cause, now_is);
 }
 
-
-void OsdScrub::register_with_osd(
-    Scrub::ScrubJob& sjob,
-    const Scrub::sched_params_t& suggested)
+void OsdScrub::enqueue_target(Scrub::ScrubJob& sjob)
 {
-  m_queue.register_with_osd(sjob, suggested);
+  m_queue.enqueue_target(sjob);
+  sjob.target_queued = true;
 }
 
 void OsdScrub::remove_from_osd_queue(Scrub::ScrubJob& sjob)

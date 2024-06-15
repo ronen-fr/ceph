@@ -105,16 +105,9 @@ class OsdScrub {
   /**
    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
    * scrubbed by the OSD.
-   * The registration is active as long as the PG exists and the OSD is its
-   * primary.
-   *
-   * See update_job() for the handling of the 'suggested' parameter.
-   *
-   * locking: might lock jobs_lock
    */
-  void register_with_osd(
-      Scrub::ScrubJob& sjob,
-      const Scrub::sched_params_t& suggested);
+  void enqueue_target(Scrub::ScrubJob& sjob);
+
 
   /**
    * remove the pg from set of PGs to be scanned for scrubbing.
