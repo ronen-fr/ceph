@@ -10,13 +10,21 @@
 #define dout_subsys ceph_subsys_
 
 using namespace std;
+using mem_snap_t = MemoryModel::mem_snap_t;
 
 MemoryModel::MemoryModel(CephContext *cct_)
   : cct(cct_)
 {
 }
 
-void MemoryModel::_sample(snap *psnap)
+std::optional<mem_snap_t> MemoryModel::sample()
+{
+
+
+
+}
+
+void MemoryModel::_sample(mem_snap_t *psnap)
 {
   ifstream f;
 
