@@ -2034,7 +2034,13 @@ void PgScrubber::scrub_finish()
     int tr = m_osds->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
     ceph_assert(tr == 0);
   }
-  update_scrub_job(m_planned_scrub);
+
+  // determine the next scrub time
+  auto applicable_conf = populate_config_params();
+  const auto scrub_clock_now = ceph_clock_now();
+  const auto suggested = determine_initial_schedule(applicable_conf, scrub_clock_now);
+  m_scrub_job->at_scrub_completion(suggested, applicable_conf, scrub_clock_now);
+  m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
 
   if (has_error) {
     m_pg->queue_peering_event(PGPeeringEventRef(
