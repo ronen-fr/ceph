@@ -199,6 +199,14 @@ class ScrubJob {
       const Scrub::sched_conf_t& aconf,
       utime_t scrub_clock_now);
 
+
+  // RRR
+  void at_scrub_completion(
+      const sched_params_t& suggested,
+      const sched_conf_t& aconf,
+      utime_t scrub_clock_now);
+
+
  /**
    * recalculate the scheduling parameters for the periodic scrub targets.
    * Used whenever the "external state" of the PG changes, e.g. when made
@@ -214,7 +222,6 @@ class ScrubJob {
       utime_t scrub_clock_now) {}
 
   void dump(ceph::Formatter* f) const;
-
 
   bool is_registered() const { return registered; }
 

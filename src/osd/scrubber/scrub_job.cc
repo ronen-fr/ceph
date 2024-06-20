@@ -112,6 +112,26 @@ void ScrubJob::update_schedule(
 	   << dendl;
 }
 
+
+/*
+ * Process: we were called after the successful completion of a scrub session.
+ * The 'last' stamps were already updated. We should now calculate the target
+ * time for our next scrub.
+ * Note: in the complete refactor of the scheduler, we will update only the
+ * target of the relevant level.
+ */
+void ScrubJob::at_scrub_completion(
+    const sched_params_t& suggested,
+    const sched_conf_t& aconf,
+    utime_t scrub_clock_now)
+{
+  auto adjusted = adjust_target_time(aconf, suggested);
+  high_priority = suggested.is_must == must_scrub_t::mandatory;
+  // for this commit - clearing n.b. delay for both shallow & deep
+  update_schedule(adjusted, true);
+}
+
+
 void ScrubJob::delay_on_failure(
     std::chrono::seconds delay,
     Scrub::delay_cause_t delay_cause,
