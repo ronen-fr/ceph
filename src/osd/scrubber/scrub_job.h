@@ -206,6 +206,20 @@ class ScrubJob {
       const sched_conf_t& aconf,
       utime_t scrub_clock_now);
 
+  /**
+   *  Recalculating any possible updates to the scrub schedule, following an
+   *  aborted scrub attempt.
+   *  Usually - we can use the same schedule that triggered the aborted scrub.
+   *  But we must take into account scenarios where "something" caused the
+   *  parameters prepared for the *next* scrub to show higher urgency or
+   *  priority. "Something" - as in an operator command requiring immediate
+   *  scrubbing, or a change in the pool/cluster configuration.
+   */
+  void merge_and_delay(
+      const scrub_schedule_t& aborted_schedule,
+      Scrub::delay_cause_t issue,
+      requested_scrub_t updated_flags,
+      utime_t scrub_clock_now);
 
  /**
    * recalculate the scheduling parameters for the periodic scrub targets.

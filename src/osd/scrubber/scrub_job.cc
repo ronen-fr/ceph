@@ -132,6 +132,25 @@ void ScrubJob::at_scrub_completion(
 }
 
 
+// note: only in this version: we need the updated data in the
+// planned_scrub flag set.
+void ScrubJob::merge_and_delay(
+    const scrub_schedule_t& aborted_schedule,
+    delay_cause_t issue,
+    requested_scrub_t updated_flags,
+    utime_t scrub_clock_now)
+{
+  // merge the schedule targets:
+  schedule.scheduled_at =
+      std::min(aborted_schedule.scheduled_at, schedule.scheduled_at);
+  high_priority = high_priority || updated_flags.must_scrub;
+  delay_on_failure(5s, issue, scrub_clock_now);
+
+  // the new deadline is the minimum of the two
+  schedule.deadline = std::min(aborted_schedule.deadline, schedule.deadline);
+}
+
+
 void ScrubJob::delay_on_failure(
     std::chrono::seconds delay,
     Scrub::delay_cause_t delay_cause,
