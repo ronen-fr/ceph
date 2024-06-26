@@ -255,6 +255,11 @@ class ScrubQueue {
   utime_t reserving_since;
 
 protected: // used by the unit-tests
+
+  // copy all targets in the queue (in this version - that means
+  // a copy of all the scrub-jobs registered)
+  std::vector<Scrub::ScrubJob> list_targets() const;
+
   /**
    * unit-tests will override this function to return a mock time
    */
