@@ -157,27 +157,24 @@ class ScrubJob {
   }
 
   /**
-   * 'reset_failure_penalty' is used to reset the 'not_before' jo attribute to
-   * the updated 'scheduled_at' time. This is used whenever the scrub-job
-   * schedule is updated, and the update is not a result of a scrub attempt
-   * failure.
-   */
-  void update_schedule(
-      const scrub_schedule_t& adjusted,
-      bool reset_failure_penalty);
-
-  /**
-   * If the scrub job was not explicitly requested, we postpone it by some
-   * random length of time.
-   * And if delaying the scrub - we calculate, based on pool parameters, a
-   * deadline we should scrub before.
+   * Given a proposed time for the next scrub, and the relevant
+   * configuration, adjust_schedule() determines the actual target time,
+   * the deadline, and the 'not_before' time for the scrub.
+   * The new values are updated into the scrub-job.
    *
-   * @return updated (i.e. - possibly delayed) scrub schedule (schedule,
-   * deadline, not_before)
+   * Specifically:
+   * - for high-priority scrubs: n.b. & deadline are set equal to the
+   *   (untouched) proposed target time.
+   * - for regular scrubs: the proposed time is adjusted (delayed) based
+   *   on the configuration; the deadline is set further out (if configured)
+   *   and possibly (parameter) the n.b. is reset to the target.
    */
-  Scrub::scrub_schedule_t adjust_target_time(
-    const Scrub::sched_conf_t& app_conf,
-    const Scrub::sched_params_t& proposed_schedule) const;
+  void adjust_schedule(
+    const Scrub::sched_params_t& suggested,
+    const Scrub::sched_conf_t& aconf,
+    utime_t scrub_clock_now,
+    bool modify_ready_targets,
+    bool reset_not_before);
 
   /**
    * push the 'not_before' time out by 'delay' seconds, so that this scrub target
@@ -186,24 +183,6 @@ class ScrubJob {
   void delay_on_failure(
       std::chrono::seconds delay,
       delay_cause_t delay_cause,
-      utime_t scrub_clock_now);
-
-  /**
-   * initial setting of the scheduling parameters of a newly registered
-   * PG. The scrub targets (in this stage of the refactoring - the whole
-   * scrub job) is initialized as for a regular periodic scrub.
-   */
-  void init_targets(
-      const sched_params_t& suggested,
-      const pg_info_t& info,
-      const Scrub::sched_conf_t& aconf,
-      utime_t scrub_clock_now);
-
-
-  // RRR
-  void at_scrub_completion(
-      const sched_params_t& suggested,
-      const sched_conf_t& aconf,
       utime_t scrub_clock_now);
 
   /**
@@ -281,11 +260,10 @@ struct formatter<Scrub::sched_params_t> {
   auto format(const Scrub::sched_params_t& pm, FormatContext& ctx) const
   {
     return fmt::format_to(
-	ctx.out(), "(proposed:{:s},must:{:2s})", utime_t{pm.proposed_time},
-	pm.is_must == Scrub::must_scrub_t::mandatory ? "true" : "false");
+	ctx.out(), "proposed:{:s},must:{:c}", pm.proposed_time,
+	pm.is_must == Scrub::must_scrub_t::mandatory ? 'y' : 'n');
   }
 };
-
 
 template <>
 struct formatter<Scrub::ScrubJob> {
@@ -295,7 +273,7 @@ struct formatter<Scrub::ScrubJob> {
   auto format(const Scrub::ScrubJob& sjob, FormatContext& ctx) const
   {
     return fmt::format_to(
-	ctx.out(), "pg[{}] @ nb:{:s} ({:s}) (dl:{:s}) - <{}>",
+	ctx.out(), "pg[{}]:nb:{:s} / trg:{:s} / dl:{:s} <{}>",
 	sjob.pgid, sjob.schedule.not_before, sjob.schedule.scheduled_at,
 	sjob.schedule.deadline, sjob.state_desc());
   }

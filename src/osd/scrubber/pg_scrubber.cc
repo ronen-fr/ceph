@@ -523,41 +523,27 @@ sched_params_t PgScrubber::determine_initial_schedule(
   }
 
   dout(15) << fmt::format(
-		  "{}: suggested:{:s}(must:{}) hist:{:s} valid:{}/{} flags:{}",
+		  "{}: suggested:{:s}(must:{:c}) hist:{:s} valid:{}/{} flags:{}",
 		  __func__, res.proposed_time,
-		  (res.is_must == must_scrub_t::mandatory ? "y" : "n"),
+		  (res.is_must == must_scrub_t::mandatory ? 'y' : 'n'),
 		  m_pg->info.history.last_scrub_stamp,
-		  (bool)m_pg->info.stats.stats_invalid,
+		  !(bool)m_pg->info.stats.stats_invalid,
 		  app_conf.mandatory_on_invalid, m_planned_scrub)
 	   << dendl;
   return res;
 }
 
 
-/*
- * Note: referring to m_planned_scrub here is temporary, as this set of
- * scheduling flags will be removed in a followup PR.
- */
 void PgScrubber::schedule_scrub_with_osd()
 {
   ceph_assert(is_primary());
   ceph_assert(m_scrub_job);
 
-  auto pre_reg = registration_state();
-  m_scrub_job->registered = true;
-
-  const auto applicable_conf = populate_config_params();
-  const auto scrub_clock_now = ceph_clock_now();
-  auto suggested = determine_initial_schedule(applicable_conf, scrub_clock_now);
-  m_scrub_job->init_targets(
-      suggested, m_pg->info, applicable_conf, scrub_clock_now);
-
-  m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
-
-  dout(10) << fmt::format(
-		  "{}: <flags:{}> <{:.5}> --> <{:.5}>", __func__,
-		  m_planned_scrub, pre_reg, registration_state())
+  dout(20) << fmt::format(
+		  "{}: state at entry: {}", __func__, m_scrub_job->state_desc())
 	   << dendl;
+  m_scrub_job->registered = true;
+  update_scrub_job();
 }
 
 
@@ -579,12 +565,12 @@ void PgScrubber::on_primary_active_clean()
  *   guarantees that the PG is locked and the interval is still the same.
  * - in the 2nd case - we know the PG state and we know we are only called
  *   for a Primary.
-*/
-void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
+ */
+void PgScrubber::update_scrub_job()
 {
   if (!is_primary() || !m_scrub_job) {
     dout(10) << fmt::format(
-		    "{}: pg[{}]: not Primary or no scrub-job", __func__,
+		    "{}: PG[{}]: not Primary or no scrub-job", __func__,
 		    m_pg_id)
 	     << dendl;
     return;
@@ -599,7 +585,7 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
   }
 
   dout(15) << fmt::format(
-		  "{}: flags:<{}> job on entry:{}", __func__, request_flags,
+		  "{}: flags:<{}> job on entry:{}", __func__, m_planned_scrub,
 		  *m_scrub_job)
 	   << dendl;
   if (m_scrub_job->target_queued) {
@@ -610,19 +596,21 @@ void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
 	     << dendl;
   }
 
-
   ceph_assert(m_pg->is_locked());
   const auto applicable_conf = populate_config_params();
   const auto scrub_clock_now = ceph_clock_now();
-  const auto suggested = determine_initial_schedule(applicable_conf, scrub_clock_now);
-  m_scrub_job->on_periods_change(suggested, applicable_conf, scrub_clock_now);
+  const auto suggested =
+      determine_initial_schedule(applicable_conf, scrub_clock_now);
+
+  m_scrub_job->adjust_schedule(
+      suggested, applicable_conf, scrub_clock_now, true, true);
   m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
   m_pg->publish_stats_to_osd();
 
-  dout(15) << fmt::format(
-                  "{}: flags:<{}> job on exit:{}", __func__, request_flags,
-                  *m_scrub_job)
-           << dendl;
+  dout(10) << fmt::format(
+		  "{}: flags:<{}> job on exit:{}", __func__, m_planned_scrub,
+		  *m_scrub_job)
+	   << dendl;
 }
 
 scrub_level_t PgScrubber::scrub_requested(
@@ -650,7 +638,7 @@ scrub_level_t PgScrubber::scrub_requested(
   req_flags.req_scrub = true;
   dout(20) << fmt::format("{}: planned scrub:{}", __func__, req_flags) << dendl;
 
-  update_scrub_job(req_flags);
+  update_scrub_job();
   return deep_requested ? scrub_level_t::deep : scrub_level_t::shallow;
 }
 
@@ -660,7 +648,7 @@ void PgScrubber::request_rescrubbing(requested_scrub_t& request_flags)
   dout(10) << __func__ << " flags: " << request_flags << dendl;
 
   request_flags.need_auto = true;
-  update_scrub_job(request_flags);
+  update_scrub_job();
 }
 
 bool PgScrubber::reserve_local()
@@ -725,7 +713,7 @@ Scrub::sched_conf_t PgScrubber::populate_config_params() const
   configs.deep_randomize_ratio = conf->osd_deep_scrub_randomize_ratio;
   configs.mandatory_on_invalid = conf->osd_scrub_invalid_stats;
 
-  dout(15) << fmt::format("updated config:{}", configs) << dendl;
+  dout(15) << fmt::format("{}: updated config:{}", __func__, configs) << dendl;
   return configs;
 }
 
@@ -761,10 +749,7 @@ void PgScrubber::on_operator_periodic_cmd(
 	   << dendl;
 
   // move the relevant time-stamp backwards - enough to trigger a scrub
-
-  utime_t now_is = ceph_clock_now();
-  utime_t stamp = now_is;
-
+  utime_t stamp = ceph_clock_now();
   if (offset > 0) {
     stamp -= offset;
   } else {
@@ -2036,11 +2021,7 @@ void PgScrubber::scrub_finish()
   }
 
   // determine the next scrub time
-  auto applicable_conf = populate_config_params();
-  const auto scrub_clock_now = ceph_clock_now();
-  const auto suggested = determine_initial_schedule(applicable_conf, scrub_clock_now);
-  m_scrub_job->at_scrub_completion(suggested, applicable_conf, scrub_clock_now);
-  m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
+  update_scrub_job();
 
   if (has_error) {
     m_pg->queue_peering_event(PGPeeringEventRef(

@@ -550,7 +550,7 @@ struct ScrubPgIF {
    * This function assumes that the queue registration status is up-to-date,
    * i.e. the OSD "knows our name" if-f we are the Primary.
    */
-  virtual void update_scrub_job(const requested_scrub_t& request_flags) = 0;
+  virtual void update_scrub_job() = 0;
 
   /**
    * route incoming replica-reservations requests/responses to the

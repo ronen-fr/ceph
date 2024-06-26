@@ -1366,7 +1366,7 @@ void PG::on_scrub_schedule_input_change()
   if (is_active() && is_primary()) {
     dout(20) << __func__ << ": active/primary" << dendl;
     ceph_assert(m_scrubber);
-    m_scrubber->update_scrub_job(m_planned_scrub);
+    m_scrubber->update_scrub_job();
   } else {
     dout(20) << __func__ << ": inactive or non-primary" << dendl;
   }

@@ -256,7 +256,7 @@ class PgScrubber : public ScrubPgIF,
 
   // managing scrub op registration
 
-  void update_scrub_job(const requested_scrub_t& request_flags) final;
+  void update_scrub_job() final;
 
   void rm_from_osd_scrubbing() final;
 
