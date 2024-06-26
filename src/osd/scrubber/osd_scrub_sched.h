@@ -240,6 +240,11 @@ class ScrubQueue {
   std::atomic_int_fast16_t blocked_scrubs_cnt{0};
 
 protected: // used by the unit-tests
+
+  // copy all targets in the queue (in this version - that means
+  // a copy of all the scrub-jobs registered)
+  std::vector<Scrub::ScrubJob> list_targets() const;
+
   /**
    * unit-tests will override this function to return a mock time
    */
