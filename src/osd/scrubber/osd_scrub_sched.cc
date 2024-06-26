@@ -178,6 +178,18 @@ void ScrubQueue::dump_scrubs(ceph::Formatter* f) const
   f->close_section();
 }
 
+// a test-only, expensive, copying of the scrub-job queue
+std::vector<ScrubJob> ScrubQueue::list_targets() const
+{
+  std::lock_guard lck{jobs_lock};
+  std::vector<ScrubJob> all_jobs;
+  all_jobs.reserve(to_scrub.size());
+  std::transform(
+      to_scrub.begin(), to_scrub.end(), std::back_inserter(all_jobs),
+      [](const auto& job) { return *job; });
+  return all_jobs;
+}
+
 
 // ////////////////////////////////////////////////////////////////////////// //
 // ScrubQueue - maintaining the 'blocked on a locked object' count
