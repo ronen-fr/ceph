@@ -502,6 +502,91 @@ void PgScrubber::rm_from_osd_scrubbing()
   }
 }
 
+/// use the 'planned scrub' flags to possibly set the deep target to
+/// high-priority.
+/// RRR not including the following condition:
+/// (m_planned_scrub.must_scrub && is_time_for_deep(pg_cond, m_planned_scrub)))
+/// as that one is irrelevant now we have dual targets.
+/// returns true if the deep target was set *here* to high-priority.
+bool PgScrubber::flags_to_deep_priority(
+    const Scrub::sched_conf_t& app_conf,
+    //Scrub::ScrubPGPreconds pg_cond,
+    utime_t scrub_clock_now)
+{
+  auto& targ = m_scrub_job->deep_target;
+  auto& entry = m_scrub_job->deep_target.sched_info;
+
+  // note: as we depend on the returned value to distinguish between existing h.p.
+  // and an instance in which that is set here, there is the added "not already
+  // high-priority" condition.
+  if (targ.is_high_priority())
+    return false;
+
+  if (m_planned_scrub.need_auto || m_planned_scrub.must_deep_scrub) {
+    // Set the smallest time that isn't utime_t()
+    entry.schedule.scheduled_at = PgScrubber::scrub_must_stamp();
+    entry.urgency = urgency_t::
+	operator_requested;  // RRR wrong!? missing an entry, which is only relevant in this step?
+
+    return true;
+  }
+
+  return false; // not set to high-priority *by this function*
+}
+
+
+void PgScrubber::flags_to_shallow_priority(
+    const Scrub::sched_conf_t& app_conf,
+    //Scrub::ScrubPGPreconds pg_cond,
+    utime_t scrub_clock_now)
+{
+  auto& entry = m_scrub_job->shallow_target.sched_info;
+
+  if (m_planned_scrub.must_scrub) {
+
+    // Set the smallest time that isn't utime_t()
+    entry.schedule.scheduled_at = PgScrubber::scrub_must_stamp();
+    entry.urgency = urgency_t::
+	operator_requested;  // RRR wrong!? missing an entry, which is only relevant in this step?
+
+  } else if (m_pg->info.stats.stats_invalid && app_conf.mandatory_on_invalid) {
+    entry.schedule.scheduled_at = scrub_clock_now;
+    entry.urgency = urgency_t::
+	operator_requested;  // RRR wrong!? missing an entry, which is only relevant in this step?
+  }
+}
+
+
+// RRR can I always pass the 'populate_()', too?
+void PgScrubber::update_targets(
+    //Scrub::ScrubPGPreconds pg_cond,
+    const requested_scrub_t& planned,
+    utime_t scrub_clock_now)
+{
+  const auto applicable_conf = populate_config_params();
+  //const auto scrub_clock_now = ceph_clock_now();
+
+  // first, use the planned-scrub flags to possibly set one of the
+  // targets as high-priority.
+  // Note - this step is to be removed in the followup commits.
+  auto deep_hp_set =
+      flags_to_deep_priority(applicable_conf, scrub_clock_now);
+
+  if (!deep_hp_set) {
+    flags_to_shallow_priority(
+	populate_config_params(), scrub_clock_now);
+  }
+
+  // the next periodic scrubs:
+  m_scrub_job->adjust_shallow_schedule2(
+      m_pg->info.history.last_scrub_stamp, applicable_conf, scrub_clock_now,
+      delay_ready_t::delay_ready);
+  m_scrub_job->adjust_deep_schedule2(
+      m_pg->info.history.last_deep_scrub_stamp, applicable_conf,
+      scrub_clock_now, delay_ready_t::delay_ready);
+}
+
+
 sched_params_t PgScrubber::determine_initial_schedule(
     const Scrub::sched_conf_t& app_conf,
     utime_t scrub_clock_now) const
@@ -597,14 +682,28 @@ void PgScrubber::update_scrub_job(Scrub::delay_ready_t delay_ready)
   }
 
   ceph_assert(m_pg->is_locked());
+  ceph_assert(m_scrub_job->is_registered());
   const auto applicable_conf = populate_config_params();
   const auto scrub_clock_now = ceph_clock_now();
-  const auto suggested =
-      determine_initial_schedule(applicable_conf, scrub_clock_now);
 
-  ceph_assert(m_scrub_job->is_registered());
-  m_scrub_job->adjust_schedule(
-      suggested, applicable_conf, scrub_clock_now, delay_ready);
+  /*
+  Possible conds re a high-priority deep-scrub:
+  - if the deep target is already high priority, or the flags determine that: set
+    the deep target to high priority.
+  - conditions to set the s to hp:
+    - deep was not set to hp, or deep not allowed, and:
+    - no stats, and mandatory_on_invalid is set, or:
+    - must_scrub is set, or:
+    - req_scrub is set (check).
+
+  Then:
+   for shallow scrub: determine the initial schedule (only based on urgency and times)
+     - update the target with adjusted values
+   Same for deep.
+   Requeue.
+*/
+  update_targets(m_planned_scrub, scrub_clock_now);
+
   m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
   m_scrub_job->target_queued = true;
   m_pg->publish_stats_to_osd();
@@ -2361,6 +2460,81 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 				 false};
   }
 
+  // not taking 'no-*scrub' flags into account here.
+  const auto first_ready = m_scrub_job->earliest_eligible(now_is);
+  if (first_ready) {
+    const auto& targ = first_ready->get();
+    return pg_scrubbing_status_t{targ.get_sched_time(),
+                                 0,
+                                 pg_scrub_sched_status_t::queued,
+                                 false,
+                                 (targ.is_deep() ? scrub_level_t::deep : scrub_level_t::shallow),
+                                 targ.is_high_priority()};
+  }
+
+  // both targets are not ready yet
+  const auto targ = m_scrub_job->earliest_target();
+    return pg_scrubbing_status_t{targ.get_sched_time(),
+                                 0,
+                                 pg_scrub_sched_status_t::scheduled,
+                                 false,
+                                 (targ.is_deep() ? scrub_level_t::deep : scrub_level_t::shallow),
+                                 targ.is_high_priority()};
+}
+
+
+
+#if 0
+pg_scrubbing_status_t PgScrubber::get_schedule() const
+{
+  if (!m_scrub_job) {
+    return pg_scrubbing_status_t{};
+  }
+
+  dout(25) << fmt::format("{}: active:{} blocked:{}",
+			  __func__,
+			  m_active,
+			  m_scrub_job->blocked)
+	   << dendl;
+
+  auto now_is = ceph_clock_now();
+
+  if (m_active) {
+    // report current scrub info, including updated duration
+
+    if (m_scrub_job->blocked) {
+      // a bug. An object is held locked.
+      int32_t blocked_for =
+	(utime_t{now_is} - m_scrub_job->blocked_since).sec();
+      return pg_scrubbing_status_t{
+	utime_t{},
+	blocked_for,
+	pg_scrub_sched_status_t::blocked,
+	true,  // active
+	(m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow),
+	false};
+
+    } else {
+      int32_t dur_seconds =
+	  duration_cast<seconds>(m_fsm->get_time_scrubbing()).count();
+      return pg_scrubbing_status_t{
+	  utime_t{},
+	  dur_seconds,
+	  pg_scrub_sched_status_t::active,
+	  true,	 // active
+	  (m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow),
+	  false /* is periodic? unknown, actually */};
+    }
+  }
+  if (!m_scrub_job->is_registered()) {
+    return pg_scrubbing_status_t{utime_t{},
+				 0,
+				 pg_scrub_sched_status_t::not_queued,
+				 false,
+				 scrub_level_t::shallow,
+				 false};
+  }
+
   // Will next scrub surely be a deep one? note that deep-scrub might be
   // selected even if we report a regular scrub here.
   bool deep_expected = (now_is >= m_pg->next_deepscrub_interval()) ||
@@ -2389,6 +2563,8 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 			       expected_level,
 			       periodic};
 }
+#endif
+
 
 void PgScrubber::handle_query_state(ceph::Formatter* f)
 {
