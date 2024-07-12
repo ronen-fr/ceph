@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "common/ceph_atomic.h"
+#include "common/fmt_common.h"
 #include "include/utime_fmt.h"
 #include "osd/osd_types.h"
 #include "osd/osd_types_fmt.h"
@@ -86,20 +87,107 @@ struct sched_conf_t {
 };
 
 
+class ScrubJob;
+
+/**
+ * a wrapper around a Scrub::SchedEntry, adding state flags and manipulators
+ * to be used only by the Scrubber. Note that the SchedEntry itself is known to
+ * multiple objects (and must be kept small in size).
+*/
+class SchedTarget {
+ public:
+  constexpr explicit SchedTarget(spg_t pg_id, scrub_level_t scrub_level)
+      : sched_info{pg_id, scrub_level}
+  {}
+
+  /// resets to the after-construction state
+  void reset();
+
+  void clear_queued() { queued = false; }
+  void set_queued() { queued = true; }
+  bool is_queued() const { return queued; }
+
+  bool is_high_priority() const { return sched_info.is_high_priority(); }
+
+  void up_urgency_to(urgency_t u);
+
+
+  /// access that part of the SchedTarget that is queued in the scrub queue
+  const SchedEntry& queued_element() const { return sched_info; }
+
+  bool is_deep() const { return sched_info.level == scrub_level_t::deep; }
+
+  bool is_shallow() const { return sched_info.level == scrub_level_t::shallow; }
+
+  scrub_level_t level() const { return sched_info.level; }
+
+  utime_t get_sched_time() const { return sched_info.schedule.not_before; }
+
+  bool was_delayed() const { return last_issue != delay_cause_t::none; }
+
+  bool is_ripe(utime_t now_is) const { return sched_info.is_ripe(now_is); }
+
+  /**
+   * periodic scrubs are those with urgency of either periodic_regular or
+   * (later) overdue
+   */
+  bool is_periodic() const;
+
+  // scrub flags
+  bool get_auto_repair() const { return auto_repairing; }
+  bool get_do_repair() const { return do_repair; }
+
+  bool over_deadline(utime_t now_is) const;
+
+  /// our ID and scheduling parameters
+  SchedEntry sched_info;
+
+  /**
+   * is this target (meaning - a copy of this specific combination of
+   * PG and scrub type) currently in the queue?
+   */
+  bool queued{false};
+
+  /// either 'none', or the reason for the latest failure/delay (for
+  /// logging/reporting purposes)
+  delay_cause_t last_issue{delay_cause_t::none};
+
+  // the flags affecting the scrub that will result from this target:
+
+  /**
+   * (deep-scrub entries only:)
+   * Supporting the equivalent of 'need-auto', which translated into:
+   * - performing a deep scrub (taken care of by raising the priority of the
+   *   deep target);
+   * - marking that scrub as 'do_repair' (the next flag here);
+   */
+  bool auto_repairing{false};
+
+  /**
+   * (deep-scrub entries only:)
+   * Set for scrub_requested() scrubs with the 'repair' flag set.
+   * Translated (in set_op_parameters()) into a deep scrub with
+   * m_is_repair & PG_REPAIR_SCRUB.
+   */
+  bool do_repair{false};
+};
+
+
 class ScrubJob {
  public:
-  /**
-   * a time scheduled for scrub, and a deadline: The scrub could be delayed
-   * if system load is too high (but not if after the deadline),or if trying
-   * to scrub out of scrub hours.
-   */
-  scrub_schedule_t schedule;
-
   /// pg to be scrubbed
   spg_t pgid;
 
   /// the OSD id (for the log)
   int whoami;
+
+  /*
+   * the schedule for the next scrub at the specific level. Also - the
+   * urgency and characteristics of the scrub (e.g. - high priority,
+   * must-repair, ...)
+   */
+  SchedTarget shallow_target;
+  SchedTarget deep_target;
 
   /**
    * Set whenever the PG scrubs are managed by the OSD (i.e. - from becoming
@@ -126,11 +214,17 @@ class ScrubJob {
 
   CephContext* cct;
 
-  bool high_priority{false};
+  //bool high_priority{false};
 
   ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
 
-  utime_t get_sched_time() const { return schedule.not_before; }
+  // RRR doc
+  std::optional<std::reference_wrapper<SchedTarget>> earliest_eligible(utime_t scrub_clock_now);
+  std::optional<std::reference_wrapper<const SchedTarget>> earliest_eligible(utime_t scrub_clock_now) const;
+  const SchedTarget& earliest_target() const;
+  SchedTarget& earliest_target();
+
+  utime_t get_sched_time() const; // RRR { return schedule.not_before; }
 
   std::string_view state_desc() const
   {
@@ -151,34 +245,28 @@ class ScrubJob {
    *   on the configuration; the deadline is set further out (if configured)
    *   and the n.b. is reset to the target.
    */
-  void adjust_schedule(
-    const Scrub::sched_params_t& suggested,
-    const Scrub::sched_conf_t& aconf,
+  void adjust_shallow_schedule(
+    utime_t last_scrub,
+    const Scrub::sched_conf_t& app_conf,
     utime_t scrub_clock_now,
-    Scrub::delay_ready_t modify_ready_targets);
+    delay_ready_t modify_ready_targets);
+
+  void adjust_deep_schedule(
+    utime_t last_deep,
+    const Scrub::sched_conf_t& app_conf,
+    utime_t scrub_clock_now,
+    delay_ready_t modify_ready_targets);
 
   /**
-   * push the 'not_before' time out by 'delay' seconds, so that this scrub target
+   * For the level specified, set the 'not-before' time to 'now+delay',
+   * so that this scrub target
    * would not be retried before 'delay' seconds have passed.
+   * The 'last_issue' is updated to the cause of the delay.
    */
   void delay_on_failure(
+      scrub_level_t level,
       std::chrono::seconds delay,
       delay_cause_t delay_cause,
-      utime_t scrub_clock_now);
-
-  /**
-   *  Recalculating any possible updates to the scrub schedule, following an
-   *  aborted scrub attempt.
-   *  Usually - we can use the same schedule that triggered the aborted scrub.
-   *  But we must take into account scenarios where "something" caused the
-   *  parameters prepared for the *next* scrub to show higher urgency or
-   *  priority. "Something" - as in an operator command requiring immediate
-   *  scrubbing, or a change in the pool/cluster configuration.
-   */
-  void merge_and_delay(
-      const scrub_schedule_t& aborted_schedule,
-      Scrub::delay_cause_t issue,
-      requested_scrub_t updated_flags,
       utime_t scrub_clock_now);
 
  /**
@@ -202,8 +290,14 @@ class ScrubJob {
   /**
    * is this a high priority scrub job?
    * High priority - (usually) a scrub that was initiated by the operator
+   *
+   * Update: as the priority is now a property of the 'target', and not of
+   * the job itself, this function is now (temporarily) modified to fetch
+   * the priority of the explicitly selected target.
+   * A followup PR will remove this function, as questioning the job does
+   * not make sense when it is targets that are queued.
    */
-  bool is_high_priority() const { return high_priority; }
+  bool is_job_high_priority(scrub_level_t lvl) const;
 
   /**
    * a text description of the "scheduling intentions" of this PG:
@@ -220,7 +314,9 @@ class ScrubJob {
   // SchedTarget(s).
   std::partial_ordering operator<=>(const ScrubJob& rhs) const
   {
-    return schedule <=> rhs.schedule;
+    return cmp_entries(
+      ceph_clock_now(), shallow_target.queued_element(),
+      deep_target.queued_element());
   };
 };
 
@@ -247,6 +343,18 @@ struct formatter<Scrub::sched_params_t> {
 };
 
 template <>
+struct formatter<Scrub::SchedTarget> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const Scrub::SchedTarget& st, FormatContext& ctx)
+  {
+     return fmt::format_to(
+ 	ctx.out(), "{},q:X,ar:{},issue:{}", st.sched_info,
+ 	/*not yet: st.in_queue ? "+" : "-",*/ st.auto_repairing ? "+" : "-", st.last_issue);
+  }
+};
+
+template <>
 struct formatter<Scrub::ScrubJob> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
@@ -254,9 +362,8 @@ struct formatter<Scrub::ScrubJob> {
   auto format(const Scrub::ScrubJob& sjob, FormatContext& ctx) const
   {
     return fmt::format_to(
-	ctx.out(), "pg[{}]:nb:{:s} / trg:{:s} / dl:{:s} <{}>",
-	sjob.pgid, sjob.schedule.not_before, sjob.schedule.scheduled_at,
-	sjob.schedule.deadline, sjob.state_desc());
+	ctx.out(), "pg[{}]:sh:{}/dp:{}<{}>",
+	sjob.pgid, sjob.shallow_target, sjob.deep_target, sjob.state_desc());
   }
 };
 
