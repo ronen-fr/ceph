@@ -808,6 +808,9 @@ class PgScrubber : public ScrubPgIF,
    */
   Scrub::sched_conf_t populate_config_params() const;
 
+  void update_targets(Scrub::ScrubPGPreconds pg_cond,
+    const requested_scrub_t& planned);
+
   /**
    * determine the time when the next scrub should be scheduled
    *

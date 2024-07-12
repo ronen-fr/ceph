@@ -502,6 +502,36 @@ void PgScrubber::rm_from_osd_scrubbing()
   }
 }
 
+void PgScrubber::update_targets(Scrub::ScrubPGPreconds pg_cond,
+    const requested_scrub_t& planned)
+{
+  // first, use the planned-scrub flags to possibly set one of the
+  // targets as high-priority.
+  // Note - this step is to be removed in the followup commits.
+
+  // do the flags require a high-priority deep scrub?
+  if (m_planned_scrub.need_auto || m_planned_scrub.must_deep_scrub || pg_cond.has_deep_errors ||
+        (m_planned_scrub.must_scrub && is_time_for_deep(pg_cond, planned))) {
+
+    // the next scrub will be a high-priority deep scrub
+    if (m_planned_scrub.must_scrub || m_planned_scrub.need_auto) {
+
+    // Set the smallest time that isn't utime_t()
+    res.proposed_time = PgScrubber::scrub_must_stamp();
+    res.is_must = Scrub::must_scrub_t::mandatory;
+
+  } else if (m_pg->info.stats.stats_invalid && app_conf.mandatory_on_invalid) {
+    res.proposed_time = scrub_clock_now;
+    res.is_must = Scrub::must_scrub_t::mandatory;
+
+  }
+  } else if (m_planned_scrub.must_scrub) {
+    // mark the shallow target for hp scrub
+  }
+
+  if (deep_is_high) {
+}
+
 sched_params_t PgScrubber::determine_initial_schedule(
     const Scrub::sched_conf_t& app_conf,
     utime_t scrub_clock_now) const
@@ -597,13 +627,15 @@ void PgScrubber::update_scrub_job(Scrub::delay_ready_t delay_ready)
   }
 
   ceph_assert(m_pg->is_locked());
+  ceph_assert(m_scrub_job->is_registered());
   const auto applicable_conf = populate_config_params();
   const auto scrub_clock_now = ceph_clock_now();
+
+  // modify the shallow target, if periodic (not high priority)
   const auto suggested =
       determine_initial_schedule(applicable_conf, scrub_clock_now);
 
-  ceph_assert(m_scrub_job->is_registered());
-  m_scrub_job->adjust_schedule(
+  m_scrub_job->adjust_shallow_schedule(
       suggested, applicable_conf, scrub_clock_now, delay_ready);
   m_osds->get_scrub_services().enqueue_target(*m_scrub_job);
   m_scrub_job->target_queued = true;
