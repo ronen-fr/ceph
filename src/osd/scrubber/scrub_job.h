@@ -149,41 +149,8 @@ class SchedTarget {
 
   bool over_deadline(utime_t now_is) const;
 
-  /// sets 'not-before' to 'now+delay'; updates 'last_issue'
-   /**
-   * push the 'not_before' time out by 'delay' seconds, so that this scrub target
-   * would not be retried before 'delay' seconds have passed.
-   * updates 
-   */
-  void delay_on_failure(
-      std::chrono::seconds delay,
-      delay_cause_t delay_cause,
-      utime_t scrub_clock_now);
-
-  /// recalculate the scheduling parameters for a periodic shallow scrub
-//   void update_periodic_shallow(
-//     const Scrub::sched_params_t& suggested,
-//     const Scrub::sched_conf_t& app_conf,
-//     //const pg_info_t& pg_info,
-//     utime_t scrub_clock_now,
-//     delay_ready_t modify_ready_targets);
-// 
-//   void update_periodic_shallow(
-//       const pg_info_t& pg_info,
-//       const Scrub::sched_conf_t& config,
-//       utime_t scrub_time_now);
-
-//   void update_periodic_deep(
-//       const pg_info_t& pg_info,
-//       const Scrub::sched_conf_t& config,
-//       utime_t scrub_time_now);
-
-//   void set_oper_shallow_target(scrub_type_t scrub_type, utime_t scrub_time_now);
-// 
-//   void set_oper_deep_target(scrub_type_t scrub_type, utime_t scrub_time_now);
-
   /// used by the fmtlib:
-  std::string fmt_print() const;
+  //std::string fmt_print() const;
 
  //private:
   /// our ID and scheduling parameters
@@ -271,8 +238,10 @@ class ScrubJob {
   ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
 
   // RRR doc
-  std::optional<std::reference_wrapper<SchedTarget>> earliest_eligible(utime_t scrub_clock_now) const;
-  SchedTarget& earliest_target() const;
+  std::optional<std::reference_wrapper<SchedTarget>> earliest_eligible(utime_t scrub_clock_now);
+  std::optional<std::reference_wrapper<const SchedTarget>> earliest_eligible(utime_t scrub_clock_now) const;
+  const SchedTarget& earliest_target() const;
+  SchedTarget& earliest_target();
 
   utime_t get_sched_time() const; // RRR { return schedule.not_before; }
 
@@ -322,10 +291,13 @@ class ScrubJob {
     delay_ready_t modify_ready_targets);
 
   /**
-   * push the 'not_before' time out by 'delay' seconds, so that this scrub target
+   * For the level specified, set the 'not-before' time to 'now+delay',
+   * so that this scrub target
    * would not be retried before 'delay' seconds have passed.
+   * The 'last_issue' is updated to the cause of the delay.
    */
   void delay_on_failure(
+      scrub_level_t level,
       std::chrono::seconds delay,
       delay_cause_t delay_cause,
       utime_t scrub_clock_now);
@@ -339,11 +311,11 @@ class ScrubJob {
    *  priority. "Something" - as in an operator command requiring immediate
    *  scrubbing, or a change in the pool/cluster configuration.
    */
-  void merge_and_delay(
-      const scrub_schedule_t& aborted_schedule,
-      Scrub::delay_cause_t issue,
-      requested_scrub_t updated_flags,
-      utime_t scrub_clock_now);
+//   void merge_and_delay(
+//       const scrub_schedule_t& aborted_schedule,
+//       Scrub::delay_cause_t issue,
+//       requested_scrub_t updated_flags,
+//       utime_t scrub_clock_now);
 
  /**
    * recalculate the scheduling parameters for the periodic scrub targets.
@@ -366,8 +338,14 @@ class ScrubJob {
   /**
    * is this a high priority scrub job?
    * High priority - (usually) a scrub that was initiated by the operator
+   *
+   * Update: as the priority is now a property of the 'target', and not of
+   * the job itself, this function is now (temporarily) modified to fetch
+   * the priority of the explicitly selected target.
+   * A followup PR will remove this function, as questioning the job does
+   * not make sense when it is targets that are queued.
    */
-  bool is_high_priority() const; // RRR { return high_priority; }
+  bool is_job_high_priority(scrub_level_t lvl) const;
 
   /**
    * a text description of the "scheduling intentions" of this PG:
@@ -384,7 +362,9 @@ class ScrubJob {
   // SchedTarget(s).
   std::partial_ordering operator<=>(const ScrubJob& rhs) const
   {
-    return schedule <=> rhs.schedule;
+    return cmp_entries(
+      ceph_clock_now(), shallow_target.queued_element(),
+      deep_target.queued_element());
   };
 };
 
@@ -410,6 +390,19 @@ struct formatter<Scrub::sched_params_t> {
   }
 };
 
+
+template <>
+struct formatter<Scrub::SchedTarget> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  template <typename FormatContext>
+  auto format(const Scrub::SchedTarget& st, FormatContext& ctx)
+  {
+     return fmt::format_to(
+ 	ctx.out(), "{},q:X,ar:{},issue:{}", st.sched_info,
+ 	/*not yet: st.in_queue ? "+" : "-",*/ st.auto_repairing ? "+" : "-", st.last_issue);
+  }
+};
+
 template <>
 struct formatter<Scrub::ScrubJob> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
@@ -418,9 +411,8 @@ struct formatter<Scrub::ScrubJob> {
   auto format(const Scrub::ScrubJob& sjob, FormatContext& ctx) const
   {
     return fmt::format_to(
-	ctx.out(), "pg[{}]:nb:{:s} / trg:{:s} / dl:{:s} <{}>",
-	sjob.pgid, sjob.schedule.not_before, sjob.schedule.scheduled_at,
-	sjob.schedule.deadline, sjob.state_desc());
+	ctx.out(), "pg[{}]:sh:{}/dp:{}<{}>",
+	sjob.pgid, sjob.shallow_target, sjob.deep_target, sjob.state_desc());
   }
 };
 
