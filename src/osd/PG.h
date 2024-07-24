@@ -41,6 +41,7 @@
 #include "recovery_types.h"
 #include "MissingLoc.h"
 #include "scrubber_common.h"
+//#include "scrubber/scrub_queue_entry.h"
 
 #include "mgr/OSDPerfMetricTypes.h"
 
@@ -701,7 +702,7 @@ public:
   bool get_must_scrub() const;
 
   Scrub::schedule_result_t start_scrubbing(
-    std::unique_ptr<Scrub::ScrubJob> candidate,
+    const Scrub::SchedEntry& candidate,
     Scrub::OSDRestrictions osd_restrictions);
 
   unsigned int scrub_requeue_priority(

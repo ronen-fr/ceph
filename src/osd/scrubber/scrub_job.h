@@ -261,18 +261,6 @@ class ScrubJob {
   void set_both_targets_queued();
 
   /**
-   * is this a high priority scrub job?
-   * High priority - (usually) a scrub that was initiated by the operator
-   *
-   * Update: as the priority is now a property of the 'target', and not of
-   * the job itself, this function is now (temporarily) modified to fetch
-   * the priority of the explicitly selected target.
-   * A followup PR will remove this function, as questioning the job does
-   * not make sense when it is targets that are queued.
-   */
-  //bool is_job_high_priority(scrub_level_t lvl) const;
-
-  /**
    * a text description of the "scheduling intentions" of this PG:
    * are we already scheduled for a scrub/deep scrub? when?
    */
