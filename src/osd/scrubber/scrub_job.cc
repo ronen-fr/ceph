@@ -6,7 +6,6 @@
 #include "pg_scrubber.h"
 
 using must_scrub_t = Scrub::must_scrub_t;
-using ScrubQContainer = Scrub::ScrubQContainer;
 using sched_params_t = Scrub::sched_params_t;
 using OSDRestrictions = Scrub::OSDRestrictions;
 using sched_conf_t = Scrub::sched_conf_t;
@@ -85,6 +84,32 @@ ostream& operator<<(ostream& out, const ScrubJob& sjob)
   return out << fmt::format("{}", sjob);
 }
 }  // namespace std
+
+
+SchedTarget& ScrubJob::get_target(scrub_level_t s_or_d)
+{
+  return (s_or_d == scrub_level_t::deep) ? deep_target : shallow_target;
+}
+
+
+bool ScrubJob::is_queued() const
+{
+  return shallow_target.is_queued() || deep_target.is_queued();
+}
+
+
+void ScrubJob::clear_both_targets_queued()
+{
+  shallow_target.clear_queued();
+  deep_target.clear_queued();
+}
+
+
+void ScrubJob::set_both_targets_queued()
+{
+  shallow_target.set_queued();
+  deep_target.set_queued();
+}
 
 
 void ScrubJob::adjust_shallow_schedule(
@@ -263,7 +288,7 @@ void ScrubJob::adjust_deep_schedule(
 }
 
 
-void ScrubJob::delay_on_failure(
+SchedTarget& ScrubJob::delay_on_failure(
     scrub_level_t level,
     std::chrono::seconds delay,
     Scrub::delay_cause_t delay_cause,
@@ -275,6 +300,7 @@ void ScrubJob::delay_on_failure(
       std::max(scrub_clock_now, delayed_target.sched_info.schedule.not_before) +
       utime_t{delay};
   delayed_target.last_issue = delay_cause;
+  return delayed_target;
 }
 
 
@@ -286,7 +312,7 @@ std::string ScrubJob::scheduling_state(utime_t now_is, bool is_deep_expected)
     return "not registered for scrubbing";
   }
 
-  if (!target_queued) {
+  if (!is_queued()) {
     // if not currently queued - we are being scrubbed
     return "scrubbing";
   }

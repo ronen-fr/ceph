@@ -87,8 +87,7 @@ struct SchedEntry {
 
   bool is_high_priority() const
   {
-    return urgency == urgency_t::operator_requested ||
-	   urgency == urgency_t::must_repair;
+    return urgency != urgency_t::periodic_regular;
   }
 
   /**
@@ -169,7 +168,30 @@ std::weak_ordering static inline cmp_entries(
   return cmp_future_entries(l, r);
 }
 
+// the interface required by 'not_before_queue_t':
+
+static inline const utime_t& project_not_before(const Scrub::SchedEntry& e)
+{
+  return e.schedule.not_before;
+}
+
+static inline const spg_t& project_removal_class(const Scrub::SchedEntry& e)
+{
+  return e.pgid;
+}
+
+
+/// 'not_before_queue_t' requires a '<' operator, to be used for
+/// eligible entries:
+static inline bool operator<(
+    const Scrub::SchedEntry& lhs,
+    const Scrub::SchedEntry& rhs)
+{
+  return cmp_ripe_entries(lhs, rhs) == std::weak_ordering::less;
+}
+
 }  // namespace Scrub
+
 
 namespace fmt {
 

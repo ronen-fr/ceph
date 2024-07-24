@@ -17,14 +17,6 @@
 #include "osd/scrubber_common.h"
 #include "scrub_queue_entry.h"
 
-/**
- * The ID used to name a candidate to scrub:
- * - in this version: a PG is identified by its spg_t
- * - in the (near) future: a PG + a scrub type (shallow/deep)
- */
-using ScrubTargetId = spg_t;
-
-
 namespace Scrub {
 
 enum class must_scrub_t { not_mandatory, mandatory };
@@ -150,12 +142,14 @@ private:
   /// our ID and scheduling parameters
   SchedEntry sched_info;
 
+public: // the q status is maintained outside of this object's code
   /**
    * is this target (meaning - a copy of this specific combination of
    * PG and scrub type) currently in the queue?
    */
   bool queued{false};
 
+private:
   /// either 'none', or the reason for the latest failure/delay (for
   /// logging/reporting purposes)
   delay_cause_t last_issue{delay_cause_t::none};
@@ -203,13 +197,6 @@ class ScrubJob {
    */
   bool registered{false};
 
-  /**
-   * there is a scrub target for this PG in the queue.
-   * \attn: temporary. Will be replaced with a pair of flags in the
-   * two level-specific scheduling targets.
-   */
-  bool target_queued{false};
-
   /// how the last attempt to scrub this PG ended
   delay_cause_t last_issue{delay_cause_t::none};
 
@@ -222,23 +209,39 @@ class ScrubJob {
 
   CephContext* cct;
 
-  //bool high_priority{false};
-
   ScrubJob(CephContext* cct, const spg_t& pg, int node_id);
 
-  // RRR doc
-  std::optional<std::reference_wrapper<SchedTarget>> earliest_eligible(utime_t scrub_clock_now);
-  std::optional<std::reference_wrapper<const SchedTarget>> earliest_eligible(utime_t scrub_clock_now) const;
+  /**
+   * returns a possible reference to the earliest target that is eligible. If
+   * both the shallow and the deep targets have their n.b. in the future,
+   * nullopt is returned.
+   */
+  std::optional<std::reference_wrapper<SchedTarget>> earliest_eligible(
+      utime_t scrub_clock_now);
+  std::optional<std::reference_wrapper<const SchedTarget>> earliest_eligible(
+      utime_t scrub_clock_now) const;
+
+  /**
+   * the target with the earliest 'not-before' time (i.e. - assuming
+   * both targets are in the future).
+   * \attn: might return the wrong answer if both targets are eligible.
+   * If a need arises, a version that accepts the current time as a parameter
+   * should be added. Then - a correct determination can be made for
+   * all cases.
+   */
   const SchedTarget& earliest_target() const;
   SchedTarget& earliest_target();
 
-  utime_t get_sched_time() const; // RRR { return schedule.not_before; }
+  /// the not-before of our earliest target (either shallow or deep)
+  utime_t get_sched_time() const;
 
   std::string_view state_desc() const
   {
-    return registered ? (target_queued ? "queued" : "registered")
+    return registered ? (is_queued() ? "queued" : "registered")
 		      : "not-registered";
   }
+
+  SchedTarget& get_target(scrub_level_t s_or_d);
 
   /**
    * Given a proposed time for the next scrub, and the relevant
@@ -270,8 +273,9 @@ class ScrubJob {
    * so that this scrub target
    * would not be retried before 'delay' seconds have passed.
    * The 'last_issue' is updated to the cause of the delay.
+   * \returns a reference to the target that was modified.
    */
-  void delay_on_failure(
+  [[maybe_unused]] SchedTarget& delay_on_failure(
       scrub_level_t level,
       std::chrono::seconds delay,
       delay_cause_t delay_cause,
@@ -294,6 +298,13 @@ class ScrubJob {
   void dump(ceph::Formatter* f) const;
 
   bool is_registered() const { return registered; }
+
+  /// are any of our two SchedTargets queued in the scrub queue?
+  bool is_queued() const;
+
+  /// mark both targets as queued / not queued
+  void clear_both_targets_queued();
+  void set_both_targets_queued();
 
   /**
    * is this a high priority scrub job?
@@ -327,9 +338,6 @@ class ScrubJob {
       deep_target.queued_element());
   };
 };
-
-using ScrubQContainer = std::vector<std::unique_ptr<ScrubJob>>;
-
 }  // namespace Scrub
 
 namespace std {
