@@ -6,7 +6,6 @@
 #include "pg_scrubber.h"
 
 using must_scrub_t = Scrub::must_scrub_t;
-using ScrubQContainer = Scrub::ScrubQContainer;
 using sched_params_t = Scrub::sched_params_t;
 using OSDRestrictions = Scrub::OSDRestrictions;
 using sched_conf_t = Scrub::sched_conf_t;
@@ -85,6 +84,12 @@ ostream& operator<<(ostream& out, const ScrubJob& sjob)
   return out << fmt::format("{}", sjob);
 }
 }  // namespace std
+
+
+SchedTarget& ScrubJob::get_target(scrub_level_t s_or_d)
+{
+  return (s_or_d == scrub_level_t::deep) ? deep_target : shallow_target;
+}
 
 
 void ScrubJob::adjust_shallow_schedule(

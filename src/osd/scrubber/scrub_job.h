@@ -240,6 +240,8 @@ class ScrubJob {
 		      : "not-registered";
   }
 
+  SchedTarget& get_target(scrub_level_t s_or_d);
+
   /**
    * Given a proposed time for the next scrub, and the relevant
    * configuration, adjust_schedule() determines the actual target time,
@@ -327,9 +329,6 @@ class ScrubJob {
       deep_target.queued_element());
   };
 };
-
-using ScrubQContainer = std::vector<std::unique_ptr<ScrubJob>>;
-
 }  // namespace Scrub
 
 namespace std {
