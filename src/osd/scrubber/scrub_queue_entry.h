@@ -27,31 +27,82 @@ namespace Scrub {
  * 'periodic_regular' - the "standard" shallow/deep scrub performed
  *      periodically on each PG.
  *
+ * overdue: shallow or deep
+ *       must reserve replicas
+ *       subject to dow/time limitations (per docs?? check)
+ *       possibly not subject to 'extended sleep time'
+ *       not subject to load (per docs)
+ *       subject to 'noscrub'/'nodeep-scrub' flags
+ * ('overdue' is not implemented as an urgency level)
+ *
  *
  * priority scrubs (termed 'required' or 'must' in the legacy code):
  * ---------------------------------------------------------------
- * Priority scrubs:
- * - are not subject to times/days/load limitations;
- * - cannot be aborted by 'noscrub'/'nodeep-scrub' flags;
- * - do not have random delays added to their target time;
- * - never have their target time modified by a configuration change;
- * - never subject to 'extended sleep time' (see scrub_sleep_time());
+ * In order of ascending priority:
+ *
+ * 'must_scrub' - the PG info is not valid (i.e. we do not have a valid
+ *     'last-scrub' stamp). A high-priority shallow scrub is required.
+ *
+ * 'after_repair' - triggered immediately after a recovery process
+ *   ('m_after_repair_scrub_required' was set).
+ *   This type of scrub is always deep.
+ *   (note: this urgency level is not implemented in this commit)
  *
  * 'operator_requested' - the target was manually requested for scrubbing by
- *      an administrator.
+ *   an administrator.
  *
- * 'must_repair' - the target is required to be scrubbed, as:
+ * 'must_repair' - the target is required to be deep-scrubbed with the
+ *   repair flag set, as:
  *      - the scrub was initiated by a message specifying 'do_repair'; or
- *      - the PG info is not valid (i.e. we do not have a valid 'last-scrub'
- *        stamp)
  *   or - a deep scrub is required after the previous scrub ended with errors.
- *   'must' scrubs are similar to 'operator_requested', but have a higher
- *      priority (and have a repair flag set).
  *
- * 'after_repair' - to be added later on.
+ *
+ * Priority scrubs are exempt from some or all of the preconditions and
+ * limitations that apply to regular scrubs. The following table
+ * details the specific set of exemptions per 'urgency' level:
+ *
+ * The next levels:
+ * - do not have random delays added to their target time;
+ * - never have their target time modified by a configuration change;
+ *
+ * # must_scrub: shallow
+ *       must reserve replicas (otherwise we'll have a problem at cluster creation)
+ *       subject to dow/time limitations
+ *       possibly not subject to 'extended sleep time'
+ *       subject to load
+ *       subject to 'noscrub'/'nodeep-scrub' flags
+ *
+ * # after_repair: deep
+ *       no reservation
+ *       subject to dow/time limitations
+ *       not subject to load
+ *       not subject to 'noscrub'/'nodeep-scrub' flags (?) - check
+ *
+ * # operator_requested: shallow or deep
+ *       no reservation
+ *       not subject to dow/time limitations
+ *       not subject to load
+ *       not subject to 'noscrub'/'nodeep-scrub' flags
+ *
+ * # repair: deep + repair
+ *       no reservation
+ *       not subject to dow/time limitations
+ *       not subject to load
+ *       not subject to 'noscrub'/'nodeep-scrub' flags
+ *
+ *  +------------+---------+------------+--------------+----------+-------------+
+ *  | limitation | overdue | must-scrub | after-repair | operator | must-repair |
+ *  +------------+---------+------------+--------------+----------+-------------+
+ *  | reservation|    yes  |    yes!    |      no      |     no   |      no     |
+ *  | dow/time   |    yes? |    yes     |     yes      |     no   |      no     |
+ *  | ext-sleep  |    no?  |    no?     |      no      |     no   |      no     |
+ *  | load       |    no   |    yes     |      no      |     no   |      no     |
+ *  | noscrub    |    yes  |    yes     |      no?     |     no   |      no     |
+ *  +------------+---------+------------+--------------+----------+-------------+
  */
 enum class urgency_t {
   periodic_regular,
+  must_scrub,
   operator_requested,
   must_repair,
 };
@@ -204,9 +255,10 @@ struct formatter<Scrub::urgency_t> : formatter<std::string_view> {
     using enum Scrub::urgency_t;
     std::string_view desc;
     switch (urg) {
-      case must_repair:         desc = "must-repair"; break;
-      case operator_requested:  desc = "operator-requested"; break;
       case periodic_regular:    desc = "periodic-regular"; break;
+      case must_scrub:          desc = "must-scrub"; break;
+      case operator_requested:  desc = "operator-requested"; break;
+      case must_repair:         desc = "must-repair"; break;
       // better to not have a default case, so that the compiler will warn
     }
     return formatter<string_view>::format(desc, ctx);
