@@ -108,7 +108,6 @@ struct SchedTarget {
 
   void up_urgency_to(urgency_t u);
 
-
   /// access that part of the SchedTarget that is queued in the scrub queue
   const SchedEntry& queued_element() const { return sched_info; }
 
@@ -248,6 +247,13 @@ class ScrubJob {
       const sched_params_t& suggested,
       const Scrub::sched_conf_t& aconf,
       utime_t scrub_clock_now) {}
+
+  /**
+   * the operator requested a scrub (shallow, deep or repair).
+   * Set the selected target to the requested urgency, adjusting scheduling
+   * parameters.
+   */
+  void operator_forced(scrub_level_t s_or_d, scrub_type_t scrub_type);
 
   void dump(ceph::Formatter* f) const;
 
