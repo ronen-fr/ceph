@@ -844,6 +844,11 @@ class PgScrubber : public ScrubPgIF,
       Scrub::ScrubPGPreconds pg_cond,
       const requested_scrub_t& planned) const;
 
+  std::optional<Scrub::schedule_result_t> validate_scrub_mode(
+    utime_t scrub_clock_now,
+    Scrub::SchedTarget& trgt,
+    const Scrub::ScrubPGPreconds& pg_cond);
+
   /**
    * Validate the various 'next scrub' flags against configuration
    * and scrub-related timestamps.
