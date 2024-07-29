@@ -353,12 +353,6 @@ struct requested_scrub_t {
    * - for periodic scrubs: time_for_deep was just set
    */
   bool auto_repair{false};
-
-  /**
-   * Used to indicate, both in client-facing listings and internally, that
-   * the planned scrub will be a deep one.
-   */
-  bool calculated_to_deep{false};
 };
 
 std::ostream& operator<<(std::ostream& out, const requested_scrub_t& sf);
@@ -371,7 +365,7 @@ struct fmt::formatter<requested_scrub_t> {
   auto format(const requested_scrub_t& rs, FormatContext& ctx)
   {
     return fmt::format_to(ctx.out(),
-                          "(plnd:{}{}{}{}{}{}{}{}{})",
+                          "(plnd:{}{}{}{}{}{}{}{})",
                           rs.must_repair ? " must_repair" : "",
                           rs.auto_repair ? " auto_repair" : "",
                           rs.deep_scrub_on_error ? " deep_scrub_on_error" : "",
@@ -379,8 +373,7 @@ struct fmt::formatter<requested_scrub_t> {
                           rs.must_scrub ? " must_scrub" : "",
                           rs.time_for_deep ? " time_for_deep" : "",
                           rs.need_auto ? " need_auto" : "",
-                          rs.req_scrub ? " req_scrub" : "",
-                          rs.calculated_to_deep ? " deep" : "");
+                          rs.req_scrub ? " req_scrub" : "");
   }
 };
 
