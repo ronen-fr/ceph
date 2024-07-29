@@ -562,7 +562,8 @@ function TEST_dump_scrub_schedule() {
     rm -f $TESTDATA
 
     local pgid="${poolid}.0"
-    local now_is=`date -I"ns"`
+    #local now_is=`date -I"ns"` # note: uses a comma for the ns part
+    local now_is=`date +'%Y-%m-%dT%H:%M:%S.%N%:z'`
 
     # before the scrubbing starts
 

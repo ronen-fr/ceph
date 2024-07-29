@@ -145,6 +145,11 @@ class ScrubSchedListener {
   virtual ~ScrubSchedListener() {}
 };
 
+struct ScrubQueueStats {
+  uint16_t num_ready{0};
+  uint16_t num_total{0};
+};
+
 }  // namespace Scrub
 
 
@@ -266,6 +271,17 @@ class ScrubQueue {
   void mark_pg_scrub_blocked(spg_t blocked_pg);
   void clear_pg_scrub_blocked(spg_t blocked_pg);
   int get_blocked_pgs_count() const;
+
+
+Scrub::ScrubQueueStats get_stats(utime_t scrub_clock_now)
+{
+  return 
+  //to_scrub.advance_time(scrub_clock_now);
+  //return ScrubQueueStats{
+  //    static_cast<uint16_t>(to_scrub.eligible_count()),
+  //    static_cast<uint16_t>(to_scrub.total_count())};
+}
+
 
  private:
   CephContext* cct;

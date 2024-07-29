@@ -3,6 +3,8 @@
 
 #include "./osd_scrub.h"
 
+#include <ranges>
+
 #include "osd/OSD.h"
 #include "osd/osd_perf_counters.h"
 #include "osdc/Objecter.h"
@@ -85,9 +87,9 @@ bool OsdScrub::scrub_random_backoff() const
 
 void OsdScrub::initiate_scrub(bool is_recovery_active)
 {
-  const utime_t scrub_time = ceph_clock_now();
+  const utime_t scrub_tick_time = ceph_clock_now();
   dout(10) << fmt::format(
-		  "time now:{:s}, recovery is active?:{}", scrub_time,
+		  "time now:{:s}, recovery is active?:{}", scrub_tick_time,
 		  is_recovery_active)
 	   << dendl;
 
@@ -105,7 +107,7 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
   // These may restrict the type of scrubs we are allowed to start, or just
   // prevent us from starting any non-operator-initiated scrub at all.
   auto env_restrictions =
-      restrictions_on_scrubbing(is_recovery_active, scrub_time);
+      restrictions_on_scrubbing(is_recovery_active, scrub_tick_time);
 
   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>() &&
       !env_restrictions.high_priority_only) {
@@ -115,6 +117,38 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
       dout(20) << fmt::format("\tscrub-queue jobs: {}", *sj) << dendl;
     }
   }
+
+  auto queue_stats = m_queue.get_stats(scrub_tick_time);
+  dout(20) << fmt::format(
+		  "{}: in queue: {} ready, {} future, {} total", __func__,
+		  queue_stats.num_ready,
+		  queue_stats.num_total - queue_stats.num_ready,
+		  queue_stats.num_total)
+	   << dendl;
+
+  // for debug logs - list all jobs in the queue
+  debug_log_queue(queue_stats);
+  if (queue_stats.num_ready == 0) {
+    dout(10) << fmt::format(
+		    "{}: no eligible scrub targets among the {} queued",
+		    __func__, queue_stats.num_total)
+	     << dendl;
+    return;
+  }
+
+  // check the OSD-wide environment conditions (scrub resources, time, etc.).
+  // These may restrict the type of scrubs we are allowed to start, or just
+  // prevent us from starting any scrub at all.
+  auto env_restrictions =
+      restrictions_on_scrubbing(config, is_recovery_active, scrub_tick_time);
+  if (!env_restrictions) {
+    return;
+  }
+
+  auto candidate = m_queue_impl->pop_ready_pg(scrub_tick_time);
+  ceph_assert(candidate);  // we did check that the queue is not empty
+
+  auto candidates = m_queue.ready_to_scrub(env_restrictions, scrub_time);
 
   // at this phase of the refactoring: minimal changes to the
   // queue interface used here: we ask for a list of
@@ -151,6 +185,76 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
   }
 }
 
+
+
+// void OsdScrub::initiate_scrub(bool is_recovery_active)
+// {
+//   const utime_t scrub_time = ceph_clock_now();
+//   dout(10) << fmt::format(
+// 		  "time now:{:s}, recovery is active?:{}", scrub_time,
+// 		  is_recovery_active)
+// 	   << dendl;
+// 
+//   if (auto blocked_pgs = get_blocked_pgs_count(); blocked_pgs > 0) {
+//     // some PGs managed by this OSD were blocked by a locked object during
+//     // scrub. This means we might not have the resources needed to scrub now.
+//     dout(10)
+// 	<< fmt::format(
+// 	       "PGs are blocked while scrubbing due to locked objects ({} PGs)",
+// 	       blocked_pgs)
+// 	<< dendl;
+//   }
+// 
+//   // check the OSD-wide environment conditions (scrub resources, time, etc.).
+//   // These may restrict the type of scrubs we are allowed to start, or just
+//   // prevent us from starting any non-operator-initiated scrub at all.
+//   auto env_restrictions =
+//       restrictions_on_scrubbing(is_recovery_active, scrub_time);
+// 
+//   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>() &&
+//       !env_restrictions.high_priority_only) {
+//     dout(20) << "scrub scheduling (@tick) starts" << dendl;
+//     auto all_jobs = m_queue.list_registered_jobs();
+//     for (const auto& sj : all_jobs) {
+//       dout(20) << fmt::format("\tscrub-queue jobs: {}", *sj) << dendl;
+//     }
+//   }
+// 
+//   // at this phase of the refactoring: minimal changes to the
+//   // queue interface used here: we ask for a list of
+//   // eligible targets (based on the known restrictions).
+//   // We try all elements of this list until a (possibly temporary) success.
+//   auto candidates = m_queue.ready_to_scrub(env_restrictions, scrub_time);
+//   if (candidates.empty()) {
+//     dout(20) << "no PGs are ready for scrubbing" << dendl;
+//     return;
+//   }
+// 
+//   for (const auto& candidate : candidates) {
+//     dout(20) << fmt::format("initiating scrub on pg[{}]", candidate) << dendl;
+// 
+//     // we have a candidate to scrub. But we may fail when trying to initiate that
+//     // scrub. For some failures - we can continue with the next candidate. For
+//     // others - we should stop trying to scrub at this tick.
+//     auto res = initiate_a_scrub(candidate, env_restrictions);
+// 
+//     if (res == schedule_result_t::target_specific_failure) {
+//       // continue with the next job.
+//       // \todo: consider separate handling of "no such PG", as - later on -
+//       // we should be removing both related targets.
+//       continue;
+//     } else if (res == schedule_result_t::osd_wide_failure) {
+//       // no point in trying the other candidates at this time
+//       break;
+//     } else {
+//       // the happy path. We are done
+//       dout(20) << fmt::format("scrub initiated for pg[{}]", candidate.pgid)
+//                << dendl;
+//       break;
+//     }
+//   }
+// }
+// 
 
 Scrub::OSDRestrictions OsdScrub::restrictions_on_scrubbing(
     bool is_recovery_active,
