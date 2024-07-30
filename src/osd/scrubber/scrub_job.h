@@ -119,11 +119,20 @@ struct SchedTarget {
 
   urgency_t urgency() const { return sched_info.urgency; }
 
+  /**
+   * a loose definition of 'high priority' scrubs. Can only be used for
+   * logs and user messages. Actual scheduling decisions should be based
+   * on the 'urgency' attribute and its fine-grained characteristics.
+   */
+  bool is_high_priority() const
+  {
+    return urgency() != urgency_t::periodic_regular;
+  }
+
   bool was_delayed() const { return sched_info.last_issue != delay_cause_t::none; }
 
   /// provides r/w access to the scheduling sub-object
   SchedEntry& sched_info_ref() { return sched_info; }
-  const SchedEntry& sched_info_ref() const { return sched_info; }
 };
 
 
@@ -184,6 +193,17 @@ class ScrubJob {
    */
   const SchedTarget& earliest_target() const;
   SchedTarget& earliest_target();
+
+  /**
+   * the target that will be scrubbed first. Basically - used
+   * cmp_entries() to determine the order of the two targets.
+   * Which means: if only one of the targets is eligible, it will be returned.
+   * If both - the one with the highest priority -> level -> target time.
+   * Otherwise - the one with the earliest not-before.
+   */
+  const SchedTarget& earliest_target(utime_t scrub_clock_now) const;
+  SchedTarget& earliest_target(utime_t scrub_clock_now);
+
 
   /// the not-before of our earliest target (either shallow or deep)
   utime_t get_sched_time() const;
@@ -270,7 +290,7 @@ class ScrubJob {
    * a text description of the "scheduling intentions" of this PG:
    * are we already scheduled for a scrub/deep scrub? when?
    */
-  std::string scheduling_state(utime_t now_is, bool is_deep_expected) const;
+  std::string scheduling_state(utime_t now_is) const;
 
   std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
   std::string log_msg_prefix;
@@ -311,6 +331,8 @@ class ScrubJob {
  *   a change in the configuration. This only applies to periodic scrubs.
  * - max-scrubs: the scrub must not be initiated if the OSD is already
  *   scrubbing too many PGs (the 'osd_max_scrubs' limit).
+ * - backoff: the scrub must not be initiated this tick if a dice roll
+ *   failed.
  * - recovery: the scrub must not be initiated if the OSD is currently
  *   recovering PGs.
  *
@@ -325,6 +347,7 @@ class ScrubJob {
  *  | load       |    yes     |      no      |     no   |      no     |
  *  | noscrub    |    yes     |      no?     |     no   |      no     |
  *  | max-scrubs |    yes     |      yes?    |     no   |      no     |
+ *  | backoff    |    yes     |      no      |     no   |      no     |
  *  +------------+------------+--------------+----------+-------------+
  */
 
@@ -342,7 +365,8 @@ class ScrubJob {
   static bool requires_randomization(urgency_t urgency);
 
   static bool observes_max_concurrency(urgency_t urgency);
-};
+
+  static bool observes_random_backoff(urgency_t urgency);};
 }  // namespace Scrub
 
 namespace std {
