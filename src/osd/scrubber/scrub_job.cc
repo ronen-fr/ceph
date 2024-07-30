@@ -382,3 +382,8 @@ bool ScrubJob::observes_max_concurrency(urgency_t urgency)
 {
   return urgency < urgency_t::operator_requested;
 }
+
+bool ScrubJob::observes_random_backoff(urgency_t urgency)
+{
+  return urgency < urgency_t::after_repair;
+}

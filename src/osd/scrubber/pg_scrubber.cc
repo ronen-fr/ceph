@@ -2521,7 +2521,7 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 	pg_scrub_sched_status_t::queued,
 	false,
 	(targ.is_deep() ? scrub_level_t::deep : scrub_level_t::shallow),
-	!targ.sched_info.is_high_priority()};
+	!targ.is_high_priority()};
   }
 
   // both targets are not ready yet
@@ -2532,7 +2532,7 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
       pg_scrub_sched_status_t::scheduled,
       false,
       (targ.is_deep() ? scrub_level_t::deep : scrub_level_t::shallow),
-      !targ.sched_info.is_high_priority()};
+      !targ.is_high_priority()};
 }
 
 
