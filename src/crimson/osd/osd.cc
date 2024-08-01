@@ -1233,11 +1233,11 @@ seastar::future<> OSD::handle_pg_create(
     auto q = m->pg_extra.find(pgid);
     ceph_assert(q != m->pg_extra.end());
     auto& [history, pi] = q->second;
-    DEBUG(
-      "e{} @{} "
-      "history {} pi {}",
-      pgid, created, created_stamp,
-      history, pi);
+//    DEBUG(
+//      "e{} @{} "
+//      "history {} pi {}",
+//      pgid, created, created_stamp,
+//      history, pi);
     if (!pi.empty() &&
 	m->epoch < pi.get_bounds().second) {
       ERROR(

@@ -103,9 +103,9 @@ PGScrubber::ifut<> PGScrubber::wait_scrub(
   PGScrubber::BlockingEvent::TriggerI&& trigger,
   const hobject_t &hoid)
 {
-  LOG_PREFIX(PGScrubber::wait_scrub);
+//  LOG_PREFIX(PGScrubber::wait_scrub);
   if (blocked && (hoid >= blocked->begin) && (hoid < blocked->end)) {
-    DEBUGDPP("blocked: {}, hoid: {}", pg, *blocked, hoid);
+//    DEBUGDPP("blocked: {}, hoid: {}", pg, *blocked, hoid);
     return trigger.maybe_record_blocking(
       blocked->p.get_shared_future(),
       *this);
@@ -198,9 +198,9 @@ void PGScrubber::scan_range(
   const hobject_t &start,
   const hobject_t &end)
 {
-  LOG_PREFIX(PGScrubber::scan_range);
-  DEBUGDPP("target: {}, version: {}, deep: {}, start: {}, end: {}",
-	   pg, target, version, deep, start, end);
+  //LOG_PREFIX(PGScrubber::scan_range);
+  //DEBUGDPP("target: {}, version: {}, deep: {}, start: {}, end: {}",
+//	   pg, target, version, deep, start, end);
   if (target == pg.get_pg_whoami()) {
     std::ignore = pg.shard_services.start_operation_may_interrupt<
       interruptor, ScrubScan
@@ -260,13 +260,13 @@ void PGScrubber::emit_chunk_result(
   const request_range_result_t &range,
   chunk_result_t &&result)
 {
-  LOG_PREFIX(PGScrubber::emit_chunk_result);
+//  LOG_PREFIX(PGScrubber::emit_chunk_result);
   if (result.has_errors()) {
-    LOG_SCRUB_ERROR(
-      "Scrub errors found. range: {}, result: {}",
-      range, result);
+//    LOG_SCRUB_ERROR(
+//      "Scrub errors found. range: {}, result: {}",
+//      range, result);
   } else {
-    DEBUGDPP("Chunk complete. range: {}", pg, range);
+//    DEBUGDPP("Chunk complete. range: {}", pg, range);
   }
 }
 

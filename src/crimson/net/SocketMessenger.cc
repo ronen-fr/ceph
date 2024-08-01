@@ -140,7 +140,7 @@ SocketMessenger::try_bind(const entity_addrvec_t& addrs,
       }, listen_ertr::all_same_way([this, max_port, &port]
                                    (const std::error_code& e) mutable
                                    -> seastar::future<std::optional<std::error_code>> {
-        logger().trace("{} try_bind: {} got error {}", *this, port, e);
+        //logger().trace("{} try_bind: {} got error {}", *this, port, e);
         if (port == max_port) {
           return seastar::make_ready_future<std::optional<std::error_code>>(
             std::make_optional<std::error_code>(e));
@@ -190,8 +190,8 @@ SocketMessenger::bind(const entity_addrvec_t& addrs)
               std::optional<std::error_code>{std::nullopt});
           });
         } else {
-          logger().info("{} was unable to bind after {} attempts: {}",
-                        *this, local_conf()->ms_bind_retry_count, error);
+          //logger().info("{} was unable to bind after {} attempts: {}",
+          //              *this, local_conf()->ms_bind_retry_count, error);
           return seastar::make_ready_future<std::optional<std::error_code>>(
             std::make_optional<std::error_code>(error));
         }

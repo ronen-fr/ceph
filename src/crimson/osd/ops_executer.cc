@@ -180,10 +180,10 @@ OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_watch_subop_watch(
       auto [it, emplaced] =
         os.oi.watchers.try_emplace(ctx.key, std::move(ctx.info));
       if (emplaced) {
-        logger().info("registered new watch {} by {}", it->second, entity);
+//        logger().info("registered new watch {} by {}", it->second, entity);
         txn.nop();
       } else {
-        logger().info("found existing watch {} by {}", it->second, entity);
+//        logger().info("found existing watch {} by {}", it->second, entity);
       }
       return seastar::now();
     },
@@ -194,9 +194,9 @@ OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_watch_subop_watch(
         const auto& [cookie, entity] = ctx.key;
         it->second = crimson::osd::Watch::create(
           obc, ctx.info, entity, std::move(pg));
-        logger().info("op_effect: added new watcher: {}", ctx.key);
+        //logger().info("op_effect: added new watcher: {}", ctx.key);
       } else {
-        logger().info("op_effect: found existing watcher: {}", ctx.key);
+        //logger().info("op_effect: found existing watcher: {}", ctx.key);
       }
       return it->second->connect(std::move(ctx.conn), true /* will_ping */);
     }
@@ -213,7 +213,7 @@ OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_watch_subop_reconnect
   if (!os.oi.watchers.count(std::make_pair(cookie, entity))) {
     return crimson::ct_error::not_connected::make();
   } else {
-    logger().info("found existing watch by {}", entity);
+    //logger().info("found existing watch by {}", entity);
     return do_op_watch_subop_watch(osd_op, os, txn);
   }
 }
@@ -235,10 +235,10 @@ OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_watch_subop_unwatch(
     [&] (auto& ctx) {
       const auto& entity = ctx.key.second;
       if (auto nh = os.oi.watchers.extract(ctx.key); !nh.empty()) {
-        logger().info("removed watch {} by {}", nh.mapped(), entity);
+        //logger().info("removed watch {} by {}", nh.mapped(), entity);
         txn.nop();
       } else {
-        logger().info("can't remove: no watch by {}", entity);
+        //logger().info("can't remove: no watch by {}", entity);
       }
       return seastar::now();
     },
@@ -246,11 +246,11 @@ OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_watch_subop_unwatch(
       if (auto nh = obc->watchers.extract(ctx.key); !nh.empty()) {
         return seastar::do_with(std::move(nh.mapped()),
                          [ctx](auto&& watcher) {
-          logger().info("op_effect: disconnect watcher {}", ctx.key);
+          //logger().info("op_effect: disconnect watcher {}", ctx.key);
           return watcher->remove();
         });
       } else {
-        logger().info("op_effect: disconnect failed to find watcher {}", ctx.key);
+        //logger().info("op_effect: disconnect failed to find watcher {}", ctx.key);
         return seastar::now();
       }
     });
@@ -275,7 +275,7 @@ OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_watch_subop_ping(
   if (it == std::end(obc->watchers) || !it->second->is_connected()) {
     return crimson::ct_error::timed_out::make();
   }
-  logger().info("found existing watch by {}", entity);
+  //logger().info("found existing watch by {}", entity);
   it->second->got_ping(ceph_clock_now());
   return seastar::now();
 }
@@ -383,8 +383,8 @@ OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_list_watchers(
 
   obj_list_watch_response_t response;
   for (const auto& [key, info] : os.oi.watchers) {
-    logger().debug("{}: key cookie={}, entity={}",
-                   __func__, key.first, key.second);
+//    logger().debug("{}: key cookie={}, entity={}",
+//                   __func__, key.first, key.second);
     assert(key.first == info.cookie);
     assert(key.second.is_client());
     response.entries.emplace_back(watch_item_t{
@@ -438,16 +438,16 @@ OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_notify_ack(
                            seastar::shared_ptr<crimson::osd::Watch>>);
           auto& [cookie, entity] = key;
           if (ctx.entity != entity) {
-            logger().debug("skipping watch {}; entity name {} != {}",
-                           key, entity, ctx.entity);
+            //logger().debug("skipping watch {}; entity name {} != {}",
+            //               key, entity, ctx.entity);
             return seastar::now();
           }
           if (ctx.watch_cookie != cookie) {
-            logger().debug("skipping watch {}; cookie {} != {}",
-                           key, ctx.watch_cookie, cookie);
+            //logger().debug("skipping watch {}; cookie {} != {}",
+            //               key, ctx.watch_cookie, cookie);
             return seastar::now();
           }
-          logger().info("acking notify on watch {}", key);
+          //logger().info("acking notify on watch {}", key);
           return watchp->notify_ack(ctx.notify_id, ctx.reply_bl);
         });
   });

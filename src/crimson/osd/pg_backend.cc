@@ -297,8 +297,8 @@ PGBackend::sparse_read(const ObjectState& os, OSDOp& osd_op,
   } else if (offset + adjusted_length > adjusted_size) {
     adjusted_length = adjusted_size - offset;
   }
-  logger().trace("sparse_read: {} {}~{}",
-                 os.oi.soid, op.extent.offset, op.extent.length);
+//  logger().trace("sparse_read: {} {}~{}",
+//                 os.oi.soid, op.extent.offset, op.extent.length);
   return interruptor::make_interruptible(store->fiemap(coll, ghobject_t{os.oi.soid},
     offset, adjusted_length)).safe_then_interruptible(
     [&delta_stats, &os, &osd_op, this](auto&& m) {
@@ -312,8 +312,8 @@ PGBackend::sparse_read(const ObjectState& os, OSDOp& osd_op,
           // re-encode since it might be modified
           ceph::encode(extents, osd_op.outdata);
           encode_destructively(bl, osd_op.outdata);
-          logger().trace("sparse_read got {} bytes from object {}",
-                         osd_op.op.extent.length, os.oi.soid);
+//          logger().trace("sparse_read got {} bytes from object {}",
+//                         osd_op.op.extent.length, os.oi.soid);
          delta_stats.num_rd++;
          delta_stats.num_rd_kb += shift_round_up(osd_op.op.extent.length, 10);
           return read_errorator::make_ready_future<>();
@@ -394,8 +394,8 @@ PGBackend::checksum(const ObjectState& os, OSDOp& osd_op)
     [&osd_op](auto&& read_bl) mutable -> checksum_errorator::future<> {
     auto& checksum = osd_op.op.checksum;
     if (read_bl.length() != checksum.length) {
-      logger().warn("checksum: bytes read {} != {}",
-                        read_bl.length(), checksum.length);
+//      logger().warn("checksum: bytes read {} != {}",
+//                        read_bl.length(), checksum.length);
       return crimson::ct_error::invarg::make();
     }
     // calculate its checksum and put the result in outdata
@@ -473,7 +473,7 @@ PGBackend::stat(
   object_stat_sum_t& delta_stats)
 {
   if (os.exists/* TODO: && !os.is_whiteout() */) {
-    logger().debug("stat os.oi.size={}, os.oi.mtime={}", os.oi.size, os.oi.mtime);
+//    logger().debug("stat os.oi.size={}, os.oi.mtime={}", os.oi.size, os.oi.mtime);
     encode(os.oi.size, osd_op.outdata);
     encode(os.oi.mtime, osd_op.outdata);
   } else {

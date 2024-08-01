@@ -49,7 +49,7 @@ struct simple_event_t : sc::event<T> {
   }
 };
 
-template <typename T, has_formatter V>
+template <typename T, typename V>
 struct value_event_t : sc::event<T> {
   const V value;
 
@@ -66,7 +66,6 @@ struct value_event_t : sc::event<T> {
     return fmt::format_to(ctx.out(), "{}", T::event_name);
   }
 };
-
 
 #define SIMPLE_EVENT(T) struct T : simple_event_t<T> {			\
     static constexpr const char * event_name = #T;			\
@@ -557,8 +556,8 @@ struct ReplicaIdle : ScrubState<ReplicaIdle, ReplicaActive> {
     >;
 
   sc::result react(const events::replica_scan_t &event) {
-    LOG_PREFIX(ScrubState::ReplicaIdle::react(events::replica_scan_t));
-    SUBDEBUGDPP(osd, "event.value: {}", get_scrub_context().get_dpp(), event.value);
+    //LOG_PREFIX(ScrubState::ReplicaIdle::react(events::replica_scan_t));
+    //SUBDEBUGDPP(osd, "event.value: {}", get_scrub_context().get_dpp(), event.value);
     post_event(event);
     return transit<ReplicaChunkState>();
   }
@@ -576,8 +575,8 @@ struct ReplicaChunkState : ScrubState<ReplicaChunkState, ReplicaActive, ReplicaW
   events::replica_scan_event_t to_scan;
 
   sc::result react(const events::replica_scan_t &event) {
-    LOG_PREFIX(ScrubState::ReplicaWaitUpdate::react(events::replica_scan_t));
-    SUBDEBUGDPP(osd, "event.value: {}", get_scrub_context().get_dpp(), event.value);
+    //LOG_PREFIX(ScrubState::ReplicaWaitUpdate::react(events::replica_scan_t));
+    //SUBDEBUGDPP(osd, "event.value: {}", get_scrub_context().get_dpp(), event.value);
     to_scan = event.value;
     if (get_scrub_context().await_update(event.value.version)) {
       post_event(ScrubContext::await_update_complete_t{});

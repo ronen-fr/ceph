@@ -360,9 +360,9 @@ std::optional<inconsistent_snapset_wrapper> evaluate_snapset(
   }
 
   if (ret.errors) {
-    DEBUGDPP(
-      "snapset {}, clones {}",
-      dpp, snapset, clones);
+    //DEBUGDPP(
+    //  "snapset {}, clones {}",
+    //  dpp, snapset, clones);
     return ret;
   } else {
     return std::nullopt;

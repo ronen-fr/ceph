@@ -143,7 +143,7 @@ using crimson::common::local_conf;
       [FNAME, this, obc=std::move(obc)](auto md)
       -> load_obc_ertr::future<> {
       const hobject_t& oid = md->os.oi.soid;
-      DEBUGDPP("loaded obs {} for {}", dpp, md->os.oi, oid);
+      //DEBUGDPP("loaded obs {} for {}", dpp, md->os.oi, oid);
       if (oid.is_head()) {
         if (!md->ssc) {
 	  ERRORDPP("oid {} missing snapsetcontext", dpp, oid);
@@ -157,7 +157,7 @@ using crimson::common::local_conf;
         // See set_clone_ssc
         obc->set_clone_state(std::move(md->os));
       }
-      DEBUGDPP("loaded obc {} for {}", dpp, obc->obs.oi, obc->obs.oi.soid);
+      //DEBUGDPP("loaded obc {} for {}", dpp, obc->obs.oi, obc->obs.oi.soid);
       return seastar::now();
     });
   }
@@ -170,7 +170,7 @@ using crimson::common::local_conf;
     return backend.load_metadata(obc.get_oid())
     .safe_then_interruptible<false>(
       [FNAME, this, &obc](auto md)-> load_obc_ertr::future<> {
-      DEBUGDPP("reloaded obs {} for {}", dpp, md->os.oi, obc.get_oid());
+      //DEBUGDPP("reloaded obs {} for {}", dpp, md->os.oi, obc.get_oid());
       if (!md->ssc) {
 	ERRORDPP("oid {} missing snapsetcontext", dpp, obc.get_oid());
         return crimson::ct_error::object_corrupted::make();

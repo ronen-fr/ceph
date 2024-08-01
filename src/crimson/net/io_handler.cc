@@ -1012,6 +1012,7 @@ IOHandler::read_message(
     // XXX: paranoid copy just to avoid oops
     ceph_msg_header2 current_header = msg_frame.header();
 
+/*
     logger().trace("{} got {} + {} + {} byte message,"
                    " envelope type={} src={} off={} seq={}",
                    conn,
@@ -1022,6 +1023,7 @@ IOHandler::read_message(
                    conn.get_peer_name(),
                    current_header.data_off,
                    current_header.seq);
+*/
 
     ceph_msg_header header{current_header.seq,
                            current_header.tid,
@@ -1085,12 +1087,14 @@ IOHandler::read_message(
                      *message,
                      message->get_type());
     } else {
+      /*
       logger().debug("{} <== #{},{} === {} ({})",
                      conn,
                      message->get_seq(),
                      current_header.ack_seq,
                      *message,
                      message->get_type());
+       */
     }
 
     // notify ack
@@ -1164,8 +1168,8 @@ void IOHandler::do_in_dispatch()
             ).then([this](auto payload) {
               // handle_keepalive2() logic
               auto keepalive_frame = KeepAliveFrame::Decode(payload->back());
-              logger().debug("{} GOT KeepAliveFrame: timestamp={}",
-                             conn, keepalive_frame.timestamp());
+              //logger().debug("{} GOT KeepAliveFrame: timestamp={}",
+              //               conn, keepalive_frame.timestamp());
               // notify keepalive ack
               next_keepalive_ack = keepalive_frame.timestamp();
               if (seastar::this_shard_id() == get_shard_id()) {

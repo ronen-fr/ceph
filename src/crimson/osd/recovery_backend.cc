@@ -339,7 +339,7 @@ RecoveryBackend::handle_recovery_op(
     return handle_scan(*boost::static_pointer_cast<MOSDPGScan>(m), conn);
   default:
     return seastar::make_exception_future<>(
-	std::invalid_argument(fmt::format("invalid request type: {}",
-					  m->get_header().type)));
+        
+	std::invalid_argument(fmt::format("invalid request type: ")));
   }
 }

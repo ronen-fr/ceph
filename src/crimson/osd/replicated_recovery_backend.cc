@@ -158,7 +158,7 @@ ReplicatedRecoveryBackend::push_delete(
     if (iter == pg.get_shard_missing().end())
       return seastar::make_ready_future<>();
     if (iter->second.is_missing(soid)) {
-      logger().debug("push_delete: will remove {} from {}", soid, shard);
+//      logger().debug("push_delete: will remove {} from {}", soid, shard);
       pg.begin_peer_recover(shard, soid);
       spg_t target_pg(pg.get_info().pgid.pgid, shard.shard);
       auto msg = crimson::make_message<MOSDPGRecoveryDelete>(
@@ -283,8 +283,8 @@ ReplicatedRecoveryBackend::recover_delete(
 	  if (shard == pg.get_pg_whoami())
 	    continue;
 	  if (pg.get_shard_missing(shard)->is_missing(soid)) {
-	    logger().debug("recover_delete: soid {} needs to deleted from replca {}",
-			   soid, shard);
+//	    logger().debug("recover_delete: soid {} needs to deleted from replca {}",
+//			   soid, shard);
 	    object_missing = true;
 	    break;
 	  }
@@ -902,8 +902,7 @@ ReplicatedRecoveryBackend::handle_pull_response(
 	get_recovering(push_op.soid).pull_info->recovery_info.version);
     return seastar::make_exception_future<>(
 	std::runtime_error(fmt::format(
-	    "Error on pushing side {} when pulling obj {}",
-	    m->from, push_op.soid)));
+	    "Error on pushing side when pulling obj")));
   }
 
   logger().debug("{}: {}", __func__, *m);
@@ -1034,11 +1033,11 @@ ReplicatedRecoveryBackend::_handle_push_reply(
   const PushReplyOp &op)
 {
   const hobject_t& soid = op.soid;
-  logger().debug("{}, soid {}, from {}", __func__, soid, peer);
+//  logger().debug("{}, soid {}, from {}", __func__, soid, peer);
   auto recovering_iter = recovering.find(soid);
   if (recovering_iter == recovering.end()
       || !recovering_iter->second->pushing.count(peer)) {
-    logger().debug("huh, i wasn't pushing {} to osd.{}", soid, peer);
+//    logger().debug("huh, i wasn't pushing {} to osd.{}", soid, peer);
     return seastar::make_ready_future<std::optional<PushOp>>();
   } else {
     auto& push_info = recovering_iter->second->pushing[peer];

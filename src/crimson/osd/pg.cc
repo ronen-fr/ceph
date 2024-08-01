@@ -163,8 +163,8 @@ void PG::check_blocklisted_watchers()
     for (const auto& [key, watch] : obc->watchers) {
       assert(watch->get_pg() == this);
       const auto& ea = watch->get_peer_addr();
-      logger().debug("watch: Found {} cookie {}. Checking entity_add_t {}",
-                     watch->get_entity(), watch->get_cookie(), ea);
+      //logger().debug("watch: Found {} cookie {}. Checking entity_add_t {}",
+      //               watch->get_entity(), watch->get_cookie(), ea);
       if (get_osdmap()->is_blocklisted(ea)) {
         logger().info("watch: Found blocklisted watcher for {}", ea);
         watch->do_watch_timeout();
@@ -627,12 +627,14 @@ void PG::log_state_enter(const char *state) {
 void PG::log_state_exit(
   const char *state_name, utime_t enter_time,
   uint64_t events, utime_t event_dur) {
+/*
   logger().info(
     "Exiting state: {}, entered at {}, {} spent on {} events",
     state_name,
     enter_time,
     event_dur,
     events);
+*/
 }
 
 ceph::signedspan PG::get_mnow() const
@@ -869,7 +871,7 @@ PG::interruptible_future<> PG::repair_object(
 {
   // see also PrimaryLogPG::rep_repair_primary_object()
   assert(is_primary());
-  logger().debug("{}: {} peers osd.{}", __func__, oid, get_acting_recovery_backfill());
+//  logger().debug("{}: {} peers osd.{}", __func__, oid, get_acting_recovery_backfill());
   // Add object to PG's missing set if it isn't there already
   assert(!get_local_missing().is_missing(oid));
   peering_state.force_object_missing(pg_whoami, oid, v);
@@ -1050,8 +1052,8 @@ seastar::future<> PG::complete_error_log(const ceph_tid_t& rep_tid,
     logger().debug("complete_error_log: write complete,"
                    " erasing rep_tid {}", rep_tid);
   } else {
-    logger().debug("complete_error_log: rep_tid {} awaiting update from {}",
-                   rep_tid, log_update.waiting_on);
+//    logger().debug("complete_error_log: rep_tid {} awaiting update from {}",
+//                   rep_tid, log_update.waiting_on);
     result = log_update.all_committed.get_shared_future().then(
     [this, last_complete, rep_tid, version] {
       logger().debug("complete_error_log: rep_tid {} awaited ", rep_tid);
@@ -1323,8 +1325,8 @@ void PG::check_blocklisted_obc_watchers(
       watch->disconnect();
       auto [it, emplaced] = obc->watchers.emplace(src, std::move(watch));
       assert(emplaced);
-      logger().debug("added watch for obj {}, client {}",
-        obc->get_oid(), src.second);
+//      logger().debug("added watch for obj {}, client {}",
+//        obc->get_oid(), src.second);
     }
   }
 }
@@ -1475,8 +1477,8 @@ PG::interruptible_future<> PG::do_update_log_missing(
     op_trim_to = m->pg_trim_to;
   if (m->pg_roll_forward_to != eversion_t())
     op_roll_forward_to = m->pg_roll_forward_to;
-  logger().debug("op_trim_to = {}, op_roll_forward_to = {}",
-    op_trim_to, op_roll_forward_to);
+//  logger().debug("op_trim_to = {}, op_roll_forward_to = {}",
+//    op_trim_to, op_roll_forward_to);
 
   peering_state.append_log_entries_update_missing(
     m->entries, t, op_trim_to, op_roll_forward_to);
@@ -1505,7 +1507,7 @@ PG::interruptible_future<> PG::do_update_log_missing(
 PG::interruptible_future<> PG::do_update_log_missing_reply(
   Ref<MOSDPGUpdateLogMissingReply> m)
 {
-  logger().debug("{}: got reply from {}", __func__, m->get_from());
+//  logger().debug("{}: got reply from {}", __func__, m->get_from());
 
   auto it = log_entry_update_waiting_on.find(m->get_tid());
   if (it != log_entry_update_waiting_on.end()) {
@@ -1516,8 +1518,8 @@ PG::interruptible_future<> PG::do_update_log_missing_reply(
 	  m->get_from(), m->last_complete_ondisk);
       }
     } else {
-      logger().error("{} : {} got reply {} from shard we are not waiting for ",
-        __func__, peering_state.get_info().pgid, *m, m->get_from());
+//      logger().error("{} : {} got reply {} from shard we are not waiting for ",
+//        __func__, peering_state.get_info().pgid, *m, m->get_from());
     }
 
     if (it->second.waiting_on.empty()) {

@@ -245,8 +245,8 @@ ScrubScan::ifut<> ScrubScan::deep_scan_object(
     [FNAME, this, &progress, &obj, &entry, &pg]()
     -> interruptible_future<seastar::stop_iteration> {
       if (progress.offset) {
-	DEBUGDPP("op: {}, obj: {}, progress: {} scanning data",
-		 pg, *this, obj, progress);
+//	DEBUGDPP("op: {}, obj: {}, progress: {} scanning data",
+//		 pg, *this, obj, progress);
 	const auto stride = local_conf().get_val<Option::size_t>(
 	  "osd_deep_scrub_stride");
 	return pg.shard_services.get_store().read(
@@ -256,8 +256,8 @@ ScrubScan::ifut<> ScrubScan::deep_scan_object(
 	  stride
 	).safe_then([this, FNAME, stride, &obj, &progress, &entry, &pg](auto bl) {
 	  size_t offset = *progress.offset;
-	  DEBUGDPP("op: {}, obj: {}, progress: {} got offset {}",
-		   pg, *this, obj, progress, offset);
+//	  DEBUGDPP("op: {}, obj: {}, progress: {} got offset {}",
+//		   pg, *this, obj, progress, offset);
 	  progress.data_hash << bl;
 	  if (bl.length() < stride) {
 	    progress.offset = std::nullopt;
@@ -279,8 +279,8 @@ ScrubScan::ifut<> ScrubScan::deep_scan_object(
 	      seastar::stop_iteration::no));
 	});
       } else if (!progress.header_done) {
-	DEBUGDPP("op: {}, obj: {}, progress: {} scanning omap header",
-		 pg, *this, obj, progress);
+//	DEBUGDPP("op: {}, obj: {}, progress: {} scanning omap header",
+//		 pg, *this, obj, progress);
 	return pg.shard_services.get_store().omap_get_header(
 	  pg.get_collection_ref(),
 	  obj
@@ -299,16 +299,16 @@ ScrubScan::ifut<> ScrubScan::deep_scan_object(
 	      seastar::stop_iteration::no));
 	});
       } else if (!progress.keys_done) {
-	DEBUGDPP("op: {}, obj: {}, progress: {} scanning omap keys",
-		 pg, *this, obj, progress);
+//	DEBUGDPP("op: {}, obj: {}, progress: {} scanning omap keys",
+//		 pg, *this, obj, progress);
 	return pg.shard_services.get_store().omap_get_values(
 	  pg.get_collection_ref(),
 	  obj,
 	  progress.next_key
 	).safe_then([FNAME, this, &obj, &progress, &entry, &pg](auto result) {
 	  const auto &[done, omap] = result;
-	  DEBUGDPP("op: {}, obj: {}, progress: {} got {} keys",
-		   pg, *this, obj, progress, omap.size());
+//	  DEBUGDPP("op: {}, obj: {}, progress: {} got {} keys",
+//		   pg, *this, obj, progress, omap.size());
 	  for (const auto &p : omap) {
 	    bufferlist bl;
 	    encode(p.first, bl);
@@ -318,8 +318,8 @@ ScrubScan::ifut<> ScrubScan::deep_scan_object(
 	    entry.object_omap_bytes += p.second.length();
 	  }
 	  if (done) {
-	    DEBUGDPP("op: {}, obj: {}, progress: {} omap done",
-		     pg, *this, obj, progress);
+//	    DEBUGDPP("op: {}, obj: {}, progress: {} omap done",
+//		     pg, *this, obj, progress);
 	    progress.keys_done = true;
 	    entry.omap_digest = progress.omap_hash.digest();
 	    entry.omap_digest_present = true;
@@ -336,15 +336,15 @@ ScrubScan::ifut<> ScrubScan::deep_scan_object(
 	    }
 	  } else {
 	    ceph_assert(!omap.empty()); // omap_get_values invariant
-	    DEBUGDPP("op: {}, obj: {}, progress: {} omap not done, next {}",
-		     pg, *this, obj, progress, omap.crbegin()->first);
+//	    DEBUGDPP("op: {}, obj: {}, progress: {} omap not done, next {}",
+////		     pg, *this, obj, progress, omap.crbegin()->first);
 	    progress.next_key = omap.crbegin()->first;
 	  }
 	}).handle_error(
 	  ct_error::all_same_way([FNAME, this, &obj, &progress, &entry, &pg]
 				 (auto e) {
-	    DEBUGDPP("op: {}, obj: {}, progress: {} error reading omap {}",
-		     pg, *this, obj, progress, e);
+//	    DEBUGDPP("op: {}, obj: {}, progress: {} error reading omap {}",
+//		     pg, *this, obj, progress, e);
 	    progress.keys_done = true;
 	    entry.read_error = true;
 	    return seastar::now();
@@ -355,8 +355,8 @@ ScrubScan::ifut<> ScrubScan::deep_scan_object(
 	      seastar::stop_iteration::no));
 	});
       } else {
-	DEBUGDPP("op: {}, obj: {}, progress: {} done",
-		 pg, *this, obj, progress);
+//	DEBUGDPP("op: {}, obj: {}, progress: {} done",
+//		 pg, *this, obj, progress);
 	return interruptor::make_interruptible(
 	  seastar::make_ready_future<seastar::stop_iteration>(
 	    seastar::stop_iteration::yes));
@@ -373,7 +373,7 @@ struct fmt::formatter<crimson::osd::obj_scrub_progress_t> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
   template <typename FormatContext>
   auto format(const crimson::osd::obj_scrub_progress_t &progress,
-	      FormatContext& ctx)
+	      FormatContext& ctx) const
   {
     return fmt::format_to(
       ctx.out(),

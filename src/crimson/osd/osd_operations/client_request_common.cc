@@ -19,8 +19,8 @@ CommonClientRequest::do_recover_missing(
   const hobject_t& soid,
   const osd_reqid_t& reqid)
 {
-  logger().debug("{} reqid {} check for recovery, {}",
-                 __func__, reqid, soid);
+  //logger().debug("{} reqid {} check for recovery, {}",
+  //               __func__, reqid, soid);
   assert(pg->is_primary());
   eversion_t ver;
   auto &peering_state = pg->get_peering_state();
@@ -28,35 +28,35 @@ CommonClientRequest::do_recover_missing(
   bool needs_recovery_or_backfill = false;
 
   if (pg->is_unreadable_object(soid)) {
-    logger().debug("{} reqid {}, {} is unreadable",
-                   __func__, reqid, soid);
+    //logger().debug("{} reqid {}, {} is unreadable",
+    //               __func__, reqid, soid);
     ceph_assert(missing_loc.needs_recovery(soid, &ver));
     needs_recovery_or_backfill = true;
   }
 
   if (pg->is_degraded_or_backfilling_object(soid)) {
-    logger().debug("{} reqid {}, {} is degraded or backfilling",
-                   __func__, reqid, soid);
+    //logger().debug("{} reqid {}, {} is degraded or backfilling",
+    //               __func__, reqid, soid);
     if (missing_loc.needs_recovery(soid, &ver)) {
       needs_recovery_or_backfill = true;
     }
   }
 
   if (!needs_recovery_or_backfill) {
-    logger().debug("{} reqid {} nothing to recover {}",
-                   __func__, reqid, soid);
+    //logger().debug("{} reqid {} nothing to recover {}",
+    //               __func__, reqid, soid);
     return seastar::now();
   }
 
-  logger().debug("{} reqid {} need to wait for recovery, {} version {}",
-                 __func__, reqid, soid, ver);
+  //logger().debug("{} reqid {} need to wait for recovery, {} version {}",
+  //               __func__, reqid, soid, ver);
   if (pg->get_recovery_backend()->is_recovering(soid)) {
-    logger().debug("{} reqid {} object {} version {}, already recovering",
-                   __func__, reqid, soid, ver);
+  //  logger().debug("{} reqid {} object {} version {}, already recovering",
+  //                 __func__, reqid, soid, ver);
     return pg->get_recovery_backend()->get_recovering(soid).wait_for_recovered();
   } else {
-    logger().debug("{} reqid {} object {} version {}, starting recovery",
-                   __func__, reqid, soid, ver);
+  //  logger().debug("{} reqid {} object {} version {}, starting recovery",
+  //                 __func__, reqid, soid, ver);
     auto [op, fut] =
       pg->get_shard_services().start_operation<UrgentRecovery>(
         soid, ver, pg, pg->get_shard_services(), pg->get_osdmap_epoch());

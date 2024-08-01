@@ -64,13 +64,12 @@ BackfillState::Initial::Initial(my_context ctx)
   : my_base(ctx)
 {
   backfill_state().last_backfill_started = peering_state().earliest_backfill();
-  logger().debug("{}: bft={} from {}",
-                 __func__, peering_state().get_backfill_targets(),
-                 backfill_state().last_backfill_started);
+  logger().debug("");
+  /*
   for (const auto& bt : peering_state().get_backfill_targets()) {
-    logger().debug("{}: target shard {} from {}",
-                   __func__, bt, peering_state().get_peer_last_backfill(bt));
+    logger().debug("");
   }
+  */
   ceph_assert(peering_state().get_backfill_targets().size());
   ceph_assert(!backfill_state().last_backfill_started.is_max());
 }
@@ -237,8 +236,7 @@ BackfillState::Enqueuing::remove_on_peers(const hobject_t& check)
       backfill_listener().enqueue_drop(bt, pbi.begin, version);
     }
   }
-  logger().debug("{}: BACKFILL removing {} from peers {}",
-                 __func__, check, result.pbi_targets);
+  logger().debug("");
   ceph_assert(!result.pbi_targets.empty());
   return result;
 }
@@ -401,8 +399,7 @@ BackfillState::ReplicasScanning::ReplicasScanning(my_context ctx)
   for (const auto& bt : peering_state().get_backfill_targets()) {
     if (const auto& pbi = backfill_state().peer_backfill_info.at(bt);
         replica_needs_scan(pbi, backfill_state().backfill_info)) {
-      logger().debug("{}: scanning peer osd.{} from {}",
-                     __func__, bt, pbi.end);
+      logger().debug("");
       backfill_listener().request_replica_scan(bt, pbi.end, hobject_t{});
 
       ceph_assert(waiting_on_backfill.find(bt) == \
@@ -424,8 +421,8 @@ BackfillState::ReplicasScanning::~ReplicasScanning()
 boost::statechart::result
 BackfillState::ReplicasScanning::react(ReplicaScanned evt)
 {
-  logger().debug("{}: got scan result from osd={}, result={}",
-                 __func__, evt.from, evt.result);
+  //logger().debug("{}: got scan result from osd={}, result={}",
+  //               __func__, evt.from, evt.result);
   // TODO: maybe we'll be able to move waiting_on_backfill from
   // the machine to the state.
   ceph_assert(peering_state().is_backfill_target(evt.from));

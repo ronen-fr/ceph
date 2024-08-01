@@ -220,10 +220,10 @@ size_t PGRecovery::start_replica_recovery_ops(
     assert(peer != pg->get_peering_state().get_primary());
     const auto& pm = pg->get_peering_state().get_peer_missing(peer);
 
-    logger().debug("{}: peer osd.{} missing {} objects", __func__,
-                 peer, pm.num_missing());
-    logger().trace("{}: peer osd.{} missing {}", __func__,
-                 peer, pm.get_items());
+//    logger().debug("{}: peer osd.{} missing {} objects", __func__,
+//                 peer, pm.num_missing());
+//    logger().trace("{}: peer osd.{} missing {}", __func__,
+//                 peer, pm.get_items());
 
     // recover oldest first
     for (auto p = pm.get_rmissing().begin();
@@ -450,9 +450,9 @@ void PGRecovery::on_peer_recover(
   const hobject_t &oid,
   const ObjectRecoveryInfo &recovery_info)
 {
-  crimson::get_logger(ceph_subsys_osd).debug(
-      "{}: {}, {} on {}", __func__, oid,
-      recovery_info.version, peer);
+//  crimson::get_logger(ceph_subsys_osd).debug(
+//      "{}: {}, {} on {}", __func__, oid,
+//      recovery_info.version, peer);
   pg->get_peering_state().on_peer_recover(peer, oid, recovery_info.version);
 }
 
@@ -585,11 +585,11 @@ void PGRecovery::update_peers_last_backfill(
       m->stats = pinfo.stats;
       std::ignore = pg->get_shard_services().send_to_osd(
         bt.osd, std::move(m), pg->get_osdmap_epoch());
-      logger().info("{}: peer {} num_objects now {} / {}",
-                    __func__,
-                    bt,
-                    pinfo.stats.stats.sum.num_objects,
-                    pg->get_info().stats.stats.sum.num_objects);
+//      logger().info("{}: peer {} num_objects now {} / {}",
+//                    __func__,
+//                    bt,
+//                    pinfo.stats.stats.sum.num_objects,
+//                    pg->get_info().stats.stats.sum.num_objects);
     }
   }
 }

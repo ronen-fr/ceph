@@ -57,7 +57,7 @@ WatchTimeoutRequest::get_do_osd_ops_params() const
     entity_inst_t{ watch->entity_name, watch->winfo.addr },
     0
   };
-  logger().debug("{}: params.reqid={}", __func__, params.reqid);
+//  logger().debug("{}: params.reqid={}", __func__, params.reqid);
   return params;
 }
 
@@ -81,7 +81,7 @@ Watch::~Watch()
 seastar::future<> Watch::connect(crimson::net::ConnectionXcoreRef conn, bool)
 {
   if (this->conn == conn) {
-    logger().debug("conn={} already connected", conn);
+    //logger().debug("conn={} already connected", conn);
     return seastar::now();
   }
   timeout_timer.cancel();
