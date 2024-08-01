@@ -2188,6 +2188,11 @@ void PgScrubber::on_mid_scrub_abort(Scrub::delay_cause_t issue)
     return;
   }
 
+  dout(10) << fmt::format("{}: executing target: {}. Session flags: {}", __func__, *m_active_target, m_flags)
+           << dendl;
+  dout(10) << fmt::format("{}: updated job: {}. planned: {}", __func__, *m_scrub_job, m_planned_scrub)
+           << dendl;
+
   // assuming we can still depend on the 'scrubbing' flag being set;
   // Also on Queued&Active.
 
@@ -2372,6 +2377,9 @@ Scrub::schedule_result_t PgScrubber::start_scrub_session(
 
   m_active_target = trgt;
   set_op_parameters(m_planned_scrub);
+  // dequeue the PG's "other" target
+  m_osds->get_scrub_services().remove_from_osd_queue(m_pg_id); // RRR rename when used like this
+  m_scrub_job->clear_both_targets_queued();
 
   // clear all special handling urgency/flags from the target that is
   // executing now.
