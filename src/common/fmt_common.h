@@ -17,9 +17,6 @@
  * such classes in Crimson.
  */
 
-template <typename T>
-concept has_formatter = fmt::has_formatter<T, fmt::format_context>::value;
-
 /**
  * Tagging classes that provide support for default fmtlib formatting,
  * by having either
@@ -38,11 +35,19 @@ template<class T>
 concept has_alt_fmt_print = requires(T t) {
   { t.alt_fmt_print(bool{}) } -> std::same_as<std::string>;
 };
+#if FMT_VERSION >= 110000
 template<class T>
 concept has_fmt_print_ctx = requires(
   T t, fmt::buffered_context<char> &ctx) {
   { t.fmt_print_ctx(ctx) } -> std::same_as<decltype(ctx.out())>;
 };
+#else
+template<class T>
+concept has_fmt_print_ctx = requires(
+  T t, fmt::buffer_context<char> &ctx) {
+  { t.fmt_print_ctx(ctx) } -> std::same_as<decltype(ctx.out())>;
+};
+#endif
 
 namespace fmt {
 
