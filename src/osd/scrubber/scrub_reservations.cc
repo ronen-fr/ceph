@@ -158,10 +158,8 @@ bool ReplicaReservations::handle_reserve_grant(
   // are legacy messages, for which the nonce was not verified).
   if (!is_msg_source_correct(from)) {
     const auto error_text = fmt::format(
-	"unexpected reservation grant from {} vs. the expected {} (e:{} "
-	"message nonce:{})",
-	from, get_last_sent().value_or(pg_shard_t{}), msg.map_epoch,
-	msg.reservation_nonce);
+	"unexpected reservation grant from vs. the expected  (e: "
+	"message nonce:)");
     dout(1) << error_text << dendl;
     if (msg.reservation_nonce != 0) {
       m_osds->clog->error() << error_text;
