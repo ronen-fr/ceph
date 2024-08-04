@@ -457,8 +457,8 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
     }
 
     dout(20)
-      << fmt::format("{}: {} shard {} got:{:D}", __func__, ho, l, shard_ret)
-      << dendl;
+     << fmt::format("{}: {} shard {} got:{:D}", __func__, ho, l, shard_ret)
+     << dendl;
 
     if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_usable) {
 
@@ -475,7 +475,7 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
 
       // do not emit the returned error message to the log
       dout(15) << fmt::format("{}: {} not found on shard {}", __func__, ho, l)
-               << dendl;
+              << dendl;
     } else {
 
       dout(30) << fmt::format("{}: consider using {} srv: {} oi soid: {}",
@@ -497,7 +497,6 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                                 (void*)&ret_auth.auth_oi,
                                 (void*)&shard_ret.oi)
                  << dendl;
-
         ret_auth.auth = shard_ret.auth_iter;
         ret_auth.auth_shard = ret_auth.auth->first;
         ret_auth.auth_oi = shard_ret.oi;
@@ -1315,7 +1314,6 @@ bool ScrubBackend::compare_obj_details(pg_shard_t auth_shard,
 
   if (candidate.size > m_conf->osd_max_object_size &&
       !obj_result.has_size_too_large()) {
-
     fmt::format_to(std::back_inserter(out),
                    "{}size {} > {} is too large",
                    sep(error),
