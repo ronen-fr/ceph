@@ -40,7 +40,7 @@ concept has_alt_fmt_print = requires(T t) {
 };
 template<class T>
 concept has_fmt_print_ctx = requires(
-  T t, fmt::buffer_context<char> &ctx) {
+  T t, fmt::buffered_context<char> &ctx) {
   { t.fmt_print_ctx(ctx) } -> std::same_as<decltype(ctx.out())>;
 };
 
