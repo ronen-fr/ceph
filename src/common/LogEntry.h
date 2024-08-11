@@ -194,6 +194,13 @@ inline std::ostream& operator<<(std::ostream& out, const LogEntry& e)
              << e.channel << " " << e.prio << " " << e.msg;
 }
 
+template <> struct fmt::formatter<clog_type> : fmt::formatter<std::string_view> {
+  template <typename FormatContext>
+  auto format(const clog_type& e, FormatContext& ctx) {
+    return formatter<std::string_view>::format(clog_type_to_string(e), ctx);
+  }
+};
+
 template <> struct fmt::formatter<EntityName> : fmt::formatter<std::string_view> {
   template <typename FormatContext>
   auto format(const EntityName& e, FormatContext& ctx) {

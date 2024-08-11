@@ -115,6 +115,7 @@ private:
   std::aligned_storage_t<impl_size> impl;
 };
 
+
 // Not the same as the librados::IoCtx, but it does gather together
 // some of the same metadata. Since we're likely to do multiple
 // operations in the same pool or namespace, it doesn't make sense to
@@ -1146,5 +1147,12 @@ struct hash<neorados::IOContext> {
   size_t operator ()(const neorados::IOContext& r) const;
 };
 } // namespace std
+
+#if FMT_VERSION >= 90000
+template<> struct fmt::formatter<neorados::Object> : fmt::ostream_formatter {};
+template<> struct fmt::formatter<neorados::IOContext>
+  : fmt::ostream_formatter {};
+#endif // FMT_VERSION
+
 
 #endif // NEORADOS_RADOS_HPP
