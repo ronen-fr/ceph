@@ -37,7 +37,7 @@ struct fmt::formatter<pg_shard_t> {
     if (shrd.shard == shard_id_t::NO_SHARD) {
       return fmt::format_to(ctx.out(), "{}", shrd.get_osd());
     }
-    return fmt::format_to(ctx.out(), "{}({})", shrd.get_osd(), shrd.shard);
+    return fmt::format_to(ctx.out(), "{}({})", shrd.get_osd(), shrd.shard.id);
   }
 };
 
@@ -57,7 +57,7 @@ struct fmt::formatter<chunk_info_t> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
   template <typename FormatContext>
-  auto format(const chunk_info_t& ci, FormatContext& ctx)
+  auto format(const chunk_info_t& ci, FormatContext& ctx) const
   {
     return fmt::format_to(ctx.out(), "(len: {} oid: {} offset: {} flags: {})",
 			  ci.length, ci.oid, ci.offset,
