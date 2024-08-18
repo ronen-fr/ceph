@@ -54,8 +54,17 @@ bool operator<(const tv_t &lhs, const tv_t &rhs) {
 }
 
 class NotBeforeTest : public testing::Test {
-protected:
-  not_before_queue_t<tv_t, test_time_t> queue;
+ public:
+  using queue_t = not_before_queue_t<tv_t, test_time_t>;
+
+  void load_test_data(const std::vector<tv_t> &dt) {
+    for (const auto &d : dt) {
+      queue.enqueue(d);
+    }
+  }
+
+ protected:
+  queue_t queue;
 
   void dump() {
     std::cout << "Dumping queue: " << std::endl;
@@ -132,6 +141,77 @@ TEST_F(NotBeforeTest, RemoveByClass) {
   EXPECT_EQ(queue.dequeue(), std::make_optional(e1));
   ASSERT_EQ(queue.dequeue(), std::nullopt);
 }
+
+TEST_F(NotBeforeTest, DequeueByPred) {
+  // the predicate we'll use is against the removal class
+  const auto pred = [](const tv_t &v) { return 0 == (v.removal_class % 2); };
+
+  tv_t e0t{1, 0, 10};
+  tv_t e1t{2, 2, 20};
+  tv_t e2t{1, 1, 12};
+  tv_t e3t{2, 1, 40};
+  tv_t e0f{1, 1, 17};
+  tv_t e1f{2, 2, 27};
+  tv_t e2f{1, 0, 17};
+  tv_t e3f{2, 1, 47};
+
+  queue.enqueue(e0f);
+  queue.enqueue(e1f);
+  queue.enqueue(e2f);
+  queue.enqueue(e3f);
+  queue.enqueue(e0t);
+  queue.enqueue(e1t);
+  queue.enqueue(e2t);
+  queue.enqueue(e3t);
+
+  // no ready entries
+  ASSERT_EQ(queue.dequeue(), std::nullopt);
+  ASSERT_EQ(queue.dequeue_by_pred(pred), std::nullopt);
+
+  // advance time to make e0* and e2* ready
+  queue.advance_time(1);
+  ASSERT_EQ(queue.dequeue_by_pred(pred), std::make_optional(e0t));
+  ASSERT_EQ(queue.dequeue_by_pred(pred), std::make_optional(e2t));
+  ASSERT_EQ(queue.dequeue_by_pred(pred), std::nullopt);
+
+  // advance time to make e1* and e3* ready
+  queue.advance_time(4);
+  ASSERT_EQ(queue.dequeue_by_pred(pred), std::make_optional(e3t));
+  ASSERT_EQ(queue.dequeue_by_pred(pred), std::make_optional(e1t));
+  ASSERT_EQ(queue.dequeue_by_pred(pred), std::nullopt);
+
+  // without the condition?
+  ASSERT_EQ(queue.dequeue(), std::make_optional(e2f));
+}
+
+namespace {
+  // clang-format off
+  std::vector<tv_t> by_class_test_data_1{
+    {0, 20, 17}, {2, 10, 17},
+    {0, 20, 23}, {2, 10, 23},
+    {0, 10, 17}, {2, 20, 17},
+    {0, 10, 23}, {2, 10, 23},
+    {7, 41, 57}, {2, 41, 57},
+    {7, 42, 53}, {2, 42, 53},
+    {7, 43, 57}, {2, 43, 57},
+    {7, 44, 53}, {2, 44, 53}
+  };
+  // clang-format on
+}  // namespace
+
+TEST_F(NotBeforeTest, RemoveIfByClass_eligible) {
+  load_test_data(by_class_test_data_1);
+  queue.advance_time(1);
+  ASSERT_EQ(queue.total_count(), 16);
+  ASSERT_EQ(queue.eligible_count(), 4);
+
+  int cnt = queue.remove_if_by_class(17, [](const tv_t &v) { return true; }, 1);
+  ASSERT_EQ(cnt, 1);
+  cnt = queue.remove_if_by_class(17, [](const tv_t &v) { return true; }, 10);
+  ASSERT_EQ(cnt, 3);
+  // to be continued...
+}
+
 
 
 
