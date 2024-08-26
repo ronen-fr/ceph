@@ -187,13 +187,18 @@ function wait_for_scrub_mod() {
 #
 function pg_scrub_mod() {
     local pgid=$1
+    # wait for 'clean' state of the PG. Operator scrub commands are rejected
+    # *and not remembered* if the PG is not clean
+    wait_for_pg_clean $pgid || return 1
+
     local last_scrub=$(get_last_scrub_stamp $pgid)
     # locate the primary
     local my_primary=`bin/ceph pg $pgid query | jq '.acting[0]' `
     local recovery=false
+
     ceph pg scrub $pgid
-    #ceph --format json pg dump pgs | jq ".pg_stats | .[] | select(.pgid == \"$pgid\") | .state"
-    if ceph --format json pg dump pgs | jq ".pg_stats | .[] | select(.pgid == \"$pgid\") | .state" | grep -q recovering
+    # are there *other* PGs that are still recovering?
+    if ceph --format json pg dump pgs | jq ".pg_stats | .[] | .state" | grep -q 'recovering|recovery_wait'
     then
       recovery=true
     fi
