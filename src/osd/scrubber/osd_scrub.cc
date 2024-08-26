@@ -419,32 +419,32 @@ PerfCounters* OsdScrub::get_perf_counters(int pool_type, scrub_level_t level)
 // ////////////////////////////////////////////////////////////////////////// //
 // forwarders to the queue
 
-Scrub::sched_params_t OsdScrub::determine_scrub_time(
-    const requested_scrub_t& request_flags,
-    const pg_info_t& pg_info,
-    const pool_opts_t& pool_conf) const
-{
-  return m_queue.determine_scrub_time(request_flags, pg_info, pool_conf);
-}
+// Scrub::sched_params_t OsdScrub::determine_scrub_time(
+//     const requested_scrub_t& request_flags,
+//     const pg_info_t& pg_info,
+//     const pool_opts_t& pool_conf) const
+// {
+//   return m_queue.determine_scrub_time(request_flags, pg_info, pool_conf);
+// }
 
-void OsdScrub::update_job(
-    Scrub::ScrubJobRef sjob,
-    const Scrub::sched_params_t& suggested)
-{
-  m_queue.update_job(sjob, suggested);
-}
-
-void OsdScrub::register_with_osd(
-    Scrub::ScrubJobRef sjob,
-    const Scrub::sched_params_t& suggested)
-{
-  m_queue.register_with_osd(sjob, suggested);
-}
-
-void OsdScrub::remove_from_osd_queue(Scrub::ScrubJobRef sjob)
-{
-  m_queue.remove_from_osd_queue(sjob);
-}
+// void OsdScrub::update_job(
+//     Scrub::ScrubJobRef sjob,
+//     const Scrub::sched_params_t& suggested)
+// {
+//   m_queue.update_job(sjob, suggested);
+// }
+// 
+// void OsdScrub::register_with_osd(
+//     Scrub::ScrubJobRef sjob,
+//     const Scrub::sched_params_t& suggested)
+// {
+//   m_queue.register_with_osd(sjob, suggested);
+// }
+// 
+// void OsdScrub::remove_from_osd_queue(Scrub::ScrubJobRef sjob)
+// {
+//   m_queue.remove_from_osd_queue(sjob);
+// }
 
 std::unique_ptr<Scrub::LocalResourceWrapper> OsdScrub::inc_scrubs_local(
     bool is_high_priority)

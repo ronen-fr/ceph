@@ -500,21 +500,17 @@ void PgScrubber::rm_from_osd_scrubbing()
  */
 void PgScrubber::on_PrimaryActive()
 {
-  ceph_assert(is_primary());
   ceph_assert(m_scrub_job);
 
-  auto pre_state = m_scrub_job->state_desc();
   auto pre_reg = registration_state();
-
-  auto suggested = m_osds->get_scrub_services().determine_scrub_time(
-      m_planned_scrub, m_pg->info, m_pg->get_pgpool().info.opts);
-  m_osds->get_scrub_services().register_with_osd(m_scrub_job, suggested);
+  const utime_t now_is = ceph_clock_now();
+  const auto cnf = populate_config_params();
+  dout(15) << fmt::format("{}: config:{}", __func__, cnf) << dendl;
+  m_scrub_job->init_and_queue_targets(m_pg->info, cnf, now_is);
 
   dout(10) << fmt::format(
-		  "{}: <flags:{}> {} <{:.5}>&<{:.10}> --> <{:.5}>&<{:.14}>",
-		  __func__, m_planned_scrub,
-		  (is_primary() ? "Primary" : "Replica/other"), pre_reg,
-		  pre_state, registration_state(), m_scrub_job->state_desc())
+		  "{}: Primary. <{:.5}> --> <{:.5}> ({})", __func__, pre_reg,
+		  m_scrub_job->registration_state(), *m_scrub_job)
 	   << dendl;
 }
 
@@ -527,34 +523,34 @@ void PgScrubber::on_primary_active_clean()
   m_fsm->process_event(PrimaryActivate{});
 }
 
-/*
- * A note re the call to publish_stats_to_osd() below:
- * - we are called from either request_rescrubbing() or scrub_requested().
- * - in both cases - the schedule was modified, and needs to be published;
- * - we are a Primary.
- * - in the 1st case - the call is made as part of scrub_finish(), which
- *   guarantees that the PG is locked and the interval is still the same.
- * - in the 2nd case - we know the PG state and we know we are only called
- *   for a Primary.
-*/
-void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
-{
-  dout(10) << fmt::format("{}: flags:<{}>", __func__, request_flags) << dendl;
-  // verify that the 'in_q' status matches our "Primariority"
-  if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) {
-    dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
-  }
-
-  if (is_primary() && m_scrub_job) {
-    ceph_assert(m_pg->is_locked());
-    auto suggested = m_osds->get_scrub_services().determine_scrub_time(
-	request_flags, m_pg->info, m_pg->get_pgpool().info.opts);
-    m_osds->get_scrub_services().update_job(m_scrub_job, suggested);
-    m_pg->publish_stats_to_osd();
-  }
-
-  dout(15) << __func__ << ": done " << registration_state() << dendl;
-}
+// /*
+//  * A note re the call to publish_stats_to_osd() below:
+//  * - we are called from either request_rescrubbing() or scrub_requested().
+//  * - in both cases - the schedule was modified, and needs to be published;
+//  * - we are a Primary.
+//  * - in the 1st case - the call is made as part of scrub_finish(), which
+//  *   guarantees that the PG is locked and the interval is still the same.
+//  * - in the 2nd case - we know the PG state and we know we are only called
+//  *   for a Primary.
+// */
+// void PgScrubber::update_scrub_job(const requested_scrub_t& request_flags)
+// {
+//   dout(10) << fmt::format("{}: flags:<{}>", __func__, request_flags) << dendl;
+//   // verify that the 'in_q' status matches our "Primariority"
+//   if (m_scrub_job && is_primary() && !m_scrub_job->in_queues) {
+//     dout(1) << __func__ << " !!! primary but not scheduled! " << dendl;
+//   }
+// 
+//   if (is_primary() && m_scrub_job) {
+//     ceph_assert(m_pg->is_locked());
+//     auto suggested = m_osds->get_scrub_services().determine_scrub_time(
+// 	request_flags, m_pg->info, m_pg->get_pgpool().info.opts);
+//     m_osds->get_scrub_services().update_job(m_scrub_job, suggested);
+//     m_pg->publish_stats_to_osd();
+//   }
+// 
+//   dout(15) << __func__ << ": done " << registration_state() << dendl;
+// }
 
 scrub_level_t PgScrubber::scrub_requested(
     scrub_level_t scrub_level,
@@ -2176,7 +2172,7 @@ PgScrubber::PgScrubber(PG* pg)
   m_fsm = std::make_unique<ScrubMachine>(m_pg, this);
   m_fsm->initiate();
 
-  m_scrub_job = ceph::make_ref<Scrub::ScrubJob>(
+  m_scrub_job = std::make_unique<Scrub::ScrubJob>(
       m_osds->cct, m_pg->pg_id, m_osds->get_nodeid());
 }
 

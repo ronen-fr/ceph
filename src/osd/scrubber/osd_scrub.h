@@ -80,10 +80,10 @@ class OsdScrub {
   void clear_pg_scrub_blocked(spg_t blocked_pg);
 
   // updating scheduling information for a specific PG
-  Scrub::sched_params_t determine_scrub_time(
-      const requested_scrub_t& request_flags,
-      const pg_info_t& pg_info,
-      const pool_opts_t& pool_conf) const;
+//   Scrub::sched_params_t determine_scrub_time(
+//       const requested_scrub_t& request_flags,
+//       const pg_info_t& pg_info,
+//       const pool_opts_t& pool_conf) const;
 
   /**
    * modify a scrub-job's scheduled time and deadline
