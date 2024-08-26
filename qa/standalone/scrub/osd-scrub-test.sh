@@ -544,6 +544,8 @@ function TEST_dump_scrub_schedule() {
             --osd_op_queue=wpq \
             --osd_stats_update_period_not_scrubbing=1 \
             --osd_stats_update_period_scrubbing=1 \
+            --osd_pg_stat_report_interval_max_seconds=1 \
+            --osd_pg_stat_report_interval_max_epochs=1 \
             --osd_scrub_sleep=0.2"
 
     for osd in $(seq 0 $(expr $OSDS - 1))
@@ -598,7 +600,7 @@ function TEST_dump_scrub_schedule() {
     # verify that 'pg dump' also shows the change in last_scrub_duration
     sched_data=()
     declare -A expct_dmp_duration=( ['dmp_last_duration']="0" ['dmp_last_duration_neg']="not0" )
-    wait_any_cond $pgid 10 $saved_last_stamp expct_dmp_duration "WaitingAfterScrub_dmp " sched_data || return 1
+    wait_any_cond $pgid 15 $saved_last_stamp expct_dmp_duration "WaitingAfterScrub_dmp " sched_data || return 1
 
     sleep 2
 
