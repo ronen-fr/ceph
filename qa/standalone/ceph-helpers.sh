@@ -186,15 +186,17 @@ function teardown() {
 	    done
         fi
     fi
-    if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
-	if [ -n "$LOCALRUN" ]; then
-	    display_logs $dir
-        else
-	    # Move logs to where Teuthology will archive it
-	    mkdir -p $TESTDIR/archive/log
-	    mv $dir/*.log $TESTDIR/archive/log
-	fi
-    fi
+    mkdir -p $TESTDIR/archive/log
+    mv $dir/*.log $TESTDIR/archive/log
+#     if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
+# 	if [ -n "$LOCALRUN" ]; then
+# 	    display_logs $dir
+#         else
+# 	    # Move logs to where Teuthology will archive it
+# 	    mkdir -p $TESTDIR/archive/log
+# 	    mv $dir/*.log $TESTDIR/archive/log
+# 	fi
+#     fi
     rm -fr $dir
     rm -rf $(get_asok_dir)
     if [ "$cores" = "yes" ]; then
@@ -1975,6 +1977,8 @@ function test_pg_scrub() {
 # @param pgid the id of the PG
 # @return 0 on success, 1 on error
 #
+
+# RRR must wait for clean? don't think so
 function pg_schedule_scrub() {
     local pgid=$1
     local last_scrub=$(get_last_scrub_stamp $pgid)
@@ -2366,6 +2370,7 @@ function main() {
     shopt -s -o xtrace
     PS4='${BASH_SOURCE[0]}:$LINENO: ${FUNCNAME[0]}:  '
 
+    #export PATH=.:$PATH # make sure program from sources are preferred
     export PATH=.:$PATH # make sure program from sources are preferred
     export PYTHONWARNINGS=ignore
     export CEPH_CONF=/dev/null
