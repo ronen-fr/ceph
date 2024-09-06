@@ -1720,10 +1720,7 @@ void PgScrubber::set_op_parameters(
   m_flags.check_repair = m_active_target->urgency() == urgency_t::after_repair;
   m_flags.auto_repair = false;
   m_flags.required = request.req_scrub || request.must_scrub;
-
-  m_flags.priority = (request.must_scrub || request.need_auto)
-		       ? get_pg_cct()->_conf->osd_requested_scrub_priority
-		       : m_pg->get_scrub_priority();
+  m_flags.priority = m_pg->get_scrub_priority();
 
   // 'deep-on-error' is set for periodic shallow scrubs, if allowed
   // by the environment
