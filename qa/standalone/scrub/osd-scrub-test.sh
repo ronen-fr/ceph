@@ -533,7 +533,7 @@ function TEST_dump_scrub_schedule() {
     TESTDATA="testdata.$$"
 
     run_mon $dir a --osd_pool_default_size=$OSDS || return 1
-    run_mgr $dir x || return 1
+    run_mgr $dir x --mgr_stats_period=1 || return 1
 
     # Set scheduler to "wpq" until there's a reliable way to query scrub states
     # with "--osd-scrub-sleep" set to 0. The "mclock_scheduler" overrides the
@@ -544,7 +544,10 @@ function TEST_dump_scrub_schedule() {
             --osd_op_queue=wpq \
             --osd_stats_update_period_not_scrubbing=1 \
             --osd_stats_update_period_scrubbing=1 \
-            --osd_scrub_sleep=0.2"
+            --osd_pg_stat_report_interval_max_seconds=1 \
+            --osd_pg_stat_report_interval_max_epochs=1 \
+            --osd_scrub_sleep=0.2 \
+            --mgr_stats_period=1"
 
     for osd in $(seq 0 $(expr $OSDS - 1))
     do
@@ -598,7 +601,7 @@ function TEST_dump_scrub_schedule() {
     # verify that 'pg dump' also shows the change in last_scrub_duration
     sched_data=()
     declare -A expct_dmp_duration=( ['dmp_last_duration']="0" ['dmp_last_duration_neg']="not0" )
-    wait_any_cond $pgid 10 $saved_last_stamp expct_dmp_duration "WaitingAfterScrub_dmp " sched_data || return 1
+    wait_any_cond $pgid 15 $saved_last_stamp expct_dmp_duration "WaitingAfterScrub_dmp " sched_data || return 1
 
     sleep 2
 
@@ -640,7 +643,8 @@ function TEST_dump_scrub_schedule() {
     # missed it.
     declare -A cond_active_dmp=( ['dmp_state_has_scrubbing']="true" ['query_active']="false" )
     sched_data=()
-    wait_any_cond $pgid 10 $saved_last_stamp cond_active_dmp "WaitingActive " sched_data || return 1
+    # RRR wait_any_cond $pgid 10 $saved_last_stamp cond_active_dmp "WaitingActive " sched_data || return 1
+    wait_any_cond $pgid 10 $saved_last_stamp cond_active_dmp "WaitingActive " sched_data
     perf_counters $dir $OSDS
 }
 

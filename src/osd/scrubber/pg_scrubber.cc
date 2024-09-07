@@ -1121,7 +1121,7 @@ bool PgScrubber::write_blocked_by_scrub(const hobject_t& soid)
   }
 
   get_counters_set().inc(scrbcnt_write_blocked);
-  dout(20) << __func__ << " " << soid << " can preempt? "
+  dout(10) << __func__ << " " << soid << " can preempt? "
 	   << preemption_data.is_preemptable() << " already preempted? "
 	   << preemption_data.was_preempted() << dendl;
 
