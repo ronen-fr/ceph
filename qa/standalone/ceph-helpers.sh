@@ -1572,7 +1572,7 @@ function is_pg_clean() {
     local pgid=$1
     local pg_state
     pg_state=$(ceph pg $pgid query 2>/dev/null | jq -r ".state ")
-    test "$pg_state" = "active+clean"
+    [[ "$pg_state" == "active+clean"* ]]
 }
 
 #######################################################################
@@ -1968,15 +1968,19 @@ function test_pg_scrub() {
 #
 function pg_schedule_scrub() {
     local pgid=$1
+    # do not issue the scrub command unless the PG is clean
+    wait_for_pg_clean $pgid || return 1
     local last_scrub=$(get_last_scrub_stamp $pgid)
-    ceph pg scrub $pgid
+    ceph tell $pgid schedule-scrub
     wait_for_scrub $pgid "$last_scrub"
 }
 
 function pg_schedule_deep_scrub() {
     local pgid=$1
+    # do not issue the scrub command unless the PG is clean
+    wait_for_pg_clean $pgid || return 1
     local last_scrub=$(get_last_scrub_stamp $pgid last_deep_scrub_stamp)
-    ceph pg deep-scrub $pgid
+    ceph tell $pgid schedule-deep-scrub
     wait_for_scrub $pgid "$last_scrub" last_deep_scrub_stamp
 }
 
@@ -1985,7 +1989,11 @@ function test_pg_schedule_scrub() {
 
     setup $dir || return 1
     run_mon $dir a --osd_pool_default_size=1 --mon_allow_pool_size_one=true || return 1
-    run_mgr $dir x || return 1
+    run_mgr $dir x  --mgr_stats_period=1 || return 1
+    local ceph_osd_args="--osd-scrub-interval-randomize-ratio=0 "
+    ceph_osd_args+="--osd_scrub_backoff_ratio=0 "
+    ceph_osd_args+="--osd_stats_update_period_not_scrubbing=3 "
+    ceph_osd_args+="--osd_stats_update_period_scrubbing=2"
     run_osd $dir 0 || return 1
     create_rbd_pool || return 1
     wait_for_clean || return 1
