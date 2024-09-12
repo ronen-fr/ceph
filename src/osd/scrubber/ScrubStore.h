@@ -1,8 +1,8 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
+#pragma once
 
-#ifndef CEPH_SCRUB_RESULT_H
-#define CEPH_SCRUB_RESULT_H
+#include <utility>
 
 #include "common/LogClient.h"
 #include "common/map_cacher.hpp"
@@ -14,6 +14,15 @@ struct object_id_t;
 
 struct inconsistent_obj_wrapper;
 struct inconsistent_snapset_wrapper;
+
+#ifndef __cpp_lib_to_underlying
+// c++-23 feature
+template <class Enum>
+constexpr auto to_underlying(Enum e) noexcept
+{
+  return static_cast<std::underlying_type_t<Enum>>(e);
+}
+#endif
 
 namespace Scrub {
 
@@ -42,7 +51,7 @@ namespace Scrub {
 class Store {
  public:
   ~Store();
-  static Store* create(
+  static std::unique_ptr<Store> create(
       ObjectStore* store,
       ObjectStore::Transaction* t,
       const spg_t& pgid,
@@ -55,7 +64,7 @@ class Store {
   // and a variant-friendly interface:
   void add_error(int64_t pool, const inconsistent_obj_wrapper& e);
   void add_error(int64_t pool, const inconsistent_snapset_wrapper& e);
-  bool empty() const;
+  [[no_discard]] bool is_empty() const;
   void flush(ObjectStore::Transaction*);
   void cleanup(ObjectStore::Transaction*, scrub_level_t level);
 
@@ -69,35 +78,62 @@ class Store {
       const librados::object_id_t& start,
       uint64_t max_return) const;
 
+ protected:
+  // machinery for the error store of a specific scrub level
+  struct at_level_t {
+    at_level_t(const spg_t& pgid, const ghobject_t& err_obj, OSDriver&& driver);
+// 
+// at_level_t(
+//       ObjectStore::Transaction* t,
+//   
+//     const spg_t& pgid,
+//     std::string_view obj_name_seed,
+//     OSDriver& driver);
+
+    /// the object in the PG store, where the errors are stored
+    const ghobject_t errors_hoid;
+
+    /// a temp object mapping seq-id to inconsistencies
+    OSDriver driver;
+
+    MapCacher::MapCacher<std::string, ceph::buffer::list> backend;
+
+    std::map<std::string, ceph::buffer::list> results;
+  };
+
+    using CacherPosData =
+	MapCacher::MapCacher<std::string, ceph::buffer::list>::PosAndData;
+    using ExpCacherPosData = tl::expected<CacherPosData, int>;
+
  private:
+  ObjectStore& object_store;
+
   // the collection (i.e. - the PG store) in which the errors are stored
   const coll_t coll;
 
   LoggerSinkSet& clog;
 
-  // the machinery for storing the shallow errors: a fake object in the PG store,
-  // caching mechanism, and the actual backend
-  const ghobject_t shallow_hoid;
-  OSDriver shallow_driver;  //< a temp object mapping seq-id to inconsistencies
-  mutable MapCacher::MapCacher<std::string, ceph::buffer::list> shallow_backend;
+  /// the machinery (backend details, cache, etc.) for storing both levels of errors
+  /// (note: 'optional' to allow delayed creation w/o dynamic allocations)
+  std::array<std::optional<at_level_t>, 2> per_level_store;
 
-  // same for all deep errors
-  const ghobject_t deep_hoid;
-  OSDriver deep_driver;
-  mutable MapCacher::MapCacher<std::string, ceph::buffer::list> deep_backend;
+  //  std::map<std::string, ceph::buffer::list> shallow_results;
+  //  std::map<std::string, ceph::buffer::list> deep_results;
+//   using CacherPosData =
+//       MapCacher::MapCacher<std::string, ceph::buffer::list>::PosAndData;
+//   using ExpCacherPosData = tl::expected<CacherPosData, int>;
 
-  std::map<std::string, ceph::buffer::list> shallow_results;
-  std::map<std::string, ceph::buffer::list> deep_results;
-  using CacherPosData =
-      MapCacher::MapCacher<std::string, ceph::buffer::list>::PosAndData;
-  using ExpCacherPosData = tl::expected<CacherPosData, int>;
+//   static std::optional<at_level_t> create_level_store(
+//       ObjectStore::Transaction* t,
+//       const spg_t& pgid,
+//       std::string_view obj_name_seed);
 
   Store(
-      const coll_t& coll,
-      const ghobject_t& oid,
-      const ghobject_t& deep_oid,
-      ObjectStore* store,
-      LoggerSinkSet& logger);
+      ObjectStore& osd_store,
+    const coll_t& coll,
+    std::optional<at_level_t>&& shallow,
+    std::optional<at_level_t>&& deep,
+    LoggerSinkSet& logger);
 
   std::vector<ceph::buffer::list> get_errors(
       const std::string& start,
@@ -113,4 +149,3 @@ class Store {
 };
 }  // namespace Scrub
 
-#endif	// CEPH_SCRUB_RESULT_H

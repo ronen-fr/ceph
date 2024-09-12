@@ -22,38 +22,38 @@ namespace {
  * One of the objects stores detected shallow errors, and the other -
  * deep errors.
  */
-auto make_scrub_objects(const spg_t& pgid)
-{
-  return std::pair{
-      pgid.make_temp_ghobject(fmt::format("scrub_{}", pgid)),
-      pgid.make_temp_ghobject(fmt::format("deep_scrub_{}", pgid))};
-}
+// auto make_scrub_objects(const spg_t& pgid)
+// {
+//   return std::pair{
+//       pgid.make_temp_ghobject(fmt::format("scrub_{}", pgid)),
+//       pgid.make_temp_ghobject(fmt::format("deep_scrub_{}", pgid))};
+// }
 
 string first_object_key(int64_t pool)
 {
-  auto shallow_hoid = hobject_t(object_t(), "", 0, 0x00000000, pool, "");
-  shallow_hoid.build_hash_cache();
-  return "SCRUB_OBJ_" + shallow_hoid.to_str();
+  auto hoid = hobject_t(object_t(), "", 0, 0x00000000, pool, "");
+  hoid.build_hash_cache();
+  return "SCRUB_OBJ_" + hoid.to_str();
 }
 
 // the object_key should be unique across pools
 string to_object_key(int64_t pool, const librados::object_id_t& oid)
 {
-  auto shallow_hoid = hobject_t(
+  auto hoid = hobject_t(
       object_t(oid.name),
       oid.locator,  // key
       oid.snap,
       0,  // hash
       pool, oid.nspace);
-  shallow_hoid.build_hash_cache();
-  return "SCRUB_OBJ_" + shallow_hoid.to_str();
+  hoid.build_hash_cache();
+  return "SCRUB_OBJ_" + hoid.to_str();
 }
 
 string last_object_key(int64_t pool)
 {
-  auto shallow_hoid = hobject_t(object_t(), "", 0, 0xffffffff, pool, "");
-  shallow_hoid.build_hash_cache();
-  return "SCRUB_OBJ_" + shallow_hoid.to_str();
+  auto hoid = hobject_t(object_t(), "", 0, 0xffffffff, pool, "");
+  hoid.build_hash_cache();
+  return "SCRUB_OBJ_" + hoid.to_str();
 }
 
 string first_snap_key(int64_t pool)
@@ -61,28 +61,28 @@ string first_snap_key(int64_t pool)
   // scrub object is per spg_t object, so we can misuse the hash (pg.seed) for
   // the representing the minimal and maximum keys. and this relies on how
   // hobject_t::to_str() works: hex(pool).hex(revhash).
-  auto shallow_hoid = hobject_t(object_t(), "", 0, 0x00000000, pool, "");
-  shallow_hoid.build_hash_cache();
-  return "SCRUB_SS_" + shallow_hoid.to_str();
+  auto hoid = hobject_t(object_t(), "", 0, 0x00000000, pool, "");
+  hoid.build_hash_cache();
+  return "SCRUB_SS_" + hoid.to_str();
 }
 
 string to_snap_key(int64_t pool, const librados::object_id_t& oid)
 {
-  auto shallow_hoid = hobject_t(
+  auto hoid = hobject_t(
       object_t(oid.name),
       oid.locator,  // key
       oid.snap,
       0x77777777,  // hash
       pool, oid.nspace);
-  shallow_hoid.build_hash_cache();
-  return "SCRUB_SS_" + shallow_hoid.to_str();
+  hoid.build_hash_cache();
+  return "SCRUB_SS_" + hoid.to_str();
 }
 
 string last_snap_key(int64_t pool)
 {
-  auto shallow_hoid = hobject_t(object_t(), "", 0, 0xffffffff, pool, "");
-  shallow_hoid.build_hash_cache();
-  return "SCRUB_SS_" + shallow_hoid.to_str();
+  auto hoid = hobject_t(object_t(), "", 0, 0xffffffff, pool, "");
+  hoid.build_hash_cache();
+  return "SCRUB_SS_" + hoid.to_str();
 }
 
 uint64_t decode_errors(
@@ -110,43 +110,124 @@ void reencode_errors(hobject_t o, uint64_t errors, ceph::buffer::list& bl)
 
 namespace Scrub {
 
-Store* Store::create(
-    ObjectStore* store,
+// ////////////////////////// at_level //////////////////////////
+
+// Store::at_level_t::at_level_t(
+//     const spg_t& pgid,
+//     std::string_view obj_name_seed,
+//     OSDriver& driver)
+//     : errors_hoid(
+// 	  pgid.make_temp_ghobject(fmt::format("{}_{}", obj_name_seed, pgid)))
+//     , driver(driver)
+//     , backend(&driver)
+// {}
+// 
+Store::at_level_t::at_level_t(
+    const spg_t& pgid,
+    const ghobject_t& err_obj,
+    OSDriver&& driver)
+    : errors_hoid{err_obj}
+    , driver{driver}
+    , backend{&driver}
+{}
+
+
+// ////////////////////////// Store //////////////////////////
+
+
+// note: this is a static method, as it creates a new Store instance
+std::unique_ptr<Store> Store::create(
+    ObjectStore* osd_store,
     ObjectStore::Transaction* t,
     const spg_t& pgid,
     const coll_t& coll,
     LoggerSinkSet& logger)
 {
-  ceph_assert(store);
+  ceph_assert(osd_store);
   ceph_assert(t);
-  auto [shallow_oid, deep_oid] = make_scrub_objects(pgid);
-  t->touch(coll, shallow_oid);
-  t->touch(coll, deep_oid);
 
-  return new Store{coll, shallow_oid, deep_oid, store, logger};
+  // the shallow errors DB
+  const auto sh_objid = pgid.make_temp_ghobject(fmt::format("scrub_{}", pgid));
+  t->touch(coll, sh_objid);
+  std::optional<at_level_t> shallow_mach{std::in_place, pgid, sh_objid, OSDriver{osd_store, coll, sh_objid}};
+
+  // and the DB for deep errors
+  const auto dp_objid = pgid.make_temp_ghobject(fmt::format("deep_scrub_{}", pgid));
+  t->touch(coll, dp_objid);
+  std::optional<at_level_t> deep_mach{std::in_place, pgid, dp_objid, OSDriver{osd_store, coll, dp_objid}};
+
+  return std::make_unique<Store>(
+      *osd_store, coll, std::move(shallow_mach), std::move(deep_mach), logger);
 }
 
+
+
+
 Store::Store(
+    ObjectStore& osd_store,
     const coll_t& coll,
-    const ghobject_t& sh_oid,
-    const ghobject_t& dp_oid,
-    ObjectStore* store,
+    std::optional<at_level_t>&& shallow,
+    std::optional<at_level_t>&& deep,
     LoggerSinkSet& logger)
-    : coll(coll)
-    , shallow_hoid(sh_oid)
-    , shallow_driver(store, coll, sh_oid)
-    , shallow_backend(&shallow_driver)
-    , deep_hoid(dp_oid)
-    , deep_driver(store, coll, dp_oid)
-    , deep_backend(&deep_driver)
-    , clog(logger)
-{}
+    : object_store{osd_store}
+    , coll{coll}
+    , clog{logger}
+{
+  per_level_store[unsigned(scrub_level_t::shallow)].swap(shallow);
+  per_level_store[unsigned(scrub_level_t::deep)].swap(deep);
+}
+
+
+// Store::Store(
+//     const coll_t& coll,
+//     const ghobject_t& sh_oid,
+//     const ghobject_t& dp_oid,
+//     ObjectStore* store,
+//     LoggerSinkSet& logger)
+//     : coll(coll)
+//     , errors_hoid(sh_oid)
+//     , shallow_driver(store, coll, sh_oid)
+//     , shallow_backend(&shallow_driver)
+//     , deep_driver(store, coll, dp_oid)
+//     , deep_backend(&deep_driver)
+//     , clog(logger)
+// {}
 
 Store::~Store()
 {
-  ceph_assert(shallow_results.empty());
-  ceph_assert(deep_results.empty());
+//   ceph_assert(shallow_results.empty());
+//   ceph_assert(deep_results.empty());
 }
+
+
+// std::optional<Store::at_level_t> Store::create_level_store(
+//     ObjectStore::Transaction* t,
+//     const spg_t& pgid,
+//     std::string_view obj_name_seed)
+// {
+//   using at_level_t = ::Scrub::Store::at_level_t;
+//   const auto err_obj =
+//       pgid.make_temp_ghobject(fmt::format("{}_{}", obj_name_seed, pgid));
+//   t->touch(coll, err_obj);
+//   return at_level_t{
+//       pgid, err_obj, std::move(OSDriver{&object_store, coll, err_obj})};
+// }
+
+
+// Store::at_level_t Store::create_level_store(
+//     ObjectStore::Transaction* t,
+//     const spg_t& pgid,
+//     std::string_view obj_name_seed)
+// {
+//   using at_level_t = ::Scrub::Store::at_level_t;
+//   const auto err_obj =
+//       pgid.make_temp_ghobject(fmt::format("{}_{}", obj_name_seed, pgid));
+//   t->touch(coll, err_obj);
+//   return at_level_t{
+//       pgid, err_obj, std::move(OSDriver{&object_store, coll, err_obj})};
+// }
+
+
 
 void Store::add_error(int64_t pool, const inconsistent_obj_wrapper& e)
 {
@@ -157,10 +238,12 @@ void Store::add_object_error(int64_t pool, const inconsistent_obj_wrapper& e)
 {
   bufferlist bl;
   e.encode(bl);
+
+  const auto key = to_object_key(pool, e.object);
   if (e.has_deep_errors()) {
-    deep_results[to_object_key(pool, e.object)] = bl;
+    per_level_store[unsigned(scrub_level_t::deep)]->results[key] = bl;
   }
-  shallow_results[to_object_key(pool, e.object)] = bl;
+  per_level_store[unsigned(scrub_level_t::shallow)]->results[key] = bl;
 }
 
 void Store::add_error(int64_t pool, const inconsistent_snapset_wrapper& e)
@@ -172,10 +255,11 @@ void Store::add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e)
 {
   bufferlist bl;
   e.encode(bl);
-  shallow_results[to_snap_key(pool, e.object)] = bl;
+  // note: placing snap errors only in the shallow store
+  per_level_store[unsigned(scrub_level_t::shallow)]->results[to_snap_key(pool, e.object)] = bl;
 }
 
-bool Store::empty() const
+bool Store::is_empty() const
 {
   return shallow_results.empty() && deep_results.empty();
 }
