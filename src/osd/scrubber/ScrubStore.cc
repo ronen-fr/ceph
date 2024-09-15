@@ -296,6 +296,8 @@ void Store::flush(ObjectStore::Transaction* t)
 
 void Store::cleanup(ObjectStore::Transaction* t, scrub_level_t level)
 {
+  clog.warn() << fmt::format("{}: cleaning up scrub errors", __func__);
+
   // always clear the known shallow errors DB (as both shallow and deep scrubs
   // would recreate it)
   t->remove(
@@ -394,7 +396,7 @@ std::vector<bufferlist> Store::get_errors(
 
 
   while (max_return) {
-    clog.debug() << fmt::format(
+    clog.warn() << fmt::format(
 	"{}: n:{} latest_sh: {}, latest_dp: {}", __func__, max_return,
 	(latest_sh ? latest_sh->last_key : "(none)"),
 	(latest_dp ? latest_dp->last_key : "(none)"));

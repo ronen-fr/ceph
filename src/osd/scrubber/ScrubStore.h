@@ -15,14 +15,6 @@ struct object_id_t;
 struct inconsistent_obj_wrapper;
 struct inconsistent_snapset_wrapper;
 
-#ifndef __cpp_lib_to_underlying
-// c++-23 feature
-template <class Enum>
-constexpr auto to_underlying(Enum e) noexcept
-{
-  return static_cast<std::underlying_type_t<Enum>>(e);
-}
-#endif
 
 namespace Scrub {
 
