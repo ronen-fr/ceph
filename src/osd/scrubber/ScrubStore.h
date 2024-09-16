@@ -14,7 +14,7 @@ struct object_id_t;
 
 struct inconsistent_obj_wrapper;
 struct inconsistent_snapset_wrapper;
-
+class PgScrubber;
 
 namespace Scrub {
 
@@ -44,6 +44,7 @@ class Store {
  public:
   ~Store();
   static Store* create(
+      PgScrubber& scrubber,
       ObjectStore* store,
       ObjectStore::Transaction* t,
       const spg_t& pgid,
@@ -69,6 +70,9 @@ class Store {
       int64_t pool,
       const librados::object_id_t& start,
       uint64_t max_return) const;
+
+
+  std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
 
  protected:
   // machinery for the error store of a specific scrub level
@@ -113,6 +117,10 @@ class Store {
   using ExpCacherPosData = tl::expected<CacherPosData, int>;
 
  private:
+
+  /// access to the owning Scrubber object, for logging mostly
+  PgScrubber& m_scrubber;
+
   ObjectStore& object_store;
 
   // the collection (i.e. - the PG store) in which the errors are stored
@@ -144,6 +152,7 @@ class Store {
 //       LoggerSinkSet& logger);
 
   Store(
+      PgScrubber& scrubber,
       ObjectStore& osd_store,
       const coll_t& coll,
       const spg_t& pgid,

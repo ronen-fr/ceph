@@ -1,12 +1,15 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
+#include "./ScrubStore.h"
+
 #include "common/scrub_types.h"
 #include "include/rados/rados_types.hpp"
-#include "osd/osd_types.h"
-#include "osd/osd_types_fmt.h"
+//#include "osd/osd_types.h"
+//#include "osd/osd_types_fmt.h"
 
-#include "ScrubStore.h"
+
+#include "pg_scrubber.h"
 
 using std::ostringstream;
 using std::string;
@@ -106,6 +109,18 @@ void reencode_errors(hobject_t o, uint64_t errors, ceph::buffer::list& bl)
 
 }  // namespace
 
+#undef dout_context
+#define dout_context (m_scrubber.get_pg_cct())
+#define dout_subsys ceph_subsys_osd
+#undef dout_prefix
+#define dout_prefix _prefix_fn(_dout, this, __func__)
+
+template <class T>
+static std::ostream& _prefix_fn(std::ostream* _dout, T* t, std::string fn = "")
+{
+  return t->gen_prefix(*_dout, fn);
+}
+
 namespace Scrub {
 
 // ////////////////////////// at_level //////////////////////////
@@ -135,6 +150,7 @@ Store::at_level_t::at_level_t(
 
 // note: this is a static method, as it creates a new Store instance
 Store* Store::create(
+    PgScrubber& scrubber,
     ObjectStore* osd_store,
     ObjectStore::Transaction* t,
     const spg_t& pgid,
@@ -157,18 +173,21 @@ Store* Store::create(
   // be used here
   //   return std::unique_ptr<Scrub::Store>(
   //       new Scrub::Store(*osd_store, coll, pgid, sh_objid, dp_objid, logger));
-  return new Scrub::Store(*osd_store, coll, pgid, sh_objid, dp_objid, logger);
+  return new Scrub::Store(
+      scrubber, *osd_store, coll, pgid, sh_objid, dp_objid, logger);
 }
 
 
 Store::Store(
+    PgScrubber& scrubber,
     ObjectStore& osd_store,
     const coll_t& coll,
     const spg_t& pgid,
     const ghobject_t& sh_err_obj,
     const ghobject_t& dp_err_obj,
     LoggerSinkSet& logger)
-    : object_store{osd_store}
+    : m_scrubber{scrubber}
+    , object_store{osd_store}
     , coll{coll}
     , clog{logger}
 {
@@ -176,6 +195,11 @@ Store::Store(
       pgid, sh_err_obj, OSDriver{&object_store, coll, sh_err_obj});
   per_level_store[unsigned(scrub_level_t::deep)].emplace(
       pgid, dp_err_obj, OSDriver{&object_store, coll, dp_err_obj});
+
+  dout(20) << fmt::format(
+		  "{}: created Scrub::Store for pg[{}], shallow: {}, deep: {}",
+		  __func__, pgid, sh_err_obj, dp_err_obj)
+	   << dendl;
 }
 
 
@@ -242,6 +266,17 @@ Store::~Store()
 //   return at_level_t{
 //       pgid, err_obj, std::move(OSDriver{&object_store, coll, err_obj})};
 // }
+
+std::ostream& Store::gen_prefix(std::ostream& out, std::string_view fn) const
+{
+  if (fn.starts_with("operator")) {
+    // it's a lambda, and __func__ is not available
+    return m_scrubber.gen_prefix(out) << "Store::";
+  } else {
+    return m_scrubber.gen_prefix(out) << "Store::" << fn << ": ";
+  }
+}
+
 
 
 void Store::add_error(int64_t pool, const inconsistent_obj_wrapper& e)
