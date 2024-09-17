@@ -152,33 +152,6 @@ Store::~Store()
 }
 
 
-// std::optional<Store::at_level_t> Store::create_level_store(
-//     ObjectStore::Transaction* t,
-//     const spg_t& pgid,
-//     std::string_view obj_name_seed)
-// {
-//   using at_level_t = ::Scrub::Store::at_level_t;
-//   const auto err_obj =
-//       pgid.make_temp_ghobject(fmt::format("{}_{}", obj_name_seed, pgid));
-//   t->touch(coll, err_obj);
-//   return at_level_t{
-//       pgid, err_obj, std::move(OSDriver{&object_store, coll, err_obj})};
-// }
-
-
-// Store::at_level_t Store::create_level_store(
-//     ObjectStore::Transaction* t,
-//     const spg_t& pgid,
-//     std::string_view obj_name_seed)
-// {
-//   using at_level_t = ::Scrub::Store::at_level_t;
-//   const auto err_obj =
-//       pgid.make_temp_ghobject(fmt::format("{}_{}", obj_name_seed, pgid));
-//   t->touch(coll, err_obj);
-//   return at_level_t{
-//       pgid, err_obj, std::move(OSDriver{&object_store, coll, err_obj})};
-// }
-
 std::ostream& Store::gen_prefix(std::ostream& out, std::string_view fn) const
 {
   if (fn.starts_with("operator")) {
@@ -195,22 +168,48 @@ void Store::add_error(int64_t pool, const inconsistent_obj_wrapper& e)
   add_object_error(pool, e);
 }
 
+namespace {
+
+inconsistent_obj_wrapper create_filtered_copy(
+    const inconsistent_obj_wrapper& obj,
+    uint64_t mask)
+{
+  inconsistent_obj_wrapper dup = obj;
+  ceph_assert(dup.object.name == obj.object.name);
+  ceph_assert(dup.object.locator == obj.object.locator);
+  ceph_assert(dup.object.nspace == obj.object.nspace);
+  ceph_assert(dup.shards.size() == obj.shards.size());
+  ceph_assert(dup.errors == obj.errors);
+  dup.errors &= mask;
+  return dup;
+}
+
+}  // namespace
+
+
 void Store::add_object_error(int64_t pool, const inconsistent_obj_wrapper& e)
 {
-  bufferlist bl;
-  e.encode(bl);
-
   const auto key = to_object_key(pool, e.object);
+
+  // create a bufferlist encoding all shallow errors
+  if (e.has_shallow_errors()) {
+    bufferlist bl;
+    create_filtered_copy(e, librados::obj_err_t::SHALLOW_ERRORS).encode(bl);
+    shallow_db->results[key] = bl;
+  }
   if (e.has_deep_errors()) {
+    bufferlist bl;
+    create_filtered_copy(e, librados::obj_err_t::DEEP_ERRORS).encode(bl);
     deep_db->results[key] = bl;
   }
-  shallow_db->results[key] = bl;
 }
+
 
 void Store::add_error(int64_t pool, const inconsistent_snapset_wrapper& e)
 {
   add_snap_error(pool, e);
 }
+
 
 void Store::add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e)
 {
@@ -220,10 +219,12 @@ void Store::add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e)
   shallow_db->results[to_snap_key(pool, e.object)] = bl;
 }
 
+
 bool Store::is_empty() const
 {
   return shallow_db->results.empty() && deep_db->results.empty();
 }
+
 
 void Store::flush(ObjectStore::Transaction* t)
 {
@@ -278,31 +279,12 @@ void Store::reinit(ObjectStore::Transaction* t, scrub_level_t level)
 }
 
 
-void Store::cleanup(ObjectStore::Transaction* t, scrub_level_t level)
+void Store::cleanup(ObjectStore::Transaction* t)
 {
-  //clog.warn() << fmt::format("{}: cleaning up scrub errors", __func__);
-  dout(20) << fmt::format(
-		  "cleaning up scrub errors (level:{})",
-		  level == scrub_level_t::deep ? "deep" : "shallow")
-	   << dendl;
+  dout(20) << "discarding error DBs" << dendl;
   ceph_assert(t);
-
-  // always clear the known shallow errors DB (as both shallow and deep scrubs
-  // would recreate it)
   t->remove(coll, shallow_db->errors_hoid);
-
-  // only a deep scrub recreates the deep errors DB
-  if (level == scrub_level_t::deep) {
-    t->remove(coll, deep_db->errors_hoid);
-  }
-}
-
-
-void Store::discard_all(ObjectStore::Transaction* t)
-{
-  dout(20) << "discarding DB contents" << dendl;
-  clog.warn() << fmt::format("{}: discarding all scrub errors", __func__);
-  cleanup(t, scrub_level_t::deep);
+  t->remove(coll, deep_db->errors_hoid);
 }
 
 
@@ -362,7 +344,7 @@ void Store::collect_specific_store(
 	 latest.value().last_key < end_key) {
     errors.push_back(latest->data);
     max_return--;
-    latest = shallow_db->backend.get_1st_after_key(latest->last_key);
+    latest = backend.get_1st_after_key(latest->last_key);
   }
 }
 
@@ -428,8 +410,8 @@ std::vector<bufferlist> Store::get_errors(
 	  decode_errors(sh_level->errors_hoid.hobj, latest_sh->data);
       uint64_t known_dp_errs =
 	  decode_errors(dp_level->errors_hoid.hobj, latest_dp->data);
-      uint64_t known_errs =
-	  known_sh_errs | (known_dp_errs & librados::obj_err_t::DEEP_ERRORS);
+      uint64_t known_errs = known_sh_errs | known_dp_errs;
+	  //known_sh_errs | (known_dp_errs & librados::obj_err_t::DEEP_ERRORS);
       dout(20) << fmt::format(
 		      "key:{} errors: sh:{:x},dp:{} -> {}", latest_sh->last_key,
 		      known_sh_errs, known_dp_errs, known_errs)

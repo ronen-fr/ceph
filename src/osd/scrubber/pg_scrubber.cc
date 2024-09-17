@@ -1196,7 +1196,7 @@ void PgScrubber::cleanup_store(ObjectStore::Transaction* t)
     {}
     void finish(int) override {}
   };
-  m_store->cleanup(t, scrub_level_t::deep);
+  m_store->cleanup(t);
   t->register_on_complete(new OnComplete(std::move(m_store)));
   ceph_assert(!m_store);
 }
