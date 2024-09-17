@@ -110,61 +110,7 @@ static std::ostream& _prefix_fn(std::ostream* _dout, T* t, std::string fn = "")
 
 namespace Scrub {
 
-// ////////////////////////// at_level //////////////////////////
-
-// // Store::at_level_t::at_level_t(
-// //     const spg_t& pgid,
-// //     std::string_view obj_name_seed,
-// //     OSDriver& driver)
-// //     : errors_hoid(
-// // 	  pgid.make_temp_ghobject(fmt::format("{}_{}", obj_name_seed, pgid)))
-// //     , driver(driver)
-// //     , backend(&driver)
-// // {}
-// //
-// Store::at_level_t::at_level_t(
-//     const spg_t& pgid,
-//     const ghobject_t& err_obj,
-//     OSDriver&& driver)
-//     : errors_hoid{err_obj}
-//     , driver{driver}
-//     , backend{&driver}
-// {}
-
-// RRR consider moving this to the '.h' file
-
 // ////////////////////////// Store //////////////////////////
-
-
-// note: this is a static method, as it creates a new Store instance
-// Store* Store::create(
-//     PgScrubber& scrubber,
-//     ObjectStore* osd_store,
-//     ObjectStore::Transaction* t,
-//     const spg_t& pgid,
-//     const coll_t& coll,
-//     LoggerSinkSet& logger)
-// {
-//   ceph_assert(osd_store);
-//   ceph_assert(t);
-// 
-//   // the shallow errors DB ingredients (not moveable, thus not created here)
-//   const auto sh_objid = pgid.make_temp_ghobject(fmt::format("scrub_{}", pgid));
-//   t->touch(coll, sh_objid);
-// 
-//   // and the DB for deep errors
-//   const auto dp_objid =
-//       pgid.make_temp_ghobject(fmt::format("deep_scrub_{}", pgid));
-//   t->touch(coll, dp_objid);
-// 
-//   // see for example https://abseil.io/tips/134 for why make_unique cannot
-//   // be used here
-//   //   return std::unique_ptr<Scrub::Store>(
-//   //       new Scrub::Store(*osd_store, coll, pgid, sh_objid, dp_objid, logger));
-//   return new Scrub::Store(
-//       scrubber, *osd_store, coll, pgid, sh_objid, dp_objid, logger);
-// }
-
 
 Store::Store(
     PgScrubber& scrubber,
@@ -198,60 +144,6 @@ Store::Store(
 	   << dendl;
 }
 
-
-// Store::Store(
-//     PgScrubber& scrubber,
-//     ObjectStore& osd_store,
-//     const coll_t& coll,
-//     const spg_t& pgid,
-//     const ghobject_t& sh_err_obj,
-//     const ghobject_t& dp_err_obj,
-//     LoggerSinkSet& logger)
-//     : m_scrubber{scrubber}
-//     , object_store{osd_store}
-//     , coll{coll}
-//     , clog{logger}
-// {
-//   shallow_db.emplace(
-//       pgid, sh_err_obj, OSDriver{&object_store, coll, sh_err_obj});
-//   deep_db.emplace(pgid, dp_err_obj, OSDriver{&object_store, coll, dp_err_obj});
-// 
-//   dout(20) << fmt::format(
-// 		  "{}: created Scrub::Store for pg[{}], shallow: {}, deep: {}",
-// 		  __func__, pgid, sh_err_obj, dp_err_obj)
-// 	   << dendl;
-// }
-
-
-// Store::Store(
-//     ObjectStore& osd_store,
-//     const coll_t& coll,
-//     std::optional<at_level_t>&& shallow,
-//     std::optional<at_level_t>&& deep,
-//     LoggerSinkSet& logger)
-//     : object_store{osd_store}
-//     , coll{coll}
-//     , clog{logger}
-// {
-//   //shallow_db = std::move(shallow);
-//   //deep_db.swap(deep);
-// }
-//
-
-// Store::Store(
-//     const coll_t& coll,
-//     const ghobject_t& sh_oid,
-//     const ghobject_t& dp_oid,
-//     ObjectStore* store,
-//     LoggerSinkSet& logger)
-//     : coll(coll)
-//     , errors_hoid(sh_oid)
-//     , shallow_driver(store, coll, sh_oid)
-//     , shallow_backend(&shallow_driver)
-//     , deep_driver(store, coll, dp_oid)
-//     , deep_backend(&deep_driver)
-//     , clog(logger)
-// {}
 
 Store::~Store()
 {
@@ -346,10 +238,12 @@ void Store::flush(ObjectStore::Transaction* t)
   deep_db->results.clear();
 }
 
-void Store::clear_level_db(ObjectStore::Transaction* t, at_level_t& db, std::string_view db_name)
+void Store::clear_level_db(
+    ObjectStore::Transaction* t,
+    at_level_t& db,
+    std::string_view db_name)
 {
-  dout(20) << fmt::format(
-		  "removing (omap) entries for {} error DB", db_name)
+  dout(20) << fmt::format("removing (omap) entries for {} error DB", db_name)
 	   << dendl;
   // easiest way to guarantee that the object representing the DB exists
   t->touch(coll, db.errors_hoid);
@@ -358,13 +252,16 @@ void Store::clear_level_db(ObjectStore::Transaction* t, at_level_t& db, std::str
   t->omap_clear(coll, db.errors_hoid);
 
   // restart the 'in progress' part of the MapCacher
-  // RRR db.backend.reset();
+  db.backend.reset();
 }
 
 
 void Store::reinit(ObjectStore::Transaction* t, scrub_level_t level)
 {
   if (!t) {
+    dout(20) << fmt::format(
+		    "no transaction provided, skipping reinit of scrub errors")
+	     << dendl;
     return;
   }
 
@@ -372,15 +269,14 @@ void Store::reinit(ObjectStore::Transaction* t, scrub_level_t level)
   // would recreate it)
   if (shallow_db) {
     clear_level_db(t, *shallow_db, "shallow");
-    //t->remove(coll, shallow_db->errors_hoid);
   }
 
   // only a deep scrub recreates the deep errors DB
   if (level == scrub_level_t::deep && deep_db) {
     clear_level_db(t, *deep_db, "deep");
-    //t->remove(coll, deep_db->errors_hoid);
   }
 }
+
 
 void Store::cleanup(ObjectStore::Transaction* t, scrub_level_t level)
 {
@@ -442,9 +338,7 @@ std::vector<bufferlist> Store::get_object_errors(
       (start.name.empty() ? first_object_key(pool)
 			  : to_object_key(pool, start));
   const string end = last_object_key(pool);
-  dout(20) << fmt::format(
-                  "getting errors from {} to {}", begin, end)
-           << dendl;
+  dout(20) << fmt::format("getting errors from {} to {}", begin, end) << dendl;
   return get_errors(begin, end, max_return);
 }
 
@@ -474,36 +368,31 @@ void Store::collect_specific_store(
 
 // a better way to implement this: use two generators, one for each store.
 // and sort-merge the results. Almost like a merge-sort, but with equal
-// keys combined.
+// keys combined. 'todo' once 'ranges' are really working.
 
-#if 1
 std::vector<bufferlist> Store::get_errors(
     const std::string& from_key,
     const std::string& end_key,
     uint64_t max_return) const
 {
+  // merge the input from the two sorted DBs into 'errors' (until
+  // enough errors are collected)
   vector<bufferlist> errors;
-
-  // until enough errors are collected, merge the input from the
-  // two sorted DBs
 
   auto& sh_level = shallow_db;
   auto& dp_level = deep_db;
-
-  dout(10) << fmt::format(
-                  "getting errors from {} to {}", from_key, end_key)
-           << dendl;
-
+  dout(10) << fmt::format("getting errors from {} to {}", from_key, end_key)
+	   << dendl;
 
   ExpCacherPosData latest_sh = sh_level->backend.get_1st_after_key(from_key);
   ExpCacherPosData latest_dp = dp_level->backend.get_1st_after_key(from_key);
 
-
   while (max_return) {
-    dout(11) << fmt::format(
-	"n:{} latest_sh: {}, latest_dp: {}", max_return,
-	(latest_sh ? latest_sh->last_key : "(none)"),
-	(latest_dp ? latest_dp->last_key : "(none)")) << dendl;
+    dout(20) << fmt::format(
+		    "n:{} latest_sh: {}, latest_dp: {}", max_return,
+		    (latest_sh ? latest_sh->last_key : "(none)"),
+		    (latest_dp ? latest_dp->last_key : "(none)"))
+	     << dendl;
 
     // returned keys that are greater than end_key are not interesting
     if (latest_sh.has_value() && latest_sh->last_key >= end_key) {
@@ -519,7 +408,6 @@ std::vector<bufferlist> Store::get_errors(
     }
     if (!latest_sh.has_value()) {
       // continue with the deep store
-      clog.debug() << fmt::format("{}: collecting from deep store", __func__);
       dout(10) << fmt::format("collecting from deep store") << dendl;
       collect_specific_store(
 	  dp_level->backend, latest_dp, errors, end_key, max_return);
@@ -536,122 +424,38 @@ std::vector<bufferlist> Store::get_errors(
     // we have results from both stores. Select the one with a lower key.
     // If the keys are equal, combine the errors.
     if (latest_sh->last_key == latest_dp->last_key) {
-
-      uint64_t known_errs =
+      uint64_t known_sh_errs =
 	  decode_errors(sh_level->errors_hoid.hobj, latest_sh->data);
       uint64_t known_dp_errs =
 	  decode_errors(dp_level->errors_hoid.hobj, latest_dp->data);
-      known_errs |= (known_dp_errs & librados::obj_err_t::DEEP_ERRORS);
-      clog.debug() << fmt::format(
-	  "{}: == n:{} dp_errs: {}, known_errs: {}", __func__, max_return,
-	  known_dp_errs, known_errs);
-      dout(12) << fmt::format("dp_errs: {}, known_errs: {}", known_dp_errs, known_errs) << dendl;
+      uint64_t known_errs =
+	  known_sh_errs | (known_dp_errs & librados::obj_err_t::DEEP_ERRORS);
+      dout(20) << fmt::format(
+		      "key:{} errors: sh:{:x},dp:{} -> {}", latest_sh->last_key,
+		      known_sh_errs, known_dp_errs, known_errs)
+	       << dendl;
 
-      reencode_errors(sh_level->errors_hoid.hobj, known_errs, latest_sh->data);
-      errors.push_back(latest_sh->data);
-      max_return--;
+      reencode_errors(dp_level->errors_hoid.hobj, known_errs, latest_dp->data);
+      errors.push_back(latest_dp->data);
       latest_sh = sh_level->backend.get_1st_after_key(latest_sh->last_key);
       latest_dp = dp_level->backend.get_1st_after_key(latest_dp->last_key);
 
     } else if (latest_sh->last_key < latest_dp->last_key) {
-      dout(12) << fmt::format("shallow store element ({})", latest_sh->last_key) << dendl;
+      dout(20) << fmt::format("shallow store element ({})", latest_sh->last_key)
+	       << dendl;
       errors.push_back(latest_sh->data);
       latest_sh = sh_level->backend.get_1st_after_key(latest_sh->last_key);
     } else {
-        dout(12) << fmt::format("deep store element ({})", latest_dp->last_key) << dendl;
+      dout(20) << fmt::format("deep store element ({})", latest_dp->last_key)
+	       << dendl;
       errors.push_back(latest_dp->data);
       latest_dp = dp_level->backend.get_1st_after_key(latest_dp->last_key);
     }
     max_return--;
   }
 
-  dout(10) << fmt::format("== n:{} #errors: {}", max_return, errors.size()) << dendl;
+  dout(10) << fmt::format("{} errors reported", errors.size()) << dendl;
   return errors;
 }
-#else
-std::vector<bufferlist> Store::get_errors(
-    const std::string& from_key,
-    const std::string& end_key,
-    uint64_t max_return) const
-{
-  vector<bufferlist> errors;
-
-  // until enough errors are collected, merge the input from the
-  // two sorted DBs
-
-  ExpCacherPosData latest_sh = shallow_db->backend.get_1st_after_key(from_key);
-  ExpCacherPosData latest_dp = deep_db->backend.get_1st_after_key(from_key);
-
-
-  while (max_return) {
-    clog.debug() << fmt::format(
-	"{}: n:{} latest_sh: {}, latest_dp: {}", __func__, max_return,
-	(latest_sh ? latest_sh->last_key : "(none)"),
-	(latest_dp ? latest_dp->last_key : "(none)"));
-
-    // returned keys that are greater than end_key are not interesting
-    if (latest_sh.has_value() && latest_sh->last_key >= end_key) {
-      latest_sh = tl::unexpected(-EINVAL);
-    }
-    if (latest_dp.has_value() && latest_dp->last_key >= end_key) {
-      latest_dp = tl::unexpected(-EINVAL);
-    }
-
-    if (!latest_sh && !latest_dp) {
-      // both stores are exhausted
-      break;
-    }
-    if (!latest_sh.has_value()) {
-      // continue with the deep store
-      clog.debug() << fmt::format("{}: collecting from deep store", __func__);
-      collect_specific_store(
-	  deep_backend, latest_dp, errors, end_key, max_return);
-      break;
-    }
-    if (!latest_dp.has_value()) {
-      // continue with the shallow store
-      clog.debug() << fmt::format(
-	  "{}: collecting from shallow store", __func__);
-      collect_specific_store(
-	  shallow_backend, latest_sh, errors, end_key, max_return);
-      break;
-    }
-
-    // we have results from both stores. Select the one with a lower key.
-    // If the keys are equal, combine the errors.
-    if (latest_sh->last_key == latest_dp->last_key) {
-
-      uint64_t known_errs = decode_errors(shallow_hoid.hobj, latest_sh->data);
-      uint64_t known_dp_errs = decode_errors(deep_hoid.hobj, latest_dp->data);
-      known_errs |= (known_dp_errs & librados::obj_err_t::DEEP_ERRORS);
-      clog.debug() << fmt::format(
-	  "{}: == n:{} dp_errs: {}, known_errs: {}", __func__, max_return,
-	  known_dp_errs, known_errs);
-
-      reencode_errors(shallow_hoid.hobj, known_errs, latest_sh->data);
-      errors.push_back(latest_sh->data);
-      max_return--;
-      latest_sh = shallow_backend.get_1st_after_key(latest_sh->last_key);
-      latest_dp = deep_backend.get_1st_after_key(latest_dp->last_key);
-
-    } else if (latest_sh->last_key < latest_dp->last_key) {
-      clog.debug() << fmt::format(
-	  "{}: shallow store element ({})", __func__, latest_sh->last_key);
-      errors.push_back(latest_sh->data);
-      latest_sh = shallow_backend.get_1st_after_key(latest_sh->last_key);
-    } else {
-      clog.debug() << fmt::format(
-	  "{}: deep store element ({})", __func__, latest_dp->last_key);
-      errors.push_back(latest_dp->data);
-      latest_dp = deep_backend.get_1st_after_key(latest_dp->last_key);
-    }
-    max_return--;
-  }
-  clog.debug() << fmt::format(
-      "{}: == n:{} #errors: {}", __func__, max_return, errors.size());
-
-  return errors;
-}
-#endif
 
 }  // namespace Scrub

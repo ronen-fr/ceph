@@ -43,13 +43,6 @@ namespace Scrub {
 class Store {
  public:
   ~Store();
-  static Store* create(
-      PgScrubber& scrubber,
-      ObjectStore* store,
-      ObjectStore::Transaction* t,
-      const spg_t& pgid,
-      const coll_t& coll,
-      LoggerSinkSet& logger);
 
   Store(
       PgScrubber& scrubber,
