@@ -51,6 +51,14 @@ class Store {
       const coll_t& coll,
       LoggerSinkSet& logger);
 
+  Store(
+      PgScrubber& scrubber,
+      ObjectStore& store,
+      ObjectStore::Transaction* t,
+      const spg_t& pgid,
+      const coll_t& coll,
+      LoggerSinkSet& logger);
+
   void add_object_error(int64_t pool, const inconsistent_obj_wrapper& e);
   void add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e);
 
@@ -59,7 +67,16 @@ class Store {
   void add_error(int64_t pool, const inconsistent_snapset_wrapper& e);
   [[nodiscard]] bool is_empty() const;
   void flush(ObjectStore::Transaction*);
+
+  /// discard all "DBs" - i.e., delete both special objects from the
+  /// coll (AKA PG) in the object-store
+  void discard_all(ObjectStore::Transaction* t);
+
+  /// cleanup either the shallow or both the shallow and
+  /// the deep errors DBs
   void cleanup(ObjectStore::Transaction*, scrub_level_t level);
+
+  void reinit(ObjectStore::Transaction* t, scrub_level_t level);
 
   std::vector<ceph::buffer::list> get_snap_errors(
       int64_t pool,
@@ -74,11 +91,16 @@ class Store {
 
   std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
 
- protected:
+ private:
   // machinery for the error store of a specific scrub level
   struct at_level_t {
-    at_level_t(const spg_t& pgid, const ghobject_t& err_obj, OSDriver&& driver);
+    at_level_t(const spg_t& pgid, const ghobject_t& err_obj, OSDriver&& drvr)
+	: errors_hoid{err_obj}
+	, driver{std::move(drvr)}
+	, backend{&driver}
+    {}
 
+//driver(store, coll, hoid),
     /// the object in the PG store, where the errors are stored
     ghobject_t errors_hoid;
 
@@ -88,28 +110,28 @@ class Store {
     MapCacher::MapCacher<std::string, ceph::buffer::list> backend;
 
     std::map<std::string, ceph::buffer::list> results;
-
-    static_assert(
-        std::is_move_constructible<OSDriver>::value,
-        "OSDriver must be move-constructible");
-    static_assert(
-        std::is_move_assignable<OSDriver>::value,
-        "OSDriver must be move-assignable");
-//     static_assert(
-//         std::is_move_constructible<MapCacher::MapCacher<std::string, ceph::buffer::list>>::value,
-//         "MapCacher must be move-constructible");
-//     static_assert(
-//         std::is_move_assignable<MapCacher::MapCacher<std::string, ceph::buffer::list>>::value,
-//         "MapCacher must be move-assignable");
+    //
+    //     static_assert(
+    //         std::is_move_constructible<OSDriver>::value,
+    //         "OSDriver must be move-constructible");
+    //     static_assert(
+    //         std::is_move_assignable<OSDriver>::value,
+    //         "OSDriver must be move-assignable");
+    //     static_assert(
+    //         std::is_move_constructible<MapCacher::MapCacher<std::string, ceph::buffer::list>>::value,
+    //         "MapCacher must be move-constructible");
+    //     static_assert(
+    //         std::is_move_assignable<MapCacher::MapCacher<std::string, ceph::buffer::list>>::value,
+    //         "MapCacher must be move-assignable");
   };
 
-    /// \todo make at_level_t move-constructible (to simplify swap etc.)
-//     static_assert(
-//         std::is_move_constructible<at_level_t>::value,
-//         "at_level_t must be move-constructible");
-//     static_assert(
-//         std::is_move_assignable<at_level_t>::value,
-//         "at_level_t must be move-assignable");
+  /// \todo make at_level_t move-constructible (to simplify swap etc.)
+  //     static_assert(
+  //         std::is_move_constructible<at_level_t>::value,
+  //         "at_level_t must be move-constructible");
+  //     static_assert(
+  //         std::is_move_assignable<at_level_t>::value,
+  //         "at_level_t must be move-assignable");
 
 
   using CacherPosData =
@@ -117,7 +139,6 @@ class Store {
   using ExpCacherPosData = tl::expected<CacherPosData, int>;
 
  private:
-
   /// access to the owning Scrubber object, for logging mostly
   PgScrubber& m_scrubber;
 
@@ -131,7 +152,8 @@ class Store {
   /// the machinery (backend details, cache, etc.) for storing both levels of errors
   /// (note: 'optional' to allow delayed creation w/o dynamic allocations, and
   /// 'mutable' as the caching mechanism is used in const methods)
-  mutable std::array<std::optional<at_level_t>, 2> per_level_store;
+  mutable std::optional<at_level_t> shallow_db;
+  mutable std::optional<at_level_t> deep_db;
 
   //  std::map<std::string, ceph::buffer::list> shallow_results;
   //  std::map<std::string, ceph::buffer::list> deep_results;
@@ -144,21 +166,21 @@ class Store {
   //       const spg_t& pgid,
   //       std::string_view obj_name_seed);
 
+  //   Store(
+  //       ObjectStore& osd_store,
+  //       const coll_t& coll,
+  //       std::optional<at_level_t>&& shallow,
+  //       std::optional<at_level_t>&& deep,
+  //       LoggerSinkSet& logger);
+
 //   Store(
+//       PgScrubber& scrubber,
 //       ObjectStore& osd_store,
 //       const coll_t& coll,
-//       std::optional<at_level_t>&& shallow,
-//       std::optional<at_level_t>&& deep,
+//       const spg_t& pgid,
+//       const ghobject_t& sh_err_obj,
+//       const ghobject_t& dp_err_obj,
 //       LoggerSinkSet& logger);
-
-  Store(
-      PgScrubber& scrubber,
-      ObjectStore& osd_store,
-      const coll_t& coll,
-      const spg_t& pgid,
-      const ghobject_t& sh_err_obj,
-      const ghobject_t& dp_err_obj,
-      LoggerSinkSet& logger);
 
   std::vector<ceph::buffer::list> get_errors(
       const std::string& start,
@@ -171,5 +193,8 @@ class Store {
       std::vector<bufferlist>& errors,
       const std::string& end_key,
       uint64_t& max_return) const;
+
+  // doc RRR
+  void clear_level_db(ObjectStore::Transaction* t, at_level_t& db, std::string_view db_name);
 };
 }  // namespace Scrub

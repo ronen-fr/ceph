@@ -1183,6 +1183,7 @@ void PgScrubber::_request_scrub_map(pg_shard_t replica,
   m_osds->send_message_osd_cluster(replica.osd, repscrubop, get_osdmap_epoch());
 }
 
+// only called on interval change. Both DBs are to be removed.
 void PgScrubber::cleanup_store(ObjectStore::Transaction* t)
 {
   if (!m_store)
@@ -1195,13 +1196,70 @@ void PgScrubber::cleanup_store(ObjectStore::Transaction* t)
     {}
     void finish(int) override {}
   };
-  // clearing both - just to get it to compile RRR
-  m_store->cleanup(t, scrub_level_t::shallow);
   m_store->cleanup(t, scrub_level_t::deep);
   t->register_on_complete(new OnComplete(std::move(m_store)));
   ceph_assert(!m_store);
 }
 
+
+void PgScrubber::reinit_scrub_store()
+{
+  /*
+Entering, 0 to 3 of the following objects may exist.
+'objects' here: both code objects (the ScrubStore object) and actual Object Store objects:
+the two special hobjects in the coll (the PG data) holding the last scrub's results.
+
+The Store object can be deleted and recreated, as a way to guarantee no junk is left.
+We won;t do it here, but we will clear the at_level_t structures.
+The hobjects: possibly (sh - always, deep - if running a deep scrub).
+Do we need to read the hobjects that were not deleted back into the cache? to verify that we do not need that.
+*/
+
+  ObjectStore::Transaction t;
+  if (m_store) {
+    dout(10) << __func__ << " reusing existing store" << dendl;
+    m_store->flush(&t);
+  } else {
+    dout(10) << __func__ << " creating new store" << dendl;
+    m_store = std::make_unique<Scrub::Store>(
+	*this, *m_pg->osd->store, &t, m_pg->info.pgid, m_pg->coll,
+	get_logger());
+  }
+
+  // regardless of whether the ScrubStore object was recreated or reused, we need to
+  // (possibly) clear the actual DB objects in the Object Store.
+  m_store->reinit(&t, m_active_target->level());
+  m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
+}
+
+void PgScrubber::on_init()
+{
+  // going upwards from 'inactive'
+  ceph_assert(!is_scrub_active());
+  m_pg->reset_objects_scrubbed();
+  preemption_data.reset();
+  m_interval_start = m_pg->get_history().same_interval_since;
+  dout(10) << __func__ << " start same_interval:" << m_interval_start << dendl;
+
+  m_be = std::make_unique<ScrubBackend>(
+    *this,
+    *m_pg,
+    m_pg_whoami,
+    m_is_repair,
+    m_is_deep ? scrub_level_t::deep : scrub_level_t::shallow,
+    m_pg->get_actingset());
+
+  // create or reuse the 'known errors' store
+  reinit_scrub_store();
+
+  m_start = m_pg->info.pgid.pgid.get_hobj_start();
+  m_active = true;
+  ++m_sessions_counter;
+  // publish the session counter and the fact the we are scrubbing.
+  m_pg->publish_stats_to_osd();
+}
+
+#if 0
 void PgScrubber::on_init()
 {
   // going upwards from 'inactive'
@@ -1234,6 +1292,7 @@ void PgScrubber::on_init()
   // publish the session counter and the fact the we are scrubbing.
   m_pg->publish_stats_to_osd();
 }
+#endif
 
 
 void PgScrubber::on_replica_init()

@@ -159,6 +159,7 @@ public:
       K key  ///< [in] key after which to get next
   )
   {
+    ceph_assert(driver);
     while (true) {
       std::pair<K, boost::optional<V>> cached;
       bool got_cached = in_progress.get_next(key, &cached);
