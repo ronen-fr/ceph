@@ -1202,7 +1202,7 @@ void PgScrubber::cleanup_store(ObjectStore::Transaction* t)
 }
 
 
-#if 1
+#if 0
 void PgScrubber::reinit_scrub_store()
 {
   /*

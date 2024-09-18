@@ -189,12 +189,6 @@ inconsistent_obj_wrapper create_filtered_copy(
 void Store::add_object_error(int64_t pool, const inconsistent_obj_wrapper& e)
 {
   const auto key = to_object_key(pool, e.object);
-
-//   dout(20) << fmt::format(
-// 		  "adding error for object {}. Errors: {:x} ({:x}/{:x}) wr:{}", key,
-// 		  e.errors, e.errors & librados::err_t::SHALLOW_ERRORS,
-// 		  e.errors & librados::err_t::DEEP_ERRORS, e)
-// 	   << dendl;
   dout(20) << fmt::format(
 		  "adding error for object {} ({}). Errors: {} ({}/{}) wr:{}", e.object, key,
 		  librados::err_t(e.errors),
@@ -203,14 +197,14 @@ void Store::add_object_error(int64_t pool, const inconsistent_obj_wrapper& e)
 	   << dendl;
 
   // create a bufferlist encoding all shallow errors
-  if (true || e.has_shallow_errors()) {
+  {
     bufferlist bl;
     create_filtered_copy(
 	e, librados::obj_err_t::SHALLOW_ERRORS, librados::err_t::SHALLOW_ERRORS)
 	.encode(bl);
     shallow_db->results[key] = bl;
   }
-  if (true || e.has_deep_errors()) {
+  {
     bufferlist bl;
     create_filtered_copy(
 	e, librados::obj_err_t::DEEP_ERRORS, librados::err_t::DEEP_ERRORS)
