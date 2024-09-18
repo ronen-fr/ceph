@@ -172,15 +172,14 @@ namespace {
 
 inconsistent_obj_wrapper create_filtered_copy(
     const inconsistent_obj_wrapper& obj,
-    uint64_t mask)
+    uint64_t obj_err_mask,
+    uint64_t shard_err_mask)
 {
   inconsistent_obj_wrapper dup = obj;
-  ceph_assert(dup.object.name == obj.object.name);
-  ceph_assert(dup.object.locator == obj.object.locator);
-  ceph_assert(dup.object.nspace == obj.object.nspace);
-  ceph_assert(dup.shards.size() == obj.shards.size());
-  ceph_assert(dup.errors == obj.errors);
-  dup.errors &= mask;
+  dup.errors &= obj_err_mask;
+  for (auto& [shard, si] : dup.shards) {
+    si.errors &= shard_err_mask;
+  }
   return dup;
 }
 
@@ -191,15 +190,31 @@ void Store::add_object_error(int64_t pool, const inconsistent_obj_wrapper& e)
 {
   const auto key = to_object_key(pool, e.object);
 
+//   dout(20) << fmt::format(
+// 		  "adding error for object {}. Errors: {:x} ({:x}/{:x}) wr:{}", key,
+// 		  e.errors, e.errors & librados::err_t::SHALLOW_ERRORS,
+// 		  e.errors & librados::err_t::DEEP_ERRORS, e)
+// 	   << dendl;
+  dout(20) << fmt::format(
+		  "adding error for object {} ({}). Errors: {} ({}/{}) wr:{}", e.object, key,
+		  librados::err_t(e.errors),
+		  librados::err_t(e.errors & librados::err_t::SHALLOW_ERRORS),
+		  librados::err_t(e.errors & librados::err_t::DEEP_ERRORS), e)
+	   << dendl;
+
   // create a bufferlist encoding all shallow errors
-  if (e.has_shallow_errors()) {
+  if (true || e.has_shallow_errors()) {
     bufferlist bl;
-    create_filtered_copy(e, librados::obj_err_t::SHALLOW_ERRORS).encode(bl);
+    create_filtered_copy(
+	e, librados::obj_err_t::SHALLOW_ERRORS, librados::err_t::SHALLOW_ERRORS)
+	.encode(bl);
     shallow_db->results[key] = bl;
   }
-  if (e.has_deep_errors()) {
+  if (true || e.has_deep_errors()) {
     bufferlist bl;
-    create_filtered_copy(e, librados::obj_err_t::DEEP_ERRORS).encode(bl);
+    create_filtered_copy(
+	e, librados::obj_err_t::DEEP_ERRORS, librados::err_t::DEEP_ERRORS)
+	.encode(bl);
     deep_db->results[key] = bl;
   }
 }
@@ -223,6 +238,21 @@ void Store::add_snap_error(int64_t pool, const inconsistent_snapset_wrapper& e)
 bool Store::is_empty() const
 {
   return shallow_db->results.empty() && deep_db->results.empty();
+}
+
+void Store::flush(ObjectStore::Transaction* t1, ObjectStore::Transaction* t2)
+{
+  if (t1) {
+    auto txn = shallow_db->driver.get_transaction(t1);
+    shallow_db->backend.set_keys(shallow_db->results, &txn);
+  }
+  if (t2) {
+    auto txn = deep_db->driver.get_transaction(t2);
+    deep_db->backend.set_keys(deep_db->results, &txn);
+  }
+
+  shallow_db->results.clear();
+  deep_db->results.clear();
 }
 
 
@@ -333,6 +363,16 @@ inline void decode(
 }
 
 
+inconsistent_obj_wrapper decode_wrapper(
+    hobject_t obj,
+    ceph::buffer::list::const_iterator bp)
+{
+  inconsistent_obj_wrapper iow{obj};
+  iow.decode(bp);
+  return iow;
+}
+
+
 void Store::collect_specific_store(
     MapCacher::MapCacher<std::string, ceph::buffer::list>& backend,
     Store::ExpCacherPosData& latest,
@@ -347,6 +387,47 @@ void Store::collect_specific_store(
     latest = backend.get_1st_after_key(latest->last_key);
   }
 }
+
+
+bufferlist Store::merge_encoded_error_wrappers(
+    hobject_t obj,
+    ExpCacherPosData& latest_sh,
+    ExpCacherPosData& latest_dp) const
+{
+  // decode both error wrappers
+
+  // the fetched shallow bufferlist: latest_sh.data
+  auto sh_wrap = decode_wrapper(obj, latest_sh->data.cbegin());
+  auto dp_wrap = decode_wrapper(obj, latest_dp->data.cbegin());
+
+  dout(20) << fmt::format(
+		  "merging errors for object {}. Shallow: {:x}, Deep: {:x}",
+		  obj, sh_wrap.errors, dp_wrap.errors)
+	   << dendl;
+
+  dout(20) << fmt::format(
+		  "merging errors {}. Shallow: {}-({}), Deep: {}-({})",
+		  sh_wrap.object, sh_wrap.errors, dp_wrap.errors, sh_wrap, dp_wrap)
+	   << dendl;
+
+  // merge the object errors (a simple OR of the two error bitmasks)
+  sh_wrap.errors |= dp_wrap.errors;
+
+  // merge the two shard error maps
+  for (auto& [shard, si] : dp_wrap.shards) {
+    dout(20) << fmt::format(
+		    "shard {} dp-errors: {} sh-errors:{}", shard, si.errors,
+		    sh_wrap.shards[shard].errors)
+	     << dendl;
+    // note: we may be creating the shallow shard entry here. This is OK
+    sh_wrap.shards[shard].errors |= si.errors;
+  }
+
+  bufferlist bl;
+  sh_wrap.encode(bl);
+  return bl;
+}
+
 
 // a better way to implement this: use two generators, one for each store.
 // and sort-merge the results. Almost like a merge-sort, but with equal
@@ -366,7 +447,8 @@ std::vector<bufferlist> Store::get_errors(
   dout(10) << fmt::format("getting errors from {} to {}", from_key, end_key)
 	   << dendl;
 
-  ExpCacherPosData latest_sh = sh_level->backend.get_1st_after_key(from_key);
+  ExpCacherPosData latest_sh =
+      sh_level->backend.get_1st_after_key(from_key);  // RRR after?
   ExpCacherPosData latest_dp = dp_level->backend.get_1st_after_key(from_key);
 
   while (max_return) {
@@ -406,19 +488,23 @@ std::vector<bufferlist> Store::get_errors(
     // we have results from both stores. Select the one with a lower key.
     // If the keys are equal, combine the errors.
     if (latest_sh->last_key == latest_dp->last_key) {
-      uint64_t known_sh_errs =
-	  decode_errors(sh_level->errors_hoid.hobj, latest_sh->data);
-      uint64_t known_dp_errs =
-	  decode_errors(dp_level->errors_hoid.hobj, latest_dp->data);
-      uint64_t known_errs = known_sh_errs | known_dp_errs;
-	  //known_sh_errs | (known_dp_errs & librados::obj_err_t::DEEP_ERRORS);
-      dout(20) << fmt::format(
-		      "key:{} errors: sh:{:x},dp:{} -> {}", latest_sh->last_key,
-		      known_sh_errs, known_dp_errs, known_errs)
-	       << dendl;
+      auto bl = merge_encoded_error_wrappers(
+	  sh_level->errors_hoid.hobj, latest_sh, latest_dp);
 
-      reencode_errors(dp_level->errors_hoid.hobj, known_errs, latest_dp->data);
-      errors.push_back(latest_dp->data);
+      //       uint64_t known_sh_errs =
+      // 	  decode_errors(sh_level->errors_hoid.hobj, latest_sh->data);
+      //       uint64_t known_dp_errs =
+      // 	  decode_errors(dp_level->errors_hoid.hobj, latest_dp->data);
+      //       uint64_t known_errs = known_sh_errs | known_dp_errs;
+      //       //known_sh_errs | (known_dp_errs & librados::err_t::DEEP_ERRORS);
+      //       dout(20) << fmt::format(
+      // 		      "key:{} errors: sh:{:x},dp:{} -> {}", latest_sh->last_key,
+      // 		      known_sh_errs, known_dp_errs, known_errs)
+      // 	       << dendl;
+      //
+      //       reencode_errors(dp_level->errors_hoid.hobj, known_errs, latest_dp->data);
+      //      errors.push_back(latest_dp->data);
+      errors.push_back(bl);
       latest_sh = sh_level->backend.get_1st_after_key(latest_sh->last_key);
       latest_dp = dp_level->backend.get_1st_after_key(latest_dp->last_key);
 

@@ -1202,6 +1202,44 @@ void PgScrubber::cleanup_store(ObjectStore::Transaction* t)
 }
 
 
+#if 1
+void PgScrubber::reinit_scrub_store()
+{
+  /*
+Entering, 0 to 3 of the following objects may exist.
+'objects' here: both code objects (the ScrubStore object) and actual Object Store objects:
+the two special hobjects in the coll (the PG data) holding the last scrub's results.
+
+The Store object can be deleted and recreated, as a way to guarantee no junk is left.
+We won;t do it here, but we will clear the at_level_t structures.
+The hobjects: possibly (sh - always, deep - if running a deep scrub).
+Do we need to read the hobjects that were not deleted back into the cache? to verify that we do not need that.
+*/
+
+  ObjectStore::Transaction t;
+  if (m_store) {
+    dout(10) << __func__ << " reusing existing store" << dendl;
+  ObjectStore::Transaction t1;
+  ObjectStore::Transaction t2;
+    m_store->flush(&t1, &t2);
+  m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t2), nullptr);
+  m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t1), nullptr);
+
+  } else {
+    dout(10) << __func__ << " creating new store" << dendl;
+    m_store = std::make_unique<Scrub::Store>(
+	*this, *m_pg->osd->store, &t, m_pg->info.pgid, m_pg->coll,
+	get_logger());
+  }
+
+  // regardless of whether the ScrubStore object was recreated or reused, we need to
+  // (possibly) clear the actual DB objects in the Object Store.
+  m_store->reinit(&t, m_active_target->level());
+  m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
+}
+
+#else
+
 void PgScrubber::reinit_scrub_store()
 {
   /*
@@ -1231,6 +1269,8 @@ Do we need to read the hobjects that were not deleted back into the cache? to ve
   m_store->reinit(&t, m_active_target->level());
   m_pg->osd->store->queue_transaction(m_pg->ch, std::move(t), nullptr);
 }
+#endif
+
 
 void PgScrubber::on_init()
 {

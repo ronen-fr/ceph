@@ -63,6 +63,7 @@ class Store {
 
   [[nodiscard]] bool is_empty() const;
   void flush(ObjectStore::Transaction*);
+  void flush(ObjectStore::Transaction* t1, ObjectStore::Transaction* t2);
 
   /// remove both shallow and deep errors DBs. Called on interval.
   void cleanup(ObjectStore::Transaction*);
@@ -162,5 +163,15 @@ class Store {
       ObjectStore::Transaction* t,
       at_level_t& db,
       std::string_view db_name);
+
+  /**
+   * merge the two error wrappers - fetched from both DBs for the same object.
+   * Specifically, the object errors are or'ed, and so are the per-shard
+   * entries.
+   */
+  bufferlist merge_encoded_error_wrappers(
+      hobject_t obj,
+      ExpCacherPosData& latest_sh,
+      ExpCacherPosData& latest_dp) const;
 };
 }  // namespace Scrub
