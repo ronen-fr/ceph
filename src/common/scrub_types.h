@@ -152,6 +152,7 @@ struct inconsistent_obj_wrapper : librados::inconsistent_obj_t {
 			const pg_shard_t &primary);
   void set_version(uint64_t ver) { version = ver; }
   void encode(ceph::buffer::list& bl) const;
+  ceph::buffer::list encode() const;
   void decode(ceph::buffer::list::const_iterator& bp);
 };
 

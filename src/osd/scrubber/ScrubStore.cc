@@ -72,15 +72,6 @@ string last_snap_key(int64_t pool)
   return "SCRUB_SS_" + hoid.to_str();
 }
 
-uint64_t decode_errors(hobject_t o, const ceph::buffer::list& bl)
-{
-  inconsistent_obj_wrapper iow{o};
-  auto sbi = bl.cbegin();
-  /// \todo add an iterator for r-value
-  iow.decode(sbi);
-  return iow.errors;
-}
-
 }  // namespace
 
 #undef dout_context
@@ -254,15 +245,12 @@ void Store::clear_level_db(
 
 void Store::reinit(ObjectStore::Transaction* t, scrub_level_t level)
 {
-  if (!t) {
-    dout(20) << fmt::format(
-		    "no transaction provided, skipping reinit of scrub errors")
-	     << dendl;
-    return;
-  }
+  dout(20) << "reinitializing the Scrub::Store" << dendl;
 
   // always clear the known shallow errors DB (as both shallow and deep scrubs
   // would recreate it)
+  // Note: only one caller, and it creates the transaction passed to reinit().
+  // No need to assert on 't'
   if (shallow_db) {
     clear_level_db(t, *shallow_db, "shallow");
   }
@@ -278,8 +266,10 @@ void Store::cleanup(ObjectStore::Transaction* t)
 {
   dout(20) << "discarding error DBs" << dendl;
   ceph_assert(t);
-  t->remove(coll, shallow_db->errors_hoid);
-  t->remove(coll, deep_db->errors_hoid);
+  if (shallow_db)
+    t->remove(coll, shallow_db->errors_hoid);
+  if (deep_db)
+    t->remove(coll, deep_db->errors_hoid);
 }
 
 
@@ -342,13 +332,12 @@ void Store::collect_specific_store(
     MapCacher::MapCacher<std::string, ceph::buffer::list>& backend,
     Store::ExpCacherPosData& latest,
     std::vector<bufferlist>& errors,
-    const std::string& end_key,
-    uint64_t& max_return) const
+    std::string_view end_key,
+    uint64_t max_return) const
 {
-  while (max_return && latest.has_value() &&
+  while (max_return-- && latest.has_value() &&
 	 latest.value().last_key < end_key) {
     errors.push_back(latest->data);
-    max_return--;
     latest = backend.get_1st_after_key(latest->last_key);
   }
 }
@@ -368,7 +357,7 @@ bufferlist Store::merge_encoded_error_wrappers(
 		  dp_wrap)
 	   << dendl;
 
-  // merge the object errors (a simple OR of the two error bitmasks)
+  // merge the object errors (a simple OR of the two error bit-sets)
   sh_wrap.errors |= dp_wrap.errors;
 
   // merge the two shard error maps
@@ -381,9 +370,7 @@ bufferlist Store::merge_encoded_error_wrappers(
     sh_wrap.shards[shard].errors |= si.errors;
   }
 
-  bufferlist bl;
-  sh_wrap.encode(bl);
-  return bl;
+  return sh_wrap.encode();
 }
 
 
@@ -405,8 +392,7 @@ std::vector<bufferlist> Store::get_errors(
   dout(10) << fmt::format("getting errors from {} to {}", from_key, end_key)
 	   << dendl;
 
-  ExpCacherPosData latest_sh =
-      sh_level->backend.get_1st_after_key(from_key);  // RRR after?
+  ExpCacherPosData latest_sh = sh_level->backend.get_1st_after_key(from_key);
   ExpCacherPosData latest_dp = dp_level->backend.get_1st_after_key(from_key);
 
   while (max_return) {
@@ -416,7 +402,7 @@ std::vector<bufferlist> Store::get_errors(
 		    (latest_dp ? latest_dp->last_key : "(none)"))
 	     << dendl;
 
-    // returned keys that are greater than end_key are not interesting
+    // keys not smaller than end_key are not interesting
     if (latest_sh.has_value() && latest_sh->last_key >= end_key) {
       latest_sh = tl::unexpected(-EINVAL);
     }

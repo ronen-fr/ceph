@@ -123,7 +123,6 @@ class Store {
       MapCacher::MapCacher<std::string, ceph::buffer::list>::PosAndData;
   using ExpCacherPosData = tl::expected<CacherPosData, int>;
 
- private:
   /// access to the owning Scrubber object, for logging mostly
   PgScrubber& m_scrubber;
 
@@ -153,8 +152,8 @@ class Store {
       MapCacher::MapCacher<std::string, ceph::buffer::list>& backend,
       ExpCacherPosData& latest,
       std::vector<bufferlist>& errors,
-      const std::string& end_key,
-      uint64_t& max_return) const;
+      std::string_view end_key,
+      uint64_t max_return) const;
 
   /**
    * Clear the DB of errors at a specific scrub level by performing an
