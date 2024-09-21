@@ -28,15 +28,20 @@ using namespace Scrub;
 bool PrimaryLogScrub::get_store_errors(const scrub_ls_arg_t& arg,
 				       scrub_ls_result_t& res_inout) const
 {
+  dout(9) << __func__ << dendl;
   if (!m_store) {
     return false;
   }
 
+  dout(8) << __func__ << dendl;
+
   if (arg.get_snapsets) {
+  dout(11) << __func__ << dendl;
     res_inout.vals = m_store->get_snap_errors(m_pg->get_pgid().pool(),
 					      arg.start_after,
 					      arg.max_return);
   } else {
+  dout(12) << __func__ << dendl;
     res_inout.vals = m_store->get_object_errors(m_pg->get_pgid().pool(),
 						arg.start_after,
 						arg.max_return);

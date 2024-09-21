@@ -16,6 +16,7 @@
 #define MAPCACHER_H
 
 #include "include/Context.h"
+#include "include/expected.hpp"
 #include "common/sharedptr_registry.hpp"
 
 namespace MapCacher {
@@ -79,11 +80,28 @@ private:
   StoreDriver<K, V> *driver;
 
   SharedPtrRegistry<K, boost::optional<V> > in_progress;
+
+ // static_assert(std::is_move_constructible<SharedPtrRegistry<K, boost::optional<V> >>::value);
+ // static_assert(std::is_move_assignable<SharedPtrRegistry<K, boost::optional<V> >>::value);
+
   typedef typename SharedPtrRegistry<K, boost::optional<V> >::VPtr VPtr;
   typedef ContainerContext<std::set<VPtr> > TransHolder;
 
 public:
   MapCacher(StoreDriver<K, V> *driver) : driver(driver) {}
+
+  // create a move constructor
+        MapCacher(MapCacher &&other) :
+        driver(other.driver),
+        in_progress(std::move(other.in_progress)) {
+        }
+
+  // move assignment operator
+        MapCacher &operator=(MapCacher &&other) {
+        driver = other.driver;
+        in_progress = std::move(other.in_progress);
+        return *this;
+        }
 
   void reset() {
     in_progress.reset();
@@ -129,6 +147,50 @@ public:
     ceph_abort(); // not reachable
     return -EINVAL;
   } ///< @return error value, 0 on success, -ENOENT if no more entries
+
+  /// Fetch first key/value std::pair after specified key
+  struct PosAndData {
+    K last_key;
+    V data;
+  };
+  using MaybePosAndData = tl::expected<PosAndData, int>;
+
+  MaybePosAndData get_1st_after_key(
+      K key  ///< [in] key after which to get next
+  )
+  {
+    ceph_assert(driver);
+    while (true) {
+      std::pair<K, boost::optional<V>> cached;
+      bool got_cached = in_progress.get_next(key, &cached);
+
+      ///\todo a driver->get_next() that returns an expected<K, V> would be nice
+      bool got_store{false};
+      std::pair<K, V> store;
+      int r = driver->get_next(key, &store);
+      if (r < 0 && r != -ENOENT) {
+        return tl::unexpected(r);
+      } else if (r == 0) {
+	got_store = true;
+      }
+
+      if (!got_cached && !got_store) {
+        return tl::unexpected(-ENOENT);
+      } else if (got_cached && (!got_store || store.first >= cached.first)) {
+	if (cached.second) {
+	  return PosAndData{cached.first, *cached.second};
+	} else {
+	  key = cached.first;
+	  continue;  // value was cached as removed, recurse
+	}
+      } else {
+	return PosAndData{store.first, store.second};
+      }
+    }
+    ceph_abort();  // not reachable
+    return tl::unexpected(-EINVAL);
+  }
+
 
   /// Adds operation setting keys to Transaction
   void set_keys(
@@ -189,6 +251,8 @@ public:
     return 0;
   } ///< @return error value, 0 on success
 };
+
+
 } // namespace
 
 #endif
