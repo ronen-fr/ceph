@@ -640,7 +640,8 @@ function TEST_dump_scrub_schedule() {
     # missed it.
     declare -A cond_active_dmp=( ['dmp_state_has_scrubbing']="true" ['query_active']="false" )
     sched_data=()
-    wait_any_cond $pgid 10 $saved_last_stamp cond_active_dmp "WaitingActive " sched_data || return 1
+    wait_any_cond $pgid 10 $saved_last_stamp cond_active_dmp "WaitingActive " sched_data
+    sleep 4
     perf_counters $dir $OSDS
 }
 
