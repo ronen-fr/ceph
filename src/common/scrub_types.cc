@@ -161,6 +161,19 @@ void inconsistent_obj_wrapper::encode(bufferlist& bl) const
   ENCODE_FINISH(bl);
 }
 
+bufferlist inconsistent_obj_wrapper::encode() const
+{
+  bufferlist bl;
+  ENCODE_START(2, 2, bl);
+  encode(errors, bl);
+  encode(object, bl);
+  encode(version, bl);
+  encode(shards, bl);
+  encode(union_shards.errors, bl);
+  ENCODE_FINISH(bl);
+  return bl;
+}
+
 void inconsistent_obj_wrapper::decode(bufferlist::const_iterator& bp)
 {
   DECODE_START(2, bp);
@@ -238,6 +251,19 @@ void inconsistent_snapset_wrapper::encode(bufferlist& bl) const
   encode(missing, bl);
   encode(ss_bl, bl);
   ENCODE_FINISH(bl);
+}
+
+bufferlist inconsistent_snapset_wrapper::encode() const
+{
+  bufferlist bl;
+  ENCODE_START(2, 1, bl);
+  encode(errors, bl);
+  encode(object, bl);
+  encode(clones, bl);
+  encode(missing, bl);
+  encode(ss_bl, bl);
+  ENCODE_FINISH(bl);
+  return bl;
 }
 
 void inconsistent_snapset_wrapper::decode(bufferlist::const_iterator& bp)
