@@ -41,7 +41,15 @@ void PerfCountersCollectionImpl::add(PerfCounters *l)
   while (i != m_loggers.end()) {
     ostringstream ss;
     ss << l->get_name() << "-" << (void*)l;
+#ifdef __cpp_lib_sstream_from_string_view
+    // the efficient version is a C++20 feature,
+    // but an up-to-date compiler is required
+
+wrong macro tested. No actual feature-test macro was defined.
+    l->set_name(ss.view());
+#else
     l->set_name(ss.str());
+#endif
     i = m_loggers.find(l);
   }
 
