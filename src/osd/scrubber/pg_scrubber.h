@@ -75,6 +75,8 @@ Main Scrubber interfaces:
 #include <string_view>
 #include <vector>
 
+#include "common/config_proxy.h"
+#include "common/config_cacher.h"
 #include "osd/PG.h"
 #include "osd/scrubber_common.h"
 
@@ -894,6 +896,19 @@ class PgScrubber : public ScrubPgIF,
   // our latest periodic 'publish_stats_to_osd()'. Required frequency depends on
   // scrub state.
   ceph::coarse_real_clock::time_point m_last_stat_upd{};
+
+  // ------------------ cached (frequently used) configuration values
+
+  /// initial (& max) number of objects to scrub in one pass - deep scrub
+  md_config_cacher_t<int64_t> osd_scrub_chunk_max;
+  /// initial (& max) number of objects to scrub in one pass - shallow
+  md_config_cacher_t<int64_t> osd_shallow_scrub_chunk_max;
+
+  /// chunk size won't be reduced (when preempted) below this
+  /// value (deep scrub)
+  md_config_cacher_t<int64_t> osd_scrub_chunk_min;
+  /// chunk size won't be reduced below this value (shallow scrub)
+  md_config_cacher_t<int64_t> osd_shallow_scrub_chunk_min;
 
   // ------------ members used if we are a replica
 
