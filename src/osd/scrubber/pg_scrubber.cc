@@ -3,12 +3,12 @@
 
 #include "./pg_scrubber.h"  // '.' notation used to affect clang-format order
 
+#include <fmt/ranges.h>
+
 #include <cmath>
 #include <iostream>
 #include <span>
 #include <vector>
-
-#include <fmt/ranges.h>
 
 #include "debug.h"
 
@@ -2547,6 +2547,10 @@ PgScrubber::PgScrubber(PG* pg)
     , osd_scrub_chunk_min{m_osds->cct->_conf, "osd_scrub_chunk_min"}
     , osd_shallow_scrub_chunk_min{m_osds->cct->_conf,
 				  "osd_shallow_scrub_chunk_min"}
+    , osd_stats_update_period_scrubbing{
+	m_osds->cct->_conf, "osd_stats_update_period_scrubbing"}
+    , osd_stats_update_period_not_scrubbing{
+	m_osds->cct->_conf, "osd_stats_update_period_not_scrubbing"}
     , preemption_data{pg}
 {
   m_fsm = std::make_unique<ScrubMachine>(m_pg, this);
@@ -2675,7 +2679,8 @@ const OSDMapRef& PgScrubber::get_osdmap() const
 
 LoggerSinkSet& PgScrubber::get_logger() const { return *m_osds->clog.get(); }
 
-ostream &operator<<(ostream &out, const PgScrubber &scrubber) {
+ostream& operator<<(ostream& out, const PgScrubber& scrubber)
+{
   return out << scrubber.m_flags;
 }
 
@@ -2789,16 +2794,14 @@ void PgScrubber::update_scrub_stats(ceph::coarse_real_clock::time_point now_is)
   using clock = ceph::coarse_real_clock;
   using namespace std::chrono;
 
-  const seconds period_active = seconds(m_pg->get_cct()->_conf.get_val<int64_t>(
-    "osd_stats_update_period_scrubbing"));
+  const seconds period_active = seconds(osd_stats_update_period_scrubbing());
   if (!period_active.count()) {
     // a way for the operator to disable these stats updates
     return;
   }
-  const seconds period_inactive =
-    seconds(m_pg->get_cct()->_conf.get_val<int64_t>(
-	      "osd_stats_update_period_not_scrubbing") +
-	    m_pg_id.pgid.m_seed % 30);
+  const seconds period_inactive = seconds(
+      osd_stats_update_period_not_scrubbing() +
+      m_pg_id.pgid.m_seed % 30);
 
   // determine the required update period, based on our current state
   auto period{period_inactive};
@@ -2832,10 +2835,10 @@ void PgScrubber::update_scrub_stats(ceph::coarse_real_clock::time_point now_is)
 
 // ///////////////////// preemption_data_t //////////////////////////////////
 
-PgScrubber::preemption_data_t::preemption_data_t(PG* pg) : m_pg{pg}
+PgScrubber::preemption_data_t::preemption_data_t(PG* pg) : m_pg{pg},
+  osd_scrub_max_preemptions{pg->cct->_conf, "osd_scrub_max_preemptions"}
 {
-  m_left = static_cast<int>(
-    m_pg->get_cct()->_conf.get_val<uint64_t>("osd_scrub_max_preemptions"));
+  m_left = osd_scrub_max_preemptions();
 }
 
 void PgScrubber::preemption_data_t::reset()
@@ -2844,8 +2847,7 @@ void PgScrubber::preemption_data_t::reset()
 
   m_preemptable = false;
   m_preempted = false;
-  m_left = static_cast<int>(
-    m_pg->cct->_conf.get_val<uint64_t>("osd_scrub_max_preemptions"));
+  m_left = osd_scrub_max_preemptions();
   m_size_divisor = 1;
 }
 
