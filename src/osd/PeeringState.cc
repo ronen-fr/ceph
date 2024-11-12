@@ -212,7 +212,7 @@ void PeeringState::update_history(const pg_history_t& new_history)
   auto mnow = pl->get_mnow();
   info.history.refresh_prior_readable_until_ub(mnow, prior_readable_until_ub);
   if (info.history.merge(new_history)) {
-    psdout(20) << "advanced history from " << new_history << dendl;
+    psdout(7) << "advanced history " << new_history << dendl;
     dirty_info = true;
     if (info.history.last_epoch_clean >= info.history.same_interval_since) {
       psdout(20) << "clearing past_intervals" << dendl;
@@ -225,7 +225,9 @@ void PeeringState::update_history(const pg_history_t& new_history)
 	       << " (mnow " << mnow << " + "
 	       << info.history.prior_readable_until_ub << ")" << dendl;
     }
-  }
+  } else {
+        psdout(7) << "history unchanged" << dendl;
+          }
 }
 
 hobject_t PeeringState::earliest_backfill() const
@@ -3004,6 +3006,8 @@ void PeeringState::share_pg_info()
 			  get_osdmap_epoch(),
 			  std::optional<pg_lease_t>{get_lease()},
 			  std::nullopt);
+    psdout(10) << "share_pg_info sending " << info.stats.stats.sum.num_large_omap_objects
+        << " to osd." << pg_shard << dendl;
     pl->send_cluster_message(pg_shard.osd, std::move(m), get_osdmap_epoch());
   }
 }
@@ -3031,8 +3035,18 @@ void PeeringState::proc_primary_info(
   ObjectStore::Transaction &t, const pg_info_t &oinfo)
 {
   ceph_assert(!is_primary());
+  psdout(10) << "proc_primary_info " << oinfo << dendl;
 
   update_history(oinfo.history);
+
+// RRR
+
+psdout(8) << "stats invalid: " << info.stats.stats_invalid << " num er:"
+<< info.stats.stats.sum.num_scrub_errors << dendl;
+
+
+
+
   if (!info.stats.stats_invalid && info.stats.stats.sum.num_scrub_errors) {
     info.stats.stats.sum.num_scrub_errors = 0;
     info.stats.stats.sum.num_shallow_scrub_errors = 0;
@@ -6489,6 +6503,7 @@ boost::statechart::result PeeringState::ReplicaActive::react(const MLease& l)
 boost::statechart::result PeeringState::ReplicaActive::react(const MInfoRec& infoevt)
 {
   DECLARE_LOCALS;
+  psdout(10) << "PeeringState::ReplicaActive::react(const MInfoRec& infoevt) " <<  dendl;
   ps->proc_primary_info(context<PeeringMachine>().get_cur_transaction(),
 			infoevt.info);
   return discard_event();

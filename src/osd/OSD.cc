@@ -7587,6 +7587,7 @@ void OSD::ms_fast_dispatch(Message *m)
   case MSG_OSD_PG_NOTIFY:
     return handle_fast_pg_notify(static_cast<MOSDPGNotify*>(m));
   case MSG_OSD_PG_INFO:
+    // RRR we won;t see this past 'n' (?)
     return handle_fast_pg_info(static_cast<MOSDPGInfo*>(m));
   case MSG_OSD_PG_REMOVE:
     return handle_fast_pg_remove(static_cast<MOSDPGRemove*>(m));
@@ -7601,6 +7602,8 @@ void OSD::ms_fast_dispatch(Message *m)
   case MSG_OSD_PG_LEASE:
   case MSG_OSD_PG_LEASE_ACK:
     {
+      if (m->get_type() == MSG_OSD_PG_INFO2)
+        dout(7) << "Maybe MSG_OSD_PG_INFO2 RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR " << m->get_type() << dendl;
       MOSDPeeringOp *pm = static_cast<MOSDPeeringOp*>(m);
       if (require_osd_peer(pm)) {
 	enqueue_peering_evt(
@@ -9391,6 +9394,7 @@ void OSD::handle_fast_pg_notify(MOSDPGNotify* m)
 
 void OSD::handle_fast_pg_info(MOSDPGInfo* m)
 {
+  // won't happen. Pre octopus
   dout(7) << __func__ << " " << *m << " from " << m->get_source() << dendl;
   if (!require_osd_peer(m)) {
     m->put();
