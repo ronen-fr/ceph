@@ -1046,15 +1046,14 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
       auth_sel.shard_map[srd].set_object(smap.objects[ho]);
 
       // Compare
-      stringstream ss;
+      //stringstream ss;
       const auto& auth_object = auth_sel.auth->second.objects[ho];
-      const bool discrep_found = compare_obj_details(auth_sel.auth_shard,
+      const auto discrep_found = compare_obj_details(auth_sel.auth_shard,
                                                      auth_object,
                                                      auth_sel.auth_oi,
                                                      smap.objects[ho],
                                                      auth_sel.shard_map[srd],
                                                      obj_result,
-                                                     ss,
                                                      ho.has_snapset());
 
       dout(20) << fmt::format(
@@ -1074,7 +1073,7 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
 		      auth_sel.auth_shard, auth_object.omap_digest_present,
 		      auth_object.omap_digest, srd,
 		      smap.objects[ho].omap_digest_present ? true : false,
-		      smap.objects[ho].omap_digest, ss.str())
+		      smap.objects[ho].omap_digest, *discrep_found)
 		 << dendl;
       }
 
@@ -1104,10 +1103,9 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
         }
 
         if (discrep_found) {
-          // Only true if compare_obj_details() found errors and put something
-          // in ss
+          // Only true if compare_obj_details() found errors
           errstream << m_pg_id << " shard " << srd << " soid " << ho << " : "
-                    << ss.str() << "\n";
+                    << *discrep_found << "\n";
         }
 
       } else if (discrep_found) {
@@ -1116,7 +1114,7 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
 
         // There are errors, without identifying the shard
         object_errors.insert(srd);
-        errstream << m_pg_id << " soid " << ho << " : " << ss.str() << "\n";
+        errstream << m_pg_id << " soid " << ho << " : " << *discrep_found << "\n";
 
       } else {
 
@@ -1371,6 +1369,236 @@ bool ScrubBackend::compare_obj_details(pg_shard_t auth_shard,
   }
   return error;
 }
+
+
+
+// == PGBackend::be_compare_scrub_objects()
+std::optional<std::string> ScrubBackend::compare_obj_details(pg_shard_t auth_shard,
+                                       const ScrubMap::object& auth,
+                                       const object_info_t& auth_oi,
+                                       const ScrubMap::object& candidate,
+                                       shard_info_wrapper& shard_result,
+                                       inconsistent_obj_wrapper& obj_result,
+                                       bool has_snapset)
+{
+  fmt::memory_buffer out;
+  bool error{false};
+
+  // ------------------------------------------------------------------------
+
+  if (auth.digest_present && candidate.digest_present &&
+      auth.digest != candidate.digest) {
+    fmt::format_to(std::back_inserter(out),
+                   "data_digest {:#x} != data_digest {:#x} from shard {}",
+                   candidate.digest,
+                   auth.digest,
+                   auth_shard);
+    error = true;
+    obj_result.set_data_digest_mismatch();
+  }
+
+  if (auth.omap_digest_present && candidate.omap_digest_present &&
+      auth.omap_digest != candidate.omap_digest) {
+    fmt::format_to(std::back_inserter(out),
+                   "{}omap_digest {:#x} != omap_digest {:#x} from shard {}",
+                   sep(error),
+                   candidate.omap_digest,
+                   auth.omap_digest,
+                   auth_shard);
+    obj_result.set_omap_digest_mismatch();
+  }
+
+  // for replicated:
+  if (m_is_replicated) {
+    if (auth_oi.is_data_digest() && candidate.digest_present &&
+        auth_oi.data_digest != candidate.digest) {
+      fmt::format_to(std::back_inserter(out),
+                     "{}data_digest {:#x} != data_digest {:#x} from auth oi {}",
+                     sep(error),
+                     candidate.digest,
+                     auth_oi.data_digest,
+                     auth_oi);
+      shard_result.set_data_digest_mismatch_info();
+    }
+
+    // for replicated:
+    if (auth_oi.is_omap_digest() && candidate.omap_digest_present &&
+        auth_oi.omap_digest != candidate.omap_digest) {
+      fmt::format_to(std::back_inserter(out),
+                     "{}omap_digest {:#x} != omap_digest {:#x} from auth oi {}",
+                     sep(error),
+                     candidate.omap_digest,
+                     auth_oi.omap_digest,
+                     auth_oi);
+      shard_result.set_omap_digest_mismatch_info();
+    }
+  }
+
+  // ------------------------------------------------------------------------
+
+  if (candidate.stat_error) {
+    if (error) {
+      return fmt::to_string(out);
+    }
+    return std::nullopt;
+  }
+
+  // ------------------------------------------------------------------------
+
+  if (!shard_result.has_info_missing() && !shard_result.has_info_corrupted()) {
+
+    auto can_attr = candidate.attrs.find(OI_ATTR);
+    ceph_assert(can_attr != candidate.attrs.end());
+    const bufferlist& can_bl = can_attr->second;
+
+    auto auth_attr = auth.attrs.find(OI_ATTR);
+    ceph_assert(auth_attr != auth.attrs.end());
+    const bufferlist& auth_bl = auth_attr->second;
+
+    if (!can_bl.contents_equal(auth_bl)) {
+      fmt::format_to(std::back_inserter(out),
+		     "{}object info inconsistent ",
+		     sep(error));
+      obj_result.set_object_info_inconsistency();
+    }
+  }
+
+  if (has_snapset) {
+    if (!shard_result.has_snapset_missing() &&
+        !shard_result.has_snapset_corrupted()) {
+
+      auto can_attr = candidate.attrs.find(SS_ATTR);
+      ceph_assert(can_attr != candidate.attrs.end());
+      const bufferlist& can_bl = can_attr->second;
+
+      auto auth_attr = auth.attrs.find(SS_ATTR);
+      ceph_assert(auth_attr != auth.attrs.end());
+      const bufferlist& auth_bl = auth_attr->second;
+
+      if (!can_bl.contents_equal(auth_bl)) {
+        fmt::format_to(std::back_inserter(out),
+		       "{}snapset inconsistent ",
+		       sep(error));
+        obj_result.set_snapset_inconsistency();
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------------
+
+  if (!m_is_replicated) {
+    if (!shard_result.has_hinfo_missing() &&
+        !shard_result.has_hinfo_corrupted()) {
+
+      auto can_hi = candidate.attrs.find(ECUtil::get_hinfo_key());
+      ceph_assert(can_hi != candidate.attrs.end());
+      const bufferlist& can_bl = can_hi->second;
+
+      auto auth_hi = auth.attrs.find(ECUtil::get_hinfo_key());
+      ceph_assert(auth_hi != auth.attrs.end());
+      const bufferlist& auth_bl = auth_hi->second;
+
+      if (!can_bl.contents_equal(auth_bl)) {
+        fmt::format_to(std::back_inserter(out),
+		       "{}hinfo inconsistent ",
+		       sep(error));
+        obj_result.set_hinfo_inconsistency();
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------------
+
+  // sizes:
+
+  uint64_t oi_size = logical_to_ondisk_size(auth_oi.size);
+  if (oi_size != candidate.size) {
+    fmt::format_to(std::back_inserter(out),
+                   "{}size {} != size {} from auth oi {}",
+                   sep(error),
+                   candidate.size,
+                   oi_size,
+                   auth_oi);
+    shard_result.set_size_mismatch_info();
+  }
+
+  if (auth.size != candidate.size) {
+    fmt::format_to(std::back_inserter(out),
+                   "{}size {} != size {} from shard {}",
+                   sep(error),
+                   candidate.size,
+                   auth.size,
+                   auth_shard);
+    obj_result.set_size_mismatch();
+  }
+
+  // If the replica is too large and we didn't already count it for this object
+
+  if (candidate.size > m_conf->osd_max_object_size &&
+      !obj_result.has_size_too_large()) {
+
+    fmt::format_to(std::back_inserter(out),
+                   "{}size {} > {} is too large",
+                   sep(error),
+                   candidate.size,
+                   m_conf->osd_max_object_size);
+    obj_result.set_size_too_large();
+  }
+
+  // ------------------------------------------------------------------------
+
+  // comparing the attributes:
+
+  for (const auto& [k, v] : auth.attrs) {
+    if (k == OI_ATTR || k[0] != '_') {
+      // We check system keys separately
+      continue;
+    }
+
+    auto cand = candidate.attrs.find(k);
+    if (cand == candidate.attrs.end()) {
+      fmt::format_to(std::back_inserter(out),
+		     "{}attr name mismatch '{}'",
+		     sep(error),
+		     k);
+      obj_result.set_attr_name_mismatch();
+    } else if (!cand->second.contents_equal(v)) {
+      fmt::format_to(std::back_inserter(out),
+		     "{}attr value mismatch '{}'",
+		     sep(error),
+		     k);
+      obj_result.set_attr_value_mismatch();
+    }
+  }
+
+  for (const auto& [k, v] : candidate.attrs) {
+    if (k == OI_ATTR || k[0] != '_') {
+      // We check system keys separately
+      continue;
+    }
+
+    auto in_auth = auth.attrs.find(k);
+    if (in_auth == auth.attrs.end()) {
+      fmt::format_to(std::back_inserter(out),
+		     "{}attr name mismatch '{}'",
+		     sep(error),
+		     k);
+      obj_result.set_attr_name_mismatch();
+    }
+  }
+
+  if (error) {
+    return fmt::to_string(out);
+  }
+  return std::nullopt;
+}
+
+
+
+
+
+
+
 
 static inline bool doing_clones(
   const std::optional<SnapSet>& snapset,

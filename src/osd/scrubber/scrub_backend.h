@@ -436,6 +436,15 @@ class ScrubBackend {
                            std::stringstream& errorstream,
                            bool has_snapset);
 
+  // returns: an error string if a discrepancy was found
+  std::optional<std::string> compare_obj_details(pg_shard_t auth_shard,
+                           const ScrubMap::object& auth,
+                           const object_info_t& auth_oi,
+                           const ScrubMap::object& candidate,
+                           shard_info_wrapper& shard_result,
+                           inconsistent_obj_wrapper& obj_result,
+                           bool has_snapset);
+
   void repair_object(const hobject_t& soid,
                      const auth_peers_t& ok_peers,
                      const std::set<pg_shard_t>& bad_peers);
