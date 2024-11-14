@@ -177,15 +177,17 @@ function teardown() {
 	    done
         fi
     fi
-    if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
-	if [ -n "$LOCALRUN" ]; then
-	    display_logs $dir
-        else
-	    # Move logs to where Teuthology will archive it
-	    mkdir -p $TESTDIR/archive/log
-	    mv $dir/*.log $TESTDIR/archive/log
-	fi
-    fi
+    mkdir -p $TESTDIR/archive/log
+    mv $dir/*.log $TESTDIR/archive/log
+#     if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
+# 	if [ -n "$LOCALRUN" ]; then
+# 	    display_logs $dir
+#         else
+# 	    # Move logs to where Teuthology will archive it
+# 	    mkdir -p $TESTDIR/archive/log
+# 	    mv $dir/*.log $TESTDIR/archive/log
+# 	fi
+#     fi
     rm -fr $dir
     rm -rf $(get_asok_dir)
     if [ "$cores" = "yes" ]; then
@@ -1990,10 +1992,16 @@ function test_pg_schedule_scrub() {
     setup $dir || return 1
     run_mon $dir a --osd_pool_default_size=1 --mon_allow_pool_size_one=true || return 1
     run_mgr $dir x  --mgr_stats_period=1 || return 1
+    local ceph_osd_args="--osd-scrub-interval-randomize-ratio=0 "
+    ceph_osd_args+="--osd_scrub_backoff_ratio=0 "
+    ceph_osd_args+="--osd_stats_update_period_not_scrubbing=3 "
+    ceph_osd_args+="--osd_stats_update_period_scrubbing=2"
     run_osd $dir 0 || return 1
     create_rbd_pool || return 1
     wait_for_clean || return 1
     pg_schedule_scrub 1.0 || return 1
+    kill_daemons $dir KILL osd || return 1
+    ! TIMEOUT=1 pg_scrub 1.0 || return 1
     teardown $dir || return 1
 }
 
