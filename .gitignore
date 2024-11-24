@@ -97,3 +97,5 @@ src/pybind/rbd/rbd.egg-info/
 src/pybind/rgw/build/
 src/pybind/rgw/rgw.c
 src/pybind/rgw/rgw.egg-info/
+install-deps-cache
+install-deps-python3
