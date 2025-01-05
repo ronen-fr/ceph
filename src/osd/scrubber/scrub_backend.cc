@@ -1040,7 +1040,7 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
       auth_sel.shard_map[auth_sel.auth_shard].selected_oi = true;
     }
 
-    if (smap.objects.count(ho)) {
+    if (smap.objects.contains(ho)) {
 
       // the scrub-map has our object
       auth_sel.shard_map[srd].set_object(smap.objects[ho]);

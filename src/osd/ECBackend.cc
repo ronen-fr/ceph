@@ -412,7 +412,7 @@ void ECBackend::RecoveryBackend::handle_recovery_read_complete(
 
     ECUtil::HashInfo hinfo(ec_impl->get_chunk_count());
     if (op.obc->obs.oi.size > 0) {
-      ceph_assert(op.xattrs.count(ECUtil::get_hinfo_key()));
+      ceph_assert(op.xattrs.contains(ECUtil::get_hinfo_key()));
       auto bp = op.xattrs[ECUtil::get_hinfo_key()].cbegin();
       decode(hinfo, bp);
     }
