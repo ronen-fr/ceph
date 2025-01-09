@@ -177,15 +177,17 @@ function teardown() {
 	    done
         fi
     fi
-    if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
-	if [ -n "$LOCALRUN" ]; then
-	    display_logs $dir
-        else
-	    # Move logs to where Teuthology will archive it
-	    mkdir -p $TESTDIR/archive/log
-	    mv $dir/*.log $TESTDIR/archive/log
-	fi
-    fi
+    mkdir -p $TESTDIR/archive/log
+    mv $dir/*.log $dir/log $TESTDIR/archive/log
+#     if [ "$cores" = "yes" -o "$dumplogs" = "1" ]; then
+# 	if [ -n "$LOCALRUN" ]; then
+# 	    display_logs $dir
+#         else
+# 	    # Move logs to where Teuthology will archive it
+# 	    mkdir -p $TESTDIR/archive/log
+# 	    mv $dir/*.log $TESTDIR/archive/log
+# 	fi
+#     fi
     rm -fr $dir
     rm -rf $(get_asok_dir)
     if [ "$cores" = "yes" ]; then
@@ -1902,7 +1904,7 @@ function test_repair() {
     wait_for_clean || return 1
     repair 1.0 || return 1
     kill_daemons $dir KILL osd || return 1
-    ! TIMEOUT=1 repair 1.0 || return 1
+    ! TIMEOUT=2 repair 1.0 || return 1
     teardown $dir || return 1
 }
 #######################################################################
@@ -1949,7 +1951,7 @@ function test_pg_scrub() {
     wait_for_clean || return 1
     pg_scrub 1.0 || return 1
     kill_daemons $dir KILL osd || return 1
-    ! TIMEOUT=1 pg_scrub 1.0 || return 1
+    ! TIMEOUT=2 pg_scrub 1.0 || return 1
     teardown $dir || return 1
 }
 
@@ -2095,7 +2097,7 @@ function test_wait_for_scrub() {
     wait_for_scrub $pgid "$last_scrub" || return 1
     kill_daemons $dir KILL osd || return 1
     last_scrub=$(get_last_scrub_stamp $pgid)
-    ! TIMEOUT=1 wait_for_scrub $pgid "$last_scrub" || return 1
+    ! TIMEOUT=2 wait_for_scrub $pgid "$last_scrub" || return 1
     teardown $dir || return 1
 }
 
