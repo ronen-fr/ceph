@@ -21,12 +21,12 @@
 template <typename ValueT>
 class md_config_cacher_t : public md_config_obs_t {
   ConfigProxy& conf;
+  const char* keys[2];
   const char* const option_name;
   std::atomic<ValueT> value_cache;
 
   const char** get_tracked_conf_keys() const override {
-    const static char* keys[] = { option_name, nullptr };
-    return keys;
+    return const_cast<const char**>(keys);
   }
 
   void handle_conf_change(const ConfigProxy& conf,
@@ -40,7 +40,8 @@ public:
   md_config_cacher_t(ConfigProxy& conf,
                      const char* const option_name)
     : conf(conf),
-      option_name(option_name) {
+      keys{option_name, nullptr},
+      option_name(keys[0]) {
     conf.add_observer(this);
     std::atomic_init(&value_cache,
                      conf.get_val<ValueT>(option_name));
