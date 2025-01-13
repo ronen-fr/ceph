@@ -9959,6 +9959,10 @@ const char** OSD::get_tracked_conf_keys() const
     "osd_op_thread_timeout",
     "osd_op_thread_suicide_timeout",
     "osd_max_scrubs",
+    "osd_shallow_scrub_chunk_max",
+    "osd_scrub_chunk_max",
+    "osd_shallow_scrub_chunk_min",
+    "osd_scrub_chunk_min",
     nullptr
   };
   return KEYS;

@@ -30,13 +30,17 @@ static std::ostream& _prefix_fn(std::ostream* _dout, T* t, std::string fn = "")
 OsdScrub::OsdScrub(
     CephContext* cct,
     Scrub::ScrubSchedListener& osd_svc,
-    const ceph::common::ConfigProxy& config)
+    ceph::common::ConfigProxy& config)
     : cct{cct}
     , m_osd_svc{osd_svc}
     , conf{config}
     , m_resource_bookkeeper{[this](std::string msg) { log_fwd(msg); }, conf}
     , m_queue{cct, m_osd_svc}
     , m_log_prefix{fmt::format("osd.{} osd-scrub:", m_osd_svc.get_nodeid())}
+    , osd_shallow_scrub_chunk_min{cct->_conf,
+				  "osd_shallow_scrub_chunk_min"}
+    , osd_shallow_scrub_chunk_max{cct->_conf,
+				  "osd_shallow_scrub_chunk_max"}
     , m_load_tracker{cct, conf, m_osd_svc.get_nodeid()}
 {
   create_scrub_perf_counters();
@@ -126,6 +130,18 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
       !env_restrictions.random_backoff_active) {
     debug_log_all_jobs();
   }
+
+  if (*osd_shallow_scrub_chunk_max)
+    dout(3) << std::format("RRR RRR conf size: {}/{} min:{}/{}",
+        *osd_shallow_scrub_chunk_max,
+       conf.get_val<int64_t>("osd_shallow_scrub_chunk_max"),
+        *osd_shallow_scrub_chunk_min,
+       conf.get_val<int64_t>("osd_shallow_scrub_chunk_min")
+        ) << dendl;
+  dout(4) << std::format("RRR RRR conf size deep: {} min:{}",
+       conf.get_val<int64_t>("osd_scrub_chunk_max"),
+       conf.get_val<int64_t>("osd_scrub_chunk_min")
+        ) << dendl;
 
   auto candidate = m_queue.pop_ready_entry(
       is_sched_target_eligible, env_restrictions, scrub_time);

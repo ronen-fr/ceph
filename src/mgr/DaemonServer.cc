@@ -1314,6 +1314,7 @@ bool DaemonServer::_handle_command(
     std::string val;
     cmd_getval(cmdctx->cmdmap, "key", key);
     cmd_getval(cmdctx->cmdmap, "value", val);
+    dout(20) << fmt::format("RRR RRRR CS {} {}", key, val) << dendl;
     r = cct->_conf.set_val(key, val, &ss);
     if (r == 0) {
       cct->_conf.apply_changes(nullptr);

@@ -207,7 +207,9 @@ function TEST_scrub_snaps() {
     do
       activate_osd $dir $osd || return 1
     done
-    ceph tell osd.* config set osd_shallow_scrub_chunk_max 25
+    sleep 3
+    ceph tell osd.* config set osd_shallow_scrub_chunk_min 5
+    ceph tell osd.* config set osd_shallow_scrub_chunk_max 20
     ceph tell osd.* config set osd_shallow_scrub_chunk_min 5
     ceph tell osd.* config set osd_pg_stat_report_interval_max_seconds 1
     ceph tell osd.* config set osd_pg_stat_report_interval_max_epochs 1
@@ -215,6 +217,10 @@ function TEST_scrub_snaps() {
 
     wait_for_clean || return 1
 
+    sleep 3
+    ceph tell osd.* config set osd_shallow_scrub_chunk_max 20
+    sleep 2
+    ceph tell osd.* config set osd_shallow_scrub_chunk_min 5
     ceph tell osd.* config get osd_shallow_scrub_chunk_max
     ceph tell osd.* config get osd_shallow_scrub_chunk_min
     ceph tell osd.* config get osd_pg_stat_report_interval_max_seconds

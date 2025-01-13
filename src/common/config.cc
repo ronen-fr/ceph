@@ -915,6 +915,7 @@ int md_config_t::set_val(ConfigValues& values,
 			 const std::string_view key, const char *val,
 			 std::stringstream *err_ss)
 {
+  //std::cout << fmt::format("RRRRRRR set_val {} = {}\n\n", key, val);
   if (key.empty()) {
     if (err_ss) *err_ss << "No key specified";
     return -EINVAL;

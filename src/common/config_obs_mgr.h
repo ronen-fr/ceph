@@ -57,15 +57,17 @@ private:
 // the non-seastar binaries against seastar libraries. so, to avoid pulling
 // in unused dependencies at the expense of increasing compiling time, we put
 // the implementation in the header file.
-template<class ConfigObs>
-void ObserverMgr<ConfigObs>::add_observer(ConfigObs* observer)
-{
-  const char **keys = observer->get_tracked_conf_keys();
-  auto ptr = std::make_shared<ConfigObs*>(observer);
-  for (const char ** k = keys; *k; ++k) {
-    observers.emplace(*k, ptr);
-  }
-}
+// template<class ConfigObs>
+// void ObserverMgr<ConfigObs>::add_observer(ConfigObs* observer)
+// {
+//   const char **keys = observer->get_tracked_conf_keys();
+//   auto ptr = std::make_shared<ConfigObs*>(observer);
+//   for (const char ** k = keys; *k; ++k) {
+//     observers.emplace(*k, ptr);
+//   }
+// }
+
+
 
 template<class ConfigObs>
 typename ObserverMgr<ConfigObs>::config_obs_wptr ObserverMgr<ConfigObs>::remove_observer(ConfigObs* observer)

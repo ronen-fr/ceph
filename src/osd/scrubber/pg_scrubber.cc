@@ -831,8 +831,8 @@ namespace {
 int64_t size_from_conf(
     bool is_deep,
     const ceph::common::ConfigProxy& conf,
-    const md_config_cacher_t<int64_t>& deep_opt,
-    const md_config_cacher_t<int64_t>& shallow_opt)
+    md_config_cacher_t<int64_t>& deep_opt,
+    md_config_cacher_t<int64_t>& shallow_opt)
 {
   if (!is_deep) {
     auto sz = *shallow_opt;
@@ -926,6 +926,9 @@ std::optional<uint64_t> PgScrubber::select_range()
 		  *osd_scrub_chunk_max,
 		  *osd_shallow_scrub_chunk_max)
 	   << dendl;
+
+  
+
 
   const int min_from_conf = static_cast<int>(size_from_conf(
       m_is_deep, conf, osd_scrub_chunk_min, osd_shallow_scrub_chunk_min));

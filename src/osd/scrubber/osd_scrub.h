@@ -4,6 +4,9 @@
 #pragma once
 #include <string_view>
 
+#include "common/config_proxy.h"
+#include "common/config_cacher.h"
+
 #include "osd/osd_types_fmt.h"
 #include "osd/osd_perf_counters.h"
 #include "osd/scrubber/osd_scrub_sched.h"
@@ -25,7 +28,7 @@ class OsdScrub {
   OsdScrub(
       CephContext* cct,
       Scrub::ScrubSchedListener& osd_svc,
-      const ceph::common::ConfigProxy& config);
+      ceph::common::ConfigProxy& config);
 
   ~OsdScrub();
 
@@ -132,10 +135,14 @@ class OsdScrub {
    // ---------------------------------------------------------------
   PerfCounters* get_perf_counters(int pool_type, scrub_level_t level);
 
+
+
  private:
   CephContext* cct;
   Scrub::ScrubSchedListener& m_osd_svc;
-  const ceph::common::ConfigProxy& conf;
+
+  // note: we are adding observers; thus - not const
+  ceph::common::ConfigProxy& conf;
 
   /**
    * check the OSD-wide environment conditions (scrub resources, time, etc.).
@@ -257,4 +264,9 @@ class OsdScrub {
 
   // 'remove' the counters from the cct, and delete them
   void destroy_scrub_perf_counters();
+
+    md_config_cacher_t<int64_t> osd_shallow_scrub_chunk_min;
+    md_config_cacher_t<int64_t> osd_shallow_scrub_chunk_max;
+
+
 };
