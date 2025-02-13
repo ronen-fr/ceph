@@ -56,10 +56,7 @@ function run() {
 function TEST_divergent() {
     local dir=$1
 
-    # something that is always there
-    local dummyfile='/etc/fstab'
-    local dummyfile2='/etc/resolv.conf'
-
+    local dummyfile=$(file_with_random_data)
     local num_osds=3
     local osds="$(seq 0 $(expr $num_osds - 1))"
     run_mon $dir a || return 1
@@ -96,7 +93,7 @@ function TEST_divergent() {
     # write a bunch of objects
     for i in $(seq 1 $testobjects)
     do
-      rados -p $poolname put existing_$i $dummyfile
+      rados -p $poolname put existing_$i $dummyfile || return 1
     done
 
     WAIT_FOR_CLEAN_TIMEOUT=20 wait_for_clean
@@ -153,7 +150,10 @@ function TEST_divergent() {
     objname="existing_$(expr $DIVERGENT_WRITE + $DIVERGENT_REMOVE)"
     echo "writing non-divergent object $objname"
     ceph pg dump pgs
-    rados -p $poolname put $objname $dummyfile2
+    # a second object (using a different size, for good measure)
+    local dummyfile2=$(file_with_random_data 1000)
+    rados -p $poolname put $objname $dummyfile2 || return 1
+    rm -f $dummyfile2
 
     # ensure no recovery of up osds first
     echo 'delay recovery'
@@ -220,6 +220,7 @@ function TEST_divergent() {
     fi
     echo "success"
 
+    rm -f $dummyfile
     delete_pool $poolname
     kill_daemons $dir || return 1
 }
@@ -227,9 +228,9 @@ function TEST_divergent() {
 function TEST_divergent_ec() {
     local dir=$1
 
-    # something that is always there
-    local dummyfile='/etc/fstab'
-    local dummyfile2='/etc/resolv.conf'
+    local dummyfile=$(file_with_random_data)
+    # a second object, different in size and contents
+    local dummyfile2=$(file_with_random_data 1000)
 
     local num_osds=3
     local osds="$(seq 0 $(expr $num_osds - 1))"
@@ -265,7 +266,7 @@ function TEST_divergent_ec() {
     # write a bunch of objects
     for i in $(seq 1 $testobjects)
     do
-      rados -p $poolname put existing_$i $dummyfile
+      rados -p $poolname put existing_$i $dummyfile || return 1
     done
 
     WAIT_FOR_CLEAN_TIMEOUT=20 wait_for_clean
@@ -322,7 +323,8 @@ function TEST_divergent_ec() {
     objname="existing_$(expr $DIVERGENT_WRITE + $DIVERGENT_REMOVE)"
     echo "writing non-divergent object $objname"
     ceph pg dump pgs
-    rados -p $poolname put $objname $dummyfile2
+    rados -p $poolname put $objname $dummyfile2 || return 1
+    rm -f $dummyfile2
 
     WAIT_FOR_CLEAN_TIMEOUT=20 wait_for_clean
 
@@ -366,6 +368,7 @@ function TEST_divergent_ec() {
     echo 'wait for peering'
     ceph pg dump pgs
     rados -p $poolname put foo $dummyfile
+    rm -f $dummyfile
 
     echo "killing divergent $divergent"
     ceph pg dump pgs
@@ -420,9 +423,9 @@ function TEST_divergent_ec() {
 function TEST_divergent_2() {
     local dir=$1
 
-    # something that is always there
-    local dummyfile='/etc/fstab'
-    local dummyfile2='/etc/resolv.conf'
+    local dummyfile=$(file_with_random_data)
+    # a second object, different in size and contents
+    local dummyfile2=$(file_with_random_data 1000)
 
     local num_osds=3
     local osds="$(seq 0 $(expr $num_osds - 1))"
@@ -460,7 +463,7 @@ function TEST_divergent_2() {
     # write a bunch of objects
     for i in $(seq 1 $testobjects)
     do
-      rados -p $poolname put existing_$i $dummyfile
+      rados -p $poolname put existing_$i $dummyfile || return 1
     done
 
     WAIT_FOR_CLEAN_TIMEOUT=20 wait_for_clean
@@ -528,7 +531,8 @@ function TEST_divergent_2() {
     objname="existing_$(expr $DIVERGENT_WRITE + $DIVERGENT_REMOVE)"
     echo "writing non-divergent object $objname"
     ceph pg dump pgs
-    rados -p $poolname put $objname $dummyfile2
+    rados -p $poolname put $objname $dummyfile2 || return 1
+    rm -f $dummyfile2
 
     WAIT_FOR_CLEAN_TIMEOUT=20 wait_for_clean
 
@@ -560,7 +564,8 @@ function TEST_divergent_2() {
     ceph pg dump pgs
     echo 'wait for peering'
     ceph pg dump pgs
-    rados -p $poolname put foo $dummyfile
+    rados -p $poolname put foo $dummyfile || return 1
+    rm -f $dummyfile
 
     # At this point the divergent_priors should have been detected
 
@@ -617,7 +622,6 @@ function TEST_divergent_2() {
     echo "success"
 
     rm $dir/$expfile
-
     delete_pool $poolname
     kill_daemons $dir || return 1
 }
@@ -627,9 +631,9 @@ function TEST_divergent_2() {
 function TEST_divergent_3() {
     local dir=$1
 
-    # something that is always there
-    local dummyfile='/etc/fstab'
-    local dummyfile2='/etc/resolv.conf'
+    local dummyfile=$(file_with_random_data)
+    # a second file (using a different size, for good measure)
+    local dummyfile2=$(file_with_random_data 1000)
 
     local num_osds=3
     local osds="$(seq 0 $(expr $num_osds - 1))"
@@ -685,7 +689,7 @@ function TEST_divergent_3() {
     # write a bunch of objects
     for i in $(seq 1 $testobjects)
     do
-      rados -p $poolname put existing_$i $dummyfile
+      rados -p $poolname put existing_$i $dummyfile || return 1
     done
 
     WAIT_FOR_CLEAN_TIMEOUT=20 wait_for_clean
@@ -753,7 +757,7 @@ function TEST_divergent_3() {
     objname="existing_$(expr $DIVERGENT_WRITE + $DIVERGENT_REMOVE)"
     echo "writing non-divergent object $objname"
     ceph pg dump pgs
-    rados -p $poolname put $objname $dummyfile2
+    rados -p $poolname put $objname $dummyfile2 || return 1
 
     WAIT_FOR_CLEAN_TIMEOUT=20 wait_for_clean
 
@@ -786,6 +790,8 @@ function TEST_divergent_3() {
     echo 'wait for peering'
     ceph pg dump pgs
     rados -p $poolname put foo $dummyfile
+    rm -f $dummyfile
+    rm -f $dummyfile2
 
     # At this point the divergent_priors should have been detected
 
@@ -842,7 +848,6 @@ function TEST_divergent_3() {
     echo "success"
 
     rm $dir/$expfile
-
     delete_pool $poolname
     kill_daemons $dir || return 1
 }
