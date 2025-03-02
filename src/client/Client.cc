@@ -160,6 +160,7 @@ using std::string;
 using std::vector;
 
 using namespace TOPNSPC::common;
+using namespace std::literals;
 
 namespace bs = boost::system;
 namespace ca = ceph::async;
@@ -17416,24 +17417,22 @@ void Client::set_cap_epoch_barrier(epoch_t e)
   cap_epoch_barrier = e;
 }
 
-const char** Client::get_tracked_conf_keys() const
+std::vector<std::string> Client::get_tracked_keys() const noexcept
 {
-  static const char* keys[] = {
-    "client_cache_size",
-    "client_cache_mid",
-    "client_acl_type",
-    "client_deleg_timeout",
-    "client_deleg_break_on_open",
-    "client_oc_size",
-    "client_oc_max_objects",
-    "client_oc_max_dirty",
-    "client_oc_target_dirty",
-    "client_oc_max_dirty_age",
-    "client_caps_release_delay",
-    "client_mount_timeout",
-    NULL
+  return {
+    "client_cache_size"s,
+    "client_cache_mid"s,
+    "client_acl_type"s,
+    "client_deleg_timeout"s,
+    "client_deleg_break_on_open"s,
+    "client_oc_size"s,
+    "client_oc_max_objects"s,
+    "client_oc_max_dirty"s,
+    "client_oc_target_dirty"s,
+    "client_oc_max_dirty_age"s,
+    "client_caps_release_delay"s,
+    "client_mount_timeout"s
   };
-  return keys;
 }
 
 void Client::handle_conf_change(const ConfigProxy& conf,
