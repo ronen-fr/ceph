@@ -15,6 +15,8 @@
 #pragma once
 #include <cstdint>
 
+#include "common/fmt_common.h"
+#include "fmt/ranges.h"
 #include "include/buffer.h"
 
 template<typename KeyT, typename IntT>
@@ -409,6 +411,21 @@ class bitset_set {
     return lhs;
   }
 
+  std::string fmt_print() const
+  requires has_formatter<KeyT>
+  {
+    std::string s = "{";
+    int c = (int)size();
+    for (auto k : *this) {
+      s += fmt::format("{}", k);
+      if (--c > 0) {
+	s += ",";
+      }
+    }
+    s += "}";
+    return s;
+  }
+
   /** returns a bitset_set with the elements from lhs which are not found in rhs
    *
    * Useful to replace calls to std::difference which looked at the complete
@@ -447,3 +464,8 @@ class bitset_set {
     return std::strong_ordering::equal;
   }
 };
+
+// make sure fmt::range would not try (and fail) to treat bitset_set as a range
+template<size_t NumBitsV, typename KeyT>
+struct fmt::is_range<bitset_set<NumBitsV, KeyT>, char> : std::false_type {};
+
