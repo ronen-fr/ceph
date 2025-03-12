@@ -193,6 +193,7 @@ using ceph::make_mutex;
 using namespace ceph::osd::scheduler;
 using TOPNSPC::common::cmd_getval;
 using TOPNSPC::common::cmd_getval_or;
+using TOPNSPC::common::cmd_getval_cast_or;
 using namespace std::literals;
 
 static ostream& _prefix(std::ostream* _dout, int whoami, epoch_t epoch) {
@@ -6567,10 +6568,12 @@ void TestOpsSocketHook::test_ops(OSDService *service, ObjectStore *store,
       return;
     }
 
-    int64_t shardid = cmd_getval_or<int64_t>(cmdmap, "shardid", shard_id_t::NO_SHARD);
-    hobject_t obj(object_t(objname), string(""), CEPH_NOSNAP, rawpg.ps(), pool, nspace);
-    ghobject_t gobj(obj, ghobject_t::NO_GEN, shard_id_t(uint8_t(shardid)));
-    spg_t pgid(curmap->raw_pg_to_pg(rawpg), shard_id_t(shardid));
+    shard_id_t shardid =
+	cmd_getval_cast_or<int64_t>(cmdmap, "shardid", shard_id_t::NO_SHARD);
+    hobject_t obj(
+	object_t(objname), string(""), CEPH_NOSNAP, rawpg.ps(), pool, nspace);
+    ghobject_t gobj(obj, ghobject_t::NO_GEN, shardid);
+    spg_t pgid(curmap->raw_pg_to_pg(rawpg), shardid);
     if (curmap->pg_is_ec(rawpg)) {
         if ((command != "injectdataerr") &&
 	    (command != "injectmdataerr") &&
