@@ -54,6 +54,74 @@ namespace ceph {
       }
     };
 
+    // with_array_section()
+
+    // for maps
+    template <typename K, typename V, typename FN, typename...Args>
+    // FN accepts a Formatter* as first argument
+    requires std::is_invocable_r_v<void, FN, Formatter*, K, V, std::string_view, Args...>
+    void with_array_section(std::string_view txt, const std::map<K,V>& m, FN&& fn, Args&&... args) {
+      Formatter::ArraySection as(*this, txt);
+      for (const auto& [k, v] : m) {
+        std::forward<FN>(fn)(this, k, v, txt, std::forward<Args>(args)...);
+      }
+    }
+
+
+    // for other types of containers
+    template <typename CONT, /*typename V, */typename FN, typename...Args> // V is the value_type of CONT ?
+    // FN accepts a Formatter* as first argument
+    requires std::is_invocable_r_v<void, FN, Formatter*, typename CONT::value_type, std::string_view, Args...>
+    void with_array_section(std::string_view txt, const CONT& m, FN&& fn, Args&&... args) {
+      Formatter::ArraySection as(*this, txt);
+      for (const auto& v : m) {
+        std::forward<FN>(fn)(this, v, txt, std::forward<Args>(args)...);
+      }
+    }
+
+    // with_obj_array_section()
+
+    // for maps
+    template <typename K, typename V, typename FN, typename...Args>
+    requires std::is_invocable_r_v<void, FN, Formatter*, const K&, const V&, std::string_view, Args...>
+    void with_obj_array_section(std::string_view txt, const std::map<K,V>& m, FN&& fn, Args&&... args) {
+      Formatter::ArraySection as(*this, txt);
+      for (const auto& [k, v] : m) {
+        Formatter::ObjectSection os(*this, txt);
+        std::forward<FN>(fn)(this, k, v, txt, std::forward<Args>(args)...);
+      }
+    }
+
+    // for other types of containers
+    template <typename CONT, /*typename V, */typename FN, typename...Args> // V is the value_type of CONT ?
+    // FN accepts a Formatter* as first argument
+    requires std::is_invocable_r_v<void, FN, Formatter*, typename CONT::value_type, std::string_view, Args...>
+    void with_obj_array_section(std::string_view txt, const CONT& m, FN&& fn, Args&&... args) {
+      Formatter::ArraySection as(*this, txt);
+      for (const auto& v : m) {
+        Formatter::ObjectSection os(*this, txt);
+        std::forward<FN>(fn)(this, v, txt, std::forward<Args>(args)...);
+      }
+    }
+
+    // an Object section:
+    template <typename OBJ_K, typename OBJ_V, typename FN, typename... Args>
+      // FN accepts a Formatter* as first argument
+      requires std::
+	  is_invocable_r_v<void, FN, Formatter*, const OBJ_K&, const OBJ_V&, std::string_view, Args...>
+	void with_object_section(
+	    std::string_view txt,
+	    const OBJ_K& obj_k,
+	    const OBJ_V& obj_v,
+	    FN&& fn,
+	    Args&&... args)
+    {
+      Formatter::ObjectSection os(*this, txt);
+      std::forward<FN>(fn)(this, obj_k, obj_v, txt, std::forward<Args>(args)...);
+    }
+
+
+
     static Formatter *create(std::string_view type,
 			     std::string_view default_type,
 			     std::string_view fallback);

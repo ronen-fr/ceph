@@ -22,6 +22,8 @@ using std::set;
 using ceph::bufferlist;
 using ceph::Formatter;
 
+using namespace std::literals;
+
 void ECSubWrite::encode(bufferlist &bl) const
 {
   ENCODE_START(4, 1, bl);
@@ -321,10 +323,150 @@ std::ostream &operator<<(
     << ")";
 }
 
-void ECSubReadReply::dump(Formatter *f) const
+#if 0
+
+/*
+
+  template<typename Callback, typename...Args>
+  decltype(auto) with_osdmap(Callback&& cb, Args&&... args) const {
+    std::shared_lock l(rwlock);
+    return std::forward<Callback>(cb)(*osdmap, std::forward<Args>(args)...);
+  }
+*/
+  //template<typename Container, typename...Args>
+  template <typename K, typename V, typename FN, typename...Args>
+  //require container is a map
+  void /*decltype(auto)*/ with_array_section(Formatter* f, std::string_view txt, const map<K,V>& m, FN&& fn, Args&&... args) {
+    Formatter::ArraySection as(*f, txt);
+    for (const auto& [k, v] : m) {
+      std::forward<FN>(fn)(f, k, v, std::forward<Args>(args)...);
+    }
+  }
+
+  template <typename CONT, typename V, typename FN, typename...Args> // V is the value_type of CONT ?
+  //require container is a map
+  void /*decltype(auto)*/ with_array_section(Formatter* f, std::string_view txt, const CONT& m, FN&& fn, Args&&... args) {
+    Formatter::ArraySection as(*f, txt);
+    for (const auto& v : m) {
+      std::forward<FN>(fn)(f, v, std::forward<Args>(args)...);
+    }
+  }
+
+  // map of <txt> to <object>
+  template <typename K, typename V, typename FN, typename...Args>
+  void with_objects_array_section(Formatter* f, std::string_view arr_txt, std::string_view obj_txt, /*fn to get object name*/ map<K,V>& m, FN&& fn, Args&&... args) {
+    Formatter::ArraySection as(*f, arr_txt);
+    for (const auto& [k, v] : m) {
+      Formatter::ObjectSection os(*f, obj_txt);
+      std::forward<FN>(fn)(f, k, v, std::forward<Args>(args)...);
+    }
+  }
+
+
+#endif
+
+void ECSubReadReply::dump(Formatter* f) const
 {
+  using offset_pair_t = pair<uint64_t, bufferlist>;
+  using extents_list_t = list<offset_pair_t>;
+
+
+  // an extent is an element in the list of extents, i.e. a pair of <offset, bl>
+  auto extent_dump = [](Formatter* f, const offset_pair_t& offset_n_bl,
+			std::string_view mg) mutable -> void {
+    const auto& [off, bl] = offset_n_bl;
+    Formatter::ObjectSection os(*f, "extent");	// mg
+    f->dump_unsigned("off", off);
+    f->dump_unsigned("buf_len", bl.length());
+  };
+
+  auto extent_dump3 = [](Formatter* f, const offset_pair_t& offset_n_bl,
+			std::string_view mg) mutable -> void {
+    const auto& [off, bl] = offset_n_bl;
+    f->dump_unsigned("off", off);
+    f->dump_unsigned("buf_len", bl.length());
+  };
+
+  auto buff_dump = [extent_dump](
+		       Formatter* f, const hobject_t& oid,
+		       const extents_list_t& l, std::string_view mg) mutable -> void {
+    f->dump_stream("oid") << oid;
+    f->with_array_section<
+	const extents_list_t,
+	decltype(extent_dump)>	// mg
+	("data", l, std::move(extent_dump));
+  };
+
+  auto buff_dump2 = [extent_dump](
+		       Formatter* f, const hobject_t& oid,
+		       const extents_list_t& l, std::string_view mg) mutable -> void {
+    f->dump_stream("oid") << oid;
+    f->with_array_section<
+	const extents_list_t,
+	decltype(extent_dump)>	// mg
+	("data", l, std::move(extent_dump));
+  };
+
+  auto buff_dump3 = [extent_dump3](
+		       Formatter* f, const hobject_t& oid,
+		       const extents_list_t& l, std::string_view mg) mutable -> void {
+    f->dump_stream("oid") << oid;
+    f->with_obj_array_section("data", l, std::move(extent_dump3));
+  };
+
   f->dump_stream("from") << from;
   f->dump_unsigned("tid", tid);
+
+//   Formatter::ArraySection as(*f, "buffers_read", buffers_read, [](Formatter *f, std::pair<hobject_t, list<pair<uint64_t, bufferlist> > > const& p) {
+//     f->open_object_section("object");
+//     f->dump_stream("oid") << p.first;
+//     Formatter::ArraySection as2(*f, "extents", p.second, [](Formatter *f, std::pair<uint64_t, bufferlist> const& p) {
+//       f->open_object_section("extent");
+//       f->dump_unsigned("off", p.first);
+//       f->dump_unsigned("buf_len", p.second.length());
+//       f->close_section();
+//     });
+//     f->open_array_section("");
+//     f->dump_stream("oid") << oid;
+//   });
+  f->with_obj_array_section("buffers_read", buffers_read, buff_dump2);
+
+  f->with_obj_array_section("buffers_read", buffers_read, buff_dump3);
+
+  f->with_array_section("buffers_read", buffers_read,
+      [buff_dump](Formatter* f, const hobject_t& oid, const extents_list_t& l, std::string_view mg) mutable {
+        buff_dump(f, oid, l, mg);
+      });
+
+
+  f->with_obj_array_section("buffers_read", buffers_read,
+      [buff_dump](Formatter* f, const hobject_t& oid, const extents_list_t& l, std::string_view mg) mutable {
+        buff_dump(f, oid, l, mg);
+      });
+
+//   f->with_array_section("buffers_read", buffers_read, [](Formatter *f, const hobject_t& oid, const list<pair<uint64_t, bufferlist>>& l,
+//         std::string_view mg) mutable {
+//     f->with_object_section("object"sv, oid, l, [](Formatter *f, const hobject_t& oid, const list<pair<uint64_t, bufferlist>>& l, std::string_view mg) mutable -> void  {
+//       f->dump_stream("oid") << oid;
+//       f->with_array_section("extents", l, [](Formatter *f, uint64_t off, bufferlist const& bl, std::string_view mg) mutable {
+//         f->open_object_section("extent");
+//         f->dump_unsigned("off", off);
+//         f->dump_unsigned("buf_len", bl.length());
+//         f->close_section();
+//       });
+//     });
+//     f->open_object_section("object");
+//     f->dump_stream("oid") << oid;
+//     f->close_section();
+// //     f->with_array_section("extents", l, [](Formatter *f, uint64_t off, bufferlist const& bl) {
+// //       f->open_object_section("extent");
+// //       f->dump_unsigned("off", off);
+// //       f->dump_unsigned("buf_len", bl.length());
+// //       f->close_section();
+// //     });
+// //     f->close_section();
+//   });
+
   f->open_array_section("buffers_read");
   for (auto i = buffers_read.cbegin(); i != buffers_read.cend(); ++i) {
     f->open_object_section("object");
