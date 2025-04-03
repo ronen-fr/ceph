@@ -611,6 +611,7 @@ PGBackend *PGBackend::build_pg_backend(
 }
 
 int PGBackend::be_scan_list(
+  const Scrub::ScrubIoCounterSet& io_counters,
   ScrubMap &map,
   ScrubMapBuilder &pos)
 {
@@ -665,7 +666,7 @@ int PGBackend::be_scan_list(
   }
 
   if (pos.deep) {
-    r = be_deep_scrub(poid, map, pos, o);
+    r = be_deep_scrub(io_counters, poid, map, pos, o);
     if (r == -EINPROGRESS) {
       return -EINPROGRESS;
     } else if (r != 0) {
