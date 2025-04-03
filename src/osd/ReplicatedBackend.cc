@@ -745,6 +745,7 @@ static uint32_t crc32_netstring(const uint32_t orig_crc, std::string_view data)
 }
 
 int ReplicatedBackend::be_deep_scrub(
+  [[maybe_unused]] const Scrub::ScrubIoCounterSet& io_counters,
   const hobject_t &poid,
   ScrubMap &map,
   ScrubMapBuilder &pos,
