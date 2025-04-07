@@ -846,6 +846,17 @@ class PgScrubber : public ScrubPgIF,
   void request_rescrubbing();
 
   /**
+   * forces a manual update of configuration parameters
+   * cached using md_config_cacher_t.
+   * The refresh is required whenever the conf parameter is used
+   * by a Scrubber method that was called from the OSD Queue conig
+   * change handler. As the order of execution of the handlers is
+   * undefined, we cannot be sure that the separate config-cachers
+   * handlers were called before or after the Osd Queue handler.
+   */
+  void refresh_config_params();
+
+  /**
    * combine cluster & pool configuration options into a single struct
    * of scrub-related parameters.
    */
