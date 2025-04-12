@@ -143,24 +143,21 @@ enum osd_counter_idx_t {
 
   l_osd_watch_timeouts,
 
+  // scrub I/O (no EC vs. replicated differentiation)
+  l_osd_scrub_omapgetheader_cnt,  ///< omap get header calls count
+  l_osd_scrub_omapgetheader_bytes,  ///< bytes read by omap get header
+  l_osd_scrub_omapget_cnt,      ///< omap get calls count
+  l_osd_scrub_omapget_bytes,    ///< total bytes read by omap get
   // scrub I/O - replicated pools
   l_osd_scrub_rppool_getattr_cnt, ///< get_attr calls count
   l_osd_scrub_rppool_stats_cnt, ///< stats calls count
   l_osd_scrub_rppool_read_cnt, ///< read calls count
   l_osd_scrub_rppool_read_bytes, ///< total bytes read
-  l_osd_scrub_rppool_omapgetheader_cnt,  ///< omap get header calls count
-  l_osd_scrub_rppool_omapgetheader_bytes,  ///< bytes read by omap get header
-  l_osd_scrub_rppool_omapget_cnt, ///< omap get calls count
-  l_osd_scrub_rppool_omapget_bytes, ///< total bytes read by omap get
   // scrub I/O - EC
   l_osd_scrub_ec_getattr_cnt, ///< get_attr calls count
   l_osd_scrub_ec_stats_cnt, ///< stats calls count
   l_osd_scrub_ec_read_cnt, ///< read calls count
   l_osd_scrub_ec_read_bytes, ///< total bytes read
-  l_osd_scrub_ec_omapgetheader_cnt,  ///< omap get header calls count
-  l_osd_scrub_ec_omapgetheader_bytes,  ///< bytes read by omap get header
-  l_osd_scrub_ec_omapget_cnt, ///< omap get calls count
-  l_osd_scrub_ec_omapget_bytes, ///< total bytes read by omap get
 
   l_osd_last,
 };

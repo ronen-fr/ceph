@@ -140,10 +140,10 @@ static inline constexpr ScrubIoCounterSet io_counters_replicated{
   .stats_cnt = l_osd_scrub_rppool_stats_cnt,
   .read_cnt = l_osd_scrub_rppool_read_cnt,
   .read_bytes = l_osd_scrub_rppool_read_bytes,
-  .omapgetheader_cnt = l_osd_scrub_rppool_omapgetheader_cnt,
-  .omapgetheader_bytes = l_osd_scrub_rppool_omapgetheader_bytes,
-  .omapget_cnt = l_osd_scrub_rppool_omapget_cnt,
-  .omapget_bytes = l_osd_scrub_rppool_omapget_bytes
+  .omapgetheader_cnt = l_osd_scrub_omapgetheader_cnt,
+  .omapgetheader_bytes = l_osd_scrub_omapgetheader_bytes,
+  .omapget_cnt = l_osd_scrub_omapget_cnt,
+  .omapget_bytes = l_osd_scrub_omapget_bytes
 };
 
 static inline constexpr ScrubIoCounterSet io_counters_ec{
@@ -151,10 +151,10 @@ static inline constexpr ScrubIoCounterSet io_counters_ec{
   .stats_cnt = l_osd_scrub_ec_stats_cnt,
   .read_cnt = l_osd_scrub_ec_read_cnt,
   .read_bytes = l_osd_scrub_ec_read_bytes,
-  .omapgetheader_cnt = l_osd_scrub_ec_omapgetheader_cnt,
-  .omapgetheader_bytes = l_osd_scrub_ec_omapgetheader_bytes,
-  .omapget_cnt = l_osd_scrub_ec_omapget_cnt,
-  .omapget_bytes = l_osd_scrub_ec_omapget_bytes
+  .omapgetheader_cnt = l_osd_scrub_omapgetheader_cnt,
+  .omapgetheader_bytes = l_osd_scrub_omapgetheader_bytes,
+  .omapget_cnt = l_osd_scrub_omapget_cnt,
+  .omapget_bytes = l_osd_scrub_omapget_bytes
 };
 }  // namespace Scrub
 
