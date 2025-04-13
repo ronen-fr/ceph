@@ -143,7 +143,8 @@ static inline constexpr ScrubIoCounterSet io_counters_replicated{
   .omapgetheader_cnt = l_osd_scrub_omapgetheader_cnt,
   .omapgetheader_bytes = l_osd_scrub_omapgetheader_bytes,
   .omapget_cnt = l_osd_scrub_omapget_cnt,
-  .omapget_bytes = l_osd_scrub_omapget_bytes
+  .omapget_bytes = l_osd_scrub_omapget_bytes,
+  .active_started_cnt = l_osd_scrub_rppool_active_started
 };
 
 static inline constexpr ScrubIoCounterSet io_counters_ec{
@@ -154,7 +155,8 @@ static inline constexpr ScrubIoCounterSet io_counters_ec{
   .omapgetheader_cnt = l_osd_scrub_omapgetheader_cnt,
   .omapgetheader_bytes = l_osd_scrub_omapgetheader_bytes,
   .omapget_cnt = l_osd_scrub_omapget_cnt,
-  .omapget_bytes = l_osd_scrub_omapget_bytes
+  .omapget_bytes = l_osd_scrub_omapget_bytes,
+  .active_started_cnt = l_osd_scrub_ec_active_started
 };
 }  // namespace Scrub
 
@@ -414,7 +416,8 @@ class PgScrubber : public ScrubPgIF,
   int get_whoami() const final;
   spg_t get_spgid() const final { return m_pg->get_pgid(); }
   PG* get_pg() const final { return m_pg; }
-  PerfCounters& get_counters_set() const final;
+  PerfCounters* get_osd_perf_counters() const final;
+  Scrub::CounterSetsInUse get_counters_set() const final;
 
   /// delay next retry of this PG after a replica reservation failure
   void flag_reservations_failure();

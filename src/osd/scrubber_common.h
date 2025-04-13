@@ -301,7 +301,19 @@ struct ScrubIoCounterSet {
   osd_counter_idx_t omapgetheader_bytes;  ///< bytes read by omap get header
   osd_counter_idx_t omapget_cnt;  ///< omap get calls count
   osd_counter_idx_t omapget_bytes;  ///< total bytes read by omap get
+  osd_counter_idx_t active_started_cnt; ///< scrubs that got past reservation
 };
+
+/// a temporary interface structure, supporting both labeled and
+/// un-labeled scrub perf counters.
+/// Note: not using refs as move-assignment is required.
+struct CounterSetsInUse {
+  // for the existing labeled counters interface:
+  PerfCounters* labeled_set;
+  // for the new un-labeled counters interface:
+  const ScrubCounterSet* counters;
+};
+
 }  // namespace Scrub
 
 
