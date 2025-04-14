@@ -594,7 +594,7 @@ typedef std::shared_ptr<const OSDMap> OSDMapRef;
    virtual bool auto_repair_supported() const = 0;
 
    int be_scan_list(
-     const Scrub::ScrubIoCounterSet& io_counters,
+     const Scrub::ScrubCounterSet& io_counters,
      ScrubMap &map,
      ScrubMapBuilder &pos);
 
@@ -602,7 +602,7 @@ typedef std::shared_ptr<const OSDMap> OSDMapRef;
      uint64_t logical_size) const = 0;
 
    virtual int be_deep_scrub(
-     [[maybe_unused]] const Scrub::ScrubIoCounterSet& io_counters,
+     [[maybe_unused]] const Scrub::ScrubCounterSet& io_counters,
      const hobject_t &oid,
      ScrubMap &map,
      ScrubMapBuilder &pos,

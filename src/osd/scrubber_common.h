@@ -292,7 +292,7 @@ struct PgScrubBeListener {
 // defining a specific subset of performance counters. Each of the members
 // is set to (the index of) the corresponding performance counter.
 // Separate sets are used for replicated and erasure-coded pools.
-struct ScrubIoCounterSet {
+struct ScrubCounterSet {
   osd_counter_idx_t getattr_cnt; ///< get_attr calls count
   osd_counter_idx_t stats_cnt;  ///< stats calls count
   osd_counter_idx_t read_cnt;   ///< read calls count

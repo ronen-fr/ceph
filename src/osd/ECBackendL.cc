@@ -1727,7 +1727,7 @@ int ECBackendL::objects_get_attrs(
 }
 
 int ECBackendL::be_deep_scrub(
-  [[maybe_unused]] const Scrub::ScrubIoCounterSet& io_counters,
+  [[maybe_unused]] const Scrub::ScrubCounterSet& io_counters,
   const hobject_t &poid,
   ScrubMap &map,
   ScrubMapBuilder &pos,

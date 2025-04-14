@@ -611,7 +611,7 @@ PGBackend *PGBackend::build_pg_backend(
 }
 
 int PGBackend::be_scan_list(
-  const Scrub::ScrubIoCounterSet& io_counters,
+  const Scrub::ScrubCounterSet& io_counters,
   ScrubMap &map,
   ScrubMapBuilder &pos)
 {

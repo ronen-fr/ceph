@@ -135,7 +135,7 @@ class MapsCollectionStatus {
 
 // links to the two sets of I/O performance counters used by PgScrubber
 // (one to be used when in a replicated pool, and one for EC))
-static inline constexpr ScrubIoCounterSet io_counters_replicated{
+static inline constexpr ScrubCounterSet io_counters_replicated{
   .getattr_cnt = l_osd_scrub_rppool_getattr_cnt,
   .stats_cnt = l_osd_scrub_rppool_stats_cnt,
   .read_cnt = l_osd_scrub_rppool_read_cnt,
@@ -147,7 +147,7 @@ static inline constexpr ScrubIoCounterSet io_counters_replicated{
   .active_started_cnt = l_osd_scrub_rppool_active_started
 };
 
-static inline constexpr ScrubIoCounterSet io_counters_ec{
+static inline constexpr ScrubCounterSet io_counters_ec{
   .getattr_cnt = l_osd_scrub_ec_getattr_cnt,
   .stats_cnt = l_osd_scrub_ec_stats_cnt,
   .read_cnt = l_osd_scrub_ec_read_cnt,

@@ -300,7 +300,7 @@ public:
   }
 
   int be_deep_scrub(
-      const Scrub::ScrubIoCounterSet &io_counters,
+      const Scrub::ScrubCounterSet &io_counters,
       const hobject_t &oid, ScrubMap &map, ScrubMapBuilder &pos,
       ScrubMap::object &o)
   {
