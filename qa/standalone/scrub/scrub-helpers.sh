@@ -407,6 +407,31 @@ function find_disjoint_but_primary {
 }
 
 
+# Dump the scrub counters for all OSDs.
+# Outputs both to the test log and (if the first parameter
+# is a number higher than 0) to a set of files in /tmp.
+function dump_scrub_counters() {
+    local dump_to_file=$([[ $1 -ge 0 ]] && echo true || echo false)
+    local msg="$2"
+    local osd_count=$(bin/ceph osd tree | grep -c 'osd\.[0-9]\+')
+    local dist1=$(( ( RANDOM % 500 )  + 1000 ))
+    local basefn="/tmp/osdio_${dist1}_${msg}_"
+    echo "-> $basefn ($osd_count OSDs) <<$msg>>"
+    for i in $(seq 0 $((osd_count-1))); do
+        echo "---------------------- osd.$i ----------------------"
+        $dump_to_file && echo "$i: into: $basefn$i"
+        $dump_to_file && bin/ceph tell osd.$i counter dump >> "$basefn$i" 2>/dev/null
+        $dump_to_file && echo "---------------------- " >> "$basefn$i"
+        $dump_to_file && CEPH_ARGS='' bin/ceph --format=json-pretty daemon $(get_asok_path osd.$i) counter dump >> "$basefn$i"
+        $dump_to_file && echo "---------------------- " >> "$basefn$i"
+        $dump_to_file && CEPH_ARGS='' bin/ceph --format=json-pretty daemon $(get_asok_path osd.$i) perf dump >> "$basefn$i"
+        bin/ceph tell osd.$i counter dump | grep -a -E '(scrub_pri)|(scrub_rep)|(scrubs_)|(scrub_)'
+        bin/ceph tell osd.$i counter dump | grep -a -A 10 'osd_scrub_'
+        echo "----------------------"
+        CEPH_ARGS='' bin/ceph --format=json-pretty daemon $(get_asok_path osd.$i) perf dump | grep -a -A 10 -B 3 -E '(scrub_pri)|(scrub_rep)|(scrubs_)|(scrub_)'
+    done
+}
+
 
 # A debug flag is set for the PG specified, causing the 'pg query' command to display
 # an additional 'scrub sessions counter' field.

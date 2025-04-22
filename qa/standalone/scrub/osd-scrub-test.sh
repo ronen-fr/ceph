@@ -34,6 +34,8 @@ function run() {
         echo "-------------- Run Test $func -----------------------"
         $func $dir || return 1
         echo "-------------- Teardown Test $func ------------------"
+        sleep 3
+        dump_scrub_counters 1 "$func"
         teardown $dir || return 1
         echo "-------------- Complete Test $func ------------------"
     done
