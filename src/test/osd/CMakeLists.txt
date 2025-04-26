@@ -93,6 +93,13 @@ add_executable(unittest_scrubber_be
 add_ceph_unittest(unittest_scrubber_be)
 target_link_libraries(unittest_scrubber_be osd os global ${CMAKE_DL_LIBS} mon ${BLKID_LIBRARIES})
 
+# unittest_scrubber_formats
+add_executable(unittest_scrubber_formats
+  test_scrubber_formats.cc
+  )
+add_ceph_unittest(unittest_scrubber_formats)
+target_link_libraries(unittest_scrubber_formats osd os global ${CMAKE_DL_LIBS} mon ${BLKID_LIBRARIES})
+
 # unittest_pglog
 add_executable(unittest_pglog
   TestPGLog.cc
