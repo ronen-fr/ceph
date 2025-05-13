@@ -139,7 +139,7 @@
     "stylelint-declaration-use-variable": "1.7.3",
     "table": "6.8.0",
     "ts-node": "9.0.0",
-    "typescript": "5.4.5",
+    "typescript": "5.8.2",
     "validator": "13.12.0"
   },
   "cypress-cucumber-preprocessor": {
