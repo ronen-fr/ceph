@@ -148,6 +148,15 @@ bool ScrubQueue::remove_entry_unlocked(spg_t pgid, scrub_level_t s_or_d)
 
 void ScrubQueue::dump_scrubs(ceph::Formatter* f) const
 {
+  {
+    auto allpgs = get_pgs([](const Scrub::SchedEntry& sj, bool) -> bool { return true; });
+    std::lock_guard lck(jobs_lock);
+    auto c = to_scrub.total_count();
+
+    dout(10) << fmt::format(
+		  "dump_scrubs: {} entries in the queue. PGs: {}", c, allpgs)
+	   << dendl;
+  }
   ceph_assert(f != nullptr);
   const auto query_time = ceph_clock_now();
   Formatter::ArraySection all_scrubs_section{*f, "scrubs"};
