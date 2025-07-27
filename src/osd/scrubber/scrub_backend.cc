@@ -488,11 +488,14 @@ static inline int dcount(const object_info_t& oi)
 ScrubBackend::sane_n_not_t ScrubBackend::shards_sanity_check(const hobject_t& ho,
                                                   std::stringstream& errstream)
 {
+  auth_selection_t ret_auth;
+  ret_auth.auth = this_chunk->received_maps.end();
+
   sane_n_not_t ret;
 
   for (const auto& [shard, smap] : this_chunk->received_maps) {
-    auto shard_ret = possible_auth_shard(ho, shard, ret_auth.shard_map);
-    if (shard_ret.possible_auth == shard_as_auth_t::usable_t::usable) {
+    auto shard_ret = possible_auth_shard_v2(ho, shard, ret_auth.shard_map);
+    if (shard_ret.possible_auth == shard_as_auth_v2_t::usable_t::usable) {
         ret.m_sane.push_back(shard);
     } else {
       // fix the error message
@@ -748,6 +751,23 @@ static inline bool dup_error_cond(bool& prev_err,
   return true;
 }
 
+// retval: should we continue with the tests
+static inline bool dup_error_cond(bool& prev_err,
+                                  bool continue_on_err,
+                                  bool pred,
+                                  shard_info_wrapper& si,
+                                  set_sinfo_err_t sete,
+                                  std::string_view msg,
+                                  std::string& errstream)
+{
+  if (pred) {
+    (si.*sete)();
+    fmt::format_to(std::back_inserter(errstream), "{}{}", sep(prev_err), msg);
+    return continue_on_err;
+  }
+  return true;
+}
+
 /**
  * calls a shard_info_wrapper function, but only if the error predicate is
  * true.
@@ -763,9 +783,9 @@ static inline bool test_error_cond(bool error_pred,
   return error_pred;
 }
 
-shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
-                                                  const pg_shard_t& srd,
-                                                  shard_info_map_t& shard_map)
+
+shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
+                                                  const pg_shard_t& srd)
 {
   //  'maps' (originally called with this_chunk->maps): this_chunk->maps
   //  'auth_oi' (called with 'auth_oi', which wasn't initialized at call site)
@@ -776,18 +796,23 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
   const auto j = this_chunk->received_maps.find(srd);
   const auto& j_shard = j->first;
   const auto& j_smap = j->second;
+
+  shard_as_auth_v2_t ret{};
+  //ret.oi = object_info_t(); // RRR needed?
+
   auto i = j_smap.objects.find(obj);
   if (i == j_smap.objects.end()) {
-    return shard_as_auth_t{};
+    return ret; // not found
   }
   const auto& smap_obj = i->second;
 
-  auto& shard_info = shard_map[j_shard];
+
+  auto& shard_info = ret.shard_info;
   if (j_shard == m_pg_whoami) {
     shard_info.primary = true;
   }
 
-  stringstream errstream;  // for this shard
+  std::string errstream;  // for this shard
 
   bool err{false};
   dup_error_cond(err,
@@ -821,7 +846,217 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
                       errstream)) {
     // With stat_error no further checking
     // We don't need to also see a missing_object_info_attr
-    return shard_as_auth_t{errstream.str()};
+    ret.error_text = errstream;
+    return ret;
+  }
+
+  ceph_assert(!obj.is_snapdir());
+  // We won't pick an auth copy if the snapset is missing or won't decode.
+  if (obj.is_head() && !m_pg.get_is_nonprimary_shard(j_shard)) {
+    auto k = smap_obj.attrs.find(SS_ATTR);
+    if (dup_error_cond(err,
+                       false,
+                       (k == smap_obj.attrs.end()),
+                       shard_info,
+                       &shard_info_wrapper::set_snapset_missing,
+                       "candidate had a missing snapset key"sv,
+                       errstream)) {
+      const bufferlist& ss_bl = k->second;
+      //SnapSet snapset;
+      try {
+        auto bliter = ss_bl.cbegin();
+        decode(ret.snapset, bliter);
+      } catch (...) {
+        // invalid snapset, probably corrupt
+        dup_error_cond(err,
+                       false,
+                       true,
+                       shard_info,
+                       &shard_info_wrapper::set_snapset_corrupted,
+                       "candidate had a corrupt snapset"sv,
+                       errstream);
+      }
+    } else {
+      // debug@dev only
+      dout(30) << fmt::format(
+                    "{} missing snap addr: {:p} shard_info: {:p} er: {:x}",
+                    __func__,
+                    (void*)&smap_obj,
+                    (void*)&shard_info,
+                    shard_info.errors)
+               << dendl;
+    }
+  }
+
+  if (m_pg.get_is_hinfo_required()) {
+    auto k = smap_obj.attrs.find(ECLegacy::ECUtilL::get_hinfo_key());
+    if (dup_error_cond(err,
+                       false,
+                       (k == smap_obj.attrs.end()),
+                       shard_info,
+                       &shard_info_wrapper::set_hinfo_missing,
+                       "candidate had a missing hinfo key"sv,
+                       errstream)) {
+      const bufferlist& hk_bl = k->second;
+      ECLegacy::ECUtilL::HashInfo hi;
+      try {
+        auto bliter = hk_bl.cbegin();
+        decode(hi, bliter);
+      } catch (...) {
+        dup_error_cond(err,
+                       false,
+                       true,
+                       shard_info,
+                       &shard_info_wrapper::set_hinfo_corrupted,
+                       "candidate had a corrupt hinfo"sv,
+                       errstream);
+      }
+    }
+  }
+
+  object_info_t oi;
+  // RRR is there a reason to not use the ret.oi?
+
+  {
+    auto k = smap_obj.attrs.find(OI_ATTR);
+    if (!dup_error_cond(err,
+                        false,
+                        (k == smap_obj.attrs.end()),
+                        shard_info,
+                        &shard_info_wrapper::set_info_missing,
+                        "candidate had a missing info key"sv,
+                        errstream)) {
+      // no object info on object, probably corrupt
+      ret.error_text = errstream;
+      return ret;
+    }
+
+    try {
+      auto bliter = k->second.cbegin();
+      decode(oi, bliter);
+    } catch (...) {
+      // invalid object info, probably corrupt
+      if (!dup_error_cond(err,
+                          false,
+                          true,
+                          shard_info,
+                          &shard_info_wrapper::set_info_corrupted,
+                          "candidate had a corrupt info"sv,
+                          errstream)) {
+        ret.error_text = errstream;
+        return ret;
+      }
+    }
+
+    if (!dup_error_cond(err,
+                        false,
+                        (oi.soid != obj),
+                        shard_info,
+                        &shard_info_wrapper::set_info_corrupted,
+                        "candidate info oid mismatch"sv,
+                        errstream)) {
+        ret.error_text = errstream;
+        return ret;
+    }
+  }
+
+  uint64_t ondisk_size = logical_to_ondisk_size(oi.size, srd.shard);
+  dup_error_cond(err,
+                 true,
+                 (smap_obj.size != ondisk_size),
+                 shard_info,
+                 &shard_info_wrapper::set_obj_size_info_mismatch,
+                 fmt::format("candidate size {} info size {} mismatch",
+                             smap_obj.size,
+                             ondisk_size),
+                 errstream);
+
+  //if (smap_obj.digest_present) {
+  ret.digest = smap_obj.digest;
+  //}
+  ret.error_text = errstream;
+
+  if (shard_info.errors) {
+    ceph_assert(err); // if we have errors, err must be true
+    return ret;
+  }
+
+  ceph_assert(!err);
+  // note that the error text is made available to the caller, even
+  // for a successful shard selection.
+  // Non-primary shards cannot be used as authoritative, but this is not
+  // considered a failure.
+  ret.possible_auth = m_pg.get_is_nonprimary_shard(j_shard)
+			  ? usable_t::not_usable_no_err
+			  : usable_t::usable;
+  ret.auth_iter = j;
+  ret.oi = oi;
+  return ret;
+  // return shard_as_auth_t{
+	// 			oi, j, errstream.str(), digest,
+	// 			m_pg.get_is_nonprimary_shard(j_shard)};
+}
+
+
+shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
+                                                  const pg_shard_t& srd,
+                                                  shard_info_map_t& shard_map)
+{
+  //  'maps' (originally called with this_chunk->maps): this_chunk->maps
+  //  'auth_oi' (called with 'auth_oi', which wasn't initialized at call site)
+  //     - create and return
+  //  'shard_map' - the one created in select_auth_object()
+  //     - used to access the 'shard_info'
+
+  const auto j = this_chunk->received_maps.find(srd);
+  const auto& j_shard = j->first;
+  const auto& j_smap = j->second;
+  auto i = j_smap.objects.find(obj);
+  if (i == j_smap.objects.end()) {
+    return shard_as_auth_t{};
+  }
+  const auto& smap_obj = i->second;
+
+  auto& shard_info = shard_map[j_shard];
+  if (j_shard == m_pg_whoami) {
+    shard_info.primary = true;
+  }
+
+  std::string errstream;  // for this shard
+
+  bool err{false};
+  dup_error_cond(err,
+                 true,
+                 smap_obj.read_error,
+                 shard_info,
+                 &shard_info_wrapper::set_read_error,
+                 "candidate had a read error"sv,
+                 errstream);
+  dup_error_cond(err,
+                 true,
+                 smap_obj.ec_hash_mismatch,
+                 shard_info,
+                 &shard_info_wrapper::set_ec_hash_mismatch,
+                 "candidate had an ec hash mismatch"sv,
+                 errstream);
+  dup_error_cond(err,
+                 true,
+                 smap_obj.ec_size_mismatch,
+                 shard_info,
+                 &shard_info_wrapper::set_ec_size_mismatch,
+                 "candidate had an ec size mismatch"sv,
+                 errstream);
+
+  if (!dup_error_cond(err,
+                      false,
+                      smap_obj.stat_error,
+                      shard_info,
+                      &shard_info_wrapper::set_stat_error,
+                      "candidate had a stat error"sv,
+                      errstream)) {
+    // With stat_error no further checking
+    // We don't need to also see a missing_object_info_attr
+    return shard_as_auth_t{errstream};
   }
 
   // We won't pick an auth copy if the snapset is missing or won't decode.

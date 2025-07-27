@@ -118,7 +118,7 @@ struct shard_as_auth_t {
   enum class usable_t : uint8_t { not_usable, not_found, usable, not_usable_no_err };
 
   // the ctor used when the shard should not be considered as auth
-  explicit shard_as_auth_t(std::string err_msg)
+  explicit shard_as_auth_t(const std::string& err_msg)
       : possible_auth{usable_t::not_usable}
       , error_text{err_msg}
       , oi{}
@@ -135,7 +135,7 @@ struct shard_as_auth_t {
       , digest{std::nullopt}
   {}
 
-  shard_as_auth_t(std::string err_msg, std::optional<uint32_t> data_digest)
+  shard_as_auth_t(const std::string& err_msg, std::optional<uint32_t> data_digest)
       : possible_auth{usable_t::not_usable}
       , error_text{err_msg}
       , oi{}
@@ -146,7 +146,7 @@ struct shard_as_auth_t {
   // possible auth candidate
   shard_as_auth_t(const object_info_t& anoi,
                   shard_to_scrubmap_t::iterator it,
-                  std::string err_msg,
+                  const std::string& err_msg,
                   std::optional<uint32_t> data_digest,
                   bool nonprimary_ec)
       : possible_auth{nonprimary_ec?usable_t::not_usable_no_err:usable_t::usable}
@@ -165,6 +165,74 @@ struct shard_as_auth_t {
   // when used for Crimson, we'll probably want to return 'digest_match' (and
   // other in/out arguments) via this struct
 };
+
+struct shard_as_auth_v2_t {
+  // note: 'not_found' differs from 'not_usable' in that 'not_found'
+  // does not carry an error message to be cluster-logged.
+  enum class usable_t : uint8_t { not_usable, not_found, usable, not_usable_no_err };
+
+  // the ctor used when the shard should not be considered as auth
+  explicit shard_as_auth_v2_t(const std::string& err_msg)
+      : possible_auth{usable_t::not_usable}
+      , error_text{err_msg}
+      , oi{}
+      , auth_iter{}
+      , digest{std::nullopt}
+  {}
+
+  // the object cannot be found on the shard
+  explicit shard_as_auth_v2_t()
+      : possible_auth{usable_t::not_found}
+      , error_text{}
+      , oi{}
+      , auth_iter{}
+      , digest{std::nullopt}
+  {}
+
+  shard_as_auth_v2_t(const std::string& err_msg, std::optional<uint32_t> data_digest)
+      : possible_auth{usable_t::not_usable}
+      , error_text{err_msg}
+      , oi{}
+      , auth_iter{}
+      , digest{data_digest}
+  {}
+
+  // possible auth candidate
+  shard_as_auth_v2_t(const object_info_t& anoi,
+                  shard_to_scrubmap_t::iterator it,
+                  const std::string& err_msg,
+                  std::optional<uint32_t> data_digest,
+                  bool nonprimary_ec)
+      : possible_auth{nonprimary_ec ? usable_t::not_usable_no_err : usable_t::usable}
+      , error_text{err_msg}
+      , oi{anoi}
+      , auth_iter{it}
+      , digest{data_digest}
+  {}
+  shard_as_auth_v2_t(const object_info_t& anoi,
+                  shard_to_scrubmap_t::iterator it,
+                  const std::string& err_msg,
+                  std::optional<uint32_t> data_digest,
+                  bool nonprimary_ec,
+                  shard_info_wrapper&& shard_info)
+      : possible_auth{nonprimary_ec ? usable_t::not_usable_no_err : usable_t::usable}
+      , error_text{err_msg}
+      , oi{anoi}
+      , auth_iter{it}
+      , digest{data_digest}
+      , shard_info{shard_info}
+  {}
+
+
+  usable_t possible_auth;
+  std::string error_text;
+  object_info_t oi;
+  shard_to_scrubmap_t::iterator auth_iter;
+  std::optional<uint32_t> digest;
+  shard_info_wrapper shard_info;
+  SnapSet snapset; ///< the snapset, if decoded
+};
+
 
 namespace fmt {
 // the format specifier {D} is used to request debug output
@@ -216,6 +284,59 @@ struct formatter<shard_as_auth_t> {
 
   bool debug_log{false};
 };
+
+namespace fmt {
+// the format specifier {D} is used to request debug output
+template <>
+struct formatter<shard_as_auth_v2_t> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    auto it = ctx.begin();
+    if (it != ctx.end()) {
+      debug_log = (*it++) == 'D';
+    }
+    return it;
+  }
+  template <typename FormatContext>
+  auto format(shard_as_auth_v2_t const& as_auth, FormatContext& ctx) const
+  {
+    if (debug_log) {
+      // note: 'if' chain, as hard to consistently (on all compilers) avoid some
+      // warnings for a switch plus multiple return paths
+      if (as_auth.possible_auth == shard_as_auth_v2_t::usable_t::not_usable) {
+        return fmt::format_to(ctx.out(),
+                              "{{shard-not-usable:{}}}",
+                              as_auth.error_text);
+      }
+      if (as_auth.possible_auth == shard_as_auth_v2_t::usable_t::not_found) {
+        return fmt::format_to(ctx.out(), "{{shard-not-found}}");
+      }
+      if (as_auth.possible_auth == shard_as_auth_v2_t::usable_t::not_usable_no_err) {
+        return fmt::format_to(ctx.out(),
+                              "{{shard-not-usable-no-err:{}}}",
+                              as_auth.error_text);
+      }
+      return fmt::format_to(ctx.out(),
+                            "{{shard-usable: soid:{} {{txt:{}}} }}",
+                            as_auth.oi.soid,
+                            as_auth.error_text);
+
+    } else {
+      return fmt::format_to(
+        ctx.out(),
+        "usable:{} soid:{} {{txt:{}}}",
+        (as_auth.possible_auth == shard_as_auth_v2_t::usable_t::usable) ? "yes"
+                                                                     : "no",
+        as_auth.oi.soid,
+        as_auth.error_text);
+    }
+  }
+
+  bool debug_log{false};
+};
+
+
 } // namespace fmt
 
 struct auth_selection_t {
@@ -471,6 +592,10 @@ class ScrubBackend {
    * entry.
    */
   shard_as_auth_t possible_auth_shard(const hobject_t& ho,
+                                      const pg_shard_t& srd,
+                                      shard_info_map_t& shard_map);
+
+  shard_as_auth_v2_t possible_auth_shard_v2(const hobject_t& ho,
                                       const pg_shard_t& srd,
                                       shard_info_map_t& shard_map);
 
