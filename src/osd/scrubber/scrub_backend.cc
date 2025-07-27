@@ -255,6 +255,7 @@ void ScrubBackend::omap_checks()
 
     const auto it = smap.objects.find(ho);
     if (it == smap.objects.end()) {
+   // RRR should not happen!!!!!!!! verify and remove
       continue;
     }
 
@@ -812,8 +813,6 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
     shard_info.primary = true;
   }
 
-  std::string errstream;  // for this shard
-
   bool err{false};
   dup_error_cond(err,
                  true,
@@ -821,21 +820,21 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                  shard_info,
                  &shard_info_wrapper::set_read_error,
                  "candidate had a read error"sv,
-                 errstream);
+                 ret.error_text);
   dup_error_cond(err,
                  true,
                  smap_obj.ec_hash_mismatch,
                  shard_info,
                  &shard_info_wrapper::set_ec_hash_mismatch,
                  "candidate had an ec hash mismatch"sv,
-                 errstream);
+                 ret.error_text);
   dup_error_cond(err,
                  true,
                  smap_obj.ec_size_mismatch,
                  shard_info,
                  &shard_info_wrapper::set_ec_size_mismatch,
                  "candidate had an ec size mismatch"sv,
-                 errstream);
+                 ret.error_text);
 
   if (!dup_error_cond(err,
                       false,
@@ -843,10 +842,9 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                       shard_info,
                       &shard_info_wrapper::set_stat_error,
                       "candidate had a stat error"sv,
-                      errstream)) {
+                      ret.error_text)) {
     // With stat_error no further checking
     // We don't need to also see a missing_object_info_attr
-    ret.error_text = errstream;
     return ret;
   }
 
@@ -860,7 +858,7 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                        shard_info,
                        &shard_info_wrapper::set_snapset_missing,
                        "candidate had a missing snapset key"sv,
-                       errstream)) {
+                       ret.error_text)) {
       const bufferlist& ss_bl = k->second;
       //SnapSet snapset;
       try {
@@ -874,7 +872,7 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                        shard_info,
                        &shard_info_wrapper::set_snapset_corrupted,
                        "candidate had a corrupt snapset"sv,
-                       errstream);
+                       ret.error_text);
       }
     } else {
       // debug@dev only
@@ -896,7 +894,7 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                        shard_info,
                        &shard_info_wrapper::set_hinfo_missing,
                        "candidate had a missing hinfo key"sv,
-                       errstream)) {
+                       ret.error_text)) {
       const bufferlist& hk_bl = k->second;
       ECLegacy::ECUtilL::HashInfo hi;
       try {
@@ -909,7 +907,7 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                        shard_info,
                        &shard_info_wrapper::set_hinfo_corrupted,
                        "candidate had a corrupt hinfo"sv,
-                       errstream);
+                       ret.error_text);
       }
     }
   }
@@ -925,9 +923,8 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                         shard_info,
                         &shard_info_wrapper::set_info_missing,
                         "candidate had a missing info key"sv,
-                        errstream)) {
+                        ret.error_text)) {
       // no object info on object, probably corrupt
-      ret.error_text = errstream;
       return ret;
     }
 
@@ -942,8 +939,7 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                           shard_info,
                           &shard_info_wrapper::set_info_corrupted,
                           "candidate had a corrupt info"sv,
-                          errstream)) {
-        ret.error_text = errstream;
+                          ret.error_text)) {
         return ret;
       }
     }
@@ -954,8 +950,7 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                         shard_info,
                         &shard_info_wrapper::set_info_corrupted,
                         "candidate info oid mismatch"sv,
-                        errstream)) {
-        ret.error_text = errstream;
+                        ret.error_text)) {
         return ret;
     }
   }
@@ -969,12 +964,9 @@ shard_as_auth_v2_t ScrubBackend::possible_auth_shard_v2(const hobject_t& obj,
                  fmt::format("candidate size {} info size {} mismatch",
                              smap_obj.size,
                              ondisk_size),
-                 errstream);
+                 ret.error_text);
 
-  //if (smap_obj.digest_present) {
   ret.digest = smap_obj.digest;
-  //}
-  ret.error_text = errstream;
 
   if (shard_info.errors) {
     ceph_assert(err); // if we have errors, err must be true
