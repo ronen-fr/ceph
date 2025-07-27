@@ -417,6 +417,18 @@ class ScrubBackend {
 
   void compare_smaps();
 
+  /// scans the replicas/primary versions of an object for discrepancies
+  std::optional<std::string> scan_object_versions(const hobject_t& ho);
+
+  struct sane_n_not_t {
+    std::vector<pg_shard_t> m_sane;
+    std::vector<shard_as_auth_t> m_failed_check;
+  };
+  sane_n_not_t shards_sanity_check(
+      const hobject_t& ho,
+      std::stringstream& errstream);
+
+
   /// might return error messages to be cluster-logged
   std::optional<std::string> compare_obj_in_maps(const hobject_t& ho);
 

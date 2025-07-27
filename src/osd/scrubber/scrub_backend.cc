@@ -281,6 +281,65 @@ void ScrubBackend::omap_checks()
   }
 }
 
+/* RRR currently replacing compare_smaps()
+ *
+ * scan_object_versions() scans the authoritative set of objects
+ * and fills m_missing and m_inconsistent.
+ *
+ * m_missing contains objects that are missing from the authoritative set.
+ * m_inconsistent contains objects that are present but have different versions
+ * across the authoritative set.
+ */
+std::optional<std::string> ScrubBackend::scan_object_versions(const hobject_t& ho)
+{
+  // find the subset of 'sane' versions of the object
+  //auto past_sanity_checks = 
+
+  return std::nullopt;
+}
+
+void ScrubBackend::update_authoritative()
+{
+  dout(10) << __func__ << dendl;
+
+  if (m_acting_but_me.empty()) {
+    return;
+  }
+
+  std::for_each(this_chunk->authoritative_set.begin(),
+                this_chunk->authoritative_set.end(),
+                [this](const auto& ho) {
+                  if (auto maybe_clust_err = scan_object_versions(ho);
+                      maybe_clust_err) {
+                    clog.error() << *maybe_clust_err;
+                  }
+                });
+
+
+  //compare_smaps();  // note: might cluster-log errors
+
+  // update the session-wide m_auth_peers with the list of good
+  // peers for each object (i.e. the ones that are in this_chunks's auth list)
+  for (auto& [obj, peers] : this_chunk->authoritative) {
+
+    auth_peers_t good_peers;
+
+    for (auto& peer : peers) {
+      good_peers.emplace_back(this_chunk->received_maps[peer].objects[obj],
+                              peer);
+    }
+
+    m_auth_peers.emplace(obj, std::move(good_peers));
+  }
+
+  for (const auto& [obj, peers] : this_chunk->authoritative) {
+    m_cleaned_meta_map.objects[obj] =
+      this_chunk->received_maps[peers.back()].objects.at(obj);
+  }
+}
+
+
+#if 0
 /*
  * update_authoritative() updates:
  *
@@ -319,6 +378,7 @@ void ScrubBackend::update_authoritative()
       *(this_chunk->received_maps[peers.back()].objects.find(obj)));
   }
 }
+#endif
 
 int ScrubBackend::scrub_process_inconsistent()
 {
@@ -423,6 +483,40 @@ static inline int dcount(const object_info_t& oi)
 {
   return (oi.is_data_digest() ? 1 : 0) + (oi.is_omap_digest() ? 1 : 0);
 }
+
+
+ScrubBackend::sane_n_not_t ScrubBackend::shards_sanity_check(const hobject_t& ho,
+                                                  std::stringstream& errstream)
+{
+  sane_n_not_t ret;
+
+  for (const auto& [shard, smap] : this_chunk->received_maps) {
+    auto shard_ret = possible_auth_shard(ho, shard, ret_auth.shard_map);
+    if (shard_ret.possible_auth == shard_as_auth_t::usable_t::usable) {
+        ret.m_sane.push_back(shard);
+    } else {
+      // fix the error message
+      shard_ret.error_text = fmt::format("{} shard {} soid {} : {}",
+                                         m_pg_id.pgid,
+                                         shard,
+                                         ho,
+                                         shard_ret.error_text);
+        ret.m_failed_check.push_back(shard_ret);
+    }
+  }
+
+  return ret;
+}
+
+
+
+
+
+
+
+
+
+
 
 auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                                                   stringstream& errstream)
