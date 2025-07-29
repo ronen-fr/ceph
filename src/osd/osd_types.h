@@ -5856,7 +5856,7 @@ inline std::ostream& operator<<(std::ostream& out, const OSDSuperblock& sb)
 
 
 
-
+/// RRR \todo improve SnapSet internal data structures
 
 /*
  * attached to object head.  describes most recent snap context, and

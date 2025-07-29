@@ -198,32 +198,32 @@ struct shard_as_auth_v2_t {
   {}
 
   // possible auth candidate
-  shard_as_auth_v2_t(const object_info_t& anoi,
-                  shard_to_scrubmap_t::iterator it,
-                  const std::string& err_msg,
-                  std::optional<uint32_t> data_digest,
-                  bool nonprimary_ec)
-      : possible_auth{nonprimary_ec ? usable_t::not_usable_no_err : usable_t::usable}
-      , error_text{err_msg}
-      , oi{anoi}
-      , auth_iter{it}
-      , digest{data_digest}
-  {}
-  shard_as_auth_v2_t(const object_info_t& anoi,
-                  shard_to_scrubmap_t::iterator it,
-                  const std::string& err_msg,
-                  std::optional<uint32_t> data_digest,
-                  bool nonprimary_ec,
-                  shard_info_wrapper&& shard_info)
-      : possible_auth{nonprimary_ec ? usable_t::not_usable_no_err : usable_t::usable}
-      , error_text{err_msg}
-      , oi{anoi}
-      , auth_iter{it}
-      , digest{data_digest}
-      , shard_info{shard_info}
-  {}
+  // shard_as_auth_v2_t(const object_info_t& anoi,
+  //                 shard_to_scrubmap_t::iterator it,
+  //                 const std::string& err_msg,
+  //                 std::optional<uint32_t> data_digest,
+  //                 bool nonprimary_ec)
+  //     : possible_auth{nonprimary_ec ? usable_t::not_usable_no_err : usable_t::usable}
+  //     , error_text{err_msg}
+  //     , oi{anoi}
+  //     , auth_iter{it}
+  //     , digest{data_digest}
+  // {}
+  // shard_as_auth_v2_t(const object_info_t& anoi,
+  //                 shard_to_scrubmap_t::iterator it,
+  //                 const std::string& err_msg,
+  //                 std::optional<uint32_t> data_digest,
+  //                 bool nonprimary_ec,
+  //                 shard_info_wrapper&& shard_info)
+  //     : possible_auth{nonprimary_ec ? usable_t::not_usable_no_err : usable_t::usable}
+  //     , error_text{err_msg}
+  //     , oi{anoi}
+  //     , auth_iter{it}
+  //     , digest{data_digest}
+  //     , shard_info{shard_info}
+  // {}
 
-
+  pg_shard_t shard_id;
   usable_t possible_auth;
   std::string error_text;
   object_info_t oi;
@@ -405,6 +405,9 @@ struct scrub_chunk_t {
   std::set<pg_shard_t> cur_missing;
   std::set<pg_shard_t> cur_inconsistent;
   bool fix_digest{false};
+  /// collected data re the advisability of using shards as auth sources
+  /// for the current object
+  std::map<pg_shard_t, shard_as_auth_v2_t> shard_consistency_data;
 };
 
 
@@ -542,12 +545,13 @@ class ScrubBackend {
   std::optional<std::string> scan_object_versions(const hobject_t& ho);
 
   struct sane_n_not_t {
-    std::vector<pg_shard_t> m_sane;
-    std::vector<shard_as_auth_t> m_failed_check;
+    std::map<pg_shard_t, shard_as_auth_v2_t> m_sane;
+    std::map<pg_shard_t, shard_as_auth_v2_t> m_failed_check;
+    std::string collected_errors;
   };
+
   sane_n_not_t shards_sanity_check(
-      const hobject_t& ho,
-      std::stringstream& errstream);
+      const hobject_t& ho);
 
 
   /// might return error messages to be cluster-logged

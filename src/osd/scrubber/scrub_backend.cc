@@ -294,7 +294,43 @@ void ScrubBackend::omap_checks()
 std::optional<std::string> ScrubBackend::scan_object_versions(const hobject_t& ho)
 {
   // find the subset of 'sane' versions of the object
-  //auto past_sanity_checks = 
+  auto past_sanity_checks = shards_sanity_check(ho);
+
+  // log all errors collected during sanity checks
+  if (!past_sanity_checks.collected_errors.empty()) {
+    clog.error() << past_sanity_checks.collected_errors;
+  }
+
+  inconsistent_obj_wrapper object_error{ho};
+
+  // if no shards are sane, create an 'inconsistent object' wrapper object,
+  // marking the object as missing.
+  if (past_sanity_checks.m_sane.empty()) {
+    object_error.set_version(0);
+    object_error.set_auth_missing(ho,
+                             this_chunk->received_maps,
+                             xxxauth_res.shard_map,
+                             this_chunk->m_error_counts.shallow_errors,
+                             this_chunk->m_error_counts.deep_errors,
+                             m_pg_whoami);
+    if (object_error.has_deep_errors()) {
+      this_chunk->m_error_counts.deep_errors++;
+    } else if (object_error.has_shallow_errors()) { // RRR why the 'else'?
+      this_chunk->m_error_counts.shallow_errors++;
+    }
+
+    this_chunk->m_inconsistent_objs.push_back(std::move(object_error));
+    return fmt::format("{} soid {} : failed to pick suitable object info\n",
+                       m_scrubber.get_pgid().pgid,
+                       ho);
+  }
+
+  // we now have a set of possible correct versions of the object.
+  // Do we need to fix anything?
+
+
+
+
 
   return std::nullopt;
 }
@@ -486,8 +522,7 @@ static inline int dcount(const object_info_t& oi)
 }
 
 
-ScrubBackend::sane_n_not_t ScrubBackend::shards_sanity_check(const hobject_t& ho,
-                                                  std::stringstream& errstream)
+ScrubBackend::sane_n_not_t ScrubBackend::shards_sanity_check(const hobject_t& ho)
 {
   auth_selection_t ret_auth;
   ret_auth.auth = this_chunk->received_maps.end();
@@ -497,7 +532,7 @@ ScrubBackend::sane_n_not_t ScrubBackend::shards_sanity_check(const hobject_t& ho
   for (const auto& [shard, smap] : this_chunk->received_maps) {
     auto shard_ret = possible_auth_shard_v2(ho, shard, ret_auth.shard_map);
     if (shard_ret.possible_auth == shard_as_auth_v2_t::usable_t::usable) {
-        ret.m_sane.push_back(shard);
+        ret.m_sane[shard] = shard_ret;
     } else {
       // fix the error message
       shard_ret.error_text = fmt::format("{} shard {} soid {} : {}",
@@ -505,9 +540,38 @@ ScrubBackend::sane_n_not_t ScrubBackend::shards_sanity_check(const hobject_t& ho
                                          shard,
                                          ho,
                                          shard_ret.error_text);
-        ret.m_failed_check.push_back(shard_ret);
+        ret.m_failed_check[shard] = shard_ret;
     }
   }
+
+  // now - find the highest version among the sane shards, and mark those
+  // that are not at that version as 'not_usable'
+
+  auto version_compare = [](const shard_as_auth_v2_t& a, const shard_as_auth_v2_t& b) {
+    if (a.oi.version == b.oi.version) {
+      // if versions are equal, prefer the one with more digests
+      return dcount(a.oi) < dcount(b.oi);
+    }
+    if (a.oi.version == eversion_t()) {
+      return (b.oi.version != eversion_t()); // a is not usable
+    }
+    return a.oi.version < b.oi.version;
+  };
+
+  auto max_version_it = std::ranges::max_element(
+    ret.m_sane | std::views::values,
+    [](const shard_as_auth_v2_t& a, const shard_as_auth_v2_t& b) {
+      return a.oi.version < b.oi.version;
+    });
+
+
+
+
+  eversion_t highest_version = std::ranges::max(
+    ret.m_sane | std::views::values,
+    {},
+    [](const shard_as_auth_v2_t& sa) { return sa.oi.version; })
+    .oi.version;
 
   return ret;
 }

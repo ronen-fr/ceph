@@ -74,14 +74,11 @@ class ModeCollector {
   std::pmr::monotonic_buffer_resource m_mbr{
       m_buffer.data(), m_buffer.size(), nullptr};
 
-  // the number of entries expected
-  const size_t m_sample_size;
-
   /// Map to store frequency of each value
   std::pmr::unordered_map<K, node_type_t, std::identity> m_frequency_map;
 
   /// Actual count of elements added. Must match m_sample_size.
-  size_t actual_count{0};
+  size_t m_actual_count{0};
 
  public:
   enum class mode_status_t {
@@ -97,11 +94,9 @@ class ModeCollector {
     size_t count;
   };
 
-  explicit ModeCollector(size_t sample_size)
-      : m_sample_size(sample_size)
-      , m_frequency_map(&m_mbr)
+  explicit ModeCollector() : m_frequency_map(&m_mbr)
   {
-    m_frequency_map.reserve(m_sample_size);
+    m_frequency_map.reserve(MAX_ELEM);
   }
 
   /// Add a value to the collector
@@ -111,8 +106,7 @@ class ModeCollector {
     node.m_count++;
     // note: it's OK to overwrite the ID here:
     node.m_id = obj;  // Store the object ID associated with this value
-    actual_count++;
-
+    m_actual_count++;
   }
 
 
@@ -123,7 +117,6 @@ class ModeCollector {
    */
   results_t find_mode()
   {
-    assert(actual_count == m_sample_size);
     assert(!m_frequency_map.empty());
 
     auto max_elem = std::ranges::max_element(
@@ -131,7 +124,7 @@ class ModeCollector {
 	[](const auto& pair) { return pair.second.m_count; });
 
     // Check for clear victory
-    if (max_elem->second.m_count > m_sample_size / 2) {
+    if (max_elem->second.m_count > m_actual_count / 2) {
       return {
 	  mode_status_t::authorative_value, max_elem->first,
 	  max_elem->second.m_id, max_elem->second.m_count};
