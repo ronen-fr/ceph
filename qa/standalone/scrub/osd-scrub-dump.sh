@@ -74,20 +74,20 @@ function wait_for_scrub_mod() {
     local orig_primary=$2
     local last_scrub="$3"
     local sname=${4:-last_scrub_stamp}
-    local tout=${5:-3000}
+    local tout=${5:-300}
 
     for ((i=0; i < $tout; i++)); do
-        sleep 0.1
+        # sleep 0.1
         if test "$(get_last_scrub_stamp $pgid $sname)" '>' "$last_scrub" ; then
             return 0
         fi
         sleep 0.1
-        # are we still the primary?
-        local current_primary=`./bin/ceph pg $pgid query | jq '.acting[0]' `
-        if [ $orig_primary != $current_primary ]; then
-            echo $orig_primary no longer primary for $pgid
-            return 0
-        fi
+        # # are we still the primary?
+        # local current_primary=`./bin/ceph pg $pgid query | jq '.acting[0]' `
+        # if [ $orig_primary != $current_primary ]; then
+        #     echo $orig_primary no longer primary for $pgid
+        #     return 0
+        # fi
     done
     return 1
 }
@@ -133,29 +133,43 @@ function modify_()
 
 }
 
+
+# \todo: the actual "corruption" should be a generic function
+# RRR
 # modify object for which the downed OSD is primary / secondary.
+# Parameters:
 function modify_obs_of_an_osd()
 {
   local dir=$1
   local target_osd=$2
   # list of objects to modify
   local objects_to_modify=$3
+  local -n o_to_og=$4
+
+  ls ./dev
 
   # Skip if no objects to modify
   if [[ -z "$objects_to_modify" ]]; then
         return 0
   fi
 
-
-  # printf "%s\n" "${!D[@]}" | shuf -n "$E" | while read -r selected_key; do
-  #   FUN "$selected_key" "${D[$selected_key]}"
-
   # the objects to modify:
   echo "Objects to modify on osd.$target_osd: ${objects_to_modify[@]}"
 
-  # take that OSD down
-
-
+  # Note: all OSDs are down
+  # As a first test - let's modify the OI_ATTR
+  for obj in $objects_to_modify; do
+    OH=$(ceph-objectstore-tool --data-path $dir/$target_osd --head --op list $obj | sed -n 's/^[^{]*\({[^}]*}\).*$/\1/p')
+    echo "Modifying $obj: json name: $OH"
+    #OH=$(ceph-objectstore-tool --data-path $dir/osd$target_osd --head --op list $obj | sed -n 's/^[^{]*\({[^}]*}\).*$/\1/p')
+    #echo "Modifying $obj: json name: $OH"
+    if [[ -z "$OH" ]]; then
+        echo "ERROR: cannot find object $obj on osd.$target_osd"
+        return 1
+    fi
+    local pgid=${o_to_og[$obj]}
+    ceph-objectstore-tool --data-path $dir/${target_osd} --pgid $pgid $OH rm-attr '_' || return 1
+  done
 }
 
 
@@ -189,6 +203,8 @@ function corrupt_and_measure()
     )
     local extr_dbg=3 # note: 3 and above leave some temp files around
     standard_scrub_wpq_cluster "$dir" cluster_conf 0 || return 1
+    orig_osd_args=" ${cluster_conf['osd_args']}"
+    orig_osd_args=" $(echo $orig_osd_args)"
 
     local poolid=${cluster_conf['pool_id']}
     local poolname=${cluster_conf['pool_name']}
@@ -224,35 +240,39 @@ function corrupt_and_measure()
     done
     if [[ -n "$saved_echo_flag" ]]; then set -x; fi
 
-    # for each OSD:
-    for osd in $(seq 0 $(expr $OSDS - 1))
-    do
-        # get the objects to modify for this OSD
-        #local -n D=${prim_objs_to_corrupt[$osd]}
-        #modify_obs_of_an_osd "$dir" "$osd" D
-        modify_obs_of_an_osd "$dir" "$osd" "${prim_objs_to_corrupt[$osd]}"
-    done
-
 
     # disable rescheduling of the queue due to 'no-scrub' flags
     bin/ceph tell osd.* config set osd_scrub_backoff_ratio 0.9999
-    ceph tell osd.* config set osd_scrub_sleep "0"
 
 
     # --------------------------  step 2: corruption of objects --------------------------
 
-    # create object errors
-    #shuf -i 0-$T -n $N
+    kill_daemons $dir TERM osd || return 1
+    sleep 1
+    for osd in $(seq 0 $(expr $OSDS - 1))
+    do
+      modify_obs_of_an_osd "$dir" "$osd" "${prim_objs_to_corrupt[$osd]}" obj_to_pgid || return 1
+    done
+    echo "osd args:"
+    echo "\t$ceph_osd_args"
+    echo "\tsaved: $orig_osd_args"
+    for osd in $(seq 0 $(expr $OSDS - 1))
+    do
+      activate_osd "$dir" "$osd" $orig_osd_args || return 1
+    done
+
+    sleep 4
 
     # ---------------------------  step 3: scrub & measure -------------------------------
 
     # set the scrub parameters and the update frequency for low latencies
     ceph tell osd.* config set osd_scrub_sleep "0"
-    ceph tell osd.* config set osd_max_scrubs 1  # for now, only one scrub at a time
+    ceph tell osd.* config set osd_max_scrubs 3  # for now, only 2 scrubs at a time
     ceph tell osd.* config set osd_stats_update_period_not_scrubbing 1
     ceph tell osd.* config set osd_stats_update_period_scrubbing 1
     ceph tell osd.* config set osd_scrub_chunk_max 5
     ceph tell osd.* config set osd_shallow_scrub_chunk_max 5
+    bin/ceph tell osd.* config set osd_scrub_backoff_ratio 0.9999
 
 
     #create the dictionary of the PGs in the pool
@@ -269,25 +289,35 @@ function corrupt_and_measure()
     for pg in "${!pg_pr[@]}"; do
         saved_last_stamp[$pg]=$(get_last_scrub_stamp $pg last_scrub_stamp)
     done
+    ceph pg dump pgs
 
     #local start_time=$(date +%s%N)
     local start_time=$(date +%s)
     for pg in "${!pg_pr[@]}"; do
         ceph pg $pg deep-scrub || return 1
+    done
+    for pg in "${!pg_pr[@]}"; do
         wait_for_scrub_mod $pg ${pg_pr[$pg]} ${saved_last_stamp[$pg]} last_scrub_stamp 6000 || return 1
     done
     local end_time=$(date +%s)
     #local duration=$(( (end_time - start_time)/1000000 ))
     local duration=$(( end_time - start_time ))
+
+    ceph pg dump pgs
+
     printf 'MSR %3d %3d %3d %6d\n' "$OSDS" "$PGS" "$CORRUPT_PRIMARY" "$duration"
     return 0
 }
 
-
-function TEST_time_measurements_basic()
+function TEST_time_measurements_basic_1()
 {
-  corrupt_and_measure "$1" 3 4 6 5 0 || return 1
+  corrupt_and_measure "$1" 3 4 6 0 0 || return 1
+}
 
+
+function TEST_time_measurements_basic_2()
+{
+  corrupt_and_measure "$1" 3 4 6 2 0 || return 1
 }
 
 function T__EST_recover_unexpected() {
