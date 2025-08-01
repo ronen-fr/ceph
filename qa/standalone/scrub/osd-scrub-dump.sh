@@ -218,7 +218,7 @@ function corrupt_and_measure()
     set +x
 
     # Create some objects
-    local testdata_file=$(file_with_random_data 1024)
+    local testdata_file=$(file_with_random_data 256)
     for i in `seq 1 $objects`
     do
         rados -p $poolname put obj${i} $testdata_file || return 1
@@ -272,8 +272,11 @@ function corrupt_and_measure()
     ceph tell osd.* config set osd_stats_update_period_scrubbing 1
     ceph tell osd.* config set osd_scrub_chunk_max 5
     ceph tell osd.* config set osd_shallow_scrub_chunk_max 5
-    bin/ceph tell osd.* config set osd_scrub_backoff_ratio 0.9999
+    ceph tell osd.* config set osd_scrub_backoff_ratio 0.9999
 
+    # first - with 'no auto-repair'
+    ceph tell osd.* config set osd_scrub_auto_repair false
+    sleep 2
 
     #create the dictionary of the PGs in the pool
     declare -A pg_pr
@@ -291,6 +294,7 @@ function corrupt_and_measure()
     done
     ceph pg dump pgs
 
+    ceph tell osd.* config set debug_osd 10/10
     #local start_time=$(date +%s%N)
     local start_time=$(date +%s)
     for pg in "${!pg_pr[@]}"; do
@@ -302,10 +306,50 @@ function corrupt_and_measure()
     local end_time=$(date +%s)
     #local duration=$(( (end_time - start_time)/1000000 ))
     local duration=$(( end_time - start_time ))
+    ceph tell osd.* config set debug_osd 20/20
 
     ceph pg dump pgs
+    printf 'MSR NAUTO %3d %3d %3d %6d\n' "$OSDS" "$PGS" "$CORRUPT_PRIMARY" "$duration"
+    for pg in "${!pg_pr[@]}"; do
+      echo "list-inconsistent for PG $pg"
+      rados -p $poolname list-inconsistent-obj $pg --format=json-pretty | jq '.'
+    done
+    bin/ceph pg ls-by-osd 0
+    bin/ceph pg ls-by-osd 1
+    bin/ceph pg ls-by-osd 2
 
-    printf 'MSR %3d %3d %3d %6d\n' "$OSDS" "$PGS" "$CORRUPT_PRIMARY" "$duration"
+    # now - auto repair
+    # ATTN in Squid - that's not enough to trigger a repair
+    ceph tell osd.* config set osd_scrub_auto_repair true
+    sleep 5
+    ceph pg dump pgs --format=json-pretty | jq '.pg_stats[]' > /tmp/pg_stats.json
+    ceph pg dump pgs --format=json-pretty | jq '.pg_stats[] | select(.state | contains("inconsistent"))'
+    for pg in "${!pg_pr[@]}"; do
+        saved_last_stamp[$pg]=$(get_last_scrub_stamp $pg last_scrub_stamp)
+    done
+    ceph tell osd.* config set debug_osd 10/10
+    start_time=$(date +%s)
+    for pg in "${!pg_pr[@]}"; do
+        ceph pg repair  $pg || return 1
+    done
+    for pg in "${!pg_pr[@]}"; do
+        wait_for_scrub_mod $pg ${pg_pr[$pg]} ${saved_last_stamp[$pg]} last_scrub_stamp 6000 || return 1
+    done
+    end_time=$(date +%s)
+    duration=$(( end_time - start_time ))
+    ceph tell osd.* config set debug_osd 20/20
+    ceph pg dump pgs
+    printf 'MSR AUTOR %3d %3d %3d %6d\n' "$OSDS" "$PGS" "$CORRUPT_PRIMARY" "$duration"
+    for pg in "${!pg_pr[@]}"; do
+      echo "list-inconsistent for PG $pg"
+      rados -p $poolname list-inconsistent-obj $pg --format=json-pretty | jq '.'
+    done
+    bin/ceph pg ls-by-osd 0
+    bin/ceph pg ls-by-osd 1
+    bin/ceph pg ls-by-osd 2
+
+    wait_for_clean || return 1
+
     return 0
 }
 
@@ -318,6 +362,12 @@ function TEST_time_measurements_basic_1()
 function TEST_time_measurements_basic_2()
 {
   corrupt_and_measure "$1" 3 4 6 2 0 || return 1
+}
+
+function TEST_time_measurements_basic_3()
+{
+  #corrupt_and_measure "$1" 4 16 32 2 0 || return 1
+  corrupt_and_measure "$1" 4 16 1024 20 0 || return 1
 }
 
 function T__EST_recover_unexpected() {
