@@ -314,6 +314,7 @@ function standard_scrub_wpq_cluster() {
 # - pg_acting_dict: a dictionary of pgid -> acting set
 # - pg_pool_dict: a dictionary of pgid -> pool
 # If the input file is '-', the function will fetch the dump directly from the ceph cluster.
+
 function build_pg_dicts {
   local dir=$1
   local -n pg_primary_dict=$2
@@ -321,42 +322,163 @@ function build_pg_dicts {
   local -n pg_pool_dict=$4
   local infile=$5
 
-  local extr_dbg=0 # note: 3 and above leave some temp files around
+  local extr_dbg=1
+
+  # Save and disable -x
+  local saved_echo_flag=${-//[^x]/}
+  set +x
+
+  # This jq filter extracts all required fields.
+  local jq_filter='.pg_stats[] | [.pgid, (.acting | @sh), .acting_primary, (.pgid | split(".")[0])] | @tsv'
+
+  # Process the data directly without a pipeline that creates a subshell
+  if [[ $infile == "-" ]]; then
+    # Fetch data and process it in the same shell
+    local json_data
+    json_data=$(ceph pg dump pgs_brief -f=json)
+
+    # Process the JSON data directly
+    while IFS=$'\t' read -r pgid acting acting_primary pool; do
+      [[ -z "$pgid" ]] && continue
+
+      (( extr_dbg >= 1 )) && echo "PG: $pgid  acting: $acting  primary: $acting_primary  pool: $pool"
+      pg_primary_dict["$pgid"]=$acting_primary
+      pg_acting_dict["$pgid"]=$acting
+      pg_pool_dict["$pgid"]=$pool
+    done < <(echo "$json_data" | jq -r "$jq_filter")
+
+  else
+    # Process directly from file
+    while IFS=$'\t' read -r pgid acting acting_primary pool; do
+      [[ -z "$pgid" ]] && continue
+
+      (( extr_dbg >= 1 )) && echo "PG: $pgid  acting: $acting  primary: $acting_primary  pool: $pool"
+      pg_primary_dict["$pgid"]=$acting_primary
+      pg_acting_dict["$pgid"]=$acting
+      pg_pool_dict["$pgid"]=$pool
+    done < <(jq -r "$jq_filter" "$infile")
+  fi
+
+  # Restore shell options
+  if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+}
+
+
+function build_pg_dicdts_old{}
+  local dir=$1
+  local -n pg_primary_dict=$2
+  local -n pg_acting_dict=$3
+  local -n pg_pool_dict=$4
+  local infile=$5
+
+  local extr_dbg=1 # note: 3 and above leave some temp files around
 
   #turn off '-x' (but remember previous state)
   local saved_echo_flag=${-//[^x]/}
   set +x
+  set -x
+
+  # This jq filter extracts all required fields.
+  # It outputs a Tab-Separated Value (TSV) line for each PG.
+  # Field 1: pgid
+  # Field 2: acting set (properly shell-escaped by @sh)
+  # Field 3: acting_primary
+  # Field 4: pool (extracted from the pgid)
+  local jq_filter='.pg_stats[] | [.pgid, (.acting | @sh), .acting_primary, (.pgid | split(".")[0])] | @tsv'
+
+
+  # This internal function contains the core processing loop.
+  # It reads the TSV data and populates the dictionaries.
+  function process_stream() {
+      # Set the Internal Field Separator (IFS) to a tab character for 'read'.
+      while IFS=$'\t' read -r pgid acting acting_primary pool; do
+          # It's good practice to skip any potentially empty lines.
+          [[ -z "$pgid" ]] && continue
+
+          (( extr_dbg >= 0 )) && echo "PG: $pgid  acting: $acting  primary: $acting_primary  pool: $pool"
+          pg_primary_dict["$pgid"]=$acting_primary
+          # The 'acting' variable is already a shell-safe string from jq's '@sh'.
+          pg_acting_dict["$pgid"]=$acting
+          pg_pool_dict["$pgid"]=$pool
+      done
+  }
 
   # if the infile name is '-', fetch the dump directly from the ceph cluster
   if [[ $infile == "-" ]]; then
-    local -r ceph_cmd="ceph pg dump pgs_brief -f=json-pretty"
-    local -r ceph_cmd_out=$(eval $ceph_cmd)
-    local -r ceph_cmd_rc=$?
-    if [[ $ceph_cmd_rc -ne 0 ]]; then
-      echo "Error: the command '$ceph_cmd' failed with return code $ceph_cmd_rc"
-    fi
-    (( extr_dbg >= 3 )) && echo "$ceph_cmd_out" > /tmp/e2
-    l0=`echo "$ceph_cmd_out" | jq '[.pg_stats | group_by(.pg_stats)[0] | map({pgid: .pgid, pool: (.pgid | split(".")[0]), acting: .acting, acting_primary: .acting_primary})] | .[]' `
+    # Use compact json (-f=json) as it's faster to generate and parse.
+    # The output is piped directly into jq, which then pipes into our loop.
+    ceph pg dump pgs_brief -f=json
+    echo "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX  100"
+    ceph pg dump pgs_brief -f=json | jq -r "$jq_filter"
+    echo "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX  101"
+    ceph pg dump pgs_brief -f=json | jq -r "$jq_filter" | process_stream
   else
-    l0=`jq '[.pg_stats | group_by(.pg_stats)[0] | map({pgid: .pgid, pool: (.pgid | split(".")[0]), acting: .acting, acting_primary: .acting_primary})] | .[]' $infile `
+    # Process directly from the input file.
+    jq -r "$jq_filter" "$infile" | process_stream
   fi
-  (( extr_dbg >= 2 )) && echo "L0: $l0"
 
-  mapfile -t l1 < <(echo "$l0" | jq -c '.[]')
-  (( extr_dbg >= 2 )) && echo "L1: ${#l1[@]}"
+  # Check the exit status of the pipeline.
+  local pipe_rc=$?
+  if [[ $pipe_rc -ne 0 ]]; then
+      echo "Warning: The data processing pipeline failed with exit code $pipe_rc." >&2
+  fi
 
-  for item in "${l1[@]}"; do
-    pgid=$(echo "$item" | jq -r '.pgid')
-    acting=$(echo "$item" | jq -r '.acting | @sh')
-    pg_acting_dict["$pgid"]=$acting
-    acting_primary=$(echo "$item" | jq -r '.acting_primary')
-    pg_primary_dict["$pgid"]=$acting_primary
-    pool=$(echo "$item" | jq -r '.pool')
-    pg_pool_dict["$pgid"]=$pool
-  done
+  for key in "${!pg_primary_dict[@]}"; do echo "${key}"; done
+  echo "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+  for key in "${!pg_acting_dict[@]}"; do echo "${key} to ${pg_acting_dict[$key]}"; done
 
+
+
+  # Restore original shell options.
+  set +o pipefail
   if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+  return $pipe_rc
 }
+
+
+# function build_pg_dicts {
+#   local dir=$1
+#   local -n pg_primary_dict=$2
+#   local -n pg_acting_dict=$3
+#   local -n pg_pool_dict=$4
+#   local infile=$5
+# 
+#   local extr_dbg=0 # note: 3 and above leave some temp files around
+# 
+#   #turn off '-x' (but remember previous state)
+#   local saved_echo_flag=${-//[^x]/}
+#   set +x
+# 
+#   # if the infile name is '-', fetch the dump directly from the ceph cluster
+#   if [[ $infile == "-" ]]; then
+#     local -r ceph_cmd="ceph pg dump pgs_brief -f=json-pretty"
+#     local -r ceph_cmd_out=$(eval $ceph_cmd)
+#     local -r ceph_cmd_rc=$?
+#     if [[ $ceph_cmd_rc -ne 0 ]]; then
+#       echo "Error: the command '$ceph_cmd' failed with return code $ceph_cmd_rc"
+#     fi
+#     (( extr_dbg >= 3 )) && echo "$ceph_cmd_out" > /tmp/e2
+#     l0=`echo "$ceph_cmd_out" | jq '[.pg_stats | group_by(.pg_stats)[0] | map({pgid: .pgid, pool: (.pgid | split(".")[0]), acting: .acting, acting_primary: .acting_primary})] | .[]' `
+#   else
+#     l0=`jq '[.pg_stats | group_by(.pg_stats)[0] | map({pgid: .pgid, pool: (.pgid | split(".")[0]), acting: .acting, acting_primary: .acting_primary})] | .[]' $infile `
+#   fi
+#   (( extr_dbg >= 2 )) && echo "L0: $l0"
+# 
+#   mapfile -t l1 < <(echo "$l0" | jq -c '.[]')
+#   (( extr_dbg >= 2 )) && echo "L1: ${#l1[@]}"
+# 
+#   for item in "${l1[@]}"; do
+#     pgid=$(echo "$item" | jq -r '.pgid')
+#     acting=$(echo "$item" | jq -r '.acting | @sh')
+#     pg_acting_dict["$pgid"]=$acting
+#     acting_primary=$(echo "$item" | jq -r '.acting_primary')
+#     pg_primary_dict["$pgid"]=$acting_primary
+#     pool=$(echo "$item" | jq -r '.pool')
+#     pg_pool_dict["$pgid"]=$pool
+#   done
+# 
+#   if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+# }
 
 
 # a function that counts the number of common active-set elements between two PGs
