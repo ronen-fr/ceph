@@ -62,7 +62,7 @@ void ScrubResources::dec_scrubs_local()
 {
   std::lock_guard lck{resource_lock};
   log_upwards(fmt::format(
-      "{}:  {} -> {} (max {})", __func__, scrubs_local, (scrubs_local - 1),
+      "{}: {} -> {} (max {})", __func__, scrubs_local, (scrubs_local - 1),
       conf->osd_max_scrubs));
   --scrubs_local;
   ceph_assert(scrubs_local >= 0);

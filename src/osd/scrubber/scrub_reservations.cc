@@ -259,7 +259,7 @@ std::optional<pg_shard_t> ReplicaReservations::get_last_sent() const
   if (m_next_to_request == m_sorted_secondaries.cbegin()) {
     return std::nullopt;
   }
-  return *(m_next_to_request - 1);
+  return *std::prev(m_next_to_request);
 }
 
 size_t ReplicaReservations::active_requests_cnt() const
