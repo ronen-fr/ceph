@@ -946,7 +946,7 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(
     inconsistents(ho,
                   auth_object,
                   auth_res.auth_oi,
-                  std::move(*opt_ers),
+                  *opt_ers,
                   errstream);
   } else {
 
@@ -1008,11 +1008,11 @@ ScrubBackend::for_empty_auth_list(std::list<pg_shard_t>&& auths,
 void ScrubBackend::inconsistents(const hobject_t& ho,
                                  ScrubMap::object& auth_object,
                                  object_info_t& auth_oi,
-                                 auth_and_obj_errs_t&& auth_n_errs,
+                                 const auth_and_obj_errs_t& auth_n_errs,
                                  stringstream& errstream)
 {
-  auto& object_errors = auth_n_errs.object_errors;
-  auto& auth_list = auth_n_errs.auth_list;
+  const auto& object_errors = auth_n_errs.object_errors;
+  auto auth_list = auth_n_errs.auth_list;
 
   this_chunk->cur_inconsistent.insert(object_errors.begin(),
                                       object_errors.end());  // merge?
@@ -1051,7 +1051,7 @@ void ScrubBackend::inconsistents(const hobject_t& ho,
   if (!this_chunk->cur_inconsistent.empty() ||
       !this_chunk->cur_missing.empty()) {
 
-    this_chunk->authoritative[ho] = auth_list;
+    this_chunk->authoritative[ho] = std::move(auth_list);
 
   } else if (!this_chunk->fix_digest && m_is_replicated) {
 
