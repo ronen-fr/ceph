@@ -268,7 +268,7 @@ function standard_scrub_cluster() {
     done
 
     if [[ "$poolname" != "nopool" ]]; then
-        create_pool $poolname $pg_num $pg_num
+        create_pool $poolname $pg_num $pg_num --autoscale_mode=off || return 1
         wait_for_clean || return 1
     fi
 
@@ -314,7 +314,62 @@ function standard_scrub_wpq_cluster() {
 # - pg_acting_dict: a dictionary of pgid -> acting set
 # - pg_pool_dict: a dictionary of pgid -> pool
 # If the input file is '-', the function will fetch the dump directly from the ceph cluster.
+
 function build_pg_dicts {
+  local dir=$1
+  local -n pg_primary_dict=$2
+  local -n pg_acting_dict=$3
+  local -n pg_pool_dict=$4
+  local infile=$5
+
+  local extr_dbg=0
+
+  # Save and disable -x
+  local saved_echo_flag=${-//[^x]/}
+  set +x
+
+  # This jq filter extracts all required fields.
+  local jq_filter='.pg_stats[] | [.pgid, (.acting | @sh), .acting_primary, (.pgid | split(".")[0])] | @tsv'
+
+  # Process the data directly without a pipeline that creates a subshell
+  if [[ $infile == "-" ]]; then
+    # Fetch data and process it in the same shell
+    local json_data
+    json_data=$(ceph pg dump pgs_brief -f=json)
+    local -r ceph_cmd_rc=$?
+    if [[ $ceph_cmd_rc -ne 0 ]]; then
+      echo "Error: 'ceph pg dump' command failed with return code $ceph_cmd_rc"
+    fi
+
+    # Process the JSON data directly
+    while IFS=$'\t' read -r pgid acting acting_primary pool; do
+      [[ -z "$pgid" ]] && continue
+
+      (( extr_dbg >= 1 )) && echo "PG: $pgid  acting: $acting  primary: $acting_primary  pool: $pool"
+      pg_primary_dict["$pgid"]=$acting_primary
+      pg_acting_dict["$pgid"]=$acting
+      pg_pool_dict["$pgid"]=$pool
+    done < <(echo "$json_data" | jq -r "$jq_filter")
+
+  else
+    # Process directly from file
+    while IFS=$'\t' read -r pgid acting acting_primary pool; do
+      [[ -z "$pgid" ]] && continue
+
+      (( extr_dbg >= 1 )) && echo "PG: $pgid  acting: $acting  primary: $acting_primary  pool: $pool"
+      pg_primary_dict["$pgid"]=$acting_primary
+      pg_acting_dict["$pgid"]=$acting
+      pg_pool_dict["$pgid"]=$pool
+    done < <(jq -r "$jq_filter" "$infile")
+  fi
+
+  # Restore shell options
+  if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+}
+
+
+
+function build_pg_dicts_legacy {
   local dir=$1
   local -n pg_primary_dict=$2
   local -n pg_acting_dict=$3

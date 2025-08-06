@@ -481,7 +481,7 @@ class ScrubBackend {
   void inconsistents(const hobject_t& ho,
                      ScrubMap::object& auth_object,
                      object_info_t& auth_oi,  // consider moving to object
-                     auth_and_obj_errs_t&& auth_n_errs,
+                     const auth_and_obj_errs_t& auth_n_errs,
                      std::stringstream& errstream);
 
   int process_clones_to(const std::optional<hobject_t>& head,
