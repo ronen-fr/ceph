@@ -799,8 +799,7 @@ int ReplicatedBackend::be_deep_scrub(
     pos.data_pos = -1;
     o.digest = pos.data_hash.digest();
     o.digest_present = true;
-    dout(20) << __func__ << "  " << poid << " done with data, digest 0x"
-	     << std::hex << o.digest << std::dec << dendl;
+    dout(20) << fmt::format("{} {} done with data, digest 0x{:x}. omap-pos empty?{}", __func__, poid, o.digest, pos.omap_pos.empty()) << dendl;
   }
 
   // omap header
@@ -822,7 +821,7 @@ int ReplicatedBackend::be_deep_scrub(
     }
     if (r == 0 && hdrbl.length()) {
       bool encoded = false;
-      dout(25) << "CRC header " << cleanbin(hdrbl, encoded, true) << dendl;
+      dout(20) << "CRC header " << cleanbin(hdrbl, encoded, true) << dendl;
       pos.omap_hash = hdrbl.crc32c(pos.omap_hash);
       perf_logger.inc(io_counters.omapgetheader_bytes, hdrbl.length());
     }
@@ -887,7 +886,7 @@ int ReplicatedBackend::be_deep_scrub(
 
   // Sum up omap usage
   if (pos.omap_keys > 0 || pos.omap_bytes > 0) {
-    dout(25) << __func__ << " adding " << pos.omap_keys << " keys and "
+    dout(15) << __func__ << " adding " << pos.omap_keys << " keys and "
              << pos.omap_bytes << " bytes to pg_stats sums" << dendl;
     map.has_omap_keys = true;
     o.object_omap_bytes = pos.omap_bytes;

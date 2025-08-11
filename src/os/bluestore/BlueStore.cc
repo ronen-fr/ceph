@@ -13700,7 +13700,7 @@ int BlueStore::omap_get_header(
   )
 {
   Collection *c = static_cast<Collection *>(c_.get());
-  dout(15) << __func__ << " " << c->get_cid() << " oid " << oid << dendl;
+  dout(1) << __func__ << " " << c->get_cid() << " oid " << oid << dendl;
   if (!c->exists)
     return -ENOENT;
   std::shared_lock l(c->lock);
@@ -13717,13 +13717,13 @@ int BlueStore::omap_get_header(
     string head;
     o->get_omap_header(&head);
     if (db->get(o->get_omap_prefix(), head, header) >= 0) {
-      dout(30) << __func__ << "  got header" << dendl;
+      dout(1) << __func__ << "  got header" << dendl;
     } else {
-      dout(30) << __func__ << "  no header" << dendl;
+      dout(1) << __func__ << "  no header" << dendl;
     }
   }
  out:
-  dout(10) << __func__ << " " << c->get_cid() << " oid " << oid << " = " << r
+  dout(1) << __func__ << " " << c->get_cid() << " oid " << oid << " = " << r
 	   << dendl;
   return r;
 }
@@ -13735,7 +13735,7 @@ int BlueStore::omap_get_keys(
   )
 {
   Collection *c = static_cast<Collection *>(c_.get());
-  dout(15) << __func__ << " " << c->get_cid() << " oid " << oid << dendl;
+  dout(1) << __func__ << " " << c->get_cid() << " oid " << oid << dendl;
   if (!c->exists)
     return -ENOENT;
   auto start1 = mono_clock::now();
@@ -13776,7 +13776,7 @@ int BlueStore::omap_get_keys(
     mono_clock::now() - start1,
     c->store->cct->_conf->bluestore_log_omap_iterator_age);
 
-  dout(10) << __func__ << " " << c->get_cid() << " oid " << oid << " = " << r
+  dout(1) << __func__ << " " << c->get_cid() << " oid " << oid << " = " << r
 	   << dendl;
   return r;
 }

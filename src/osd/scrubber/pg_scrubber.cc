@@ -1618,7 +1618,7 @@ void PgScrubber::set_op_parameters(ScrubPGPreconds pg_cond)
   //
   // PG_STATE_REPAIR, on the other hand, is only used for status reports (inc.
   // the PG status as appearing in the logs), and would not be turned on for
-  // 'on the go' - only after errors to be repair are found.
+  // 'on the go' - only after errors to be repaired are found.
   m_is_repair = m_flags.auto_repair ||
 		ScrubJob::is_repair_implied(m_active_target->urgency());
   ceph_assert(!m_is_repair || m_is_deep);  // repair implies deep-scrub

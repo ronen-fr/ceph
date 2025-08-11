@@ -787,7 +787,7 @@ int PGBackend::be_scan_list(
   auto& perf_logger = *(get_parent()->get_logger());
 
   int r = 0;
-  ScrubMap::object &o = map.objects[poid];
+  ScrubMap::object& o = map.objects[poid];
   if (!pos.metadata_done) {
     perf_logger.inc(io_counters.stats_cnt);
     struct stat st;
@@ -822,14 +822,15 @@ int PGBackend::be_scan_list(
       ceph_abort();
     }
 
+    /// \todo RRR how can this happen? see line above
     if (r != 0) {
-      dout(25) << __func__ << "  " << poid << " got " << r
+      dout(15) << __func__ << "  " << poid << " got " << r
 	       << ", skipping" << dendl;
       pos.next_object();
       return 0;
     }
 
-    dout(25) << __func__ << "  " << poid << dendl;
+    dout(20) << __func__ << "  " << poid << dendl;
     pos.metadata_done = true;
   }
 
