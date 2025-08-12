@@ -162,8 +162,6 @@ struct shard_as_auth_t {
   object_info_t oi;
   shard_to_scrubmap_t::iterator auth_iter;
   std::optional<uint32_t> digest;
-  // when used for Crimson, we'll probably want to return 'digest_match' (and
-  // other in/out arguments) via this struct
 };
 
 namespace fmt {
@@ -227,10 +225,12 @@ struct auth_selection_t {
   bool digest_match{true};        ///< do all (existing) digests match?
 };
 
+namespace fmt {
+
 // note: some scrub tests are sensitive to the specific format of
 // auth_selection_t listing in the logs
 template <>
-struct fmt::formatter<auth_selection_t> {
+struct formatter<auth_selection_t> {
   template <typename ParseContext>
   constexpr auto parse(ParseContext& ctx)
   {
@@ -250,6 +250,20 @@ struct fmt::formatter<auth_selection_t> {
                           aus.digest_match);
   }
 };
+} // namespace fmt
+
+
+/**
+ * the back-end data that is per-object
+ * RRR complete the documentation
+ */
+struct object_scrub_data_t {
+  std::set<pg_shard_t> cur_missing;
+  std::set<pg_shard_t> cur_inconsistent;
+  bool fix_digest{false};
+};
+
+
 
 /**
  * the back-end data that is per-chunk
@@ -281,9 +295,8 @@ struct scrub_chunk_t {
 
   // these must be reset for each element:
 
-  std::set<pg_shard_t> cur_missing;
-  std::set<pg_shard_t> cur_inconsistent;
-  bool fix_digest{false};
+  // (linked from here, for this phase of the changes):
+  //object_scrub_data_t m_current_obj;
 };
 
 
@@ -389,6 +402,9 @@ class ScrubBackend {
   };
 
   std::optional<scrub_chunk_t> this_chunk;
+
+  /// the data collected/processed re the specific object being scrubbed
+  object_scrub_data_t m_current_obj; // RRR optional? must we?
 
   /// Maps from objects with errors to missing peers
   HobjToShardSetMapping m_missing;  // used by scrub_process_inconsistent()

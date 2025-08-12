@@ -885,9 +885,7 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(
   const hobject_t& ho)
 {
   // clear per-object data:
-  this_chunk->cur_inconsistent.clear();
-  this_chunk->cur_missing.clear();
-  this_chunk->fix_digest = false;
+  m_current_obj = object_scrub_data_t{};
 
   stringstream candidates_errors;
   auto auth_res = select_auth_object(ho, candidates_errors);
@@ -927,7 +925,7 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(
 
   object_error.set_version(auth_res.auth_oi.user_version);
   ScrubMap::object& auth_object = auth->second.objects[ho];
-  ceph_assert(!this_chunk->fix_digest);
+  ceph_assert(!m_current_obj.fix_digest);
 
   auto [auths, objerrs] =
     match_in_shards(ho, auth_res, object_error, errstream);
@@ -1014,7 +1012,7 @@ void ScrubBackend::inconsistents(const hobject_t& ho,
   auto& object_errors = auth_n_errs.object_errors;
   auto& auth_list = auth_n_errs.auth_list;
 
-  this_chunk->cur_inconsistent.insert(object_errors.begin(),
+  m_current_obj.cur_inconsistent.insert(object_errors.begin(),
                                       object_errors.end());  // merge?
 
   dout(15) << fmt::format(
@@ -1023,19 +1021,19 @@ void ScrubBackend::inconsistents(const hobject_t& ho,
                 __func__,
                 object_errors.size(),
                 auth_list.size(),
-                this_chunk->cur_missing.size(),
-                this_chunk->cur_inconsistent.size())
+                m_current_obj.cur_missing.size(),
+                m_current_obj.cur_inconsistent.size())
            << dendl;
 
 
-  if (!this_chunk->cur_missing.empty()) {
-    m_missing[ho] = this_chunk->cur_missing;
+  if (!m_current_obj.cur_missing.empty()) {
+    m_missing[ho] = m_current_obj.cur_missing;
   }
-  if (!this_chunk->cur_inconsistent.empty()) {
-    m_inconsistent[ho] = this_chunk->cur_inconsistent;
+  if (!m_current_obj.cur_inconsistent.empty()) {
+    m_inconsistent[ho] = m_current_obj.cur_inconsistent;
   }
 
-  if (this_chunk->fix_digest) {
+  if (m_current_obj.fix_digest) {
 
     ceph_assert(auth_object.digest_present);
     std::optional<uint32_t> data_digest{auth_object.digest};
@@ -1048,12 +1046,12 @@ void ScrubBackend::inconsistents(const hobject_t& ho,
       make_pair(ho, make_pair(data_digest, omap_digest)));
   }
 
-  if (!this_chunk->cur_inconsistent.empty() ||
-      !this_chunk->cur_missing.empty()) {
+  if (!m_current_obj.cur_inconsistent.empty() ||
+      !m_current_obj.cur_missing.empty()) {
 
-    this_chunk->authoritative[ho] = auth_list;
+    m_current_obj.good_shards = auth_list; // actual copy!
 
-  } else if (!this_chunk->fix_digest && m_is_replicated) {
+  } else if (!m_current_obj.fix_digest && m_is_replicated) {
 
     auto is_to_fix =
       should_fix_digest(ho, auth_object, auth_oi, m_repair, errstream);
@@ -1227,7 +1225,7 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
           auth_sel.shard_map[srd].only_data_digest_mismatch_info() &&
           auth_object.digest_present) {
         // Set in missing_digests
-        this_chunk->fix_digest = true;
+        m_current_obj.fix_digest = true;
         // Clear the error
         auth_sel.shard_map[srd].clear_data_digest_mismatch_info();
         errstream << m_pg_id << " soid " << ho
@@ -1238,7 +1236,7 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
       // Some errors might have already been set in select_auth_object()
       if (auth_sel.shard_map[srd].errors != 0) {
 
-        this_chunk->cur_inconsistent.insert(srd);
+        m_current_obj.cur_inconsistent.insert(srd);
         if (auth_sel.shard_map[srd].has_deep_errors()) {
           this_chunk->m_error_counts.deep_errors++;
         } else {
@@ -1269,7 +1267,7 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
 
     } else {
 
-      this_chunk->cur_missing.insert(srd);
+      m_current_obj.cur_missing.insert(srd);
       auth_sel.shard_map[srd].set_missing();
       auth_sel.shard_map[srd].primary = (srd == m_pg_whoami);
 
