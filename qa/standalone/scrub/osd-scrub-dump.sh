@@ -175,16 +175,19 @@ function dump_scrub_counters()
   local dir=$1
   local OSDS=$2
   local hdr_msg=$3
+  local extr_dbg=1
+
   fnm="/tmp/dscrub_counters_`date +%d_%H%M`"
-  echo "$hdr_msg: Scrub counters at `date +%T.%N`" > $fnm
-  for osd in $(seq 0 $(expr $OSDS - 1))
-  do
+  ((extr_dbg >= 3)) && echo "$hdr_msg: Scrub counters at `date +%T.%N`" > $fnm
+  for osd in $(seq 0 $(expr $OSDS - 1)); do
     echo "osd.$osd scrub counters:" >> $fnm
-    ceph tell osd.$osd counter dump --format=json |
-        jq 'recurse | objects | to_entries[] | select(.key | test("scrub"))' >> $fnm
-    ceph tell osd.$osd counter dump --format=json |
-        jq '[recurse | objects | to_entries[] | select(.key | test("scrub")) | {(.key): .value}] | add' |
-        jq -s '.' >> ${fnm}_b
+    all_c=$(ceph tell osd.$osd counter dump --format=json |
+        jq 'recurse | objects | to_entries[] | select(.key | test("scrub"))')
+    ((extr_dbg >= 3)) && echo "$all_c" >> $fnm
+    echo "$all_c"
+    # ceph tell osd.$osd counter dump --format=json |
+    #     jq '[recurse | objects | to_entries[] | select(.key | test("scrub")) | {(.key): .value}] | add' |
+    #     jq -s '.' >> ${fnm}_b
   done
 }
 
@@ -378,7 +381,8 @@ function corrupt_and_measure()
     return 1
   fi
 
-  local extr_dbg=1 # note: 3 and above leaves some temp files around
+  local extr_dbg=2 # note: 3 and above leaves some temp files around
+  # must not do that: set -o nounset
   standard_scrub_wpq_cluster "$dir" alargs 0 || return 1
   orig_osd_args=" ${alargs['osd_args']}"
   orig_osd_args=" $(echo $orig_osd_args)"
@@ -392,7 +396,7 @@ function corrupt_and_measure()
 
   #turn off '-x' (but remember previous state)
   local saved_echo_flag=${-//[^x]/}
-  set +x
+  set -x
 
   # Create some objects
   #create_objects_2 "$dir" "$poolname" "$objects" 256 4 || return 1
@@ -401,6 +405,8 @@ function corrupt_and_measure()
   echo "Pre-wait-forclean: $(date +%T.%N)"
   wait_for_clean || return 1
   ceph osd pool stats
+  sleep 5
+  ceph pg dump pgs
 
   echo "Pre dict creation: $(date +%T.%N)"
   local start_dict=$(date +%s%N)
@@ -424,6 +430,7 @@ function corrupt_and_measure()
   declare -A repl_objs_to_corrupt
   # group by the primary OSD (the dict value)
   for ((i=0; i < $modify_as_prim_cnt; i++)); do
+    (( extr_dbg >= 2 )) && echo "Corrupting primary object ${selected_keys[$i]}"
     k=${selected_keys[$i]}
     prim_osd=${obj_to_primary[$k]}
     prim_objs_to_corrupt["$prim_osd"]+="$k "
