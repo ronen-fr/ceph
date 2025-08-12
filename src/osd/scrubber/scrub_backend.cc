@@ -220,7 +220,20 @@ objs_fix_list_t ScrubBackend::scrub_compare_maps(
   merge_to_authoritative_set();
 
   // collect some omap statistics into m_omap_stats
-  omap_checks();
+  this_chunk->m_omap_checks_required = std::any_of(
+    this_chunk->received_maps.begin(),
+    this_chunk->received_maps.end(),
+    [](const auto& m) -> bool {
+      return m.second.has_large_omap_object_errors || m.second.has_omap_keys;
+    });
+
+  // the following paragraphs should be part of an object-by-object
+  // handling loop. To be revisited in the following commits.
+  if (this_chunk->m_omap_checks_required) {
+    for (const auto& ho : this_chunk->authoritative_set) {
+      check_hobject_omap(ho);
+    }
+  }
 
   update_authoritative();
   auto for_meta_scrub = clean_meta_map(m_cleaned_meta_map, max_reached);
@@ -234,52 +247,36 @@ objs_fix_list_t ScrubBackend::scrub_compare_maps(
                          scan_snaps(for_meta_scrub, snaps_getter)};
 }
 
-void ScrubBackend::omap_checks()
+
+void ScrubBackend::check_hobject_omap(const hobject_t& ho)
 {
-  const bool needs_omap_check = std::any_of(
-    this_chunk->received_maps.begin(),
-    this_chunk->received_maps.end(),
-    [](const auto& m) -> bool {
-      return m.second.has_large_omap_object_errors || m.second.has_omap_keys;
-    });
+  dout(20) << fmt::format("{}: Checking OMAP for object {}", __func__, ho)
+	   << dendl;
 
-  if (!needs_omap_check) {
-    return;  // Nothing to do
+  // Check if the object has any OMAP-related issues
+  const auto it = this_chunk->m_my_map.objects.find(ho);
+  if (it == this_chunk->m_my_map.objects.end()) {
+    dout(20) << fmt::format("Object {} not found in primary smap", ho) << dendl;
+    return;
   }
 
-  stringstream wss;
-  const auto& smap = this_chunk->received_maps.at(m_pg_whoami);
+  const ScrubMap::object& smap_obj = it->second;
+  m_omap_stats.omap_bytes += smap_obj.object_omap_bytes;
+  m_omap_stats.omap_keys += smap_obj.object_omap_keys;
 
-  // Iterate through objects and update omap stats
-  for (const auto& ho : this_chunk->authoritative_set) {
+  if (smap_obj.large_omap_object_found) {
+    m_omap_stats.large_omap_objects++;
+    std::string error_msg = fmt::format(
+	"Large omap object found. Object: {} PG: {} ({}) Key count: {} Size "
+	"(bytes): {}",
+	ho, m_pg_id, m_pg_id.pgid, smap_obj.large_omap_object_key_count,
+	smap_obj.large_omap_object_value_size);
 
-    const auto it = smap.objects.find(ho);
-    if (it == smap.objects.end()) {
-      continue;
-    }
-
-    const ScrubMap::object& smap_obj = it->second;
-    m_omap_stats.omap_bytes += smap_obj.object_omap_bytes;
-    m_omap_stats.omap_keys += smap_obj.object_omap_keys;
-    if (smap_obj.large_omap_object_found) {
-      auto osdmap = m_scrubber.get_osdmap();
-      pg_t pg;
-      osdmap->map_to_pg(ho.pool, ho.oid.name, ho.get_key(), ho.nspace, &pg);
-      pg_t mpg = osdmap->raw_pg_to_pg(pg);
-      m_omap_stats.large_omap_objects++;
-      wss << "Large omap object found. Object: " << ho << " PG: " << pg << " ("
-	  << mpg << ")"
-	  << " Key count: " << smap_obj.large_omap_object_key_count
-	  << " Size (bytes): " << smap_obj.large_omap_object_value_size << '\n';
-      break;
-    }
-  }
-
-  if (!wss.str().empty()) {
-    dout(5) << __func__ << ": " << wss.str() << dendl;
-    clog.warn(wss);
+    dout(5) << __func__ << ": " << error_msg << dendl;
+    clog.do_log(CLOG_WARN, error_msg);
   }
 }
+
 
 /*
  * update_authoritative() updates:

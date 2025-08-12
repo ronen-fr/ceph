@@ -272,11 +272,16 @@ struct object_scrub_data_t {
  */
 struct scrub_chunk_t {
 
-  explicit scrub_chunk_t(pg_shard_t i_am) { received_maps[i_am] = ScrubMap{}; }
+  explicit scrub_chunk_t(pg_shard_t i_am) : m_my_map{received_maps[i_am]} {
+    received_maps[i_am] = ScrubMap{};
+  }
 
   /// the working set of scrub maps: the received maps, plus
   /// Primary's own map.
   std::map<pg_shard_t, ScrubMap> received_maps;
+
+  /// a shortcut into my scrub-map in that collection
+  ScrubMap& m_my_map;
 
   /// a collection of all objs mentioned in the maps
   std::set<hobject_t> authoritative_set;
@@ -293,8 +298,11 @@ struct scrub_chunk_t {
   /// shallow/deep error counters
   error_counters_t m_error_counts;
 
-  // these must be reset for each element:
+  /// a fast check of the whole chunk revealed at least one
+  /// scrub-map that either has large OMAP errors or OMAP keys
+  bool m_omap_checks_required{false};
 
+  // these must be reset for each element:
   // (linked from here, for this phase of the changes):
   object_scrub_data_t m_current_obj;
 };
@@ -433,7 +441,13 @@ class ScrubBackend {
   /// might return error messages to be cluster-logged
   std::optional<std::string> compare_obj_in_maps(const hobject_t& ho);
 
-  void omap_checks();
+  /**
+   * Check the OMAP for the given object, updating m_omap_stats.
+   * If the OMAP is large, log a warning.
+   *
+   * @param ho the hobject to check
+   */
+  void check_hobject_omap(const hobject_t& ho);
 
   std::optional<auth_and_obj_errs_t> for_empty_auth_list(
     std::list<pg_shard_t>&& auths,
