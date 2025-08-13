@@ -413,7 +413,8 @@ function corrupt_and_measure()
   declare -A obj_to_pgid
   declare -A obj_to_primary
   declare -A obj_to_acting
-  objs_to_prim_dict_wip "$dir" $poolname "obj" $objects obj_to_pgid obj_to_primary obj_to_acting
+  #objs_to_prim_dict_wip "$dir" $poolname "obj" $objects obj_to_pgid obj_to_primary obj_to_acting
+  objs_to_prim_dict "$dir" $poolname "obj" $objects obj_to_pgid obj_to_primary obj_to_acting
   local end_dict=$(date +%s%N)
   echo "Post dict creation: $(date +%T.%N) ($(( (end_dict - start_dict)/1000000 )) ms)"
 
@@ -423,14 +424,20 @@ function corrupt_and_measure()
   local all_errors=$(($modify_as_prim_cnt + $modify_as_repl_cnt))
   # select the objects to corrupt (both primary and replica)
   mapfile -t selected_keys < <(printf "%s\n" "${!obj_to_primary[@]}" | shuf -n "$all_errors")
+  # list the number of elements, and the first element
+  echo "Selected keys: ${#selected_keys[@]}"
+  echo "First element: ${selected_keys[0]}"
+  echo "obj_to_primary: ${#obj_to_primary[@]}"
+
   # take the first modify_as_prim_cnt of them to corrupt their primary version.
   # the rest will be corrupted on their replicas.
 
   declare -A prim_objs_to_corrupt
   declare -A repl_objs_to_corrupt
   # group by the primary OSD (the dict value)
-  for ((i=0; i < $modify_as_prim_cnt; i++)); do
-    (( extr_dbg >= 2 )) && echo "Corrupting primary object ${selected_keys[$i]}"
+  for ((i=0; i < $modify_as_prim_cnt; i++))
+  do
+    (( extr_dbg >= 2 )) && echo "Corrupting primary object ($1) ${selected_keys[$i]}"
     k=${selected_keys[$i]}
     prim_osd=${obj_to_primary[$k]}
     prim_objs_to_corrupt["$prim_osd"]+="$k "

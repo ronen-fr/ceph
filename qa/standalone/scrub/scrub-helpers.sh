@@ -465,7 +465,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 def get_object_mapping(obj_name, pool_name):
     """Get PG mapping for a single object."""
     try:
-        cmd = ['./bin/ceph', '--format=json', 'osd', 'map', pool_name, obj_name]
+        cmd = ['ceph', '--format=json', 'osd', 'map', pool_name, obj_name]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, stderr=subprocess.DEVNULL)
         if result.returncode == 0:
             data = json.loads(result.stdout)
@@ -521,10 +521,10 @@ function objs_to_prim_dict()
 
     for i in $(seq 1 $obj_num ); do
         local obj="${basename}${i}"
-        echo "--------- $obj ---------" >> /tmp/temp1_1
-        ./bin/ceph --format=json osd map $poolname $obj >> /tmp/temp1_1
+        #echo "--------- $obj ---------" >> /tmp/temp1_1
+        #./bin/ceph --format=json osd map $poolname $obj >> /tmp/temp1_1
 
-        IFS=$'\t' read -r pgid primary_osd acting <<<$(./bin/ceph --format=json osd map $poolname $obj |\
+        IFS=$'\t' read -r pgid primary_osd acting <<<$(ceph --format=json osd map $poolname $obj |\
           jq -r '"\(.pgid)\t\(.acting_primary)\t\(.acting | join(" "))"')
         obj_pgid_dict["$obj"]=$pgid
         obj_prim_dict["$obj"]=$primary_osd
