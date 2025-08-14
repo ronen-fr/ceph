@@ -110,7 +110,9 @@ struct objs_fix_list_t {
 /**
  * A structure used internally by select_auth_object()
  *
- * Conveys the usability of a specific shard as an auth source.
+ * Manages all the shard-specific data required to determine
+ * its usability as an auth source.
+ * Also serves as a cache for the shard's object information.
  */
 struct shard_as_auth_t {
   // note: 'not_found' differs from 'not_usable' in that 'not_found'
@@ -156,10 +158,15 @@ struct shard_as_auth_t {
       , digest{data_digest}
   {}
 
-
-  usable_t possible_auth;
+  // shard_info_wrapper is a wrapped librados::shard_info_t. Contains
+  // the attributes, size, digest flags, etc'.
+  shard_info_wrapper shard_info;
+  usable_t possible_auth{usable_t::not_found};
   std::string error_text;
-  object_info_t oi;
+  object_info_t oi{};
+  bool oi_decoded{false};
+  SnapSet snapset; ///< the snapset, if decoded
+  bool snapset_decoded{false};
   shard_to_scrubmap_t::iterator auth_iter;
   std::optional<uint32_t> digest;
 };
@@ -261,6 +268,7 @@ struct object_scrub_data_t {
   std::set<pg_shard_t> cur_missing;
   std::set<pg_shard_t> cur_inconsistent;
   bool fix_digest{false};
+  std::map<pg_shard_t, shard_as_auth_t> cur_objects;
 };
 
 
@@ -280,7 +288,7 @@ struct scrub_chunk_t {
   /// Primary's own map.
   std::map<pg_shard_t, ScrubMap> received_maps;
 
-  /// a shortcut into my scrub-map in that collection
+  /// a shortcut into my (the primary) scrub-map in that collection
   ScrubMap& m_my_map;
 
   /// a collection of all objs mentioned in the maps
@@ -435,8 +443,6 @@ class ScrubBackend {
   // note: used by both Primary & replicas
   static ScrubMap clean_meta_map(ScrubMap& cleaned, bool max_reached);
 
-  void compare_smaps();
-
   /// might return error messages to be cluster-logged
   std::optional<std::string> compare_obj_in_maps(const hobject_t& ho);
 
@@ -529,6 +535,8 @@ class ScrubBackend {
    *     the selected shard).
    */
   void update_authoritative();
+
+  void evaluate_object_shards(const hobject_t& ho);
 
   void log_missing(int missing,
                    const std::optional<hobject_t>& head,
