@@ -290,7 +290,7 @@ void ScrubBackend::check_hobject_omap(const hobject_t& ho)
 void ScrubBackend::update_authoritative()
 {
   dout(10) << __func__ << dendl;
-
+#if 0
   if (m_acting_but_me.empty()) {
     return;
   }
@@ -316,6 +316,7 @@ void ScrubBackend::update_authoritative()
     m_cleaned_meta_map.objects.insert(
       *(this_chunk->received_maps[peers.back()].objects.find(obj)));
   }
+#endif
 }
 
 // temporary note: replaces update_authoritative() with a per-object version
@@ -330,20 +331,18 @@ void ScrubBackend::evaluate_object_shards(const hobject_t& ho)
     clog.error() << *maybe_clust_err;
   }
 
-  auto possibly_damaged_it = this_chunk->authoritative.find(ho);
-  if (possibly_damaged_it == this_chunk->authoritative.end()) {
-    dout(19) << fmt::format("{}: object:{} not found", __func__, ho) << dendl;
-    return;
+  if (m_current_obj.good_shards) {
+    auto& peers = *m_current_obj.good_shards;
+    auth_peers_t good_peers;
+    for (auto& peer : peers) {
+      good_peers.emplace_back(
+	  this_chunk->received_maps[peer].objects[ho], peer);
+    }
+    m_auth_peers.emplace(ho, std::move(good_peers));
+    m_cleaned_meta_map.objects.erase(ho);
+    m_cleaned_meta_map.objects.insert(
+	*(this_chunk->received_maps[peers.back()].objects.find(ho)));
   }
-  auto& peers = possibly_damaged_it->second;
-  auth_peers_t good_peers;
-  for (auto& peer : peers) {
-    good_peers.emplace_back(this_chunk->received_maps[peer].objects[ho], peer);
-  }
-  m_auth_peers.emplace(ho, std::move(good_peers));
-  m_cleaned_meta_map.objects.erase(ho);
-  m_cleaned_meta_map.objects.insert(
-      *(this_chunk->received_maps[peers.back()].objects.find(ho)));
 }
 
 
@@ -357,7 +356,7 @@ int ScrubBackend::scrub_process_inconsistent()
            << dendl;
 
   ceph_assert(!m_auth_peers.empty());
-  // authoritative only store objects which are missing or inconsistent.
+  // good_shards is only set for objects which are missing or inconsistent.
 
   // some tests expect an error message that does not contain the __func__ and
   // PG:

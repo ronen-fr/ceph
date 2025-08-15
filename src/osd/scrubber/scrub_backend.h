@@ -269,6 +269,8 @@ struct object_scrub_data_t {
   std::set<pg_shard_t> cur_inconsistent;
   bool fix_digest{false};
   std::map<pg_shard_t, shard_as_auth_t> cur_objects;
+  /// good peers (nullopt if no discrepancies were detected)
+  std::optional<std::list<pg_shard_t>> good_shards; ///< RRR a list???!
 };
 
 
@@ -297,9 +299,6 @@ struct scrub_chunk_t {
   utime_t started{ceph_clock_now()};
 
   digests_fixes_t missing_digest;
-
-  /// Map from object with errors to good peers
-  std::map<hobject_t, std::list<pg_shard_t>> authoritative;
 
   inconsistent_objs_t m_inconsistent_objs;
 
