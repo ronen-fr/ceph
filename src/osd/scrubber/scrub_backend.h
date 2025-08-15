@@ -312,7 +312,7 @@ struct scrub_chunk_t {
 
   // these must be reset for each element:
   // (linked from here, for this phase of the changes):
-  object_scrub_data_t m_current_obj;
+  //object_scrub_data_t m_current_obj;
 };
 
 
@@ -418,6 +418,9 @@ class ScrubBackend {
   };
 
   std::optional<scrub_chunk_t> this_chunk;
+
+  /// the data collected/processed re the specific object being scrubbed
+  object_scrub_data_t m_current_obj; // RRR optional? must we?
 
   /// Maps from objects with errors to missing peers
   HobjToShardSetMapping m_missing;  // used by scrub_process_inconsistent()
