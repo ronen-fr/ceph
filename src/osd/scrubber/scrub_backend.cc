@@ -41,6 +41,16 @@ std::ostream& ScrubBackend::logger_prefix(std::ostream* out,
   return t->m_scrubber.gen_prefix(*out) << " b.e.: ";
 }
 
+
+// ////////////////////  scrub_chunk_t  ///////////////////////////////////// //
+
+explicit scrub_chunk_t::scrub_chunk_t(pg_shard_t i_am, uint32_t ec_digest_sz)
+    : m_my_map{received_maps[i_am]}
+    , m_ec_digest_map{ec_digest_sz} // RRR what happens on '0'?
+{
+  received_maps[i_am] = ScrubMap{};
+}
+
 // ////////////////////////////////////////////////////////////////////////// //
 
 // for a Primary
@@ -71,6 +81,13 @@ ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
 
   m_is_replicated = m_pool.info.is_replicated();
   m_is_optimized_ec = m_pool.info.allows_ecoptimizations();
+
+  // EC-related:
+
+  if (!m_is_replicated && m_pg.get_ec_supports_crc_encode_decode()) {
+    m_ec_digest_map_size = m_pg.get_ec_sinfo().get_k_plus_m();
+  }
+
   m_mode_desc =
     (m_repair ? "repair"sv
               : (m_depth == scrub_level_t::deep ? "deep-scrub"sv : "scrub"sv));
@@ -133,7 +150,7 @@ void ScrubBackend::update_repair_status(bool should_repair)
 void ScrubBackend::new_chunk()
 {
   dout(15) << __func__ << dendl;
-  this_chunk.emplace(m_pg_whoami);
+  this_chunk.emplace(m_pg_whoami, m_ec_digest_map_size);
 }
 
 ScrubMap& ScrubBackend::get_primary_scrubmap()
@@ -462,11 +479,6 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
   /// This creates an issue with 'digest_match' that should be handled.
   std::list<pg_shard_t> shards;
   shard_id_set available_shards;
-  uint32_t digest_map_size = 0;
-  if (!m_is_replicated && m_pg.get_ec_supports_crc_encode_decode()) {
-    digest_map_size = m_pg.get_ec_sinfo().get_k_plus_m();
-  }
-  shard_id_map<bufferlist> digest_map{digest_map_size};
 
   for (const auto& [srd, smap] : this_chunk->received_maps) {
     if (srd != m_pg_whoami) {
@@ -487,8 +499,8 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
           m_pg.get_ec_sinfo().get_chunk_size());
       b.copy_in(0, length, crc_bytes);
 
-      digest_map[srd.shard] = bufferlist{};
-      digest_map[srd.shard].append(b);
+      this_chunk->m_ec_digest_map[srd.shard] = bufferlist{};
+      this_chunk->m_ec_digest_map[srd.shard].append(b);
     }
   }
   shards.push_front(m_pg_whoami);
@@ -599,8 +611,8 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                         "as only received shards were ({}).",
                         __func__, missing_shards, m_pg_whoami, available_shards)
                  << dendl;
-        digest_map = m_pg.ec_decode_acting_set(
-            digest_map, m_pg.get_ec_sinfo().get_chunk_size());
+        this_chunk->m_ec_digest_map = m_pg.ec_decode_acting_set(
+            this_chunk->m_ec_digest_map, m_pg.get_ec_sinfo().get_chunk_size());
       } else if (missing_shards != 0) {
         dout(5) << fmt::format(
                        "{}: Cannot decode {} shards from pg {} "
@@ -620,17 +632,17 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
         uint32_t zero_data_crc = generate_zero_buffer_crc(
             shard_id, logical_to_ondisk_size(ret_auth.auth_oi.size, shard_id));
         for (std::size_t i = 0; i < sizeof(zero_data_crc); i++) {
-          digest_map[shard_id].c_str()[i] =
-              digest_map[shard_id][i] ^ ((zero_data_crc >> (8 * i)) & 0xff);
+          this_chunk->m_ec_digest_map[shard_id].c_str()[i] =
+              this_chunk->m_ec_digest_map[shard_id][i] ^ ((zero_data_crc >> (8 * i)) & 0xff);
         }
 
-        crc_bl.append(digest_map[shard_id]);
+        crc_bl.append(this_chunk->m_ec_digest_map[shard_id]);
       }
 
       shard_id_map<bufferlist> encoded_crcs = m_pg.ec_encode_acting_set(crc_bl);
 
       if (encoded_crcs[shard_id_t(m_pg.get_ec_sinfo().get_k())] !=
-          digest_map[shard_id_t(m_pg.get_ec_sinfo().get_k())]) {
+          this_chunk->m_ec_digest_map[shard_id_t(m_pg.get_ec_sinfo().get_k())]) {
         ret_auth.digest_match = false;
       }
     } else {

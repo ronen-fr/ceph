@@ -282,9 +282,7 @@ struct object_scrub_data_t {
  */
 struct scrub_chunk_t {
 
-  explicit scrub_chunk_t(pg_shard_t i_am) : m_my_map{received_maps[i_am]} {
-    received_maps[i_am] = ScrubMap{};
-  }
+  explicit scrub_chunk_t(pg_shard_t i_am, uint32_t ec_digest_sz=0UL);
 
   /// the working set of scrub maps: the received maps, plus
   /// Primary's own map.
@@ -308,6 +306,11 @@ struct scrub_chunk_t {
   /// a fast check of the whole chunk revealed at least one
   /// scrub-map that either has large OMAP errors or OMAP keys
   bool m_omap_checks_required{false};
+
+  // EC-related:
+
+  //const uint32_t m_ec_digest_map_size;
+  shard_id_map<bufferlist> m_ec_digest_map;
 };
 
 
@@ -400,6 +403,11 @@ class ScrubBackend {
 
   /// Mapping from object with errors to good peers
   std::map<hobject_t, auth_peers_t> m_auth_peers;
+
+  /// EC related:
+
+  /// size of the EC digest map, calculated based on the EC configuration
+  uint32_t m_ec_digest_map_size{1};
 
   // shorthands:
   ConfigProxy& m_conf;
