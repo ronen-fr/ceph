@@ -593,7 +593,7 @@ beyond the scope of ``pg repair``.
 In the case of erasure-coded and BlueStore pools, Ceph will automatically
 perform repairs if ``osd_scrub_auto_repair`` (default ``false``) is set to
 ``true`` and if no more than ``osd_scrub_auto_repair_num_errors`` (default
-``5``) errors are found.
+``5``) damaged objects are found.
 
 The ``pg repair`` command will not solve every problem. Ceph does not
 automatically repair PGs when they are found to contain inconsistencies.

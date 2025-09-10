@@ -35,7 +35,7 @@ describe('ConfigOptionComponent', () => {
         name: 'osd_scrub_auto_repair_num_errors',
         type: 'uint',
         level: 'advanced',
-        desc: 'Maximum number of detected errors to automatically repair',
+        desc: 'Maximum number of detected damaged objects to automatically repair',
         long_desc: '',
         default: 5,
         daemon_default: '',
