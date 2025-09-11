@@ -234,7 +234,37 @@ objs_fix_list_t ScrubBackend::scrub_compare_maps(
   m_cleaned_meta_map.insert(my_map());
   merge_to_authoritative_set();
 
-  update_authoritative();
+
+
+  for (const auto& ho : this_chunk->authoritative_set) {
+
+    // clear per-object data:
+    m_current_obj = object_scrub_data_t{};
+    this_chunk->m_ec_digest_map.clear();
+
+    // scan all versions (shards) of this object for internal consistency
+    // issues or missing information. The results, including information
+    // collected in the process, is stored in m_current_obj.shards_data.
+    auto tentative_auth = shards_sanity(ho);
+
+    if (tentative_auth) {
+      // we have a tentative shard to use as authoritative. All possible
+      // candidates are named in m_current_object.good_versions.
+
+      // compare the good shards, and select the best one
+      update_authoritative(ho, *tentative_auth);
+
+    } else {
+      // all shards are bad. Note the object as inconsistent, and
+      // move to the next object
+      //this_chunk->m_inconsistent_objs.push_back(
+      //  inconsistent_obj_wrapper(ho, "all shards unusable"));
+      continue; // RRR
+    }
+  }
+
+  // the following paragraphs should be part of an object-by-object
+  // handling loop. To be revisited in the following commits.
   auto for_meta_scrub = clean_meta_map(m_cleaned_meta_map, max_reached);
 
   // ok, do the pg-type specific scrubbing
@@ -279,46 +309,129 @@ void ScrubBackend::collect_omap_stats(
  *  - m_cleaned_meta_map: replaces [obj] entry with:
  *     the relevant object in the scrub-map of the "selected" (back-most) peer
  */
-void ScrubBackend::update_authoritative()
+void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& initial_cand)
 {
-  dout(10) << __func__ << dendl;
+  dout(10) << fmt::format("{}: object:{} initial:{}", __func__, ho, initial_cand) << dendl;
 
   if (m_acting_but_me.empty()) {
     // nothing to fix. Just count OMAP stats
-    // (temporary code - to be removed once scrub_compare_maps()
-    //  is modified to process object-by-object)
-    for (const auto& ho : this_chunk->authoritative_set) {
-      const auto it = my_map().objects.find(ho);
-      // all objects in the authoritative set should be there, in the
-      // map of the sole OSD
-      ceph_assert(it != my_map().objects.end());
-      collect_omap_stats(ho, it->second);
-    }
+    const auto it = my_map().objects.find(ho);
+    // all objects in the authoritative set should be there, in the
+    // map of the sole OSD
+    ceph_assert(it != my_map().objects.end());
+    collect_omap_stats(ho, it->second);
     return;
   }
 
-  compare_smaps();  // note: might cluster-log errors
+  // compare all 'good' shards (those who passed the internal sanity checks)
+  // among themselves, choosing the best auth source.
 
-  // update the session-wide m_auth_peers with the list of good
-  // peers for each object (i.e. the ones that are in this_chunks's auth list)
-  for (auto& [obj, peers] : this_chunk->authoritative) {
 
-    auth_peers_t good_peers;
+  /// RRR moved select_auth_object functionality
 
-    for (auto& peer : peers) {
-      good_peers.emplace_back(this_chunk->received_maps[peer].objects[obj],
-                              peer);
+  auth_selection_t ret_auth;
+  ret_auth.auth = this_chunk->received_maps.find(initial_cand);
+  eversion_t auth_version = m_current_obj.shards_data[initial_cand].oi.version;
+  ret_auth.auth_shard = initial_cand;
+
+  for (auto cand_shard : m_current_obj.good_versions) {
+    const auto& cand_obj = this_chunk->received_maps[cand_shard].objects[ho];
+    auto& cand_collected = m_current_obj.shards_data[cand_shard];
+
+    // do all versions agree on the data digest?
+    // Note: this block is definitely about to change in this refactoring.
+    auto selected_digest = m_current_obj.shards_data.at(ret_auth.auth_shard).data_digest;
+    auto cand_digest = cand_collected.data_digest;
+    if (selected_digest && cand_digest && (*selected_digest != *cand_digest)) {
+      ret_auth.digest_match = false;
     }
 
-    m_auth_peers.emplace(obj, std::move(good_peers));
+    // do we have a better version?
+    // For now - this is the only criteria we will use when selecting the best version
+    // (apart from being the version maintained by the primary)
+    if (cand_collected.oi.version > auth_version) {
+      ret_auth.auth = this_chunk->received_maps.find(cand_shard);
+      ret_auth.auth_shard = cand_shard;
+      auth_version = cand_collected.oi.version;
+    }
   }
 
-  for (const auto& [obj, peers] : this_chunk->authoritative) {
-    m_cleaned_meta_map.objects.erase(obj);
-    m_cleaned_meta_map.objects.insert(
-      *(this_chunk->received_maps[peers.back()].objects.find(obj)));
+  // do we have enough CRC data from EC shards to recreate the data?
+  if (m_ec_digest_map_size > 0) {
+    // which means that: 1: EC 2: comaptible schema
+    if (auth_version != eversion_t{} && m_current_obj.available_ec_crc_shards.size() > 0) {
+      redecode_ec_shards(ret_auth);
+    }
   }
+
+XXXX;
+
+  // if (auto maybe_clust_err = compare_obj_in_maps(ho); maybe_clust_err) {
+  //   clog.error() << *maybe_clust_err;
+  // }
+
+  // update the session-wide m_auth_peers with the list of good peers for 'ho'
+  auto& peers = this_chunk->authoritative[ho];
+  auth_peers_t good_peers;
+  for (auto& peer : peers) {
+    good_peers.emplace_back(this_chunk->received_maps[peer].objects[ho], peer);
+  }
+  m_auth_peers.emplace(ho, std::move(good_peers));
+
+  m_cleaned_meta_map.objects.erase(ho);
+  m_cleaned_meta_map.objects.insert(
+      *(this_chunk->received_maps[peers.back()].objects.find(ho)));
 }
+
+
+// /*
+//  * update_authoritative() updates:
+//  *
+//  *  - m_auth_peers: adds obj-> list of pairs < scrub-map, shard>
+//  *
+//  *  - m_cleaned_meta_map: replaces [obj] entry with:
+//  *     the relevant object in the scrub-map of the "selected" (back-most) peer
+//  */
+// void ScrubBackend::update_authoritative()
+// {
+//   dout(10) << __func__ << dendl;
+// 
+//   // if (m_acting_but_me.empty()) {
+//   //   // nothing to fix. Just count OMAP stats
+//   //   // (temporary code - to be removed once scrub_compare_maps()
+//   //   //  is modified to process object-by-object)
+//   //   for (const auto& ho : this_chunk->authoritative_set) {
+//   //     const auto it = my_map().objects.find(ho);
+//   //     // all objects in the authoritative set should be there, in the
+//   //     // map of the sole OSD
+//   //     ceph_assert(it != my_map().objects.end());
+//   //     collect_omap_stats(ho, it->second);
+//   //   }
+//   //   return;
+//   // }
+// 
+//   compare_smaps();  // note: might cluster-log errors
+// 
+//   // update the session-wide m_auth_peers with the list of good
+//   // peers for each object (i.e. the ones that are in this_chunks's auth list)
+//   for (auto& [obj, peers] : this_chunk->authoritative) {
+// 
+//     auth_peers_t good_peers;
+// 
+//     for (auto& peer : peers) {
+//       good_peers.emplace_back(this_chunk->received_maps[peer].objects[obj],
+//                               peer);
+//     }
+// 
+//     m_auth_peers.emplace(obj, std::move(good_peers));
+//   }
+// 
+//   for (const auto& [obj, peers] : this_chunk->authoritative) {
+//     m_cleaned_meta_map.objects.erase(obj);
+//     m_cleaned_meta_map.objects.insert(
+//       *(this_chunk->received_maps[peers.back()].objects.find(obj)));
+//   }
+// }
 
 int ScrubBackend::scrub_process_inconsistent()
 {
@@ -424,6 +537,208 @@ static inline int dcount(const object_info_t& oi)
   return (oi.is_data_digest() ? 1 : 0) + (oi.is_omap_digest() ? 1 : 0);
 }
 
+
+#if 1
+
+auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
+                                                  stringstream& errstream)
+{
+  // Create a list of shards (with the Primary first, so that it will be
+  // auth-copy, all other things being equal)
+
+  /// \todo: consider sorting the candidate shards by the conditions for
+  /// selecting best auth source below. Then - stopping on the first one
+  /// that is auth eligible.
+  /// This creates an issue with 'digest_match' that should be handled.
+  std::list<pg_shard_t> shards;
+  shard_id_set available_shards;
+
+  for (const auto& [srd, smap] : this_chunk->received_maps) {
+    if (srd != m_pg_whoami) {
+      shards.push_back(srd);
+    }
+
+//     if (!m_is_replicated && m_pg.get_ec_supports_crc_encode_decode() &&
+//         smap.objects.contains(ho)) {
+//       available_shards.insert(srd.shard);
+// 
+//       uint32_t digest = smap.objects.at(ho).digest;
+//       constexpr std::size_t length = sizeof(digest);
+//       char crc_bytes[length];
+//       for (std::size_t i = 0; i < length; i++) {
+//         crc_bytes[i] = digest >> (8 * i) & 0xFF;
+//       }
+//       ceph::bufferptr b = ceph::buffer::create_page_aligned(
+//           m_pg.get_ec_sinfo().get_chunk_size());
+//       b.copy_in(0, length, crc_bytes);
+// 
+//       this_chunk->m_ec_digest_map[srd.shard] = bufferlist{};
+//       this_chunk->m_ec_digest_map[srd.shard].append(b);
+//     }
+  }
+  shards.push_front(m_pg_whoami);
+
+  auth_selection_t ret_auth;
+  ret_auth.auth = this_chunk->received_maps.end();
+  eversion_t auth_version;
+
+  for (auto& l : shards) {
+
+    auto shard_ret = possible_auth_shard(ho, l, ret_auth.shard_map);
+
+    // digest_match will only be true if computed digests are the same
+    if (auth_version != eversion_t() &&
+        ret_auth.auth->second.objects.at(ho).digest_present &&
+        shard_ret.digest.has_value() &&
+        ret_auth.auth->second.objects.at(ho).digest != *shard_ret.digest) {
+
+      ret_auth.digest_match = false;
+      dout(10) << fmt::format(
+                    "{}: digest_match = false, {} data_digest 0x{:x} != "
+                    "data_digest 0x{:x}",
+                    __func__,
+                    ho,
+                    ret_auth.auth->second.objects.at(ho).digest,
+                    *shard_ret.digest)
+               << dendl;
+    }
+
+    dout(20)
+      << fmt::format("{}: {} shard {} got:{:D}", __func__, ho, l, shard_ret)
+      << dendl;
+
+    if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_usable) {
+
+      // Don't use this particular shard due to previous errors
+      // XXX: For now we can't pick one shard for repair and another's object
+      // info or snapset
+
+      ceph_assert(shard_ret.error_text.length());
+      errstream << m_pg_id.pgid << " shard " << l << " soid " << ho << " : "
+                << shard_ret.error_text << "\n";
+
+    } else if (shard_ret.possible_auth ==
+               shard_as_auth_t::usable_t::not_found) {
+
+      // do not emit the returned error message to the log
+      dout(15) << fmt::format("{}: {} not found on shard {}", __func__, ho, l)
+               << dendl;
+    } else if (shard_ret.possible_auth == shard_as_auth_t::usable_t::not_usable_no_err) {
+      dout(20) << fmt::format("{}: skipping not_usable_no_err {} {} {}",
+                        __func__,
+                        l,
+                        shard_ret.oi.version,
+                        shard_ret.oi.soid)
+               << dendl;
+    } else {
+
+      dout(30) << fmt::format("{}: consider using {} srv: {} oi soid: {}",
+                              __func__,
+                              l,
+                              shard_ret.oi.version,
+                              shard_ret.oi.soid)
+               << dendl;
+
+      // consider using this shard as authoritative. Is it more recent?
+
+      if (auth_version == eversion_t() || shard_ret.oi.version > auth_version ||
+          (shard_ret.oi.version == auth_version &&
+           dcount(shard_ret.oi) > dcount(ret_auth.auth_oi))) {
+
+        dout(20) << fmt::format("{}: using {} moved auth oi {:p} <-> {:p}",
+                                __func__,
+                                l,
+                                (void*)&ret_auth.auth_oi,
+                                (void*)&shard_ret.oi)
+                 << dendl;
+
+        ret_auth.auth = shard_ret.auth_iter;
+        ret_auth.auth_shard = ret_auth.auth->first;
+        ret_auth.auth_oi = shard_ret.oi;
+        auth_version = shard_ret.oi.version;
+        ret_auth.is_auth_available = true;
+      }
+    }
+  }
+
+  if (auth_version != eversion_t() && !m_is_replicated &&
+      m_pg.get_ec_supports_crc_encode_decode() &&
+      available_shards.size() != 0) {
+    if (m_pg.ec_can_decode(available_shards)) {
+      // Decode missing data shards needed to do an encode
+      // Only bother doing this if the number of missing shards is less than the
+      // number of parity shards
+
+      int missing_shards =
+          std::count_if(m_pg.get_ec_sinfo().get_data_shards().begin(),
+                        m_pg.get_ec_sinfo().get_data_shards().end(),
+                        [&available_shards](const auto& shard_id) {
+                          return available_shards.contains(shard_id);
+                        });
+
+      const int num_redundancy_shards = m_pg.get_ec_sinfo().get_m();
+      if (missing_shards > 0 && missing_shards < num_redundancy_shards) {
+        dout(10) << fmt::format(
+                        "{}: Decoding {} missing shards for pg {} "
+                        "as only received shards were ({}).",
+                        __func__, missing_shards, m_pg_whoami, available_shards)
+                 << dendl;
+        this_chunk->m_ec_digest_map = m_pg.ec_decode_acting_set(
+            this_chunk->m_ec_digest_map, m_pg.get_ec_sinfo().get_chunk_size());
+      } else if (missing_shards != 0) {
+        dout(5) << fmt::format(
+                       "{}: Cannot decode {} shards from pg {} "
+                       "when only shards {} were received. Ignoring.",
+                       __func__, missing_shards, m_pg_whoami, available_shards)
+                << dendl;
+      } else {
+        dout(30) << fmt::format(
+                        "{}: All shards received for pg {}. "
+                        "skipping decoding.",
+                        __func__, m_pg_whoami)
+                 << dendl;
+      }
+
+      bufferlist crc_bl;
+      for (const auto& shard_id : m_pg.get_ec_sinfo().get_data_shards()) {
+        uint32_t zero_data_crc = generate_zero_buffer_crc(
+            shard_id, logical_to_ondisk_size(ret_auth.auth_oi.size, shard_id));
+        for (std::size_t i = 0; i < sizeof(zero_data_crc); i++) {
+          this_chunk->m_ec_digest_map[shard_id].c_str()[i] =
+              this_chunk->m_ec_digest_map[shard_id][i] ^ ((zero_data_crc >> (8 * i)) & 0xff);
+        }
+
+        crc_bl.append(this_chunk->m_ec_digest_map[shard_id]);
+      }
+
+      shard_id_map<bufferlist> encoded_crcs = m_pg.ec_encode_acting_set(crc_bl);
+
+      if (encoded_crcs[shard_id_t(m_pg.get_ec_sinfo().get_k())] !=
+          this_chunk->m_ec_digest_map[shard_id_t(m_pg.get_ec_sinfo().get_k())]) {
+        ret_auth.digest_match = false;
+      }
+    } else {
+      dout(10) << fmt::format(
+                      "{}: Cannot decode missing shards in pg {} "
+                      "when only shards {} were received. Ignoring.",
+                      __func__, m_pg_whoami, available_shards)
+               << dendl;
+    }
+  }
+
+  dout(10) << fmt::format("{}: selecting osd {} for obj {} with oi {}",
+                          __func__,
+                          ret_auth.auth_shard,
+                          ho,
+                          ret_auth.auth_oi)
+           << dendl;
+
+  return ret_auth;
+}
+
+#endif
+
+#if 0
 auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
                                                   stringstream& errstream)
 {
@@ -620,6 +935,8 @@ auth_selection_t ScrubBackend::select_auth_object(const hobject_t& ho,
   return ret_auth;
 }
 
+#endif
+
 using set_sinfo_err_t = void (shard_info_wrapper::*)();
 
 inline static const char* sep(bool& prev_err)
@@ -664,6 +981,8 @@ static inline bool test_error_cond(bool error_pred,
   return error_pred;
 }
 
+
+/// possible_auth_shard is not needed anymore. Functionality moved to the shard_sanity functions
 shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
                                                   const pg_shard_t& srd,
                                                   shard_info_map_t& shard_map)
@@ -862,26 +1181,23 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
 // re-implementation of PGBackend::be_compare_scrubmaps()
 void ScrubBackend::compare_smaps()
 {
-  dout(10) << __func__
-           << ": authoritative-set #: " << this_chunk->authoritative_set.size()
-           << dendl;
-
-  std::for_each(this_chunk->authoritative_set.begin(),
-                this_chunk->authoritative_set.end(),
-                [this](const auto& ho) {
-                  if (auto maybe_clust_err = compare_obj_in_maps(ho);
-                      maybe_clust_err) {
-                    clog.error() << *maybe_clust_err;
-                  }
-                });
+//   dout(10) << __func__
+//            << ": authoritative-set #: " << this_chunk->authoritative_set.size()
+//            << dendl;
+// 
+//   std::for_each(this_chunk->authoritative_set.begin(),
+//                 this_chunk->authoritative_set.end(),
+//                 [this](const auto& ho) {
+//                   if (auto maybe_clust_err = compare_obj_in_maps(ho);
+//                       maybe_clust_err) {
+//                     clog.error() << *maybe_clust_err;
+//                   }
+//                 });
 }
 
 std::optional<std::string> ScrubBackend::compare_obj_in_maps(
   const hobject_t& ho)
 {
-  // clear per-object data:
-  m_current_obj = object_scrub_data_t{};
-
   stringstream candidates_errors;
   auto auth_res = select_auth_object(ho, candidates_errors);
   if (candidates_errors.str().size()) {
@@ -971,7 +1287,7 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(
 std::optional<ScrubBackend::auth_and_obj_errs_t>
 ScrubBackend::for_empty_auth_list(std::list<pg_shard_t>&& auths,
                                   std::set<pg_shard_t>&& obj_errors,
-                                  shard_to_scrubmap_t::iterator auth,
+                                  shard_to_scrubmap_t::const_iterator auth,
                                   const hobject_t& ho,
                                   stringstream& errstream)
 {
@@ -2165,3 +2481,389 @@ ScrubMap ScrubBackend::clean_meta_map(ScrubMap& cleaned, bool max_reached)
 
   return for_meta_scrub;
 }
+
+std::optional<pg_shard_t> ScrubBackend::shards_sanity(const hobject_t& ho)
+{
+  //std::optional<shard_as_auth_t*> tentative_auth{std::nullopt};
+  std::optional<pg_shard_t> tentative_auth{std::nullopt};
+
+  for (const auto& [shard, smap] : this_chunk->received_maps) {
+    dout(10) << fmt::format(
+		    "{}: {}: shard {} ({})", __func__, ho, shard,
+		    smap.objects.size())
+	     << dendl;
+    m_current_obj.shards_data.emplace(
+	shard, std::move(shard_sanity(ho, shard)));
+    dout(10) << fmt::format(
+		    "{}: sanity {}: shard {} ({})", __func__, ho, shard,
+		    (int)(m_current_obj.shards_data.at(shard).possible_auth))
+	     << dendl;
+
+    // assign the shard to one of good/bad/ec-and-not-relevant lists
+    switch (m_current_obj.shards_data.at(shard).possible_auth) {
+      case shard_as_auth_t::usable_t::usable:
+	m_current_obj.good_versions.push_back(shard);
+	//tentative_auth = &m_current_obj.shards_data.at(shard);
+        tentative_auth = shard;
+	break;
+      case shard_as_auth_t::usable_t::not_usable_no_err:
+	// not usable, but no error
+	m_current_obj.irrelevant_ec_shards.push_back(shard);
+	break;
+      case shard_as_auth_t::usable_t::not_usable:
+	// not usable, with an error
+	m_current_obj.inconsistent_versions.push_back(shard);
+	m_current_obj.something_amiss = true;
+	break;
+      case shard_as_auth_t::usable_t::not_found:
+	// not found, no error
+	m_current_obj.missing_versions.push_back(shard);
+	m_current_obj.something_amiss = true;
+	break;
+    }
+  }
+
+  dout(10)
+      << fmt::format(
+	     "{}: {}: good:{} bad:{} irrelevant:{} inconsistent:{} missing:{}",
+	     __func__, ho, m_current_obj.good_versions,
+	     "xx",  //m_current_obj.bad_versions.size(),
+	     m_current_obj.irrelevant_ec_shards,
+	     m_current_obj.inconsistent_versions,
+	     m_current_obj.missing_versions)
+      << dendl;
+  return tentative_auth;
+}
+
+
+/*
+
+
+
+*/
+
+void ScrubBackend::redecode_ec_shards(auth_selection_t& ret_auth)
+{
+  auto& available_shards = m_current_obj.available_ec_crc_shards;
+
+  if (m_pg.ec_can_decode(available_shards)) {
+    // Decode missing data shards needed to do an encode
+    // Only bother doing this if the number of missing shards is less than the
+    // number of parity shards
+
+
+    int missing_shards = std::count_if(
+	m_pg.get_ec_sinfo().get_data_shards().begin(),
+	m_pg.get_ec_sinfo().get_data_shards().end(),
+	[&available_shards](const auto& shard_id) {
+	  return available_shards.contains(shard_id);
+	});
+
+    const int num_redundancy_shards = m_pg.get_ec_sinfo().get_m();
+    if (missing_shards > 0 && missing_shards < num_redundancy_shards) {
+      dout(10) << fmt::format(
+		      "{}: Decoding {} missing shards for pg {} "
+		      "as only received shards were ({}).",
+		      __func__, missing_shards, m_pg_whoami, available_shards)
+	       << dendl;
+      this_chunk->m_ec_digest_map = m_pg.ec_decode_acting_set(
+	  this_chunk->m_ec_digest_map, m_pg.get_ec_sinfo().get_chunk_size());
+    } else if (missing_shards != 0) {
+      dout(5) << fmt::format(
+		     "{}: Cannot decode {} shards from pg {} "
+		     "when only shards {} were received. Ignoring.",
+		     __func__, missing_shards, m_pg_whoami, available_shards)
+	      << dendl;
+    } else {
+      dout(30) << fmt::format(
+		      "{}: All shards received for pg {}. "
+		      "skipping decoding.",
+		      __func__, m_pg_whoami)
+	       << dendl;
+    }
+
+    bufferlist crc_bl;
+    for (const auto& shard_id : m_pg.get_ec_sinfo().get_data_shards()) {
+      uint32_t zero_data_crc = generate_zero_buffer_crc(
+	  shard_id, logical_to_ondisk_size(ret_auth.auth_oi.size, shard_id));
+      for (std::size_t i = 0; i < sizeof(zero_data_crc); i++) {
+	this_chunk->m_ec_digest_map[shard_id].c_str()[i] =
+	    this_chunk->m_ec_digest_map[shard_id][i] ^
+	    ((zero_data_crc >> (8 * i)) & 0xff);
+      }
+
+      crc_bl.append(this_chunk->m_ec_digest_map[shard_id]);
+    }
+
+    shard_id_map<bufferlist> encoded_crcs = m_pg.ec_encode_acting_set(crc_bl);
+
+    if (encoded_crcs[shard_id_t(m_pg.get_ec_sinfo().get_k())] !=
+	this_chunk->m_ec_digest_map[shard_id_t(m_pg.get_ec_sinfo().get_k())]) {
+      ret_auth.digest_match = false;
+    }
+  } else {
+    dout(10) << fmt::format(
+		    "{}: Cannot decode missing shards in pg {} "
+		    "when only shards {} were received. Ignoring.",
+		    __func__, m_pg_whoami, available_shards)
+	     << dendl;
+  }
+}
+
+
+ceph::bufferptr ScrubBackend::collect_crc_bytes(
+    const pg_shard_t& shard,
+    uint32_t shard_dt_digest)
+{
+#if 0
+  constexpr std::size_t length = sizeof(shard_dt_digest);
+  char crc_bytes[length];
+  for (std::size_t i = 0; i < length; i++) {
+    crc_bytes[i] = shard_dt_digest >> (8 * i) & 0xFF;
+  }
+  ceph::bufferptr b =
+      ceph::buffer::create_page_aligned(m_pg.get_ec_sinfo().get_chunk_size());
+  b.copy_in(0, length, crc_bytes);
+
+#else
+  uint32_t le_digest = ceph_le32(shard_dt_digest);
+  ceph::bufferptr b =
+      ceph::buffer::create_page_aligned(m_pg.get_ec_sinfo().get_chunk_size());
+  b.copy_in(0, sizeof(le_digest), reinterpret_cast<const char*>(&le_digest));
+#endif
+  return b;
+}
+
+shard_as_auth_t ScrubBackend::shard_sanity(const hobject_t& ho,
+                                               const pg_shard_t& shard)
+{
+  // -- noting basic details of the version of our object in that shard --
+  dout(10) << fmt::format("{}: {}: shard {}", __func__, ho, shard) << dendl;
+
+  shard_as_auth_t verdict(shard, this_chunk->received_maps[shard]);
+  auto obj_in_smap = verdict.shard_smap.objects.find(ho);
+  if (obj_in_smap == verdict.shard_smap.objects.end()) {
+    // can't use this shard!
+    return verdict; // 'verdict' defaulted to 'not usable'
+  }
+  verdict.object_in_shard_smap = &obj_in_smap->second;
+  // and a shorhand:
+  const auto& smap_obj = *verdict.object_in_shard_smap;
+
+  verdict.shard_info.set_object(smap_obj);
+  verdict.shard_info.primary = (shard == m_pg_whoami);
+
+  // internal consistency of this version of the object and its metadata
+  bool err{false};
+  dup_error_cond(err,
+                 true,
+                 smap_obj.read_error,
+                 verdict.shard_info,
+                 &shard_info_wrapper::set_read_error,
+                 "candidate had a read error"sv,
+                 verdict.error_text);
+  dup_error_cond(err,
+                 true,
+                 smap_obj.ec_hash_mismatch,
+                 verdict.shard_info,
+                 &shard_info_wrapper::set_ec_hash_mismatch,
+                 "candidate had an ec hash mismatch"sv,
+                 verdict.error_text);
+  dup_error_cond(err,
+                 true,
+                 smap_obj.ec_size_mismatch,
+                 verdict.shard_info,
+                 &shard_info_wrapper::set_ec_size_mismatch,
+                 "candidate had an ec size mismatch"sv,
+                 verdict.error_text);
+
+  if (!dup_error_cond(err,
+                      false,
+                      smap_obj.stat_error,
+                      verdict.shard_info,
+                      &shard_info_wrapper::set_stat_error,
+                      "candidate had a stat error"sv,
+                      verdict.error_text)) {
+    // With stat_error no further checking
+    // We don't need to also see a missing_object_info_attr
+    return verdict;
+  }
+
+  // -- verifying the snap-set (and keeping the decoded snap-set) --
+
+  ceph_assert(!ho.is_snapdir());
+  // We won't pick an auth copy if the snapset is missing or won't decode.
+  if (ho.is_head() && !m_pg.get_is_nonprimary_shard(shard)) {
+    auto k = smap_obj.attrs.find(SS_ATTR);
+    if (dup_error_cond(err,
+                       false,
+                       (k == smap_obj.attrs.end()),
+                       verdict.shard_info,
+                       &shard_info_wrapper::set_snapset_missing,
+                       "candidate had a missing snapset key"sv,
+                       verdict.error_text)) {
+      const bufferlist& ss_bl = k->second;
+      try {
+        auto bliter = ss_bl.cbegin();
+        decode(verdict.snapset, bliter);
+        verdict.snapset_hash = ss_bl.crc32c(0);
+      } catch (...) {
+        // invalid snapset, probably corrupt
+        dup_error_cond(err,
+                       false,
+                       true,
+                       verdict.shard_info,
+                       &shard_info_wrapper::set_snapset_corrupted,
+                       "candidate had a corrupt snapset"sv,
+                       verdict.error_text);
+      }
+    } else {
+      // debug@dev only
+      dout(30) << fmt::format(
+                    "{} missing snap addr: {:p} shard_info: {:p} er: {:x}",
+                    __func__,
+                    (void*)&smap_obj,
+                    (void*)&verdict.shard_info,
+                    verdict.shard_info.errors)
+               << dendl;
+    }
+  }
+
+  // -- the hinfo --
+
+  if (m_pg.get_is_hinfo_required()) {
+    auto hinfo_attr = smap_obj.attrs.find(ECLegacy::ECUtilL::get_hinfo_key());
+    if (dup_error_cond(err,
+                       false,
+                       (hinfo_attr == smap_obj.attrs.end()),
+                       verdict.shard_info,
+                       &shard_info_wrapper::set_hinfo_missing,
+                       "candidate had a missing hinfo key"sv,
+                       verdict.error_text)) {
+      const bufferlist& hk_bl = hinfo_attr->second;
+      //ECLegacy::ECUtilL::HashInfo hi;
+      try {
+        auto bliter = hk_bl.cbegin();
+        decode(verdict.hash_info, bliter);
+      } catch (...) {
+        dup_error_cond(err,
+                       false,
+                       true,
+                       verdict.shard_info,
+                       &shard_info_wrapper::set_hinfo_corrupted,
+                       "candidate had a corrupt hinfo"sv,
+                       verdict.error_text);
+      }
+    }
+  }
+
+  dout(20) << fmt::format("{}: {}/{}: {}", __func__, ho, shard, verdict.shard_info) << dendl;
+
+  // -- the object-info (OI_ATTR) --
+
+  {
+    const auto k = smap_obj.attrs.find(OI_ATTR);
+    if (!dup_error_cond(err,
+                        false,
+                        (k == smap_obj.attrs.end()),
+                        verdict.shard_info,
+                        &shard_info_wrapper::set_info_missing,
+                        "candidate had a missing info key"sv,
+                        verdict.error_text)) {
+      // no object info on object, probably corrupt
+      return verdict;
+    }
+
+    try {
+      auto bliter = k->second.cbegin();
+      decode(verdict.oi, bliter);
+    } catch (...) {
+      // invalid object info, probably corrupt
+      if (!dup_error_cond(err,
+                          false,
+                          true,
+                          verdict.shard_info,
+                          &shard_info_wrapper::set_info_corrupted,
+                          "candidate had a corrupt info"sv,
+                          verdict.error_text)) {
+        return verdict;
+      }
+    }
+
+    if (!dup_error_cond(err,
+                        false,
+                        (verdict.oi.soid != ho),
+                        verdict.shard_info,
+                        &shard_info_wrapper::set_info_corrupted,
+                        "candidate info oid mismatch"sv,
+                        verdict.error_text)) {
+        return verdict;
+    }
+    //verdict.oi_decoded = true;
+    // create a hash of the object info for later comparison
+    verdict.oi_hash = ceph_crc32c(0, (unsigned char*)&verdict.oi, sizeof(verdict.oi));
+  }
+
+  // -- object size --
+
+  const uint64_t ondisk_size = logical_to_ondisk_size(verdict.oi.size, shard.shard);
+  dup_error_cond(err, true, (smap_obj.size != ondisk_size), verdict.shard_info,
+                 &shard_info_wrapper::set_obj_size_info_mismatch,
+                 fmt::format("candidate size {} info size {} mismatch",
+                             smap_obj.size, ondisk_size),
+                 verdict.error_text);
+
+  // -- checksums --
+
+  // calculate and save a checksum over the non-system attributes
+
+  // Note: other than OI, Only potential primaries have the attribues.
+  if (!m_pg.get_is_nonprimary_shard(shard)) {
+    uint32_t attr_digest = 0;
+    for (const auto& [k, v] : smap_obj.attrs) {
+      if (k == OI_ATTR || k[0] != '_') {
+        // We check system keys separately
+        continue;
+      }
+      attr_digest = ceph_crc32c(attr_digest, (unsigned char*)k.data(), k.length());
+      attr_digest = v.crc32c(attr_digest);
+    }
+    verdict.attr_hash = attr_digest;
+  }
+
+  // calculate and save a checksum over the snapset
+
+  // \todo
+
+  // save the received data hash
+
+  // RRR is it OK to not collect the EC CRC if any of the failures above was triggered?
+  if (smap_obj.digest_present) {
+    verdict.data_digest = smap_obj.digest;
+    if (m_ec_digest_map_size > 0) {
+      // save the data digest in a page-aligned buffer
+      //verdict.data_digest_bytes = collect_crc_bytes(shard, smap_obj.digest);
+      ceph::bufferptr b = collect_crc_bytes(shard, smap_obj.digest);
+      this_chunk->m_ec_digest_map[shard.shard].append(b);
+      m_current_obj.available_ec_crc_shards.insert(shard.shard);
+    }
+  }
+
+  // -- summary of errors --
+
+  dout(20) << fmt::format("{}: {}/{}: err:{} errors:{}", __func__, ho, shard, err, verdict.shard_info.errors) << dendl;
+  if (verdict.shard_info.errors) {
+    ceph_assert(err);
+    return verdict;
+  }
+  ceph_assert(!err);
+
+  verdict.possible_auth = m_pg.get_is_nonprimary_shard(shard)
+                          ? shard_as_auth_t::usable_t::not_usable_no_err
+                          : shard_as_auth_t::usable_t::usable;
+  //ret.auth_iter = this_chunk->received_maps.find(srd); // RRR to be reworked
+
+  return verdict;
+
+}
+
