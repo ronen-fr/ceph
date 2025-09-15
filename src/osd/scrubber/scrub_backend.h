@@ -117,53 +117,41 @@ struct objs_fix_list_t {
 struct shard_as_auth_t {
   // note: 'not_found' differs from 'not_usable' in that 'not_found'
   // does not carry an error message to be cluster-logged.
-  enum class usable_t : uint8_t { not_usable, not_found, usable, not_usable_no_err };
+  enum class usable_t : uint_fast8_t { not_usable, not_found, usable, not_usable_no_err };
 
-  // the ctor used when the shard should not be considered as auth
-  explicit shard_as_auth_t(std::string err_msg)
-      : possible_auth{usable_t::not_usable}
-      , error_text{err_msg}
-      , oi{}
-      , auth_iter{}
-      , digest{std::nullopt}
+  explicit shard_as_auth_t(const pg_shard_t& srd, const ScrubMap& smap)
+      : shard{srd}
+      , shard_smap{smap}
   {}
 
-  // the object cannot be found on the shard
-  explicit shard_as_auth_t()
-      : possible_auth{usable_t::not_found}
-      , error_text{}
-      , oi{}
-      , auth_iter{}
-      , digest{std::nullopt}
-  {}
+  pg_shard_t shard;
 
-  shard_as_auth_t(std::string err_msg, std::optional<uint32_t> data_digest)
-      : possible_auth{usable_t::not_usable}
-      , error_text{err_msg}
-      , oi{}
-      , auth_iter{}
-      , digest{data_digest}
-  {}
+  // fast access to the smap received from this OSD, ...
+  const ScrubMap& shard_smap;
+  /// ... and to the current object's entry in that map, if any
+  const ScrubMap::object* object_in_shard_smap{nullptr};
 
-  // possible auth candidate
-  shard_as_auth_t(const object_info_t& anoi,
-                  shard_to_scrubmap_t::iterator it,
-                  std::string err_msg,
-                  std::optional<uint32_t> data_digest,
-                  bool nonprimary_ec)
-      : possible_auth{nonprimary_ec?usable_t::not_usable_no_err:usable_t::usable}
-      , error_text{err_msg}
-      , oi{anoi}
-      , auth_iter{it}
-      , digest{data_digest}
-  {}
+  // shard_info_wrapper is a wrapped librados::shard_info_t. Contains
+  // the attributes, size, digest flags, etc'.
+  // Required until we maintain all error data in a new structure here.
+  shard_info_wrapper shard_info;
 
+  usable_t possible_auth{usable_t::not_found};
+  ECLegacy::ECUtilL::HashInfo hash_info;
 
-  usable_t possible_auth;
-  std::string error_text;
-  object_info_t oi;
+  std::stringstream error_text;
+
+  object_info_t oi{};
+  std::optional<uint32_t> oi_hash;
+
+  SnapSet snapset; ///< the snapset, if decoded
+  bool snapset_decoded{false}; // RRR needed?
+  std::optional<uint32_t> snapset_hash;
+
+  std::optional<uint32_t> data_digest;
+  std::optional<uint32_t> attr_hash;
+
   shard_to_scrubmap_t::iterator auth_iter;
-  std::optional<uint32_t> digest;
 };
 
 namespace fmt {
@@ -218,6 +206,16 @@ struct formatter<shard_as_auth_t> {
 };
 } // namespace fmt
 
+/// aggragating the results of compare_obj_details()
+struct compare_obj_result_t {
+  compare_obj_result_t(const hobject_t& ho) : inconsistent_wrap(ho) {}
+  inconsistent_obj_wrapper inconsistent_wrap;
+  bool any_error{false};
+  bool data_digests_match{true};
+  std::stringstream error_text;
+};
+
+
 struct auth_selection_t {
   shard_to_scrubmap_t::const_iterator auth;  ///< an iter into one of this_chunk->maps
   pg_shard_t auth_shard;               // set to auth->first
@@ -263,8 +261,21 @@ struct object_scrub_data_t {
   std::set<pg_shard_t> cur_inconsistent;
   bool fix_digest{false};
 
-  // the set of EC shards for which we have valid data CRC
+  /// shard evaluation: data collected and partial/full results
+  std::map<pg_shard_t, shard_as_auth_t> shards_data;
+
+  /// active-set versions grouped by 'ability to serve as auth'
+  std::vector<pg_shard_t> good_versions;
+  std::vector<pg_shard_t> inconsistent_versions;
+  std::vector<pg_shard_t> missing_versions;
+  std::vector<pg_shard_t> irrelevant_ec_shards;
+
+  /// the set of EC shards for which we have valid data CRC
   shard_id_set available_ec_crc_shards;
+
+  /// whether there is any inconsistency or missing data for this object
+  /// (replacing the 'good_shards.size() > 0' check)
+  bool something_amiss{false};
 };
 
 
@@ -455,6 +466,10 @@ class ScrubBackend {
       const hobject_t& ho,
       const ScrubMap::object& auth_object);
 
+  std::optional<pg_shard_t> shards_sanity(const hobject_t& ho);
+
+  shard_as_auth_t shard_sanity(const hobject_t& ho, const pg_shard_t& shard);
+
   std::optional<auth_and_obj_errs_t> for_empty_auth_list(
     std::list<pg_shard_t>&& auths,
     std::set<pg_shard_t>&& obj_errors,
@@ -466,6 +481,12 @@ class ScrubBackend {
                                       auth_selection_t& auth_sel,
                                       inconsistent_obj_wrapper& obj_result,
                                       std::stringstream& errstream);
+
+  // NOTE: assuming the object exists in both
+  compare_obj_result_t compare_obj_details(
+      const hobject_t& ho,
+      const shard_as_auth_t& auth_data,
+      shard_as_auth_t& shard_data);
 
   // returns: true if a discrepancy was found
   bool compare_obj_details(pg_shard_t auth_shard,
@@ -537,7 +558,7 @@ class ScrubBackend {
    *   - in m_cleaned_meta_map: a "cleaned" version of the object (the one from
    *     the selected shard).
    */
-  void update_authoritative();
+  std::optional<pg_shard_t> update_authoritative(const hobject_t& ho, const pg_shard_t& initial_cand);
 
   void log_missing(int missing,
                    const std::optional<hobject_t>& head,
@@ -570,6 +591,12 @@ class ScrubBackend {
 
   // TBD
   void redecode_ec_shards(auth_selection_t& auth_ret);
+
+  /**
+   * TBD
+   * \returns false if the data digests do not match
+   */
+  bool redecode_ec_shards(const pg_shard_t& selected_shard, size_t auth_oi_size);
 };
 
 namespace fmt {
