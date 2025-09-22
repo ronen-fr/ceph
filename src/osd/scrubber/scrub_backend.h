@@ -159,7 +159,7 @@ namespace fmt {
 template <>
 struct formatter<shard_as_auth_t> {
   template <typename ParseContext>
-  constexpr auto parse(ParseContext& ctx)
+  constexpr auto parse(ParseContext& ctx) const
   {
     auto it = ctx.begin();
     if (it != ctx.end()) {
@@ -597,6 +597,19 @@ class ScrubBackend {
    * \returns false if the data digests do not match
    */
   bool redecode_ec_shards(const pg_shard_t& selected_shard, size_t auth_oi_size);
+
+  /**
+   * a temporary function: translating the shards evaluation results created
+   * by the new code, into the data structures consumed by the legacy code
+   * that handles missing/damaged versions of an object.
+   */
+  void glue_shard_eval_to_legacy(
+    const hobject_t& ho,
+    const shard_as_auth_t& shard_data,
+    const compare_obj_result_t& comp_res);
+
+  void glue_shards_eval_to_legacy(
+    const hobject_t& ho);
 };
 
 namespace fmt {
