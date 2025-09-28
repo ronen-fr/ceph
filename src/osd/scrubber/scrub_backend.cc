@@ -160,7 +160,7 @@ void ScrubBackend::merge_to_authoritative_set()
 {
   dout(15) << __func__ << dendl;
   ceph_assert(m_scrubber.is_primary());
-  ceph_assert(this_chunk->authoritative_set.empty() &&
+  ceph_assert(this_chunk->all_chunk_objects.empty() &&
               "the scrubber-backend should be empty");
 
   if (g_conf()->subsys.should_gather<ceph_subsys_osd, 15>()) {
@@ -177,8 +177,8 @@ void ScrubBackend::merge_to_authoritative_set()
   for (const auto& map : this_chunk->received_maps) {
     std::transform(map.second.objects.begin(),
                    map.second.objects.end(),
-                   std::inserter(this_chunk->authoritative_set,
-                                 this_chunk->authoritative_set.end()),
+                   std::inserter(this_chunk->all_chunk_objects,
+                                 this_chunk->all_chunk_objects.end()),
                    [](const auto& i) { return i.first; });
   }
 }

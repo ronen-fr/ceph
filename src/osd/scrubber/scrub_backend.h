@@ -323,7 +323,7 @@ struct scrub_chunk_t {
   std::map<pg_shard_t, ScrubMap> received_maps;
 
   /// a collection of all objs mentioned in the maps
-  std::set<hobject_t> authoritative_set;
+  std::set<hobject_t> all_chunk_objects;
 
   utime_t started{ceph_clock_now()};
 
