@@ -686,7 +686,6 @@ public:
    * @param start list object that sort >= this value
    * @param end list objects that sort < this value
    * @param max return no more than this many results
-   * @param seq return no objects with snap < seq
    * @param ls [out] result
    * @param next [out] next item sorts >= this value
    * @return zero on success, or negative error
