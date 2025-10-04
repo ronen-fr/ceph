@@ -6633,6 +6633,8 @@ struct ScrubMapBuilder {
     omap_bytes = 0;
   }
 
+  std::string fmt_print() const;
+
   friend std::ostream& operator<<(std::ostream& out, const ScrubMapBuilder& pos) {
     out << "(" << pos.pos << "/" << pos.ls.size();
     if (pos.pos < pos.ls.size()) {
