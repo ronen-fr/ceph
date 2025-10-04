@@ -809,59 +809,63 @@ PGBackend *PGBackend::build_pg_backend(
 
 int PGBackend::be_scan_list(
   const Scrub::ScrubCounterSet& io_counters,
-  ScrubMap &map,
-  ScrubMapBuilder &pos)
+  ScrubMap& map,
+  ScrubMapBuilder& pos)
 {
-  dout(10) << __func__ << " " << pos << dendl;
+  dout(10) << fmt::format("{} {}", __func__, pos) << dendl;
   ceph_assert(!pos.done());
   ceph_assert(pos.pos < pos.ls.size());
-  hobject_t& poid = pos.ls[pos.pos];
+  const hobject_t& poid = pos.ls[pos.pos];
   auto& perf_logger = *(get_parent()->get_logger());
 
   int r = 0;
-  ScrubMap::object &o = map.objects[poid];
+  ScrubMap::object& o = map.objects[poid];
   if (!pos.metadata_done) {
     perf_logger.inc(io_counters.stats_cnt);
     struct stat st;
+    std::string failed_call = "stat";
     r = store->stat(
-      ch,
-      ghobject_t(
-	poid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-      &st,
-      true);
+	ch,
+	ghobject_t(
+	    poid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
+	&st, true);
 
     if (r == 0) {
+      failed_call = "getattrs";
       perf_logger.inc(io_counters.getattr_cnt);
       o.size = st.st_size;
       ceph_assert(!o.negative);
       r = store->getattrs(
-	ch,
-	ghobject_t(
-	  poid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-	o.attrs);
+	  ch,
+	  ghobject_t(
+	      poid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
+	  o.attrs);
     }
 
     if (r == -ENOENT) {
-      dout(25) << __func__ << "  " << poid << " got " << r
-	       << ", removing from map" << dendl;
+      dout(10) << fmt::format(
+		      "{} {} got -ENOENT from {}, removing from map", __func__,
+		      poid, failed_call)
+	       << dendl;
       map.objects.erase(poid);
+      pos.next_object();
+      return 0;
     } else if (r == -EIO) {
-      dout(25) << __func__ << "  " << poid << " got " << r
-	       << ", stat_error" << dendl;
+      dout(5) << fmt::format(
+		      "{} {} got -EIO from {}, marking stat_error", __func__,
+		      poid, failed_call)
+	       << dendl;
       o.stat_error = true;
+      pos.next_object();
+      return 0;
     } else if (r != 0) {
-      derr << __func__ << " got: " << cpp_strerror(r) << dendl;
+      derr << fmt::format("{} {} got {} from {}", __func__, poid, cpp_strerror(r),
+           failed_call) << dendl;
       ceph_abort();
     }
 
-    if (r != 0) {
-      dout(25) << __func__ << "  " << poid << " got " << r
-	       << ", skipping" << dendl;
-      pos.next_object();
-      return 0;
-    }
-
-    dout(25) << __func__ << "  " << poid << dendl;
+    dout(20) << fmt::format("{} {} - done with metadata", __func__, pos)
+	     << dendl;
     pos.metadata_done = true;
   }
 
@@ -870,7 +874,10 @@ int PGBackend::be_scan_list(
     if (r == -EINPROGRESS) {
       return -EINPROGRESS;
     } else if (r != 0) {
-      derr << __func__ << " be_deep_scrub got: " << cpp_strerror(r) << dendl;
+      derr << fmt::format(
+		  "{} be_deep_scrub {} got: {}", __func__, poid,
+		  cpp_strerror(r))
+	   << dendl;
       ceph_abort();
     }
   }
