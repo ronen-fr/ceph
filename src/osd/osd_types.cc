@@ -7391,13 +7391,13 @@ std::string ScrubMapBuilder::fmt_print() const
 {
   const string dtl_size = (pos < ls.size()) ? fmt::format(" {}", ls[pos]) : "";
   const string dtl_data_pos =
-      (data_pos < 0) ? "" : fmt::format(" byte {}", data_pos);
+      (data_pos < 0) ? "" : fmt::format(" byte:{}", data_pos);
   const string dtl_omap_pos =
-      omap_pos.empty() ? "" : fmt::format(" key {}", omap_pos);
+      omap_pos.empty() ? "" : fmt::format(" key:{}", omap_pos);
   const string dtl_deep = deep ? " deep" : "";
-  const string dtl_ret = ret ? "" : fmt::format(" {}", ret);
+  const string dtl_ret = ret ? "" : fmt::format(" ret:{}", ret);
   return fmt::format(
-      "({}/{}{} metadata_done {}{}{}{}{})", pos, ls.size(), dtl_size,
+      "({}/{}{} metadata_done:{}{}{}{}{})", pos, ls.size(), dtl_size,
       metadata_done, dtl_data_pos, dtl_omap_pos, dtl_deep, dtl_ret);
 }
 

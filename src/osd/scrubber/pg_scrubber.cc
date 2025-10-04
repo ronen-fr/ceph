@@ -1351,8 +1351,9 @@ int PgScrubber::build_scrub_map_chunk(ScrubMap& map,
 				      hobject_t end,
 				      bool deep)
 {
-  dout(10) << __func__ << " [" << start << "," << end << ") "
-	   << " pos " << pos << " Deep: " << deep << dendl;
+  dout(10) << fmt::format("{}: [{}, {}) pos {} Deep: {}",
+                          __func__, start, end, pos, deep)
+           << dendl;
 
   // start
   while (pos.empty()) {
@@ -1366,16 +1367,21 @@ int PgScrubber::build_scrub_map_chunk(ScrubMap& map,
 							end,
 							&pos.ls,
 							&rollback_obs);
-    dout(10) << __func__ << " while pos empty " << pos.ret << dendl;
     if (pos.ret < 0) {
-      dout(5) << "objects_list_range error: " << pos.ret << dendl;
+      dout(5) << fmt::format("{}: objects_list_range error: {}", __func__,
+                pos.ret) << dendl;
       return pos.ret;
     }
-    dout(10) << __func__ << " pos.ls.empty()? " << (pos.ls.empty() ? "+" : "-")
-	     << dendl;
+    dout(20) << fmt::format("{} pos.ls.empty()? {}",
+                            __func__, (pos.ls.empty() ? "+" : "-"))
+             << dendl;
     if (pos.ls.empty()) {
       break;
     }
+    dout(10) << fmt::format(
+		    "{}: got {} objects. Searching the rollbacks. Rescheduling",
+                    __func__, pos.ls.size())
+	     << dendl;
     m_pg->_scan_rollback_obs(rollback_obs);
     pos.pos = 0;
     return -EINPROGRESS;
@@ -1383,13 +1389,13 @@ int PgScrubber::build_scrub_map_chunk(ScrubMap& map,
 
   // scan objects
   while (!pos.done()) {
-    int r =
+    const int r =
 	m_pg->get_pgbackend()->be_scan_list(get_unlabeled_counters(), map, pos);
-    dout(30) << __func__ << " BE returned " << r << dendl;
     if (r == -EINPROGRESS) {
-      dout(20) << __func__ << " in progress" << dendl;
+      dout(10) << fmt::format("{} : BE in progress", __func__) << dendl;
       return r;
     }
+    dout(30) << fmt::format("{} BE returned {}", __func__, r) << dendl;
   }
 
   // finish
