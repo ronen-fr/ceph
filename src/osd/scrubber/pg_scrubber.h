@@ -516,6 +516,15 @@ class PgScrubber : public ScrubPgIF,
 
   void on_mid_scrub_abort(Scrub::delay_cause_t issue) final;
 
+  /**
+   *  an auxiliary used by on_mid_scrub_abort()
+   *  If the target has operator-initiated urgency - downgrade
+   *  it to regular periodic.
+   *  \retval true: the urgency was downgraded
+   */
+  bool downgrade_on_op_abort(
+    Scrub::SchedTarget& targ);
+
   ScrubMachineListener::MsgAndEpoch prep_replica_map_msg(
     Scrub::PreemptionNoted was_preempted) final;
 
