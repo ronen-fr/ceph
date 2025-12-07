@@ -771,6 +771,77 @@ void PgScrubber::on_operator_forced_scrub(
 }
 
 
+/**
+ * Operation:
+ * - if the PG is being scrubbed - just send the operator-abort event to
+ *   the FSM. That would stop the ongoing scrub session, and remove the
+ *   (possible) operator-requested priority from both PG targets (shallow
+ *   and deep).
+ * - otherwise - manually manipulate the two urgencies.
+ */
+void PgScrubber::on_operator_abort_scrub(ceph::Formatter* f)
+{
+  Formatter::ObjectSection asok_resp_section{*f, "result"sv};
+  if (!is_primary() || !m_scrub_job) {
+    dout(10) << fmt::format(
+		    "{}: PG[{}]: not Primary or no scrub-job", __func__,
+		    m_pg_id)
+	     << dendl;
+    f->dump_bool("applicable", false);
+    f->dump_bool("active", false);
+    return;
+  }
+
+  dout(5) << fmt::format(
+                  "{}: job on entry: {}", __func__, *m_scrub_job)
+           << dendl;
+  ceph_assert(m_pg->is_locked());
+  if (is_scrub_active()) {
+    m_fsm->process_event(OperatorAbort{});
+    f->dump_bool("applicable", true);
+    f->dump_bool("active", true);
+
+  } else if (!m_scrub_job->is_registered()) {
+    dout(10) << fmt::format("{}: PG[{}] not registered", __func__, m_pg_id)
+	     << dendl;
+    f->dump_bool("applicable", false);
+    f->dump_bool("active", false);
+
+  } else {
+    // not scrubbing now. Remove any operator-requested priority from
+    // both targets.
+
+    if (m_scrub_job->is_queued()) {
+      // one or both of the targets are in the queue. Remove them.
+      m_osds->get_scrub_services().remove_from_osd_queue(m_pg_id);
+      m_scrub_job->clear_both_targets_queued();
+      dout(20) << fmt::format(
+		    "{}: PG[{}] dequeuing for an update", __func__, m_pg_id)
+	     << dendl;
+    }
+
+    // if any of the targets was set to operator-initiated urgency -
+    // remove that designation, and reschedule both.
+    const bool adj_shallow = downgrade_on_oper_abort(m_scrub_job->get_target(scrub_level_t::shallow));
+    // note: must not short-circuit!
+    const bool adj_deep = downgrade_on_oper_abort(m_scrub_job->get_target(scrub_level_t::deep));
+    if (adj_shallow || adj_deep) {
+      update_targets(ceph_clock_now());
+      dout(10) << fmt::format(
+		    "{}: adjusted job: {}", __func__, *m_scrub_job)
+               << dendl;
+    }
+    m_osds->get_scrub_services().enqueue_scrub_job(*m_scrub_job);
+    m_scrub_job->set_both_targets_queued();
+    f->dump_bool("applicable", true);
+    f->dump_bool("active", false);
+  }
+  dout(5) << fmt::format(
+                  "{}: job at exit: {}", __func__, *m_scrub_job) << dendl;
+  m_pg->publish_stats_to_osd();
+}
+
+
 // ----------------------------------------------------------------------------
 
 bool PgScrubber::has_pg_marked_new_updates() const
@@ -2066,7 +2137,7 @@ void PgScrubber::on_digest_updates()
 }
 
 // an aux, to avoid duplicating a set of 'if's
-bool PgScrubber::downgrade_on_op_abort(
+bool PgScrubber::downgrade_on_oper_abort(
     Scrub::SchedTarget& targ)
 {
   if (targ.urgency() == urgency_t::operator_requested ||

@@ -340,6 +340,9 @@ class PgScrubber : public ScrubPgIF,
       scrub_level_t scrub_level,
       scrub_type_t scrub_type) final;
 
+  void on_operator_abort_scrub(
+      ceph::Formatter* f) final;
+
   /**
    * let the scrubber know that a recovery operation has completed.
    * This might trigger an 'after repair' scrub.
@@ -518,11 +521,12 @@ class PgScrubber : public ScrubPgIF,
 
   /**
    *  an auxiliary used by on_mid_scrub_abort()
-   *  If the target has operator-initiated urgency - downgrade
-   *  it to regular periodic.
+   *  If the target has operator-initiated urgency (either 'must_repair' -
+   *  operator-requested repair or 'operator_requested' - operator-requested
+   *  scrub) - downgrade it to regular periodic.
    *  \retval true: the urgency was downgraded
    */
-  bool downgrade_on_op_abort(
+  bool downgrade_on_oper_abort(
     Scrub::SchedTarget& targ);
 
   ScrubMachineListener::MsgAndEpoch prep_replica_map_msg(
