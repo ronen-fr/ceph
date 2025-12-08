@@ -801,6 +801,16 @@ void PgScrubber::on_operator_abort_scrub(ceph::Formatter* f)
     f->dump_bool("applicable", true);
     f->dump_bool("active", true);
 
+  } else if (is_queued_or_active()) {
+    // instead of adding logic to the FSM to handle this rare
+    // occasion, we will simply ignore it (and let the operators
+    // know they can reissue the command, if still needed).
+    dout(10) << fmt::format("{}: PG[{}] scrub not stopped due to transitory state. Reissue!",
+             __func__, m_pg_id)
+	     << dendl;
+    f->dump_bool("applicable", false);
+    f->dump_bool("active", true);
+
   } else if (!m_scrub_job->is_registered()) {
     dout(10) << fmt::format("{}: PG[{}] not registered", __func__, m_pg_id)
 	     << dendl;
