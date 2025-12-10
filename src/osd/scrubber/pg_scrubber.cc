@@ -826,19 +826,21 @@ void PgScrubber::on_operator_abort_scrub(ceph::Formatter* f)
       m_osds->get_scrub_services().remove_from_osd_queue(m_pg_id);
       m_scrub_job->clear_both_targets_queued();
       dout(20) << fmt::format(
-		    "{}: PG[{}] dequeuing for an update", __func__, m_pg_id)
-	     << dendl;
+                      "{}: PG[{}] dequeuing for an update", __func__, m_pg_id)
+               << dendl;
     }
 
     // if any of the targets was set to operator-initiated urgency -
     // remove that designation, and reschedule both.
-    const bool adj_shallow = downgrade_on_oper_abort(m_scrub_job->get_target(scrub_level_t::shallow));
+    const auto scrub_time_now = ceph_clock_now();
+    const bool adj_shallow = downgrade_on_oper_abort(
+        m_scrub_job->get_target(scrub_level_t::shallow), scrub_time_now);
     // note: must not short-circuit!
-    const bool adj_deep = downgrade_on_oper_abort(m_scrub_job->get_target(scrub_level_t::deep));
+    const bool adj_deep = downgrade_on_oper_abort(
+        m_scrub_job->get_target(scrub_level_t::deep), scrub_time_now);
     if (adj_shallow || adj_deep) {
-      update_targets(ceph_clock_now());
-      dout(10) << fmt::format(
-		    "{}: adjusted job: {}", __func__, *m_scrub_job)
+      update_targets(scrub_time_now);
+      dout(10) << fmt::format("{}: adjusted job: {}", __func__, *m_scrub_job)
                << dendl;
     }
     m_osds->get_scrub_services().enqueue_scrub_job(*m_scrub_job);
@@ -846,8 +848,8 @@ void PgScrubber::on_operator_abort_scrub(ceph::Formatter* f)
     f->dump_bool("applicable", true);
     f->dump_bool("active", false);
   }
-  dout(5) << fmt::format(
-                  "{}: job at exit: {}", __func__, *m_scrub_job) << dendl;
+  dout(5) << fmt::format("{}: job at exit: {}", __func__, *m_scrub_job)
+          << dendl;
   m_pg->publish_stats_to_osd();
 }
 
