@@ -2146,21 +2146,24 @@ void PgScrubber::on_digest_updates()
   }
 }
 
-// an aux, to avoid duplicating a set of 'if's
 bool PgScrubber::downgrade_on_oper_abort(
-    Scrub::SchedTarget& targ)
+    Scrub::SchedTarget& targ,
+    utime_t scrub_clock_now)
 {
-  if (targ.urgency() == urgency_t::operator_requested ||
-      targ.urgency() == urgency_t::must_repair) {
-    dout(10) << fmt::format(
-                      "{}: removing operator-requested urgency from target {}",
-                      __func__, targ)
-               << dendl;
-    targ.sched_info.urgency = urgency_t::periodic_regular;
-    targ.sched_info.schedule.scheduled_at = ceph_clock_now();
-    return true;
+  if (targ.urgency() != urgency_t::operator_requested &&
+      targ.urgency() != urgency_t::must_repair) {
+    return false;  // no need to downgrade
   }
-  return false;
+
+  targ.sched_info.urgency = urgency_t::periodic_regular;
+  targ.sched_info.schedule.scheduled_at = scrub_clock_now;
+  targ.sched_info.schedule.not_before = scrub_clock_now;
+  dout(10)
+      << fmt::format(
+             "{}: removing operator-requested urgency from target. Updated: {}",
+             __func__, targ)
+      << dendl;
+  return true;
 }
 
 
@@ -2204,35 +2207,42 @@ void PgScrubber::on_mid_scrub_abort(Scrub::delay_cause_t issue)
   auto& current_targ = m_scrub_job->get_target(aborted_target.level());
   ceph_assert(!current_targ.queued);
 
-
-  // if the abort request was an explicit operator abort command, remove
-  // any operator-requested urgency from the aborted target. We must also
-  // ignore the 'do it now' target time that was set when the operator
-  // had initiated the scrub.
+  // if the abort trigger was an explicit operator abort command, and the
+  // aborted target had operator-initiated urgency:
+  // - do not perform a 'merge' of the aborted target and the 'next'
+  //   target in the scrub-job. Instead - just reinstate the 'next' target.
+  //   (the aborted target has more than its urgency attribute wrong. The
+  //   scheduled-at was also made irrelevant by the original operator
+  //   command that initiated the aborted scrub).
+  bool should_merge = true;
   if (issue == delay_cause_t::operator_abort) {
-    downgrade_on_oper_abort(aborted_target);
+    should_merge = !downgrade_on_oper_abort(aborted_target, scrub_clock_now);
   }
 
-  // merge the aborted target with the current one
-  auto& curr_sched = current_targ.sched_info.schedule;
-  auto& abrt_sched = aborted_target.sched_info.schedule;
+  if (should_merge) {
+    // the regular case. merge the aborted target with the current one
+    auto& curr_sched = current_targ.sched_info.schedule;
+    auto& abrt_sched = aborted_target.sched_info.schedule;
 
-  current_targ.sched_info.urgency =
-      std::max(current_targ.urgency(), aborted_target.urgency());
-  curr_sched.scheduled_at =
-      std::min(curr_sched.scheduled_at, abrt_sched.scheduled_at);
-  curr_sched.not_before =
-      std::min(curr_sched.not_before, abrt_sched.not_before);
-
-  dout(10) << fmt::format(
-		  "{}: merged target (before delay): {}", __func__,
-		  current_targ)
-	   << dendl;
+    current_targ.sched_info.urgency =
+        std::max(current_targ.urgency(), aborted_target.urgency());
+    curr_sched.scheduled_at =
+        std::min(curr_sched.scheduled_at, abrt_sched.scheduled_at);
+    curr_sched.not_before =
+        std::min(curr_sched.not_before, abrt_sched.not_before);
+    dout(10) << fmt::format(
+		    "{}: merged target (before delay): {}", __func__,
+		    current_targ)
+	     << dendl;
+  } else {
+    dout(10) << fmt::format(
+                    "{}: aborted oper-urgency target discarded: {}",
+                    __func__, current_targ)
+             << dendl;
+  }
 
   // affect a delay, as there was a failure mid-scrub
   m_scrub_job->delay_on_failure(current_targ.level(), issue, scrub_clock_now);
-
-  // reinstate both targets in the queue
   m_osds->get_scrub_services().enqueue_target(current_targ);
   current_targ.queued = true;
 
@@ -2240,13 +2250,12 @@ void PgScrubber::on_mid_scrub_abort(Scrub::delay_cause_t issue)
   auto& sister = m_scrub_job->get_target(
       aborted_target.level() == scrub_level_t::deep ? scrub_level_t::shallow
 						    : scrub_level_t::deep);
-
   // if 'operator-aborted' - that one should be downgraded, too (the scenario
   // we are trying to help the operator with: trying to recover from a set of
   // scrub requests issued by mistake).
   if (!sister.queued) {
     if (issue == delay_cause_t::operator_abort) {
-      downgrade_on_oper_abort(sister);
+      downgrade_on_oper_abort(sister, scrub_clock_now);
     }
     m_osds->get_scrub_services().enqueue_target(sister);
     sister.queued = true;
