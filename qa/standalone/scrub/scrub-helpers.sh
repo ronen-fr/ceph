@@ -51,7 +51,7 @@ function extract_published_sch() {
   (( extr_dbg >= 2 )) && echo "query output:"
   (( extr_dbg >= 2 )) && ceph pg $1 query -f json-pretty | awk -e '/scrubber/,/agent_state/ {print;}'
 
-  # note: the query output for the schedule containas two dates: the first is the not-before, and
+  # note: the query output for the schedule contains two dates: the first is the not-before, and
   # the second is the original target time (which is before or the same as the not-before)
   # the current line format looks like this:
   # "schedule": "scrub scheduled @ 2024-06-26T16:09:56.666 (2024-06-24T16:09:56.338)"

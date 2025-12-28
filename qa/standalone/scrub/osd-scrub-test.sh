@@ -48,6 +48,46 @@ function perf_counters() {
     done
 }
 
+function create_objects_par()
+{
+  local dir=$1
+  local poolname=$2
+  local K=$3
+  local S=$4
+  local NTHR=$5
+
+  local start_times=$(date +%s%N)
+  local testdata_file=$(file_with_random_data $S)
+
+  (( NTHR > K )) && NTHR=$K # no more than K parallel threads
+  local objs_per_proc=$((K / NTHR))
+  if (( K % NTHR != 0 )); then
+    objs_per_proc=$((objs_per_proc + 1))
+  fi
+
+  (( NTHR > 1 )) && echo "Creating $K objects in pool $poolname using $NTHR parallel threads," \
+                      "$objs_per_proc objects per thread"
+  for i in `seq 1 $NTHR`; do
+    (
+      for j in `seq 1 $objs_per_proc`; do
+        local obj_id=$(( (i - 1) * objs_per_proc + j ))
+        if (( obj_id > K )); then
+          break
+        fi
+        rados -p $poolname put obj${obj_id} $testdata_file
+      done
+    ) &
+  done
+
+  wait
+  rm $testdata_file
+  local end_times=$(date +%s%N)
+  local duration=$(( (end_times - start_times) / 1000000 ))
+  echo "create_objects_par(): created $K objects in pool $poolname in $duration ms"
+}
+
+
+
 function TEST_scrub_test() {
     local dir=$1
     local poolname=test
@@ -731,6 +771,58 @@ function wait_initial_scrubs() {
 }
 
 
+
+
+
+# Assuming a file containing the combined output of 'ceph tell osd.* dump_scrubs',
+# print the scrub status for a given PG and level.
+# Prints: <pgid> <level> <urgency> <sched_time> <forced> (single line)
+function extract_pg_sched_info()
+{
+  set -x
+  local pg=$1
+  local level=$2
+  local dump_file=$3
+  if [[ -z "$pg" ]]; then
+    echo "print_scrub_for_pg: pg is required" >&2
+    return 1
+  fi
+  if [[ -z "$dump_file" || ! -f "$dump_file" ]]; then
+    echo "print_scrub_for_pg: dump file '$dump_file' not found" >&2
+    return 1
+  fi
+  if [[ -z "$level" ]]; then
+    echo "print_scrub_for_pg: level is required (e.g. 'shallow' or 'deep')" >&2
+    return 1
+  fi
+  #jq -r --arg PG "$pg" --arg LEVEL "$level" '.[] | select(.pgid == $PG and .level == $LEVEL) | .["pgid"] + " "  + .["level"] + " " + .["urgency"] + " " + .["sched_time"] + " " + (.forced|tostring) '  < "$dump_file";
+  cat "$dump_file" | jq -r --arg PG "$pg" --arg LEVEL "$level" '.[] | select(.pgid == $PG and .level == $LEVEL) | .["urgency"] + " "  + (.forced|tostring) '
+  cat "$dump_file" | jq -r --arg PG "$pg" --arg LEVEL "$level" '.[] | select(.pgid == $PG and .level == $LEVEL) | (.["pgid"] + " "  + .["level"] + " " + .["urgency"] + " " + .["sched_time"] + " " + (.forced|tostring) ) '
+}
+
+# create a json concatenation of the outputs of
+#  ceph tell osd.* dump_scrubs --format=json-pretty
+# into a temporary file, to be used by, for example, extract_pg_sched_info()
+function combined_scrub_sched_dump() {
+  local osd_num=$1
+  for osd in $(seq 0 $((osd_num - 1))); do
+    ceph tell osd.$osd dump_scrubs --format=json-pretty > /tmp/ds_osd_${osd}.json
+  done
+  local out_file=$(mktemp /tmp/combined_scrub_dump.XXXX.json)
+  jq -s 'add' /tmp/ds_osd_*.json > "$out_file"
+  echo "$out_file"
+}
+
+
+
+# pg=2.6; level="deep"; cat /tmp/ds_allto_072453.json | jq -r --arg PG "$pg" --arg LEVEL "$level" '.[]|select(.pgid == $PG and .level == $LEVEL)'  | head
+# pg=2.6; level="deep"; cat /tmp/ds_allto_072453.json | jq --arg PG "$pg" --arg LEVEL "$level" '.[]|select(.pgid == $PG and .level == $LEVEL)| .["pgid"] + " "  + .["level"] + " " + .["urgency"] + " " + "\(.forced)" ' | head
+# URGENCY=LL; read -r PGID LEVEL URGENCY SCHEDULE FORCED < <(pg=2.6; level="deep"; cat /tmp/ds_allto_072453.json | jq --arg PG "$pg" --arg LEVEL "$level" '.[] | select(.pgid == $PG and .level == $LEVEL) |  .["pgid"] + " "  + .["level"] + " " + .["urgency"] + " " + .["sched_time"] + " " + "\(.forced)" ' /tmp/ds_allto_072453.json | tr -d '"'); echo $URGENCY
+# cat /tmp/ds_allto_072453.json | jq -r --arg PG "3.5" --arg LEVEL "deep" '.[] | select(.pgid == $PG and .level == $LEVEL) |  .["pgid"] + " "  + .["level"] + " " + .["urgency"] + " " + .["sched_time"] + " " + (.forced|tostring) '
+#  3.5 deep periodic-regular 2025-12-25T07:30:05.182891+0000 false
+
+
+
 # Whenever a PG is being scrubbed at a regular, periodic, urgency, and is queued
 # for its replicas:
 # if the operator is requesting a scrub of the same PG, the operator's request
@@ -781,6 +873,269 @@ function TEST_abort_periodic_for_operator() {
     for pg in "${!pg_pr[@]}"; do
       (( extr_dbg >= 2 )) && echo "Got: $pg: ${pg_pr[$pg]} ( ${pg_ac[$pg]} ) ${pg_po[$pg]}"
     done
+
+    wait_initial_scrubs pg_pr || return 1
+
+    # limit all OSDs to one scrub at a time
+    ceph tell osd.* config set osd_max_scrubs 1
+    ceph tell osd.* config set osd_stats_update_period_not_scrubbing 1
+
+    # configure for slow scrubs
+    ceph tell osd.* config set osd_scrub_sleep 3
+    ceph tell osd.* config set osd_shallow_scrub_chunk_max 2
+    ceph tell osd.* config set osd_scrub_chunk_max 2
+    (( extr_dbg >= 2 )) && ceph tell osd.2 dump_scrub_reservations --format=json-pretty
+
+    # the first PG to work with:
+    local pg2=""
+    for pg1 in "${!pg_pr[@]}"; do
+      for pg in "${!pg_pr[@]}"; do
+        if [[ "$pg" == "$pg1" ]]; then
+          continue
+        fi
+        if [[ "${pg_pr[$pg]}" == "${pg_pr[$pg1]}" ]]; then
+          local -i common=$(count_common_active $pg $pg1 pg_ac)
+          if [[ $common -gt 1 ]]; then
+            pg2=$pg
+            break 2
+          fi
+        fi
+      done
+    done
+
+    if [[ -z "$pg2" ]]; then
+      echo "No PG found with the same primary as $pg1"
+      return 0 # not an error
+    fi
+
+    # the common primary is allowed two concurrent scrubs
+    ceph tell osd."${pg_pr[$pg1]}" config set osd_max_scrubs 2
+    echo "The two PGs to manipulate are $pg1 and $pg2"
+
+    set_query_debug "$pg1"
+    # wait till the information published by pg1 is updated to show it as
+    # not being scrubbed
+    local is_act
+    for i in $( seq 1 3 )
+    do
+      is_act=$(ceph pg "$pg1" query | jq '.scrubber.active')
+      if [[ "$is_act" = "false" ]]; then
+          break
+      fi
+      echo "Still waiting for pg $pg1 to finish scrubbing"
+      sleep 0.7
+    done
+    ceph pg dump pgs
+    if [[ "$is_act" != "false" ]]; then
+      ceph pg "$pg1" query
+      echo "PG $pg1 appears to be still scrubbing"
+      return 1
+    fi
+    sleep 0.5
+
+    echo "Initiating a periodic scrub of $pg1"
+    (( extr_dbg >= 2 )) && ceph pg "$pg1" query -f json-pretty | jq '.scrubber'
+    ceph tell $pg1 schedule-deep-scrub || return 1
+    sleep 1
+    (( extr_dbg >= 2 )) && ceph pg "$pg1" query -f json-pretty | jq '.scrubber'
+
+    for i in $( seq 1 14 )
+    do
+      sleep 0.5
+      stt=$(ceph pg "$pg1" query | jq '.scrubber')
+      is_active=$(echo $stt | jq '.active')
+      is_reserving_replicas=$(echo $stt | jq '.is_reserving_replicas')
+      if [[ "$is_active" = "true" && "$is_reserving_replicas" = "false" ]]; then
+          break
+      fi
+      echo "Still waiting for pg $pg1 to start scrubbing: $stt"
+    done
+    if [[ "$is_active" != "true" || "$is_reserving_replicas" != "false" ]]; then
+      ceph pg "$pg1" query -f json-pretty | jq '.scrubber'
+      echo "The scrub is not active or is reserving replicas"
+      return 1
+    fi
+    (( extr_dbg >= 2 )) && ceph pg "$pg1" query -f json-pretty | jq '.scrubber'
+
+
+    # PG 1 is scrubbing, and has reserved the replicas - soem of which are shared
+    # by PG 2. As the max-scrubs was set to 1, that should prevent PG 2 from
+    # reserving its replicas.
+
+    (( extr_dbg >= 1 )) && ceph tell osd.* dump_scrub_reservations --format=json-pretty
+
+    # now - the 2'nd scrub - which should be blocked on reserving
+    set_query_debug "$pg2"
+    ceph tell "$pg2" schedule-deep-scrub
+    sleep 0.5
+    (( extr_dbg >= 2 )) && echo "===================================================================================="
+    (( extr_dbg >= 2 )) && ceph pg "$pg2" query -f json-pretty | jq '.scrubber'
+    (( extr_dbg >= 2 )) && ceph pg "$pg1" query -f json-pretty | jq '.scrubber'
+    sleep 1
+    (( extr_dbg >= 2 )) && echo "===================================================================================="
+    (( extr_dbg >= 2 )) && ceph pg "$pg2" query -f json-pretty | jq '.scrubber'
+    (( extr_dbg >= 2 )) && ceph pg "$pg1" query -f json-pretty | jq '.scrubber'
+
+    # make sure pg2 scrub is stuck in the reserving state
+    local stt2=$(ceph pg "$pg2" query | jq '.scrubber')
+    local pg2_is_reserving
+    pg2_is_reserving=$(echo $stt2 | jq '.is_reserving_replicas')
+    if [[ "$pg2_is_reserving" != "true" ]]; then
+      echo "The scheduled scrub for $pg2 should have been stuck"
+      ceph pg dump pgs
+      return 1
+    fi
+
+    # now - issue an operator-initiated scrub on pg2.
+    # The periodic scrub should be aborted, and the operator-initiated scrub should start.
+    echo "Instructing $pg2 to perform a high-priority scrub"
+    ceph tell "$pg2" scrub
+    for i in $( seq 1 10 )
+    do
+      sleep 0.5
+      stt2=$(ceph pg "$pg2" query | jq '.scrubber')
+      pg2_is_active=$(echo $stt2 | jq '.active')
+      pg2_is_reserving=$(echo $stt2 | jq '.is_reserving_replicas')
+      if [[ "$pg2_is_active" = "true" && "$pg2_is_reserving" != "true" ]]; then
+            break
+      fi
+      echo "Still waiting: $stt2"
+    done
+
+    if [[ "$pg2_is_active" != "true" || "$pg2_is_reserving" = "true" ]]; then
+      echo "The high-priority scrub for $pg2 is not active or is reserving replicas"
+      return 1
+    fi
+    echo "Done"
+}
+
+
+# Test the new ('Tentacle' version) 'tell' command to "undo" an operator
+# scrub request.
+# The specifics of the 'tell <pgid> abort-scrub' command are:
+# - if there is an ongoing scrub of the named PG, it is aborted;
+# - if the aborted scrub was operator-initiated, that aborted target is
+#   downgraded to a 'periodic' urgency scrub target;
+# - if that PG has a pending operator-initiated scrub, the 'urgency' of that
+#   scrub-target is cleared (i.e. downgraded to 'periodic' urgency);
+# (note that 'scrub' above means both 'scrub' and 'deep-scrub')
+#
+# To test this functonality, we:
+# - create a scenario that includes:
+#    - a set of PGs being periodically scrubbed
+#    - one PG being operator-scrubbed while also have a pending operator-deep-scrub
+#    - one PG being operator-deep-scrub
+#
+# A next step: have some of the PGs in 'must scrub' urgency, issue operator scrub
+# requests then undoing them. The 'mst scrub' urgency should be retriggered.
+#
+function TEST_undo_operator_initiation() {
+    local dir=$1
+    local -A cluster_conf=(
+        ['osds_num']="3"
+        ['pgs_in_pool']="8"
+        ['pool_name']="test"
+    )
+    local extr_dbg=3 # note: 3 and above leave some temp files around
+
+    standard_scrub_wpq_cluster "$dir" cluster_conf 2 || return 1
+    local poolid=${cluster_conf['pool_id']}
+    local poolname=${cluster_conf['pool_name']}
+    echo "Pool: $poolname : $poolid"
+    ceph osd pool set $poolname noscrub 1
+    ceph osd pool set $poolname nodeep-scrub 1
+
+    #turn off '-x' (but remember previous state)
+    local saved_echo_flag=${-//[^x]/}
+    set -x
+
+    # Create some objects
+    local fill_threads=8
+    create_objects_par "$dir" "$poolname" 64 1024 "$fill_threads" || return 1
+    if [[ -n "$saved_echo_flag" ]]; then set -x; fi
+    ceph pg dump pgs
+
+    # create the dictionary of the PGs in the pool
+    declare -A pg_pr
+    declare -A pg_ac
+    declare -A pg_po
+    build_pg_dicts "$dir" pg_pr pg_ac pg_po "-"
+    (( extr_dbg >= 2 )) && echo "PGs table:"
+    for pg in "${!pg_pr[@]}"; do
+      (( extr_dbg >= 2 )) && echo "Got: $pg: ${pg_pr[$pg]} ( ${pg_ac[$pg]} ) ${pg_po[$pg]}"
+    done
+
+    # slow the scrubs down
+    ceph tell osd.* config set osd_scrub_sleep 2
+    ceph tell osd.* config set osd_shallow_scrub_chunk_max 3
+    ceph tell osd.* config set osd_scrub_chunk_max 3
+
+    ceph pg dump pgs
+    # tell PG p.0 to both scrub & deep-scrub
+    ceph pg ${poolid}.0 scrub
+    ceph pg ${poolid}.0 deep-scrub
+
+    # capture its targets' urgencies
+    # bin/ceph tell osd.1 dump_scrubs --format=json-pretty  | jq -r --arg PG "2.6" '[.[] | select(.pgid == $PG and .level == $LEVEL) | .urgency] | unique[]'
+    # jq -r --arg PG "$PG" --arg LEVEL "$LEVEL" '.[] | select(.pgid == $PG and .level == $LEVEL) | .urgency' ds_01.json
+
+    echo "$(combined_scrub_sched_dump ${cluster_conf['osds_num']})"
+    dump_file=$(combined_scrub_sched_dump ${cluster_conf['osds_num']})
+    (( extr_dbg >= 2 )) && echo "Combined scrub schedule dump in $dump_file" && head -20 "$dump_file"
+
+    #echo extract_pg_sched_info "${poolid}.0" "shallow" /tmp/rrr999.json
+    #extract_pg_sched_info "${poolid}.0" "shallow" /tmp/rrr999.json
+
+    # pg.0 shallow scrub should be operator-initiated already
+    # pg.0 deep should be waiting, but with operator-initiated urgency
+    read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
+    test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+        "$s0_pgid" "$s0_level" "$s0_urgency" "$s0_schedule" "$s0_forced"
+
+    read -r d0_pgid d0_level d0_urgency d0_schedule d0_forced < <(extract_pg_sched_info "${poolid}.0" "deep" "$dump_file")
+    test "$d0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+        "$d0_pgid" "$d0_level" "$d0_urgency" "$d0_schedule" "$d0_forced"
+
+    sleep 2
+    dump_file=$(combined_scrub_sched_dump ${cluster_conf['osds_num']})
+    (( extr_dbg >= 2 )) && echo "Combined scrub schedule dump in $dump_file" && head -20 "$dump_file"
+
+    # pg.0 shallow scrub should be operator-initiated already
+    # pg.0 deep should be waiting, but with operator-initiated urgency
+    read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
+    test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+        "$s0_pgid" "$s0_level" "$s0_urgency" "$s0_schedule" "$s0_forced"
+
+    read -r d0_pgid d0_level d0_urgency d0_schedule d0_forced < <(extract_pg_sched_info "${poolid}.0" "deep" "$dump_file")
+    test "$d0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+        "$d0_pgid" "$d0_level" "$d0_urgency" "$d0_schedule" "$d0_forced"
+
+
+    sleep 10
+    dump_file=$(combined_scrub_sched_dump ${cluster_conf['osds_num']})
+    (( extr_dbg >= 2 )) && echo "Combined scrub schedule dump in $dump_file" && head -20 "$dump_file"
+
+    # pg.0 shallow scrub should be operator-initiated already
+    # pg.0 deep should be waiting, but with operator-initiated urgency
+    read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
+    test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+        "$s0_pgid" "$s0_level" "$s0_urgency" "$s0_schedule" "$s0_forced"
+
+    read -r d0_pgid d0_level d0_urgency d0_schedule d0_forced < <(extract_pg_sched_info "${poolid}.0" "deep" "$dump_file")
+    test "$d0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+        "$d0_pgid" "$d0_level" "$d0_urgency" "$d0_schedule" "$d0_forced"
+
+    return 0;
+
+
+
+
 
     wait_initial_scrubs pg_pr || return 1
 
