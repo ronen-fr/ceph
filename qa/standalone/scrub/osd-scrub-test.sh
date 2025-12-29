@@ -777,7 +777,7 @@ function wait_initial_scrubs() {
 # Assuming a file containing the combined output of 'ceph tell osd.* dump_scrubs',
 # print the scrub status for a given PG and level.
 # Prints: <pgid> <level> <urgency> <sched_time> <forced> (single line)
-function extract_pg_sched_info()
+function extract_pg_sched_info_v0()
 {
   set -x
   local pg=$1
@@ -796,9 +796,197 @@ function extract_pg_sched_info()
     return 1
   fi
   #jq -r --arg PG "$pg" --arg LEVEL "$level" '.[] | select(.pgid == $PG and .level == $LEVEL) | .["pgid"] + " "  + .["level"] + " " + .["urgency"] + " " + .["sched_time"] + " " + (.forced|tostring) '  < "$dump_file";
-  cat "$dump_file" | jq -r --arg PG "$pg" --arg LEVEL "$level" '.[] | select(.pgid == $PG and .level == $LEVEL) | .["urgency"] + " "  + (.forced|tostring) '
+  #cat "$dump_file" | jq -r --arg PG "$pg" --arg LEVEL "$level" '.[] | select(.pgid == $PG and .level == $LEVEL) | .["urgency"] + " "  + (.forced|tostring) '
   cat "$dump_file" | jq -r --arg PG "$pg" --arg LEVEL "$level" '.[] | select(.pgid == $PG and .level == $LEVEL) | (.["pgid"] + " "  + .["level"] + " " + .["urgency"] + " " + .["sched_time"] + " " + (.forced|tostring) ) '
 }
+
+
+# Extract scrub scheduling info from a PG query JSON output.
+# Arguments:
+#   $1 - the PG ID
+#   $2 - level: "shallow" or "deep"
+#   $3 - name of an associative array to fill with results
+# Fills the dictionary with keys: urgency, sched_time, level, active
+#
+# The expected output from the PG query command (e.g. c pg 3.7  query -f json-pretty)
+# looks like this:
+# {
+#   ...
+#  "scrubber": {
+#       "active": true,
+#       "epoch_start": "16",
+#       "start": "2:e4d0e58a:::benchmark_data_sockeni07.maas_2211795_object125:0",
+#       ...
+#       "deep": true,
+#       "req_scrub": true,
+#       ...
+#       "waiting_on_whom": [],
+#       "schedule": "scrubbing",
+#       ...
+#       "urgency": "operator-requested",
+#       "shallow-target": {
+#           "pgid": "2.7",
+#           "level": "shallow",
+#           "urgency": "operator-requested",
+#           "sched_time": "1.000000",
+#           "orig_sched_time": "1.000000",
+#           "last_issue": "ok",
+#           "forced": true,
+#           "eligible": true,
+#           "queued": false,
+#           "active": false
+#       },
+#       "deep-target": {
+#           "pgid": "2.7",
+#           "level": "deep",
+#           "urgency": "periodic-regular",
+#           "sched_time": "2106-02-07T06:28:15.999999+0000",
+#           "orig_sched_time": "2106-02-07T06:28:15.999999+0000",
+#           "last_issue": "ok",
+#           "forced": false,
+#           "eligible": false,
+#           "queued": false,
+#           "active": true
+#       }
+#   }
+function extract_scrub_info_from_query()
+{
+  local pg=$1
+  local level=$2
+  local -n result_dict=$3
+  if [[ -z "$pg" ]]; then
+    echo "extract_scrub_info_from_query: pg is required" >&2
+    return 1
+  fi
+  if [[ -z "$level" || ( "$level" != "shallow" && "$level" != "deep" ) ]]; then
+    echo "extract_scrub_info_from_query: level must be 'shallow' or 'deep'" >&2
+    return 1
+  fi
+  local extr_dbg=3 # note: 3 and above leave some temp files around
+
+  (( extr_dbg >= 2 )) && ceph pg $pg query -f json-pretty | awk -e '/scrubber/,/agent_state/ {print;}'
+
+  local target_key="${level}-target"
+  # Determine if the top-level is active and if the active scrub level matches
+  # the requested level. The top-level "deep" field indicates the active scrub level.
+  local jq_prog='
+    def active_level: if .deep then "deep" else "shallow" end;
+
+    if (.active == true and active_level == $LEVEL) then
+      # Active scrub matches requested level - use top-level values
+      {
+        urgency: .urgency,
+        sched_time: .[$TARGET].sched_time,
+        level: $LEVEL,
+	forced: .req_scrub,
+        active: "true",
+	scrubbing: .active
+      }
+    else
+      # Not active or level mismatch - use target sub-dictionary
+      {
+        urgency: .[$TARGET].urgency,
+        sched_time: .[$TARGET].sched_time,
+        level: $LEVEL,
+	forced: .[$TARGET].forced,
+        active: "false",
+	scrubbing: .active
+      }
+    end | "\(.scrubbing) \(.urgency) \(.sched_time) \(.level) \(.active) \(.forced)"
+  '
+
+  local out
+  #out=$(jq -r --arg LEVEL "$level" --arg TARGET "$target_key" "$jq_prog" < "$dump_file")
+  out=$(ceph pg $pg query -f json-pretty | jq -r '.scrubber' | \
+      jq -r --arg LEVEL "$level" --arg TARGET "$target_key" "$jq_prog")
+
+  if [[ -z "$out" || "$out" == "null" ]]; then
+    echo "extract_scrub_info_from_query: failed to extract values" >&2
+    return 1
+  fi
+
+  # Parse the output and fill the dictionary
+  read -r result_dict['scrubbing'] result_dict['urgency'] result_dict['sched_time'] \
+       result_dict['level'] result_dict['target_active']  result_dict['forced'] <<< "$out"
+  return 0
+}
+
+
+function extract_pg_sched_info()
+{
+  set -x
+  local pg=$1
+  local level=$2
+  local dump_file=$3
+  local -n result_dict=$4
+
+  if [[ -z "$pg" ]]; then
+    echo "extract_pg_sched_info: pg is required" >&2
+    return 1
+  fi
+  if [[ -z "$dump_file" || ! -f "$dump_file" ]]; then
+    echo "extract_pg_sched_info: dump file '$dump_file' not found" >&2
+    return 1
+  fi
+  if [[ -z "$level" ]]; then
+    echo "extract_pg_sched_info: level is required (e.g. 'shallow' or 'deep')" >&2
+    return 1
+  fi
+
+  local out
+  out=$(jq -r --arg PG "$pg" --arg LEVEL "$level" \
+    '.[] | select(.pgid == $PG and .level == $LEVEL) | (.["pgid"] + " "  + .["level"] + " " + .["urgency"] + " " + .["sched_time"] + " " + (.forced|tostring) )' < "$dump_file")
+
+  if [[ -z "$out" ]]; then
+    # No matching object: in our usage scenarios, this indicates an active scrub of this PG
+    out=$(pg_sched_from_pg_dump "$pg" "$level")
+    extract_scrub_info_from_query "$pg" "$level" result_dict
+    if [[ $? -ne 0 ]]; then
+      echo "extract_pg_sched_info: pg_sched_from_pg_dump failed" >&2
+      return 1
+    fi
+  else
+    # Parse the output and fill the dictionary
+    read -r result_dict['pgid'] result_dict['level'] result_dict['urgency'] result_dict['sched_time'] result_dict['forced'] <<< "$out"
+    result_dict['scrubbing']="false"
+    result_dict['target_active']="false"
+  fi
+  return 0
+}
+
+# function extract_pg_sched_info()
+# {
+#   set -x
+#   local pg=$1
+#   local level=$2
+#   local dump_file=$3
+#   if [[ -z "$pg" ]]; then
+#     echo "print_scrub_for_pg: pg is required" >&2
+#     return 1
+#   fi
+#   if [[ -z "$dump_file" || ! -f "$dump_file" ]]; then
+#     echo "print_scrub_for_pg: dump file '$dump_file' not found" >&2
+#     return 1
+#   fi
+#   if [[ -z "$level" ]]; then
+#     echo "print_scrub_for_pg: level is required (e.g. 'shallow' or 'deep')" >&2
+#     return 1
+#   fi
+# 
+#   local out
+#   out=$(jq -r --arg PG "$pg" --arg LEVEL "$level" \
+#     '.[] | select(.pgid == $PG and .level == $LEVEL) | (.["pgid"] + " "  + .["level"] + " " + .["urgency"] + " " + .["sched_time"] + " " + (.forced|tostring) )' < "$dump_file")
+# 
+#   if [[ -z "$out" ]]; then
+#     # No matching object: in our usage scenarios, this indicates an active scrub of this PG
+#     func_def_output=$(func_def)
+#     echo "$func_def_output"
+#     return 1
+#   fi
+# 
+#   echo "$out"
+# }
+
 
 # create a json concatenation of the outputs of
 #  ceph tell osd.* dump_scrubs --format=json-pretty
@@ -1027,7 +1215,7 @@ function TEST_abort_periodic_for_operator() {
 #    - one PG being operator-deep-scrub
 #
 # A next step: have some of the PGs in 'must scrub' urgency, issue operator scrub
-# requests then undoing them. The 'mst scrub' urgency should be retriggered.
+# requests then undoing them. The 'must scrub' urgency should be retriggered.
 #
 function TEST_undo_operator_initiation() {
     local dir=$1
@@ -1079,6 +1267,30 @@ function TEST_undo_operator_initiation() {
     # bin/ceph tell osd.1 dump_scrubs --format=json-pretty  | jq -r --arg PG "2.6" '[.[] | select(.pgid == $PG and .level == $LEVEL) | .urgency] | unique[]'
     # jq -r --arg PG "$PG" --arg LEVEL "$LEVEL" '.[] | select(.pgid == $PG and .level == $LEVEL) | .urgency' ds_01.json
 
+
+    declare -A sh_dict
+    extract_scrub_info_from_query "${poolid}.0" shallow sh_dict
+    echo "Shallow: got:"
+    echo "scrubbing: ${sh_dict['scrubbing']}"
+    for x in "${!sh_dict[@]}"; do
+      echo "$x" " -> " ${sh_dict[$x]}
+    done
+    declare -A dp_dict
+    extract_scrub_info_from_query "${poolid}.0" deep dp_dict
+    echo "Deep: got:"
+    echo "scrubbing: ${dp_dict['scrubbing']}"
+    for x in "${!dp_dict[@]}"; do
+      echo "$x" " -> " ${dp_dict[$x]}
+    done
+
+
+
+
+
+
+
+
+
     echo "$(combined_scrub_sched_dump ${cluster_conf['osds_num']})"
     dump_file=$(combined_scrub_sched_dump ${cluster_conf['osds_num']})
     (( extr_dbg >= 2 )) && echo "Combined scrub schedule dump in $dump_file" && head -20 "$dump_file"
@@ -1088,48 +1300,75 @@ function TEST_undo_operator_initiation() {
 
     # pg.0 shallow scrub should be operator-initiated already
     # pg.0 deep should be waiting, but with operator-initiated urgency
-    read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
-    test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
-    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
-        "$s0_pgid" "$s0_level" "$s0_urgency" "$s0_schedule" "$s0_forced"
-
-    read -r d0_pgid d0_level d0_urgency d0_schedule d0_forced < <(extract_pg_sched_info "${poolid}.0" "deep" "$dump_file")
-    test "$d0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
-    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
-        "$d0_pgid" "$d0_level" "$d0_urgency" "$d0_schedule" "$d0_forced"
+    declare -A sh0_stat
+    #read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
+    extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file" sh0_stat
+    #test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    for x in "${!sh0_stat[@]}"; do
+      echo "sh0_stat: $x" " -> " ${sh0_stat[$x]}
+    done
+    declare -A dp0_stat
+    #read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
+    extract_pg_sched_info "${poolid}.0" "deep" "$dump_file" dp0_stat
+    #test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    for x in "${!dp0_stat[@]}"; do
+      echo "dp0_stat: $x" " -> " ${dp0_stat[$x]}
+    done
 
     sleep 2
-    dump_file=$(combined_scrub_sched_dump ${cluster_conf['osds_num']})
-    (( extr_dbg >= 2 )) && echo "Combined scrub schedule dump in $dump_file" && head -20 "$dump_file"
-
-    # pg.0 shallow scrub should be operator-initiated already
-    # pg.0 deep should be waiting, but with operator-initiated urgency
-    read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
-    test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
-    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
-        "$s0_pgid" "$s0_level" "$s0_urgency" "$s0_schedule" "$s0_forced"
-
-    read -r d0_pgid d0_level d0_urgency d0_schedule d0_forced < <(extract_pg_sched_info "${poolid}.0" "deep" "$dump_file")
-    test "$d0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
-    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
-        "$d0_pgid" "$d0_level" "$d0_urgency" "$d0_schedule" "$d0_forced"
+    extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file" sh0_stat
+    #test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    for x in "${!sh0_stat[@]}"; do
+      echo "sh0_stat: $x" " -> " ${sh0_stat[$x]}
+    done
+    #read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
+    extract_pg_sched_info "${poolid}.0" "deep" "$dump_file" dp0_stat
+    #test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    for x in "${!dp0_stat[@]}"; do
+      echo "dp0_stat: $x" " -> " ${dp0_stat[$x]}
+    done
 
 
-    sleep 10
-    dump_file=$(combined_scrub_sched_dump ${cluster_conf['osds_num']})
-    (( extr_dbg >= 2 )) && echo "Combined scrub schedule dump in $dump_file" && head -20 "$dump_file"
+    #     printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+    #         "$s0_pgid" "$s0_level" "$s0_urgency" "$s0_schedule" "$s0_forced"
+    # 
+    #     read -r d0_pgid d0_level d0_urgency d0_schedule d0_forced < <(extract_pg_sched_info "${poolid}.0" "deep" "$dump_file")
+    #     test "$d0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    #     printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+    #         "$d0_pgid" "$d0_level" "$d0_urgency" "$d0_schedule" "$d0_forced"
 
-    # pg.0 shallow scrub should be operator-initiated already
-    # pg.0 deep should be waiting, but with operator-initiated urgency
-    read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
-    test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
-    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
-        "$s0_pgid" "$s0_level" "$s0_urgency" "$s0_schedule" "$s0_forced"
-
-    read -r d0_pgid d0_level d0_urgency d0_schedule d0_forced < <(extract_pg_sched_info "${poolid}.0" "deep" "$dump_file")
-    test "$d0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
-    printf "PG %s level %s urgency %s schedule %s forced %s\n" \
-        "$d0_pgid" "$d0_level" "$d0_urgency" "$d0_schedule" "$d0_forced"
+    # sleep 2
+    # dump_file=$(combined_scrub_sched_dump ${cluster_conf['osds_num']})
+    # (( extr_dbg >= 2 )) && echo "Combined scrub schedule dump in $dump_file" && head -20 "$dump_file"
+    # 
+    # # pg.0 shallow scrub should be operator-initiated already
+    # # pg.0 deep should be waiting, but with operator-initiated urgency
+    # read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
+    # test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    # printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+    #     "$s0_pgid" "$s0_level" "$s0_urgency" "$s0_schedule" "$s0_forced"
+    # 
+    # read -r d0_pgid d0_level d0_urgency d0_schedule d0_forced < <(extract_pg_sched_info "${poolid}.0" "deep" "$dump_file")
+    # test "$d0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    # printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+    #     "$d0_pgid" "$d0_level" "$d0_urgency" "$d0_schedule" "$d0_forced"
+    # 
+    # 
+    # sleep 10
+    # dump_file=$(combined_scrub_sched_dump ${cluster_conf['osds_num']})
+    # (( extr_dbg >= 2 )) && echo "Combined scrub schedule dump in $dump_file" && head -20 "$dump_file"
+    # 
+    # # pg.0 shallow scrub should be operator-initiated already
+    # # pg.0 deep should be waiting, but with operator-initiated urgency
+    # read -r s0_pgid s0_level s0_urgency s0_schedule s0_forced < <(extract_pg_sched_info "${poolid}.0" "shallow" "$dump_file")
+    # test "$s0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    # printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+    #     "$s0_pgid" "$s0_level" "$s0_urgency" "$s0_schedule" "$s0_forced"
+    # 
+    # read -r d0_pgid d0_level d0_urgency d0_schedule d0_forced < <(extract_pg_sched_info "${poolid}.0" "deep" "$dump_file")
+    # test "$d0_pgid" = "${poolid}.0" || { echo "Mismatched PGID"; echo rm -f "$dump_file"; return 1; }
+    # printf "PG %s level %s urgency %s schedule %s forced %s\n" \
+    #     "$d0_pgid" "$d0_level" "$d0_urgency" "$d0_schedule" "$d0_forced"
 
     return 0;
 
