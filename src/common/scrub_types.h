@@ -109,6 +109,8 @@ public:
 
 WRITE_CLASS_ENCODER(shard_info_wrapper)
 
+using shard_info_map_t = std::map<pg_shard_t, shard_info_wrapper>;
+
 namespace librados {
   inline void decode(librados::shard_info_t& shard,
 		     ceph::buffer::list::const_iterator& bp) {
@@ -153,7 +155,7 @@ struct inconsistent_obj_wrapper : librados::inconsistent_obj_t {
   void add_shard(const pg_shard_t& pgs, const shard_info_wrapper& shard);
   void set_auth_missing(const hobject_t& hoid,
                         const std::map<pg_shard_t, ScrubMap>&,
-			std::map<pg_shard_t, shard_info_wrapper>&,
+			shard_info_map_t&,
 			int &shallow_errors, int &deep_errors,
 			const pg_shard_t &primary);
   void set_version(uint64_t ver) { version = ver; }
