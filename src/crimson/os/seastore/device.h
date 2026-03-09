@@ -4,6 +4,8 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <string_view>
 
 #include "include/buffer_fwd.h"
 
@@ -76,6 +78,104 @@ struct device_config_t {
 };
 
 std::ostream& operator<<(std::ostream&, const device_config_t&);
+
+// -----------------------------------------------------------------------
+// Unified superblock written at offset 0 on every Crimson device type:
+//   HDD (block-segment), ZBD (zoned-block), RBM (random-block / NVMe)
+// -----------------------------------------------------------------------
+
+/// Magic identifying all Crimson device superblocks: "CRIMSON_DEVICE\0\0"
+constexpr std::string_view CRIMSON_DEVICE_SUPERBLOCK_MAGIC{"CRIMSON_DEVICE\0\0", 16};
+
+/// Current superblock format version
+constexpr uint8_t CRIMSON_DEVICE_SUPERBLOCK_VERSION = 1;
+
+/// Feature bits stored in device_superblock_t::feature
+enum class device_feature_t : uint64_t {
+  NVME_END_TO_END_PROTECTION = 1,
+};
+
+/// Unified per-shard layout info for all device types.
+/// Fields unused by a given device type are left at their zero default.
+struct device_shard_info_t {
+  size_t size = 0;                    ///< usable shard size in bytes (all)
+  size_t segments = 0;                ///< number of segments (HDD/ZBD; 0 for RBM)
+  uint64_t first_segment_offset = 0;  ///< byte offset of first segment (HDD/ZBD)
+  uint64_t tracker_offset = 0;        ///< byte offset of segment-state tracker (HDD)
+  uint64_t start_offset = 0;          ///< byte offset of shard start (RBM)
+
+  DENC(device_shard_info_t, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.size, p);
+    denc(v.segments, p);
+    denc(v.first_segment_offset, p);
+    denc(v.tracker_offset, p);
+    denc(v.start_offset, p);
+    DENC_FINISH(p);
+  }
+};
+
+std::ostream& operator<<(std::ostream&, const device_shard_info_t&);
+
+/// Unified on-disk superblock for all Crimson device types.
+/// Fields specific to a device type are zero for other types.
+struct device_superblock_t {
+  // --- Fixed header (all device types) ---
+  std::string magic = std::string(CRIMSON_DEVICE_SUPERBLOCK_MAGIC);
+  uint8_t version = CRIMSON_DEVICE_SUPERBLOCK_VERSION;
+  unsigned int shard_num = 0;
+  size_t segment_size = 0;   ///< logical segment size in bytes (HDD/ZBD; 0 for RBM)
+  size_t block_size = 0;
+  device_config_t config;
+
+  // --- Device-type-specific size information (union concept) ---
+  size_t total_size = 0;          ///< total device capacity in bytes (RBM)
+  uint64_t journal_size = 0;      ///< journal area size in bytes (RBM)
+  size_t segment_capacity = 0;    ///< usable bytes/segment = zone_capacity*zones_per_segment (ZBD)
+  size_t zones_per_segment = 0;   ///< zones per segment (ZBD)
+  size_t zone_size = 0;           ///< physical zone size in bytes (ZBD)
+  size_t zone_capacity = 0;       ///< usable zone capacity in bytes (ZBD)
+
+  // --- Per-shard information ---
+  std::vector<device_shard_info_t> shard_infos;
+
+  // --- RBM-specific remaining fields ---
+  checksum_t crc = 0;
+  uint64_t feature = 0;          ///< device_feature_t bits
+  uint32_t nvme_block_size = 0;  ///< NVMe logical block size (E2E protection)
+
+  DENC(device_superblock_t, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.magic, p);
+    denc(v.version, p);
+    denc(v.shard_num, p);
+    denc(v.segment_size, p);
+    denc(v.block_size, p);
+    denc(v.config, p);
+    denc(v.total_size, p);
+    denc(v.journal_size, p);
+    denc(v.segment_capacity, p);
+    denc(v.zones_per_segment, p);
+    denc(v.zone_size, p);
+    denc(v.zone_capacity, p);
+    denc(v.shard_infos, p);
+    denc(v.crc, p);
+    denc(v.feature, p);
+    denc(v.nvme_block_size, p);
+    DENC_FINISH(p);
+  }
+
+  void validate() const;
+
+  bool is_end_to_end_data_protection() const {
+    return feature & (uint64_t)device_feature_t::NVME_END_TO_END_PROTECTION;
+  }
+  void set_end_to_end_data_protection() {
+    feature |= (uint64_t)device_feature_t::NVME_END_TO_END_PROTECTION;
+  }
+};
+
+std::ostream& operator<<(std::ostream&, const device_superblock_t&);
 
 class Device;
 using DeviceRef = std::unique_ptr<Device>;
@@ -177,8 +277,12 @@ check_create_device_ret check_create_device(
 
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::device_spec_t)
 WRITE_CLASS_DENC(crimson::os::seastore::device_config_t)
+WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::device_shard_info_t)
+WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::device_superblock_t)
 
 #if FMT_VERSION >= 90000
 template <> struct fmt::formatter<crimson::os::seastore::device_config_t> : fmt::ostream_formatter {};
 template <> struct fmt::formatter<crimson::os::seastore::device_spec_t> : fmt::ostream_formatter {};
+template <> struct fmt::formatter<crimson::os::seastore::device_shard_info_t> : fmt::ostream_formatter {};
+template <> struct fmt::formatter<crimson::os::seastore::device_superblock_t> : fmt::ostream_formatter {};
 #endif

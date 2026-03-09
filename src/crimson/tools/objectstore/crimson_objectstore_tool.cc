@@ -455,7 +455,7 @@ public:
   explicit SeastoreMetaReader(const std::string& path, const std::string& device_type) :
     m_data_path(path), m_device_type(device_type) {}
 
-  tl::expected<crimson::os::seastore::block_sm_superblock_t, std::string> load_seastore_superblock() {
+  tl::expected<crimson::os::seastore::device_superblock_t, std::string> load_seastore_superblock() {
     try {
       std::string block_path = m_data_path + "/block";
 
@@ -478,26 +478,14 @@ public:
 
       auto bliter = bl.cbegin();
 
-      // fmt::println(std::cout, "Device type: {}", m_device_type);
-
-      if (m_device_type != "RANDOM_BLOCK_SSD") {
-        // TODO this Signature is only applicable for segment devices(SSD/HDD) not
-        // for other two devices like ZBD/RANDOM_BLOCK_SSD
-        constexpr const char SEASTORE_SUPERBLOCK_SIGN[] = "seastore block device\n";
-        constexpr std::size_t SEASTORE_SUPERBLOCK_SIGN_LEN = sizeof(SEASTORE_SUPERBLOCK_SIGN) - 1;
-
-        // Validate the magic prefix
-        std::string sb_magic;
-        bliter.copy(SEASTORE_SUPERBLOCK_SIGN_LEN, sb_magic);
-        if (sb_magic != SEASTORE_SUPERBLOCK_SIGN) {
-          return tl::unexpected("invalid superblock signature " + block_path);
-        }
-      }
-
-      crimson::os::seastore::block_sm_superblock_t superblock;
+      crimson::os::seastore::device_superblock_t superblock;
       decode(superblock, bliter);
 
-      ceph_assert(ceph::encoded_sizeof<crimson::os::seastore::block_sm_superblock_t>(superblock) <
+      if (superblock.magic != crimson::os::seastore::CRIMSON_DEVICE_SUPERBLOCK_MAGIC) {
+        return tl::unexpected("invalid superblock magic in " + block_path);
+      }
+
+      ceph_assert(ceph::encoded_sizeof<crimson::os::seastore::device_superblock_t>(superblock) <
                   block_size);
 
       return superblock;
