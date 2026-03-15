@@ -43,10 +43,12 @@
 
 #include <fmt/core.h>
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include <iosfwd>
 #include <string_view>
 
+#include "common/fmt_common.h"
 #include "common/LogClient.h"
 #include "osd/ECCommonL.h"
 #include "osd/OSDMap.h"
@@ -299,6 +301,17 @@ struct object_scrub_data_t {
   shard_id_set available_ec_crc_shards;
 
   bool something_amiss{false};
+  eversion_t auth_version{};
+
+  template <typename FormatContext>
+  auto
+  fmt_print_ctx(FormatContext& ctx) const
+  {
+    return fmt::format_to(
+        ctx.out(), "flt:{:1},sorted:g:{},i{},m{},e{},v:{}", something_amiss,
+        good_versions, inconsistent_versions, missing_versions,
+        irrelevant_ec_shards, auth_version);
+  }
 };
 
 
@@ -498,7 +511,7 @@ class ScrubBackend {
   // note: used by both Primary & replicas
   static ScrubMap clean_meta_map(ScrubMap& cleaned, bool max_reached);
 
-  void compare_smaps();
+  //void compare_smaps();
 
   /// might return error messages to be cluster-logged
   std::optional<std::string> compare_obj_in_maps(const hobject_t& ho);
@@ -606,7 +619,23 @@ RRR
 
   std::string mark_object_inconsistent(
       const hobject_t& ho,
+      object_scrub_data_t& ho_data,
+      pg_shard_t selected);
+
+  std::string mark_object_missing(
+      const hobject_t& ho,
       object_scrub_data_t& ho_data);
+
+  /**
+   * Scan good_versions for shards where the predicate indicates a
+   * mismatch. Every deviant shard is moved from good_versions to
+   * inconsistent_versions and added to cur_inconsistent.
+   *
+   * @param is_deviant  callable (const pg_shard_t&) -> bool
+   * @return true if at least one deviant shard was found
+   */
+  template <typename Func>
+  bool mark_mismatched_versions(Func&& is_deviant);
 
   void log_missing(int missing,
                    const std::optional<hobject_t>& head,
@@ -639,6 +668,24 @@ RRR
     return value >> (8 * index) & 0xFF;
   }
 };
+
+template <typename Func>
+bool ScrubBackend::mark_mismatched_versions(Func&& is_deviant)
+{
+  bool found{false};
+  auto it = m_current_obj.good_versions.begin();
+  while (it != m_current_obj.good_versions.end()) {
+    if (is_deviant(*it)) {
+      m_current_obj.inconsistent_versions.push_back(*it);
+      m_current_obj.cur_inconsistent.insert(*it);
+      it = m_current_obj.good_versions.erase(it);
+      found = true;
+    } else {
+      ++it;
+    }
+  }
+  return found;
+}
 
 namespace fmt {
 

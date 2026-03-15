@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory_resource>
+#include <optional>
 #include <ranges>
 #include <unordered_map>
 
@@ -47,6 +48,21 @@ struct ModeFinder {
                        ///< of the samples
     authorative_value  ///< more than half of the samples are of the same value
   };
+};
+
+/// Standalone result type so that fmt::formatter can deduce template params.
+template <typename ObjIdT, typename K>
+struct ModeCollectorResult {
+  /// do we have a mode value?
+  ModeFinder::mode_status_t tag;
+  /// the mode value (if any)
+  K key;
+  /// an object ID, "arbitrary" selected from the set of objects that
+  /// reported the mode value
+  ObjIdT id;
+  /// the number of times the mode value was reported
+  size_t count;
+  auto operator<=>(const ModeCollectorResult& rhs) const = default;
 };
 
 // note the use of std::identity: it's a pretty fast hash function,
@@ -100,18 +116,7 @@ class ModeCollector : public ModeFinder {
  public:
   using mode_status_t = ModeFinder::mode_status_t;
 
-  struct results_t {
-    /// do we have a mode value?
-    mode_status_t tag;
-    /// the mode value (if any)
-    K key;
-    /// an object ID, "arbitrary" selected from the set of objects that
-    /// reported the mode value
-    ObjIdT id;
-    /// the number of times the mode value was reported
-    size_t count;
-    auto operator<=>(const results_t& rhs) const = default;
-  };
+  using results_t = ModeCollectorResult<ObjIdT, K>;
 
   explicit ModeCollector() : m_frequency_map(&m_mbr)
   {
@@ -129,6 +134,15 @@ class ModeCollector : public ModeFinder {
     m_actual_count++;
   }
 
+  /// Overload accepting an optional key. If the key is not present,
+  /// the sample is silently ignored (not counted).
+  void insert(const ObjIdT& obj, const std::optional<K>& value) noexcept
+  {
+    if (value.has_value()) {
+      insert(obj, *value);
+    }
+  }
+
 
   /**
    * Find the mode of the collected values
@@ -137,7 +151,9 @@ class ModeCollector : public ModeFinder {
    */
   results_t find_mode()
   {
-    assert(!m_frequency_map.empty());
+    if (m_frequency_map.empty()) {
+      return {mode_status_t::no_mode_value, K{}, ObjIdT{}, 0};
+    }
 
     auto max_elem = std::ranges::max_element(
         m_frequency_map, {},
@@ -170,3 +186,27 @@ class ModeCollector : public ModeFinder {
         max_elem_cnt};
   }
 };
+
+
+template <typename ObjIdT, typename K>
+    requires requires (K const& x) { fmt::format("{}", x); }
+struct fmt::formatter<ModeCollectorResult<ObjIdT, K>> : fmt::formatter<std::string_view> {
+  auto format(const ModeCollectorResult<ObjIdT, K>& p, fmt::format_context& ctx) const
+      -> fmt::format_context::iterator
+  {
+    auto s = [&]() -> std::string {
+      switch (p.tag) {
+        case ModeFinder::mode_status_t::no_mode_value:
+          return fmt::format("no_mode_value");
+        case ModeFinder::mode_status_t::mode_value:
+          return fmt::format("mode_value: key={}, id={}, count={}", p.key, p.id, p.count);
+        case ModeFinder::mode_status_t::authorative_value:
+          return fmt::format("authorative_value: key={}, id={}, count={}", p.key, p.id, p.count);
+      }
+      return "unknown";
+    }();
+    return fmt::formatter<std::string_view>::format(s, ctx);
+  }
+};
+
+

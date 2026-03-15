@@ -9,7 +9,7 @@
 #include <fmt/ranges.h>
 
 #include "common/debug.h"
-
+#include "common/mode_collector.h"
 #include "include/utime_fmt.h"
 #include "messages/MOSDRepScrubMap.h"
 #include "osd/ECUtil.h"
@@ -127,13 +127,11 @@ std::string ScrubBackend::extract_crcs_from_map(
 }
 
 std::string ScrubBackend::extract_crc_from_bufferlist(
-    const bufferlist& crc_buffer) {
-  std::string crc_string;
-  constexpr size_t digest_length = sizeof(uint32_t);
-  for (size_t i = 0; i < digest_length; i++) {
-    crc_string += fmt::format("{:02x}", crc_buffer[digest_length - i]);
-  }
-  return crc_string;
+    const bufferlist& crc_buffer)
+{
+  return fmt::format(
+      "{:02x}{:02x}{:02x}{:02x}", crc_buffer[3], crc_buffer[2], crc_buffer[1],
+      crc_buffer[0]);
 }
 
 uint64_t ScrubBackend::logical_to_ondisk_size(uint64_t logical_size,
@@ -283,14 +281,16 @@ objs_fix_list_t ScrubBackend::scrub_compare_maps(
     } else {
       // all shards are bad. Note the object as inconsistent, and
       // move to the next object
-      std::ignore /* for now */ = mark_object_inconsistent(ho, m_current_obj);
+
+
+      // RRR should probably be handled by common code that looks at the
+      // list of inconsistent shards
+      std::ignore /* for now */ = mark_object_missing(ho, m_current_obj);
       continue; // RRR
     }
   }
 
   auto for_meta_scrub = clean_meta_map(m_cleaned_meta_map, max_reached);
-
-  // ok, do the pg-type specific scrubbing
 
   // (Validates consistency of the object info and snap sets)
   scrub_snapshot_metadata(for_meta_scrub, m_pg_whoami);
@@ -299,9 +299,68 @@ objs_fix_list_t ScrubBackend::scrub_compare_maps(
                          scan_snaps(for_meta_scrub, snaps_getter)};
 }
 
+
+std::string ScrubBackend::mark_object_inconsistent(
+    const hobject_t& ho,
+    object_scrub_data_t& ho_data,
+    pg_shard_t selected)
+{
+  inconsistent_obj_wrapper object_error{ho};
+  object_error.set_version(m_current_obj.auth_version.version);
+
+  // perform the functionality of set_auth_missing() here, as we need to pass the shard_map
+  /*
+  - we are setting the fields of the object_error wrapper, based on object_scrub_data_t:
+  - the received maps in shards_data[s].shard_smap;
+  - xxx
+
+  */
+  for (auto& pg_shard: m_current_obj.inconsistent_versions) {
+
+    auto& as_auth = ho_data.shards_data.at(pg_shard);
+    ceph_assert(as_auth.object_in_shard_smap);
+
+    // RRR primary should be set already
+    as_auth.shard_info.primary = (pg_shard == m_pg_whoami);
+    as_auth.shard_info.set_object(*as_auth.object_in_shard_smap);
+
+    // // the map can be accessed thru as_auth.shard_smap.
+    // // 'shard_map' of the original code is the info map.
+    // if (as_auth.object_in_shard_smap) {
+    //   as_auth.shard_info.set_object(*as_auth.object_in_shard_smap);
+    // } else {
+    //   as_auth.shard_info.set_missing();
+    // }
+
+    if (as_auth.shard_info.has_deep_errors()) {
+      ++this_chunk->m_error_counts.deep_errors;
+    }
+    if (as_auth.shard_info.has_shallow_errors()) {
+      ++this_chunk->m_error_counts.shallow_errors;
+    }
+    object_error.union_shards.errors |= as_auth.shard_info.errors;
+    object_error.shards.emplace(
+        librados::osd_shard_t{pg_shard.osd, static_cast<int8_t>(pg_shard.shard)},
+        as_auth.shard_info);
+  }
+
+
+  // RRR are we double-counting the errors here, by counting them both in the shard_info and in the object_error wrapper?
+  if (object_error.has_deep_errors()) {
+    this_chunk->m_error_counts.deep_errors++;
+  } else if (object_error.has_shallow_errors()) {
+    this_chunk->m_error_counts.shallow_errors++;
+  }
+
+  this_chunk->m_inconsistent_objs.push_back(std::move(object_error));
+  return fmt::format(
+      "{} soid {} (version:{}) : marked inconsistencies for {}\n",
+      m_scrubber.get_pgid().pgid, ho, m_current_obj.auth_version, m_current_obj.inconsistent_versions);
+}
+
+
 #if 1
-std::string
-ScrubBackend::mark_object_inconsistent(
+std::string ScrubBackend::mark_object_missing(
     const hobject_t& ho,
     object_scrub_data_t& ho_data)
 {
@@ -342,6 +401,7 @@ ScrubBackend::mark_object_inconsistent(
   }
 
 
+  // RRR are we double-counting the errors here, by counting them both in the shard_info and in the object_error wrapper?
   if (object_error.has_deep_errors()) {
     this_chunk->m_error_counts.deep_errors++;
   } else if (object_error.has_shallow_errors()) {
@@ -350,7 +410,7 @@ ScrubBackend::mark_object_inconsistent(
 
   this_chunk->m_inconsistent_objs.push_back(std::move(object_error));
   return fmt::format(
-      "{} soid {} : failed to pick suitable object info\n",
+      "{} soid {} : marked inconsistencies\n",
       m_scrubber.get_pgid().pgid, ho);
 }
 
@@ -386,7 +446,7 @@ std::optional<pg_shard_t> ScrubBackend::shards_sanity(const hobject_t& ho)
 
   for (const auto& [shard, smap] : this_chunk->received_maps) {
     dout(10) << fmt::format(
-		    "{}: {}: shard {} ({})", __func__, ho, shard,
+		    "{}: {}: shard {} (objs#:{})", __func__, ho, shard,
 		    smap.objects.size())
 	     << dendl;
     m_current_obj.shards_data.emplace(
@@ -468,7 +528,7 @@ void ScrubBackend::collect_omap_stats(
  */
 void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& initial_cand)
 {
-  dout(10) << fmt::format("{}: object:{} initial:{}", __func__, ho, initial_cand) << dendl;
+  dout(10) << fmt::format("{}: object:{} initial:{} known:{}", __func__, ho, initial_cand, m_current_obj) << dendl;
 
   if (m_acting_but_me.empty()) {
     // nothing to fix. Just count OMAP stats
@@ -483,16 +543,161 @@ void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& i
   // compare all 'good' shards (those who passed the internal sanity checks)
   // among themselves, choosing the best auth source.
 
+  auto candidate = initial_cand;
 
-  /// RRR moved select_auth_object functionality
-  auth_selection_t ret_auth;
-  ret_auth.auth = this_chunk->received_maps.find(initial_cand);
-  eversion_t auth_version = m_current_obj.shards_data[initial_cand].oi.version;
+  // find the mode value of the versions, and select it as the tentative auth version.
+
+  using mode_of_versions_t = ModeCollector<pg_shard_t, eversion_t, std::hash<eversion_t>>;
+  if (m_current_obj.good_versions.size() >= 3) { // not sure we need the check in this specific case. What should we do otherwise? RRR
+    mode_of_versions_t mode_collector;
+    for (const auto& shard : m_current_obj.good_versions) {
+      const auto& shard_data = m_current_obj.shards_data.at(shard);
+      mode_collector.insert(shard, shard_data.oi.version);
+    }
+    const auto mode_result = mode_collector.find_mode();
+    dout(20) << fmt::format("{}: object:{} versions mode result: {}", __func__, ho, mode_result) << dendl;
+    if (mode_result.tag == ModeFinder::mode_status_t::authorative_value) {
+      candidate = mode_result.id;
+      m_current_obj.auth_version = mode_result.key;
+      dout(10) << fmt::format("{}: object:{} selected auth shard {} based on version mode", __func__, ho, mode_result.id) << dendl;
+      // mark all other versions as inconsistent.
+      mark_mismatched_versions([&candidate, this](const auto& shard) {
+        return m_current_obj.shards_data.at(shard).oi.version != m_current_obj.shards_data.at(candidate).oi.version;
+      });
+    } else {
+      // maybe we should still pick a tentative auth based on the highest version, even if there is no mode? RRR
+      dout(10) << fmt::format("{}: object:{} no authoritative version found based on version mode", __func__, ho) << dendl;
+      // select the primary if part of the good versions, otherwise stick with the initial candidate. RRR
+      if (std::find(m_current_obj.good_versions.begin(), m_current_obj.good_versions.end(), m_pg_whoami) != m_current_obj.good_versions.end()) {
+        candidate = m_pg_whoami;
+        dout(10) << fmt::format("{}: object:{} selected auth shard {} based on primary preference", __func__, ho, m_pg_whoami) << dendl;
+      } else {
+        dout(10) << fmt::format("{}: object:{} sticking with initial auth shard {} as no better candidate found", __func__, ho, initial_cand) << dendl;
+      }
+    }
+  }
+
+  // if there are enough good versions still - compare the data digests:
+  // RRR remember we have a separate system to fix digest mismathces.
+
+  /* note to self: the standard guarantees that for an implementation of std::hash,
+   * "The value returned shall depend only on the argument k for the
+   * duration of the program.". Meaning it's OK to have an optional key
+   * for the mode collector.
+   */
+  using mode_collector_digests_t =
+      ModeCollector<pg_shard_t, uint32_t, std::identity>;
+  if (m_current_obj.good_versions.size() >= 3) {
+    mode_collector_digests_t digest_mode_collector;
+    for (const auto& shard : m_current_obj.good_versions) {
+      //const auto& shard_data = m_current_obj.shards_data.at(shard);
+      //if (shard_data.data_digest) {
+      digest_mode_collector.insert(shard, m_current_obj.shards_data.at(shard).data_digest);
+      //}
+    }
+    const auto digest_mode_result = digest_mode_collector.find_mode();
+    dout(20) << fmt::format(
+                    "{}: object:{} data digests mode result: {}", __func__, ho,
+                    digest_mode_result)
+             << dendl;
+    if (digest_mode_result.tag == ModeFinder::mode_status_t::authorative_value) {
+      candidate = digest_mode_result.id;
+      if (mark_mismatched_versions([&digest_mode_result, this](const auto& shard) {
+        const auto& shard_data = m_current_obj.shards_data.at(shard);
+        // it is OK if some shards don't have a digest - we won't consider them as mismatched based on digest
+        return shard_data.data_digest &&
+               *shard_data.data_digest != digest_mode_result.key;
+      })) {
+        dout(10) << fmt::format(
+                        "{}: object:{} selected auth shard {} based on data "
+                        "digest. Updated shards sorting: {}",
+                        __func__, ho, digest_mode_result.id, m_current_obj)
+                 << dendl;
+      }
+      dout(10) << fmt::format("{}: object:{} selected auth shard {} based on data digest mode", __func__, ho, digest_mode_result.id) << dendl;
+    }
+  }
+
+  // now - compare the snapset HASH
+  // RRR TBD
+
+  // compare the OI hashes, if we have them, and if there are still enough candidates to compare.
+
+  using mode_collector_oi_hashes_t = ModeCollector<pg_shard_t, uint32_t, std::identity>;
+  if (m_current_obj.good_versions.size() >= 3) {
+    mode_collector_oi_hashes_t oi_hash_mode_collector;
+    for (const auto& shard : m_current_obj.good_versions) {
+      oi_hash_mode_collector.insert(shard, m_current_obj.shards_data.at(shard).oi_hash);
+    }
+    const auto oi_hash_mode_result = oi_hash_mode_collector.find_mode();
+    dout(20) << fmt::format(
+                    "{}: object:{} OI hashes mode result: {}", __func__, ho,                    oi_hash_mode_result)
+             << dendl;
+    if (oi_hash_mode_result.tag == ModeFinder::mode_status_t::authorative_value) {
+      candidate = oi_hash_mode_result.id;
+      if (mark_mismatched_versions([&oi_hash_mode_result, this](const auto& shard) {
+        const auto& shard_data = m_current_obj.shards_data.at(shard);
+        // it is OK if some shards don't have an OI hash
+        return shard_data.oi_hash &&
+               *shard_data.oi_hash != oi_hash_mode_result.key;
+      })) {
+        dout(10) << fmt::format(
+                        "{}: object:{} selected auth shard {} based on OI hash. Updated shards sorting: {}",
+                        __func__, ho, oi_hash_mode_result.id, m_current_obj)
+                 << dendl;
+      }
+      dout(10) << fmt::format("{}: object:{} selected auth shard {} based on OI hash mode", __func__, ho, oi_hash_mode_result.id) << dendl;
+    }
+  }
+
+
+
+
+#ifdef RRR_TBD
+      ret_auth.auth = this_chunk->received_maps.find(mode_result.id);
+         ret_auth.auth = this_chunk->received_maps.find(m_pg_whoami);
+  eversion_t auth_version = m_current_obj.shards_data.at(initial_cand).oi.version;
   ret_auth.auth_shard = initial_cand;
 
+  // find the highest version. Mark all others as inconsistent.
+  bool new_inconsistencies_found{false};
   for (const auto cand_shard : m_current_obj.good_versions) {
-    const auto& cand_obj = this_chunk->received_maps[cand_shard].objects[ho];
-    auto& cand_collected = m_current_obj.shards_data[cand_shard];
+    const auto cand_version = m_current_obj.shards_data.at(cand_shard).oi.version;
+    if (cand_version > auth_version) {
+      auth_version = cand_version;
+      ret_auth.auth = this_chunk->received_maps.find(cand_shard);
+      ret_auth.auth_shard = cand_shard;
+      // mark the previous as inconsistent (RRR even if the Primary?)
+      m_current_obj.inconsistent_versions.push_back(ret_auth.auth_shard);
+      new_inconsistencies_found = true;
+      // we'll have to remove it from the good versions at the end of this loop
+    } else if (cand_version < auth_version) {
+      m_current_obj.inconsistent_versions.push_back(cand_shard);
+      new_inconsistencies_found = true;
+    }
+  }
+
+  // remove all inconsistent versions from the good versions list
+  if (new_inconsistencies_found) {
+    dout(10)
+        << fmt::format(
+               "{}: object:{}:{} marking lower-version shards as inconsistent: {}",
+               __func__, ho, auth_version, m_current_obj.inconsistent_versions)
+        << dendl;
+    for (const auto& bad_shard : m_current_obj.inconsistent_versions) {
+      m_current_obj.good_versions.erase(
+          std::remove(
+              m_current_obj.good_versions.begin(),
+              m_current_obj.good_versions.end(), bad_shard),
+          m_current_obj.good_versions.end());
+    }
+    m_current_obj.something_amiss = true;
+    // should I count a shallow error now? RRR
+  }
+
+  for (const auto cand_shard : m_current_obj.good_versions) {
+    //const auto& cand_obj = this_chunk->received_maps.at(cand_shard).objects.at(ho);
+    auto& cand_collected = m_current_obj.shards_data.at(cand_shard);
 
     // do all versions agree on the data digest?
     // Note: this block is definitely about to change in this refactoring. RRR
@@ -501,16 +706,8 @@ void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& i
     if (selected_digest && cand_digest && (*selected_digest != *cand_digest)) {
       ret_auth.digest_match = false;
     }
-
-    // do we have a better version?
-    // For now - this is the only criteria we will use when selecting the best copy
-    // (apart from being the version maintained by the primary)
-    if (cand_collected.oi.version > auth_version) {
-      ret_auth.auth = this_chunk->received_maps.find(cand_shard);
-      ret_auth.auth_shard = cand_shard;
-      auth_version = cand_collected.oi.version;
-    }
   }
+#endif
 
   #ifdef NOT_YET
   // do we have enough CRC data from EC shards to recreate the data?
@@ -522,6 +719,13 @@ void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& i
   }
   #endif
 
+  m_current_obj.something_amiss = (m_current_obj.inconsistent_versions.size() > 0) || (m_current_obj.missing_versions.size() > 0)/* || !ret_auth.digest_match*/ ;
+  if (m_current_obj.something_amiss) {
+    ; // RRR TBD
+  }
+    
+
+  #ifdef NOT_YET
   // update the authoritative peer and the cleaned meta map with the selected version
   m_auth_peer.emplace(
       ho,
@@ -537,6 +741,7 @@ void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& i
 
   collect_omap_stats(ho, ret_auth.auth->second.objects.at(ho));
 
+  #endif
 
 #if 0
   // for each object in this chunk's authoritative map:
@@ -1009,21 +1214,21 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
 #endif
 
 // re-implementation of PGBackend::be_compare_scrubmaps()
-void ScrubBackend::compare_smaps()
-{
-  dout(10) << __func__
-           << ": authoritative-set #: " << this_chunk->all_chunk_objects.size()
-           << dendl;
-
-  std::for_each(this_chunk->all_chunk_objects.begin(),
-                this_chunk->all_chunk_objects.end(),
-                [this](const auto& ho) {
-                  if (auto maybe_clust_err = compare_obj_in_maps(ho);
-                      maybe_clust_err) {
-                    clog.error() << *maybe_clust_err;
-                  }
-                });
-}
+//void ScrubBackend::compare_smaps()
+//{
+//   dout(10) << __func__
+//            << ": authoritative-set #: " << this_chunk->all_chunk_objects.size()
+//            << dendl;
+// 
+//   std::for_each(this_chunk->all_chunk_objects.begin(),
+//                 this_chunk->all_chunk_objects.end(),
+//                 [this](const auto& ho) {
+//                   if (auto maybe_clust_err = compare_obj_in_maps(ho);
+//                       maybe_clust_err) {
+//                     clog.error() << *maybe_clust_err;
+//                   }
+//                 });
+//}
 
 void ScrubBackend::setup_ec_digest_map(auth_selection_t& auth_selection,
                                        const hobject_t& ho) {
@@ -1176,6 +1381,7 @@ void ScrubBackend::setup_ec_digest_map(auth_selection_t& auth_selection,
   }
 }
 
+#if 0
 std::optional<std::string> ScrubBackend::compare_obj_in_maps(
   const hobject_t& ho)
 {
@@ -1270,7 +1476,7 @@ std::optional<std::string> ScrubBackend::compare_obj_in_maps(
     return errstream.str();
   }
 }
-
+#endif
 
 std::optional<ScrubBackend::auth_and_obj_errs_t>
 ScrubBackend::for_empty_auth_list(std::list<pg_shard_t>&& auths,
@@ -1625,6 +1831,9 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
       // using the erasure coding plugin for this pool.
       // When we find it does not decode back correctly, we know we have found
       // a data consistency issue that should be reported.
+
+      // RRR this code is buggy (modifying the map while iterating over it), but
+      // I am not sure this is the actual code in 'main'
       for (auto& [srd, bl] : digests) {
         if (m_pg.get_ec_sinfo().get_data_shards().contains(srd)) {
           bufferlist removed_shard = std::move(bl);
@@ -2696,12 +2905,20 @@ shard_as_auth_t ScrubBackend::shard_sanity(const hobject_t& ho,
     }
     //verdict.oi_decoded = true;
     // create a hash of the object info for later comparison
-    verdict.oi_hash = ceph_crc32c(0, (unsigned char*)&verdict.oi, sizeof(verdict.oi));
+    {
+      // instead of hashing the fields of the object info separately, we first
+      // encode the whole object info into a buffer and then hash that buffer.
+      bufferlist bl;
+      verdict.oi.encode(bl, 0UL);
+      verdict.oi_hash = bl.crc32c(0);
+    }
   }
 
   // -- object size --
 
-  const uint64_t ondisk_size = logical_to_ondisk_size(verdict.oi.size, shard.shard);
+  const uint64_t ondisk_size = logical_to_ondisk_size(verdict.oi.size, shard.shard,
+    smap_obj.attrs.contains(ECUtil::get_hinfo_key()),
+    smap_obj.size);
   dup_error_cond(err, true, (smap_obj.size != ondisk_size), verdict.shard_info,
                  &shard_info_wrapper::set_obj_size_info_mismatch,
                  fmt::format("candidate size {} info size {} mismatch",

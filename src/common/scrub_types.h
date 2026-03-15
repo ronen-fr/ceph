@@ -283,9 +283,9 @@ struct fmt::formatter<librados::shard_info_t> {
       "shard_info_t(error: {}, "
       "size: {}, "
       "omap_digest_present: {}, "
-      "omap_digest: {}, "
+      "omap_digest: {:x}, "
       "data_digest_present: {}, "
-      "data_digest: {}, "
+      "data_digest: {:x}, "
       "selected_io: {}, "
       "primary: {})",
       static_cast<librados::err_t>(err),

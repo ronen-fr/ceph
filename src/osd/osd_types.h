@@ -6289,7 +6289,7 @@ struct object_info_t {
   // opportunistic checksums; may or may not be present
   __u32 data_digest;  ///< data crc32c
   __u32 omap_digest;  ///< omap crc32c
-  
+
   // alloc hint attribute
   uint64_t expected_object_size, expected_write_size;
   uint32_t alloc_hint_flags;

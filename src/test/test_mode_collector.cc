@@ -460,3 +460,146 @@ TEST_F(ModeCollectorTest_2, failedID_ev)
   collect(test_case);
   expect_wrong_ID(test_case);
 }
+
+// ---------------------------------------------------------------------------
+// optional key tests — samples with missing (nullopt) keys should be ignored
+
+// using uint64_t values inserted as std::optional<uint64_t>
+using MP_u64_opt_u64 = ModeCollector<uint64_t, uint64_t>;
+
+struct data_opt_res_t {
+  std::vector<std::pair<uint64_t, std::optional<uint64_t>>> data;
+  MP_u64_opt_u64::results_t expected;
+};
+
+struct ModeCollectorOptTest : public ::testing::Test {
+  MP_u64_opt_u64 mc;
+
+  void collect(const data_opt_res_t& test_case)
+  {
+    for (const auto& [key, value] : test_case.data) {
+      mc.insert(key, value);
+    }
+  }
+
+  void verify(const data_opt_res_t& test_case)
+  {
+    const auto r = mc.find_mode();
+    EXPECT_EQ(r.tag, test_case.expected.tag);
+    if (r.tag != mode_status_t::no_mode_value) {
+      EXPECT_EQ(r.key, test_case.expected.key);
+      EXPECT_EQ(r.count, test_case.expected.count);
+    }
+  }
+};
+
+// nullopt values are skipped; remaining values determine the mode
+TEST_F(ModeCollectorOptTest, nullopts_ignored_in_mode)
+{
+  static const data_opt_res_t test_case{
+      {
+	  {1, std::optional<uint64_t>{101}},
+	  {2, std::nullopt},
+	  {3, std::optional<uint64_t>{101}},
+	  {4, std::nullopt},
+	  {5, std::optional<uint64_t>{101}},
+      },
+      {mode_status_t::authorative_value, 101, 5, 3}};
+
+  collect(test_case);
+  verify(test_case);
+}
+
+// nullopt values don't affect threshold for authoritative vs. mode_value
+TEST_F(ModeCollectorOptTest, nullopts_dont_inflate_count)
+{
+  // 2 of value 101, 1 of value 202, plus 2 nullopts
+  // Without nullopts: 3 samples, 2 of 101 → authoritative (2 > 3/2)
+  // If nullopts were counted: 5 samples, 2 of 101 → not authoritative (2 <= 5/2)
+  static const data_opt_res_t test_case{
+      {
+	  {1, std::optional<uint64_t>{101}},
+	  {2, std::nullopt},
+	  {3, std::optional<uint64_t>{101}},
+	  {4, std::nullopt},
+	  {5, std::optional<uint64_t>{202}},
+      },
+      {mode_status_t::authorative_value, 101, 3, 2}};
+
+  collect(test_case);
+  verify(test_case);
+}
+
+// all nullopt → no mode value
+TEST_F(ModeCollectorOptTest, all_nullopt)
+{
+  static const data_opt_res_t test_case{
+      {
+	  {1, std::nullopt},
+	  {2, std::nullopt},
+	  {3, std::nullopt},
+      },
+      {mode_status_t::no_mode_value, 0, 0, 0}};
+
+  collect(test_case);
+  verify(test_case);
+}
+
+// mixed: nullopts with a tie among real values
+TEST_F(ModeCollectorOptTest, nullopts_with_tie)
+{
+  static const data_opt_res_t test_case{
+      {
+	  {1, std::optional<uint64_t>{10}},
+	  {2, std::nullopt},
+	  {3, std::optional<uint64_t>{20}},
+	  {4, std::nullopt},
+      },
+      {mode_status_t::no_mode_value, 0, 0, 0}};
+
+  collect(test_case);
+  verify(test_case);
+}
+
+// optional with eversion_t keys using std::hash
+using MP_pg_opt_ev = ModeCollector<pg_shard_t, eversion_t, std::hash<eversion_t>>;
+
+struct data_opt_ev_res_t {
+  std::vector<std::pair<pg_shard_t, std::optional<eversion_t>>> data;
+  MP_pg_opt_ev::results_t expected;
+};
+
+struct ModeCollectorOptEvTest : public ::testing::Test {
+  MP_pg_opt_ev mc;
+
+  void collect(const data_opt_ev_res_t& test_case)
+  {
+    for (const auto& [key, value] : test_case.data) {
+      mc.insert(key, value);
+    }
+  }
+
+  void verify(const data_opt_ev_res_t& test_case)
+  {
+    const auto r = mc.find_mode();
+    EXPECT_EQ(r.tag, test_case.expected.tag);
+    EXPECT_EQ(r.key, test_case.expected.key);
+    EXPECT_EQ(r.count, test_case.expected.count);
+  }
+};
+
+TEST_F(ModeCollectorOptEvTest, nullopts_ignored_eversion)
+{
+  static const data_opt_ev_res_t test_case{
+      {
+	  {pg_shard_t{1}, std::optional<eversion_t>{eversion_t{1, 1}}},
+	  {pg_shard_t{2}, std::nullopt},
+	  {pg_shard_t{3}, std::optional<eversion_t>{eversion_t{1, 1}}},
+	  {pg_shard_t{4}, std::nullopt},
+	  {pg_shard_t{5}, std::optional<eversion_t>{eversion_t{2, 2}}},
+      },
+      {mode_status_t::authorative_value, eversion_t{1, 1}, pg_shard_t{3}, 2}};
+
+  collect(test_case);
+  verify(test_case);
+}
