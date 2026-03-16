@@ -200,7 +200,8 @@ RBMDevice::mount_ret RBMDevice::do_shard_mount()
 
 EphemeralRBMDeviceRef create_test_ephemeral(uint64_t journal_size, uint64_t data_size) {
   return EphemeralRBMDeviceRef(
-    new EphemeralRBMDevice(journal_size + data_size + 
+    new EphemeralRBMDevice(
+      (journal_size + data_size) * seastar::smp::count +
 	random_block_device::RBMDevice::get_shard_reserved_size(),
 	EphemeralRBMDevice::TEST_BLOCK_SIZE));
 }
@@ -281,8 +282,9 @@ EphemeralRBMDevice::mount_ret EphemeralRBMDevice::mount() {
   return do_shard_mount();
 }
 
+// RRR ask Matan
 EphemeralRBMDevice::mkfs_ret EphemeralRBMDevice::mkfs(device_config_t config) {
-  return do_primary_mkfs(config, 1, DEFAULT_TEST_CBJOURNAL_SIZE);
+  return do_primary_mkfs(config, seastar::smp::count, DEFAULT_TEST_CBJOURNAL_SIZE);
 }
 
 }
