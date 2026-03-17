@@ -123,7 +123,7 @@ class TestPg : public PgScrubBeListener {
       for (int j = 0; std::cmp_less(j, get_ec_sinfo().get_chunk_size()); j++) {
         encode_map.at(i).c_str()[j] =
             chunks[j + (get_ec_sinfo().get_chunk_size() * i.id)];
-        for (shard_id_t k{static_cast<int8_t>(get_ec_sinfo().get_k_plus_m())};
+        for (shard_id_t k{static_cast<int8_t>(get_ec_sinfo().get_k())};
              k < get_ec_sinfo().get_k_plus_m(); ++k) {
           encode_map.at(k).c_str()[j] +=
               chunks[j + (get_ec_sinfo().get_chunk_size() * i.id)];

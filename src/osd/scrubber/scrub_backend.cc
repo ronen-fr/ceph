@@ -739,26 +739,31 @@ pg_shard_t ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shar
   }
 #endif
 
-  #ifdef NOT_YET
-  // do we have enough CRC data from EC shards to recreate the data?
-  if (m_ec_digest_map_size > 0) {
-    // which means that: 1: EC 2: comaptible schema
-    if (auth_version != eversion_t{} && m_current_obj.available_ec_crc_shards.size() > 0) {
-      redecode_ec_shards(ret_auth);
-    }
+  // For EC optimized pools: verify parity consistency by re-encoding the
+  // per-shard digests and comparing against the actual parity shard digest.
+  // Parity shards are in irrelevant_ec_shards (they can't be authoritative),
+  // so they're not checked by the version/digest mode-finding above.
+  bool ec_digest_match = true;
+  if (m_ec_digest_map_size > 0 && !m_is_replicated) {
+    auth_selection_t ec_check;
+    ec_check.auth = this_chunk->received_maps.find(candidate);
+    ec_check.auth_shard = candidate;
+    ec_check.auth_oi = m_current_obj.shards_data.at(candidate).oi;
+    setup_ec_digest_map(ec_check, ho);
+    ec_digest_match = ec_check.digest_match;
   }
-  #endif
 
-  m_current_obj.something_amiss = (m_current_obj.inconsistent_versions.size() > 0) || (m_current_obj.missing_versions.size() > 0)/* || !ret_auth.digest_match*/ ;
+  m_current_obj.something_amiss = (m_current_obj.inconsistent_versions.size() > 0) ||
+                                  (m_current_obj.missing_versions.size() > 0) || !ec_digest_match;
   if (m_current_obj.something_amiss) {
     ; // RRR TBD
   }
 
   // collect OMAP stats from the selected authoritative shard
-  if (this_chunk->received_maps.at(candidate).objects.count(ho)) {
+  if (this_chunk->received_maps.at(candidate).objects.count(ho)) { // RRR verify we need the condition
     collect_omap_stats(ho, this_chunk->received_maps.at(candidate).objects.at(ho));
   }
-    
+
 
   #ifdef NOT_YET
   // update the authoritative peer and the cleaned meta map with the selected version
