@@ -816,6 +816,56 @@ TEST_F(TestTScrubberBe_data_2, smaps_clone_size)
   EXPECT_EQ(incons.size(), 1);	// one inconsistency
 }
 
+// A dataset similar to 'minimal_snaps_configuration', but with the head
+// object's data digest corrupted on OSD 2 (a non-primary replica).
+// Mirrors the essence of TEST_scrub_test in
+// qa/standalone/scrub/osd-scrub-test.sh, which corrupts raw bytes on one
+// non-primary OSD and expects the inconsistency to be detected by the
+// deep scrub.
+class TestTScrubberBe_data_3 : public TestTScrubberBe {
+ public:
+  TestTScrubberBe_data_3() : TestTScrubberBe() {}
+
+  // basic test configuration - 3 OSDs, all involved in the pool
+  pool_conf_t pl{3, 3, 3, 3, "rep_pool", pg_pool_t::TYPE_REPLICATED,
+                 std::nullopt};
+
+  // corrupt the data digest (hash) on OSD 2 (a non-primary replica);
+  // OSDs 0 and 1 are not in the map and will use the crpt_do_nothing fallback
+  CorruptFuncList corrupt_funcs{{2, &crpt_object_hash}};
+
+  TestTScrubberBeParams inject_params() override
+  {
+    std::cout << fmt::format(
+		   "{}: injecting params (minimal-snaps + digest mismatch on "
+		   "OSD 2)",
+		   __func__)
+	      << std::endl;
+    TestTScrubberBeParams params{
+      /* pool_conf */ pl,
+      /* real_objs_conf */ ScrubDatasets::minimal_snaps_configuration,
+      /*num_osds */ 3};
+
+    // corrupt the data digest of the head object on OSD 2 (non-primary),
+    // mimicking TEST_scrub_test which corrupts raw bytes on one replica OSD
+    params.objs_conf.objs[2].corrupt_funcs = &corrupt_funcs;
+    return params;
+  }
+};
+
+// Mirrors the essence of TEST_scrub_test in
+// qa/standalone/scrub/osd-scrub-test.sh: corrupt data bytes on one replica
+// OSD → deep scrub detects the inconsistency.
+TEST_F(TestTScrubberBe_data_3, data_digest_mismatch)
+{
+  ASSERT_TRUE(sbe);
+  logger.set_expected_err_count(1);
+  auto [incons, fix_list] = sbe->scrub_compare_maps(true, *test_scrubber);
+
+  EXPECT_EQ(fix_list.size(), 0);  // snap-mapper fix should be empty
+  EXPECT_EQ(incons.size(), 1);	  // one inconsistency (the head object)
+}
+
 class TestTScrubberBeECCorruptShards : public TestTScrubberBe {
  private:
   int seed;
