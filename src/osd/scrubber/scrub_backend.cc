@@ -38,7 +38,7 @@ using namespace std::literals;
 std::ostream& ScrubBackend::logger_prefix(std::ostream* out,
                                           const ScrubBackend* t)
 {
-  return t->m_scrubber.gen_prefix(*out) << " b.e.: ";
+  return t->m_scrubber.gen_prefix(*out) << "b.e.: ";
 }
 
 
@@ -248,9 +248,8 @@ std::vector<snap_mapper_fix_t> ScrubBackend::replica_clean_meta(
 //
 // /////////////////////////////////////////////////////////////////////////////
 
-objs_fix_list_t ScrubBackend::scrub_compare_maps(
-  bool max_reached,
-  SnapMapReaderI& snaps_getter)
+objs_fix_list_t
+ScrubBackend::scrub_compare_maps(bool max_reached, SnapMapReaderI& snaps_getter)
 {
   dout(10) << __func__ << " has maps, analyzing" << dendl;
   ceph_assert(m_scrubber.is_primary());
@@ -273,11 +272,45 @@ objs_fix_list_t ScrubBackend::scrub_compare_maps(
 
     if (tentative_auth) {
       // we have a tentative shard to use as authoritative. All possible
-      // candidates are named in m_current_object.good_versions.
+      // candidates are named in m_current_obj.good_versions.
 
       // compare the good shards, and select the best one
-      update_authoritative(ho, *tentative_auth);
+      tentative_auth = update_authoritative(ho, *tentative_auth);
 
+      if (m_current_obj.something_amiss) {
+        // we have a good candidate, but there are others that are inconsistent
+        // with it.
+        dout(10) << fmt::format(
+                        "{}: object {} has an authoritative shard {} but also "
+                        "inconsistent shards ({})",
+                        __func__, ho, tentative_auth.value(), m_current_obj)
+                 << dendl;
+        const auto auth_shard = *tentative_auth;
+        const auto& auth_object =
+            this_chunk->received_maps.at(auth_shard).objects.at(ho);
+        auto& auth_oi = m_current_obj.shards_data.at(auth_shard).oi;
+
+        // auth_list = good shards; object_errors = shards with per-shard errors
+        std::set<pg_shard_t> errs{
+            m_current_obj.inconsistent_versions.begin(),
+            m_current_obj.inconsistent_versions.end()};
+        auth_and_obj_errs_t auth_n_errs{
+            std::list<pg_shard_t>{
+                m_current_obj.good_versions.begin(),
+                m_current_obj.good_versions.end()},
+            std::move(errs)};
+
+        stringstream errstream;
+        inconsistents(
+            ho, auth_object, auth_oi, std::move(auth_n_errs), errstream);
+        if (!errstream.str().empty()) {
+          clog.error() << errstream.str();
+        }
+        // inconsistents() fills authoritative/m_missing/m_inconsistent but
+        // does NOT push to m_inconsistent_objs — do that here.
+        auto incons_msg = mark_object_inconsistent(ho, m_current_obj, auth_shard);
+        clog.error() << incons_msg;
+      }
     } else {
       // all shards are bad. Note the object as inconsistent, and
       // move to the next object
@@ -286,7 +319,6 @@ objs_fix_list_t ScrubBackend::scrub_compare_maps(
       // RRR should probably be handled by common code that looks at the
       // list of inconsistent shards
       std::ignore /* for now */ = mark_object_missing(ho, m_current_obj);
-      continue; // RRR
     }
   }
 
@@ -295,8 +327,9 @@ objs_fix_list_t ScrubBackend::scrub_compare_maps(
   // (Validates consistency of the object info and snap sets)
   scrub_snapshot_metadata(for_meta_scrub, m_pg_whoami);
 
-  return objs_fix_list_t{std::move(this_chunk->m_inconsistent_objs),
-                         scan_snaps(for_meta_scrub, snaps_getter)};
+  return objs_fix_list_t{
+      std::move(this_chunk->m_inconsistent_objs),
+      scan_snaps(for_meta_scrub, snaps_getter)};
 }
 
 
@@ -439,59 +472,56 @@ std::string ScrubBackend::mark_object_inconsistent(const hobject_t& ho)
 }
 #endif
 
-std::optional<pg_shard_t> ScrubBackend::shards_sanity(const hobject_t& ho)
+std::optional<pg_shard_t>
+ScrubBackend::shards_sanity(const hobject_t& ho)
 {
   //std::optional<shard_as_auth_t*> tentative_auth{std::nullopt};
   std::optional<pg_shard_t> tentative_auth{std::nullopt};
 
   for (const auto& [shard, smap] : this_chunk->received_maps) {
     dout(10) << fmt::format(
-		    "{}: {}: shard {} (objs#:{})", __func__, ho, shard,
-		    smap.objects.size())
-	     << dendl;
-    m_current_obj.shards_data.emplace(
-	shard, std::move(shard_sanity(ho, shard)));
+                    "{}: {}: shard {} (objs#:{})", __func__, ho, shard,
+                    smap.objects.size())
+             << dendl;
+    m_current_obj.shards_data.emplace(shard, std::move(shard_sanity(ho, shard)));
     dout(10) << fmt::format(
-		    "{}: sanity {}: shard {} ({})", __func__, ho, shard,
-		    (int)(m_current_obj.shards_data.at(shard).possible_auth))
-	     << dendl;
+                    "{}: sanity {}: shard {} ({})", __func__, ho, shard,
+                    (int)(m_current_obj.shards_data.at(shard).possible_auth))
+             << dendl;
 
     // assign the shard to one of good/bad/ec-and-not-relevant lists
     switch (m_current_obj.shards_data.at(shard).possible_auth) {
-      case shard_as_auth_t::usable_t::usable:
-	m_current_obj.good_versions.push_back(shard);
-	//tentative_auth = &m_current_obj.shards_data.at(shard);
-        tentative_auth = shard;
-	break;
-      case shard_as_auth_t::usable_t::not_usable_no_err:
-	// not usable, but no error
-	m_current_obj.irrelevant_ec_shards.push_back(shard);
-	break;
-      case shard_as_auth_t::usable_t::not_usable:
-	// not usable, with an error
-	m_current_obj.inconsistent_versions.push_back(shard);
-	m_current_obj.something_amiss = true;
-	break;
-      case shard_as_auth_t::usable_t::not_found:
-	// not found, no error
-	m_current_obj.missing_versions.push_back(shard);
-	m_current_obj.something_amiss = true;
-	break;
+    case shard_as_auth_t::usable_t::usable:
+      m_current_obj.good_versions.push_back(shard);
+      //tentative_auth = &m_current_obj.shards_data.at(shard);
+      tentative_auth = shard;
+      break;
+    case shard_as_auth_t::usable_t::not_usable_no_err:
+      // not usable, but no error
+      m_current_obj.irrelevant_ec_shards.push_back(shard);
+      break;
+    case shard_as_auth_t::usable_t::not_usable:
+      // not usable, with an error
+      m_current_obj.inconsistent_versions.push_back(shard);
+      //m_current_obj.something_amiss = true;
+      break;
+    case shard_as_auth_t::usable_t::not_found:
+      // not found, no error
+      m_current_obj.missing_versions.push_back(shard);
+      //m_current_obj.something_amiss = true;
+      break;
     }
   }
 
-  dout(10)
-      << fmt::format(
-	     "{}: {}: good:{} bad:{} irrelevant:{} inconsistent:{} missing:{}",
-	     __func__, ho, m_current_obj.good_versions,
-	     "xx",  //m_current_obj.bad_versions.size(),
-	     m_current_obj.irrelevant_ec_shards,
-	     m_current_obj.inconsistent_versions,
-	     m_current_obj.missing_versions)
-      << dendl;
+  dout(10) << fmt::format(
+                  "{}: {}: good:{} irrelevant:{} inconsistent:{} missing:{}",
+                  __func__, ho, m_current_obj.good_versions,
+                  m_current_obj.irrelevant_ec_shards,
+                  m_current_obj.inconsistent_versions,
+                  m_current_obj.missing_versions)
+           << dendl;
   return tentative_auth;
 }
-
 
 
 void ScrubBackend::collect_omap_stats(
@@ -526,7 +556,7 @@ void ScrubBackend::collect_omap_stats(
  *  - m_cleaned_meta_map: replaces [obj] entry with:
  *     the relevant object in the scrub-map of that selected peer
  */
-void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& initial_cand)
+pg_shard_t ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& initial_cand)
 {
   dout(10) << fmt::format("{}: object:{} initial:{} known:{}", __func__, ho, initial_cand, m_current_obj) << dendl;
 
@@ -537,7 +567,7 @@ void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& i
     // map of the sole OSD
     ceph_assert(it != my_map().objects.end());
     collect_omap_stats(ho, it->second);
-    return;
+    return initial_cand;
   }
 
   // compare all 'good' shards (those who passed the internal sanity checks)
@@ -723,6 +753,11 @@ void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& i
   if (m_current_obj.something_amiss) {
     ; // RRR TBD
   }
+
+  // collect OMAP stats from the selected authoritative shard
+  if (this_chunk->received_maps.at(candidate).objects.count(ho)) {
+    collect_omap_stats(ho, this_chunk->received_maps.at(candidate).objects.at(ho));
+  }
     
 
   #ifdef NOT_YET
@@ -757,6 +792,7 @@ void ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shard_t& i
 	*(this_chunk->received_maps[peers.back()].objects.find(obj)));
   }
 #endif
+  return candidate;
 }
 
 
@@ -1526,17 +1562,21 @@ void ScrubBackend::inconsistents(const hobject_t& ho,
                 __func__,
                 auth_n_errs.object_errors.size(),
                 auth_n_errs.auth_list.size(),
-                m_current_obj.cur_missing.size(),
+                "XXX", //m_current_obj.cur_missing.size(),
                 m_current_obj.cur_inconsistent.size())
            << dendl;
 
+  if (!m_current_obj.missing_versions.empty()) {
+    std::copy(m_current_obj.missing_versions.begin(),
+              m_current_obj.missing_versions.end(),
+              std::inserter(m_missing[ho], m_missing[ho].end()));
+  }
+  if (!m_current_obj.inconsistent_versions.empty()) {
+    std::copy(m_current_obj.inconsistent_versions.begin(),
+              m_current_obj.inconsistent_versions.end(),
+              std::inserter(m_inconsistent[ho], m_inconsistent[ho].end()));
+  }
 
-  if (!m_current_obj.cur_missing.empty()) {
-    m_missing[ho] = m_current_obj.cur_missing;
-  }
-  if (!m_current_obj.cur_inconsistent.empty()) {
-    m_inconsistent[ho] = m_current_obj.cur_inconsistent;
-  }
 
   if (m_current_obj.fix_digest) {
 
@@ -1551,8 +1591,8 @@ void ScrubBackend::inconsistents(const hobject_t& ho,
       make_pair(ho, make_pair(data_digest, omap_digest)));
   }
 
-  if (!m_current_obj.cur_inconsistent.empty() ||
-      !m_current_obj.cur_missing.empty()) {
+  if (!m_current_obj.inconsistent_versions.empty() ||
+      !m_current_obj.missing_versions.empty()) {
     this_chunk->authoritative[ho] = std::move(auth_n_errs.auth_list);
 
   } else if (!m_current_obj.fix_digest && m_is_replicated) {
@@ -1786,7 +1826,7 @@ ScrubBackend::auth_and_obj_errs_t ScrubBackend::match_in_shards(
 
     } else {
 
-      m_current_obj.cur_missing.insert(srd);
+      //m_current_obj.cur_missing.insert(srd);
       auth_sel.shard_map[srd].set_missing();
       auth_sel.shard_map[srd].primary = (srd == m_pg_whoami);
 

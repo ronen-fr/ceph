@@ -285,7 +285,7 @@ struct formatter<auth_selection_t> {
  * the back-end data that is per-object
  */
 struct object_scrub_data_t {
-  std::set<pg_shard_t> cur_missing;
+  //std::set<pg_shard_t> cur_missing;
   std::set<pg_shard_t> cur_inconsistent;
   bool fix_digest{false};
 
@@ -615,7 +615,7 @@ class ScrubBackend {
 
 RRR
    */
-  void update_authoritative(const hobject_t& ho, const pg_shard_t& initial_cand);
+  pg_shard_t update_authoritative(const hobject_t& ho, const pg_shard_t& initial_cand);
 
   std::string mark_object_inconsistent(
       const hobject_t& ho,
