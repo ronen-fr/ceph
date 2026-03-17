@@ -2992,19 +2992,18 @@ shard_as_auth_t ScrubBackend::shard_sanity(const hobject_t& ho,
 
   // \todo
 
-  // save the received data hash
-
-  // RRR is it OK to not collect the EC CRC if any of the failures above was triggered?
-  // if (smap_obj.digest_present) {
-  //   verdict.data_digest = smap_obj.digest;
-  //   if (m_ec_digest_map_size > 0) {
-  //     // save the data digest in a page-aligned buffer
-  //     //verdict.data_digest_bytes = collect_crc_bytes(shard, smap_obj.digest);
-  //     ceph::bufferptr b = collect_crc_bytes(shard, smap_obj.digest);
-  //     this_chunk->m_ec_digest_map[shard.shard].append(b);
-  //     m_current_obj.available_ec_crc_shards.insert(shard.shard);
-  //   }
-  // }
+  // save the received data hash (used by the mode-based digest comparison
+  // in update_authoritative() to detect per-shard digest mismatches)
+  if (smap_obj.digest_present) {
+    verdict.data_digest = smap_obj.digest;
+    // RRR is it OK to not collect the EC CRC if any of the failures above was triggered?
+    // if (m_ec_digest_map_size > 0) {
+    //   // save the data digest in a page-aligned buffer
+    //   ceph::bufferptr b = collect_crc_bytes(shard, smap_obj.digest);
+    //   this_chunk->m_ec_digest_map[shard.shard].append(b);
+    //   m_current_obj.available_ec_crc_shards.insert(shard.shard);
+    // }
+  }
 
   // -- summary of errors --
 
