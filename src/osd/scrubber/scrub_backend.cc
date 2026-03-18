@@ -348,6 +348,8 @@ std::string ScrubBackend::mark_object_inconsistent(
   - xxx
 
   */
+  const auto& auth_shard_data = ho_data.shards_data.at(selected);
+
   for (auto& pg_shard: m_current_obj.inconsistent_versions) {
 
     auto& as_auth = ho_data.shards_data.at(pg_shard);
@@ -357,13 +359,15 @@ std::string ScrubBackend::mark_object_inconsistent(
     as_auth.shard_info.primary = (pg_shard == m_pg_whoami);
     as_auth.shard_info.set_object(*as_auth.object_in_shard_smap);
 
-    // // the map can be accessed thru as_auth.shard_smap.
-    // // 'shard_map' of the original code is the info map.
-    // if (as_auth.object_in_shard_smap) {
-    //   as_auth.shard_info.set_object(*as_auth.object_in_shard_smap);
-    // } else {
-    //   as_auth.shard_info.set_missing();
-    // }
+    // Cross-replica mismatches are detected by the mode-based comparison in
+    // update_authoritative(), not by the OSD's own scrub (which has no local
+    // errors for the corrupted-data case). set_object() above only copies
+    // flags from the shard's own scrub-map, so any cross-replica mismatch
+    // must be flagged explicitly here.
+    if (as_auth.data_digest && auth_shard_data.data_digest &&
+        *as_auth.data_digest != *auth_shard_data.data_digest) {
+      as_auth.shard_info.set_data_digest_mismatch_info();
+    }
 
     if (as_auth.shard_info.has_deep_errors()) {
       ++this_chunk->m_error_counts.deep_errors;
@@ -377,13 +381,6 @@ std::string ScrubBackend::mark_object_inconsistent(
         as_auth.shard_info);
   }
 
-
-  // RRR are we double-counting the errors here, by counting them both in the shard_info and in the object_error wrapper?
-  if (object_error.has_deep_errors()) {
-    this_chunk->m_error_counts.deep_errors++;
-  } else if (object_error.has_shallow_errors()) {
-    this_chunk->m_error_counts.shallow_errors++;
-  }
 
   this_chunk->m_inconsistent_objs.push_back(std::move(object_error));
   return fmt::format(
@@ -435,11 +432,11 @@ std::string ScrubBackend::mark_object_missing(
 
 
   // RRR are we double-counting the errors here, by counting them both in the shard_info and in the object_error wrapper?
-  if (object_error.has_deep_errors()) {
-    this_chunk->m_error_counts.deep_errors++;
-  } else if (object_error.has_shallow_errors()) {
-    this_chunk->m_error_counts.shallow_errors++;
-  }
+  // if (object_error.has_deep_errors()) {
+  //   this_chunk->m_error_counts.deep_errors++;
+  // } else if (object_error.has_shallow_errors()) {
+  //   this_chunk->m_error_counts.shallow_errors++;
+  // }
 
   this_chunk->m_inconsistent_objs.push_back(std::move(object_error));
   return fmt::format(
@@ -755,33 +752,31 @@ pg_shard_t ScrubBackend::update_authoritative(const hobject_t& ho, const pg_shar
 
   m_current_obj.something_amiss = (m_current_obj.inconsistent_versions.size() > 0) ||
                                   (m_current_obj.missing_versions.size() > 0) || !ec_digest_match;
-  if (m_current_obj.something_amiss) {
-    ; // RRR TBD
+
+  // Update the authoritative peer map and the cleaned meta map.
+  // m_auth_peer is needed by scrub_process_inconsistent() to drive repair;
+  // m_cleaned_meta_map feeds scrub_snapshot_metadata() for snapset checks.
+  // Only record an entry when something is wrong (matching legacy behaviour).
+  if (this_chunk->received_maps.at(candidate).objects.count(ho)) {
+    const auto& auth_obj = this_chunk->received_maps.at(candidate).objects.at(ho);
+
+    if (m_current_obj.something_amiss) {
+      m_auth_peer.emplace(ho, std::make_pair(auth_obj, candidate));
+    }
+
+    // Keep the cleaned meta map up to date with the chosen auth shard
+    // (matters when the primary is not the auth source).
+    m_cleaned_meta_map.objects.erase(ho);
+    m_cleaned_meta_map.objects.insert(
+        *this_chunk->received_maps.at(candidate).objects.find(ho));
+
+    dout(10) << fmt::format(
+                    "{}: selected auth shard {} for object {}",
+                    __func__, candidate, ho)
+             << dendl;
+
+    collect_omap_stats(ho, auth_obj);
   }
-
-  // collect OMAP stats from the selected authoritative shard
-  if (this_chunk->received_maps.at(candidate).objects.count(ho)) { // RRR verify we need the condition
-    collect_omap_stats(ho, this_chunk->received_maps.at(candidate).objects.at(ho));
-  }
-
-
-  #ifdef NOT_YET
-  // update the authoritative peer and the cleaned meta map with the selected version
-  m_auth_peer.emplace(
-      ho,
-      std::make_pair(ret_auth.auth->second.objects.at(ho), ret_auth.auth_shard));
-
-  m_cleaned_meta_map.objects.erase(ho);
-  m_cleaned_meta_map.objects.insert(*(ret_auth.auth->second.objects.find(ho)));
-
-  dout(10) << fmt::format(
-                  "{}: selected auth shard {} for object {} version {}",
-                  __func__, ret_auth.auth_shard, ho, auth_version)
-           << dendl;
-
-  collect_omap_stats(ho, ret_auth.auth->second.objects.at(ho));
-
-  #endif
 
 #if 0
   // for each object in this chunk's authoritative map:
@@ -2796,7 +2791,11 @@ shard_as_auth_t ScrubBackend::shard_sanity(const hobject_t& ho,
     return verdict; // 'verdict' defaulted to 'not usable'
   }
   verdict.object_in_shard_smap = &obj_in_smap->second;
-  // and a shorhand:
+  // The object exists on this shard. Mark it as inconsistent until all checks pass.
+  // (Avoids the default 'not_found' on any early error-return path below.)
+  verdict.possible_auth = shard_as_auth_t::usable_t::not_usable;
+
+  // and a shorthand:
   const auto& smap_obj = *verdict.object_in_shard_smap;
 
   verdict.shard_info.set_object(smap_obj);
