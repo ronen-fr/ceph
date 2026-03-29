@@ -134,6 +134,12 @@ read_ertr::future<device_superblock_t> RBMDevice::read_rbm_superblock(
       crimson::ct_error::input_output_error::make()
     );
   }
+  if (super_block.magic != CRIMSON_DEVICE_SUPERBLOCK_MAGIC) {
+    ERROR("invalid superblock magic in read_rbm_superblock");
+    co_return co_await read_ertr::future<device_superblock_t>(
+      crimson::ct_error::input_output_error::make()
+    );
+  }
   checksum_t crc = super_block.crc;
   bufferlist meta_b_header;
   super_block.crc = 0;
