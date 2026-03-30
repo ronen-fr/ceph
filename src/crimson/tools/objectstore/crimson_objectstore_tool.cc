@@ -568,11 +568,22 @@ public:
 
       auto bliter = bl.cbegin();
 
-      // Quick check: reject obvious non-crimson devices before decode.
-      if (nread >= 16 &&
-          std::string(buf.data(), 16) == "bluestore block ") {
-        return tl::unexpected(
-          block_path + " is a BlueStore device, not a Crimson device");
+      // Check magic before attempting full decode so that non-crimson
+      // or corrupt devices produce a clean error instead of a decode
+      // exception.  The on-disk layout is:
+      //   DENC envelope: struct_v(1) + struct_compat(1) + struct_len(4)
+      //   string encoding: length(4) + data(16)
+      // so the 16-byte magic string starts at offset 10.
+      constexpr size_t kMagicOffset = 10;
+      const auto& magic = crimson::os::seastore::CRIMSON_DEVICE_SUPERBLOCK_MAGIC;
+      if (static_cast<size_t>(nread) < kMagicOffset + magic.size() ||
+          std::memcmp(buf.data() + kMagicOffset, magic.data(), magic.size()) != 0) {
+        if (nread >= 16 &&
+            std::memcmp(buf.data(), "bluestore block ", 16) == 0) {
+          return tl::unexpected(
+            block_path + " is a BlueStore device, not a Crimson device");
+        }
+        return tl::unexpected("invalid superblock signature in " + block_path);
       }
 
       crimson::os::seastore::device_superblock_t superblock;
@@ -580,14 +591,7 @@ public:
         decode(superblock, bliter);
       } catch (const std::exception& e) {
         return tl::unexpected(
-          "failed to decode superblock from " + block_path +
-          " (not a Crimson device?): " + e.what());
-      }
-
-      // Verify magic after decode — the magic field sits inside the
-      // DENC envelope, so it can only be checked after a full decode.
-      if (superblock.magic != crimson::os::seastore::CRIMSON_DEVICE_SUPERBLOCK_MAGIC) {
-        return tl::unexpected("invalid superblock signature in " + block_path);
+          "failed to decode superblock from " + block_path + ": " + e.what());
       }
 
       return superblock;
