@@ -1566,12 +1566,15 @@ function test_is_clean() {
 ##
 # Predicate checking if the named PG is in state "active+clean"
 #
+# @param pgid the id of the PG
+# @param timeout optional timeout in seconds for the query (default: 6)
 # @return 0 if the PG is active & clean, 1 otherwise
 #
 function is_pg_clean() {
     local pgid=$1
+    local timeout=${2:-6}
     local pg_state
-    pg_state=$(ceph pg $pgid query 2>/dev/null | jq -r ".state ")
+    pg_state=$(timeout $timeout ceph pg $pgid query 2>/dev/null | jq -r ".state ")
     [[ "$pg_state" == "active+clean"* ]]
 }
 
