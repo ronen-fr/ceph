@@ -142,7 +142,7 @@ public:
     return queue.get_type();
   }
 
-  ~ClassedOpQueueScheduler() override {};
+  ~ClassedOpQueueScheduler() final {};
 };
 
 }
