@@ -262,32 +262,32 @@ class PgScrubber : public ScrubPgIF,
   //  ------------------  the I/F exposed to the PG (ScrubPgIF) -------------
 
   /// are we waiting for resource reservation grants form our replicas?
-  [[nodiscard]] bool is_reserving() const final;
+  [[nodiscard]] bool is_reserving() const final override;
 
   Scrub::schedule_result_t start_scrub_session(
       scrub_level_t s_or_d,
       Scrub::OSDRestrictions osd_restrictions,
-      Scrub::ScrubPGPreconds pg_cond) final;
+      Scrub::ScrubPGPreconds pg_cond) final override;
 
-  void initiate_regular_scrub(epoch_t epoch_queued) final;
+  void initiate_regular_scrub(epoch_t epoch_queued) final override;
 
-  void send_scrub_resched(epoch_t epoch_queued) final;
+  void send_scrub_resched(epoch_t epoch_queued) final override;
 
-  void active_pushes_notification(epoch_t epoch_queued) final;
+  void active_pushes_notification(epoch_t epoch_queued) final override;
 
-  void update_applied_notification(epoch_t epoch_queued) final;
+  void update_applied_notification(epoch_t epoch_queued) final override;
 
-  void send_scrub_unblock(epoch_t epoch_queued) final;
+  void send_scrub_unblock(epoch_t epoch_queued) final override;
 
-  void digest_update_notification(epoch_t epoch_queued) final;
+  void digest_update_notification(epoch_t epoch_queued) final override;
 
-  void send_replica_maps_ready(epoch_t epoch_queued) final;
+  void send_replica_maps_ready(epoch_t epoch_queued) final override;
 
-  void send_start_replica(epoch_t epoch_queued, Scrub::act_token_t token) final;
+  void send_start_replica(epoch_t epoch_queued, Scrub::act_token_t token) final override;
 
-  void send_sched_replica(epoch_t epoch_queued, Scrub::act_token_t token) final;
+  void send_sched_replica(epoch_t epoch_queued, Scrub::act_token_t token) final override;
 
-  void send_replica_pushes_upd(epoch_t epoch_queued) final;
+  void send_replica_pushes_upd(epoch_t epoch_queued) final override;
   /**
    * The PG has updated its 'applied version'. It might be that we are waiting
    * for this information: after selecting a range of objects to scrub, we've
@@ -295,30 +295,30 @@ class PgScrubber : public ScrubPgIF,
    * not start the map building before we know that the PG has reached this
    * version.
    */
-  void on_applied_when_primary(const eversion_t& applied_version) final;
+  void on_applied_when_primary(const eversion_t& applied_version) final override;
 
-  void send_chunk_free(epoch_t epoch_queued) final;
+  void send_chunk_free(epoch_t epoch_queued) final override;
 
-  void send_chunk_busy(epoch_t epoch_queued) final;
+  void send_chunk_busy(epoch_t epoch_queued) final override;
 
-  void send_local_map_done(epoch_t epoch_queued) final;
+  void send_local_map_done(epoch_t epoch_queued) final override;
 
-  void send_get_next_chunk(epoch_t epoch_queued) final;
+  void send_get_next_chunk(epoch_t epoch_queued) final override;
 
-  void send_scrub_is_finished(epoch_t epoch_queued) final;
+  void send_scrub_is_finished(epoch_t epoch_queued) final override;
 
-  void send_granted_by_reserver(const AsyncScrubResData& req) final;
+  void send_granted_by_reserver(const AsyncScrubResData& req) final override;
 
   /**
    *  we allow some number of preemptions of the scrub, which mean we do
    *  not block.  Then we start to block.  Once we start blocking, we do
    *  not stop until the scrub range is completed.
    */
-  bool write_blocked_by_scrub(const hobject_t& soid) final;
+  bool write_blocked_by_scrub(const hobject_t& soid) final override;
 
   /// true if the given range intersects the scrub interval in any way
   bool range_intersects_scrub(const hobject_t& start,
-			      const hobject_t& end) final;
+			      const hobject_t& end) final override;
 
   /**
    * route incoming replica-reservations requests/responses to the
@@ -326,30 +326,30 @@ class PgScrubber : public ScrubPgIF,
    * As the ReplicaReservations object is to be owned by the ScrubMachine, we
    * send all relevant messages to the ScrubMachine.
    */
-  void handle_scrub_reserve_msgs(OpRequestRef op) final;
+  void handle_scrub_reserve_msgs(OpRequestRef op) final override;
 
   // managing scrub op registration
 
-  void update_scrub_job() final;
+  void update_scrub_job() final override;
 
-  void rm_from_osd_scrubbing() final;
+  void rm_from_osd_scrubbing() final override;
 
-  void schedule_scrub_with_osd() final;
+  void schedule_scrub_with_osd() final override;
 
   scrub_level_t scrub_requested(
       scrub_level_t scrub_level,
-      scrub_type_t scrub_type) final;
+      scrub_type_t scrub_type) final override;
 
   void on_operator_abort_scrub(
-      ceph::Formatter* f) final;
+      ceph::Formatter* f) final override;
 
   /**
    * let the scrubber know that a recovery operation has completed.
    * This might trigger an 'after repair' scrub.
    */
-  void recovery_completed() final;
+  void recovery_completed() final override;
 
-  bool is_after_repair_required() const final;
+  bool is_after_repair_required() const final override;
 
   /**
    * Reserve local scrub resources (managed by the OSD)
@@ -359,56 +359,56 @@ class PgScrubber : public ScrubPgIF,
    */
   bool reserve_local(const Scrub::SchedTarget& trgt);
 
-  void handle_query_state(ceph::Formatter* f) final;
+  void handle_query_state(ceph::Formatter* f) final override;
 
-  pg_scrubbing_status_t get_schedule() const final;
+  pg_scrubbing_status_t get_schedule() const final override;
 
   void on_operator_periodic_cmd(
     ceph::Formatter* f,
     scrub_level_t scrub_level,
-    int64_t offset) final;
+    int64_t offset) final override;
 
   void on_operator_forced_scrub(
     ceph::Formatter* f,
-    scrub_level_t scrub_level) final;
+    scrub_level_t scrub_level) final override;
 
-  void dump_scrubber(ceph::Formatter* f) const final;
+  void dump_scrubber(ceph::Formatter* f) const final override;
 
   // used if we are a replica
 
-  void replica_scrub_op(OpRequestRef op) final;
+  void replica_scrub_op(OpRequestRef op) final override;
 
   /// the op priority, taken from the primary's request message
-  Scrub::scrub_prio_t replica_op_priority() const final
+  Scrub::scrub_prio_t replica_op_priority() const final override
   {
     return m_replica_request_priority;
   };
 
   unsigned int scrub_requeue_priority(
     Scrub::scrub_prio_t with_priority,
-    unsigned int suggested_priority) const final;
+    unsigned int suggested_priority) const final override;
   /// the version that refers to m_flags.priority
   unsigned int scrub_requeue_priority(
-    Scrub::scrub_prio_t with_priority) const final;
+    Scrub::scrub_prio_t with_priority) const final override;
 
-  void add_callback(Context* context) final { m_callbacks.push_back(context); }
+  void add_callback(Context* context) final override { m_callbacks.push_back(context); }
 
-  [[nodiscard]] bool are_callbacks_pending() const final  // used for an assert
+  [[nodiscard]] bool are_callbacks_pending() const final override  // used for an assert
 							  // in PG.cc
   {
     return !m_callbacks.empty();
   }
 
   /// handle a message carrying a replica map
-  void map_from_replica(OpRequestRef op) final;
+  void map_from_replica(OpRequestRef op) final override;
 
-  void on_new_interval() final;
+  void on_new_interval() final override;
 
-  void on_primary_active_clean() final;
+  void on_primary_active_clean() final override;
 
-  void on_replica_activate() final;
+  void on_replica_activate() final override;
 
-  bool is_queued_or_active() const final;
+  bool is_queued_or_active() const final override;
 
   /**
    *  add to scrub statistics, but only if the soid is below the scrub start
@@ -422,9 +422,9 @@ class PgScrubber : public ScrubPgIF,
   /**
    * finalize the parameters of the initiated scrubbing session:
    */
-  void set_op_parameters(Scrub::ScrubPGPreconds pg_cond) final;
+  void set_op_parameters(Scrub::ScrubPGPreconds pg_cond) final override;
 
-  void cleanup_store(ObjectStore::Transaction* t) final;
+  void cleanup_store(ObjectStore::Transaction* t) final override;
 
   bool get_store_errors(const scrub_ls_arg_t& arg,
 			scrub_ls_result_t& res_inout) const override
@@ -432,7 +432,7 @@ class PgScrubber : public ScrubPgIF,
     return false;
   }
 
-  void update_scrub_stats(ceph::coarse_real_clock::time_point now_is) final;
+  void update_scrub_stats(ceph::coarse_real_clock::time_point now_is) final override;
 
   int asok_debug(std::string_view cmd,
 		 std::string param,
@@ -445,13 +445,13 @@ class PgScrubber : public ScrubPgIF,
   // the I/F used by the state-machine (i.e. the implementation of
   // ScrubMachineListener)
 
-  LogChannelRef &get_clog() const final;
-  int get_whoami() const final;
-  spg_t get_spgid() const final { return m_pg->get_pgid(); }
-  PG* get_pg() const final { return m_pg; }
-  PerfCounters* get_osd_perf_counters() const final;
-  const Scrub::ScrubCounterSet& get_unlabeled_counters() const final;
-  PerfCounters* get_labeled_counters() const final;
+  LogChannelRef &get_clog() const final override;
+  int get_whoami() const final override;
+  spg_t get_spgid() const final override { return m_pg->get_pgid(); }
+  PG* get_pg() const final override { return m_pg; }
+  PerfCounters* get_osd_perf_counters() const final override;
+  const Scrub::ScrubCounterSet& get_unlabeled_counters() const final override;
+  PerfCounters* get_labeled_counters() const final override;
 
   /// delay next retry of this PG after a replica reservation failure
   void flag_reservations_failure();
@@ -473,51 +473,51 @@ class PgScrubber : public ScrubPgIF,
     return grace_period;
   }
 
-  [[nodiscard]] bool is_primary() const final
+  [[nodiscard]] bool is_primary() const final override
   {
     return m_pg->recovery_state.is_primary();
   }
 
   /// is this scrub's urgency high enough, or must it reserve its replicas?
-  [[nodiscard]] bool is_reservation_required() const final;
+  [[nodiscard]] bool is_reservation_required() const final override;
 
-  void set_state_name(const char* name) final
+  void set_state_name(const char* name) final override
   {
     m_fsm_state_name = name;
   }
 
-  void select_range_n_notify() final;
+  void select_range_n_notify() final override;
 
-  void set_scrub_blocked(utime_t since) final;
-  void clear_scrub_blocked() final;
+  void set_scrub_blocked(utime_t since) final override;
+  void clear_scrub_blocked() final override;
 
 
   /// walk the log to find the latest update that affects our chunk
-  eversion_t search_log_for_updates() const final;
+  eversion_t search_log_for_updates() const final override;
 
-  eversion_t get_last_update_applied() const final
+  eversion_t get_last_update_applied() const final override
   {
     return m_pg->recovery_state.get_last_update_applied();
   }
 
-  int pending_active_pushes() const final { return m_pg->active_pushes; }
+  int pending_active_pushes() const final override { return m_pg->active_pushes; }
 
-  void on_init() final;
-  void on_replica_init() final;
-  void replica_handling_done() final;
+  void on_init() final override;
+  void on_replica_init() final override;
+  void replica_handling_done() final override;
 
-  void clear_pgscrub_state() final;
+  void clear_pgscrub_state() final override;
 
-  std::chrono::milliseconds get_scrub_sleep_time() const final;
-  void queue_for_scrub_resched(Scrub::scrub_prio_t prio) final;
+  std::chrono::milliseconds get_scrub_sleep_time() const final override;
+  void queue_for_scrub_resched(Scrub::scrub_prio_t prio) final override;
 
-  void get_replicas_maps(bool replica_can_preempt) final;
+  void get_replicas_maps(bool replica_can_preempt) final override;
 
-  void on_digest_updates() final;
+  void on_digest_updates() final override;
 
-  void scrub_finish() final;
+  void scrub_finish() final override;
 
-  void on_mid_scrub_abort(Scrub::delay_cause_t issue) final;
+  void on_mid_scrub_abort(Scrub::delay_cause_t issue) final override;
 
   /**
    *  an auxiliary used by on_mid_scrub_abort()
@@ -531,43 +531,43 @@ class PgScrubber : public ScrubPgIF,
     utime_t scrub_clock_now);
 
   ScrubMachineListener::MsgAndEpoch prep_replica_map_msg(
-    Scrub::PreemptionNoted was_preempted) final;
+    Scrub::PreemptionNoted was_preempted) final override;
 
   void send_replica_map(
-    const ScrubMachineListener::MsgAndEpoch& preprepared) final;
+    const ScrubMachineListener::MsgAndEpoch& preprepared) final override;
 
-  void send_preempted_replica() final;
+  void send_preempted_replica() final override;
 
   /**
    *  does the PG have newer updates than what we (the scrubber) know?
    */
-  [[nodiscard]] bool has_pg_marked_new_updates() const final;
+  [[nodiscard]] bool has_pg_marked_new_updates() const final override;
 
-  void set_subset_last_update(eversion_t e) final;
+  void set_subset_last_update(eversion_t e) final override;
 
-  void maps_compare_n_cleanup() final;
+  void maps_compare_n_cleanup() final override;
 
-  Scrub::preemption_t& get_preemptor() final;
+  Scrub::preemption_t& get_preemptor() final override;
 
-  int build_primary_map_chunk() final;
+  int build_primary_map_chunk() final override;
 
-  int build_replica_map_chunk() final;
+  int build_replica_map_chunk() final override;
 
-  [[nodiscard]] bool was_epoch_changed() const final;
+  [[nodiscard]] bool was_epoch_changed() const final override;
 
-  void set_queued_or_active() final;
+  void set_queued_or_active() final override;
   /// Clears `m_queued_or_active` and restarts snap-trimming
-  void clear_queued_or_active() final;
+  void clear_queued_or_active() final override;
 
-  void mark_local_map_ready() final;
+  void mark_local_map_ready() final override;
 
-  [[nodiscard]] bool are_all_maps_available() const final;
+  [[nodiscard]] bool are_all_maps_available() const final override;
 
-  std::string dump_awaited_maps() const final;
+  std::string dump_awaited_maps() const final override;
 
-  void set_scrub_duration(std::chrono::milliseconds duration) final;
+  void set_scrub_duration(std::chrono::milliseconds duration) final override;
 
-  std::ostream& gen_prefix(std::ostream& out) const final;
+  std::ostream& gen_prefix(std::ostream& out) const final override;
 
   /// facilitate scrub-backend access to SnapMapper mappings
   Scrub::SnapMapReaderI& get_snap_mapper_accessor()
@@ -575,7 +575,7 @@ class PgScrubber : public ScrubPgIF,
     return m_pg->snap_mapper;
   }
 
-  void log_cluster_warning(const std::string& warning) const final;
+  void log_cluster_warning(const std::string& warning) const final override;
 
  protected:
   bool state_test(uint64_t m) const { return m_pg->state_test(m); }
@@ -619,14 +619,14 @@ class PgScrubber : public ScrubPgIF,
     ceph_assert(0 && "expecting a PrimaryLogScrub object");
   }
 
-  CephContext* get_pg_cct() const final { return m_pg->cct; }
+  CephContext* get_pg_cct() const final override { return m_pg->cct; }
  
-  LoggerSinkSet& get_logger() const final;
+  LoggerSinkSet& get_logger() const final override;
 
-  spg_t get_pgid() const final { return m_pg->get_pgid(); }
+  spg_t get_pgid() const final override { return m_pg->get_pgid(); }
 
   /// Returns reference to current osdmap
-  const OSDMapRef& get_osdmap() const final;
+  const OSDMapRef& get_osdmap() const final override;
 
 
   // ---------------------------------------------------------------------------
@@ -637,7 +637,7 @@ class PgScrubber : public ScrubPgIF,
 
   virtual ~PgScrubber();  // must be defined separately, in the .cc file
 
-  [[nodiscard]] bool is_scrub_active() const final { return m_active; }
+  [[nodiscard]] bool is_scrub_active() const final override { return m_active; }
 
  private:
   void reset_internal_state();
@@ -654,7 +654,7 @@ class PgScrubber : public ScrubPgIF,
    *  - the epoch when started;
    *  - the depth of the scrub requested (from the PG_STATE variable)
    */
-  void reset_epoch() final;
+  void reset_epoch() final override;
 
   void run_callbacks();
 
@@ -911,7 +911,7 @@ class PgScrubber : public ScrubPgIF,
 
   void update_op_mode_text();
 
-  std::string_view get_op_mode_text() const final;
+  std::string_view get_op_mode_text() const final override;
 
  private:
   /**
@@ -1015,12 +1015,12 @@ class PgScrubber : public ScrubPgIF,
     explicit preemption_data_t(PG* pg);	 // the PG access is used for conf
 					 // access (and logs)
 
-    [[nodiscard]] bool is_preemptable() const final { return m_preemptable; }
+    [[nodiscard]] bool is_preemptable() const final override { return m_preemptable; }
 
     preemption_data_t(const preemption_data_t&) = delete;
     preemption_data_t(preemption_data_t&&) = delete;
 
-    bool do_preempt() final
+    bool do_preempt() final override
     {
       if (m_preempted || !m_preemptable)
 	return false;
@@ -1054,7 +1054,7 @@ class PgScrubber : public ScrubPgIF,
       m_preemptable = is_allowed;
     }
 
-    bool disable_and_test() final
+    bool disable_and_test() final override
     {
       std::lock_guard<ceph::mutex> lk{m_preemption_lock};
       m_preemptable = false;
@@ -1067,7 +1067,7 @@ class PgScrubber : public ScrubPgIF,
 
     void reset();
 
-    void adjust_parameters() final
+    void adjust_parameters() final override
     {
       std::lock_guard<ceph::mutex> lk{m_preemption_lock};
 

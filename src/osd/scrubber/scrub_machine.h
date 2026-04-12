@@ -298,20 +298,20 @@ class ScrubMachine : public ScrubFsmIf, public sc::state_machine<ScrubMachine, N
   ScrubMachineListener* m_scrbr;
   std::ostream& gen_prefix(std::ostream& out) const;
 
-  void assert_not_in_session() const final;
-  [[nodiscard]] bool is_reserving() const final;
-  [[nodiscard]] bool is_accepting_updates() const final;
-  [[nodiscard]] bool is_primary_idle() const final;
+  void assert_not_in_session() const final override;
+  [[nodiscard]] bool is_reserving() const final override;
+  [[nodiscard]] bool is_accepting_updates() const final override;
+  [[nodiscard]] bool is_primary_idle() const final override;
 
   /// elapsed time for the currently active scrub.session
-  ceph::timespan get_time_scrubbing() const final;
+  ceph::timespan get_time_scrubbing() const final override;
 
   /// replica reservation process status
-  std::optional<pg_scrubbing_status_t> get_reservation_status() const final;
+  std::optional<pg_scrubbing_status_t> get_reservation_status() const final override;
 
-  void initiate() final { sc::state_machine<ScrubMachine, NotActive>::initiate(); }
+  void initiate() final override { sc::state_machine<ScrubMachine, NotActive>::initiate(); }
 
-  void process_event(const boost::statechart::event_base& evt) final {
+  void process_event(const boost::statechart::event_base& evt) final override {
     sc::state_machine<ScrubMachine, NotActive>::process_event(evt);
   }
 

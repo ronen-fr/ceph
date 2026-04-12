@@ -232,7 +232,7 @@ public:
     return pg_id;
   }
 
-  const PGPool& get_pgpool() const final {
+  const PGPool& get_pgpool() const final override {
     return pool;
   }
   uint64_t get_last_user_version() const {
@@ -248,22 +248,22 @@ public:
     return info.history.same_interval_since;
   }
 
-  bool is_waiting_for_unreadable_object() const final
+  bool is_waiting_for_unreadable_object() const final override
   {
     return !waiting_for_unreadable_object.empty();
   }
 
-  bool get_is_nonprimary_shard(const pg_shard_t &shard) const final
+  bool get_is_nonprimary_shard(const pg_shard_t &shard) const final override
   {
     return get_pgbackend()->get_is_nonprimary_shard(shard.shard);
   }
 
-  bool get_is_hinfo_required() const final
+  bool get_is_hinfo_required() const final override
   {
     return get_pgbackend()->get_is_hinfo_required();
   }
 
-  bool get_is_ec_optimized() const final {
+  bool get_is_ec_optimized() const final override {
     return get_pgbackend()->get_is_ec_optimized();
   }
 
@@ -355,7 +355,7 @@ public:
   int get_acting_primary() const {
     return recovery_state.get_acting_primary();
   }
-  pg_shard_t get_primary() const final {
+  pg_shard_t get_primary() const final override {
     return recovery_state.get_primary();
   }
   const std::vector<int> get_up() const {
@@ -1407,43 +1407,46 @@ protected:
 
 // ScrubberPasskey getters/misc:
 public:
- const pg_info_t& get_pg_info(ScrubberPasskey) const final { return info; }
+  const pg_info_t& get_pg_info(ScrubberPasskey) const final override
+  {
+    return info;
+  }
 
  OSDService* get_pg_osd(ScrubberPasskey) const { return osd; }
 
  void force_object_missing(ScrubberPasskey,
                            const std::set<pg_shard_t>& peer,
                            const hobject_t& oid,
-                           eversion_t version) final
+                           eversion_t version) final override
  {
    recovery_state.force_object_missing(peer, oid, version);
  }
 
  uint64_t logical_to_ondisk_size(uint64_t logical_size,
                                  shard_id_t shard_id,
-                                 bool object_is_legacy_ec) const final {
+                                 bool object_is_legacy_ec) const final override {
    return get_pgbackend()->be_get_ondisk_size(logical_size, shard_id_t(shard_id), object_is_legacy_ec);
  }
 
- bool ec_can_decode(const shard_id_set &available_shards) const final {
+ bool ec_can_decode(const shard_id_set &available_shards) const final override {
    return get_pgbackend()->ec_can_decode(available_shards);
  }
 
  shard_id_map<bufferlist> ec_encode_acting_set(
-     const bufferlist &in_bl) const final {
+     const bufferlist &in_bl) const final override {
    return get_pgbackend()->ec_encode_acting_set(in_bl);
  }
 
  shard_id_map<bufferlist> ec_decode_acting_set(
-     const shard_id_map<bufferlist> &shard_map, int chunk_size) const final {
+     const shard_id_map<bufferlist> &shard_map, int chunk_size) const final override {
    return get_pgbackend()->ec_decode_acting_set(shard_map, chunk_size);
  }
 
- bool get_ec_supports_crc_encode_decode() const final {
+ bool get_ec_supports_crc_encode_decode() const final override {
    return get_pgbackend()->get_ec_supports_crc_encode_decode();
  }
 
- ECUtil::stripe_info_t get_ec_sinfo() const final {
+ ECUtil::stripe_info_t get_ec_sinfo() const final override {
    return get_pgbackend()->ec_get_sinfo();
  }
 };

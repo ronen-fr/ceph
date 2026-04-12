@@ -238,7 +238,7 @@ public:
 
     void maybe_load_obc(
       const std::map<std::string, ceph::bufferlist, std::less<>>& raw_attrs,
-      RecoveryOp &op) final;
+      RecoveryOp &op) final override;
 
     PGBackend::Listener *get_parent() const { return parent; }
 

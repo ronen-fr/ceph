@@ -117,29 +117,29 @@ public:
   std::string display_queues() const;
 
   // Enqueue op in the back of the regular queue
-  void enqueue(OpSchedulerItem &&item) final;
+  void enqueue(OpSchedulerItem &&item) final override;
 
   // Enqueue the op in the front of the high priority queue
-  void enqueue_front(OpSchedulerItem &&item) final;
+  void enqueue_front(OpSchedulerItem &&item) final override;
 
   // Return an op to be dispatch
-  WorkItem dequeue() final;
+  WorkItem dequeue() final override;
 
   // Returns if the queue is empty
-  bool empty() const final {
+  bool empty() const final override {
     return scheduler.empty() && high_priority.empty();
   }
 
   // Formatted output of the queue
-  void dump(ceph::Formatter &f) const final;
+  void dump(ceph::Formatter &f) const final override;
 
-  void print(std::ostream &ostream) const final {
+  void print(std::ostream &ostream) const final override {
     ostream << get_op_queue_type_name(get_type());
     ostream << ", cutoff=" << cutoff_priority;
   }
 
   // Return the scheduler type
-  op_queue_type_t get_type() const final {
+  op_queue_type_t get_type() const final override {
     return op_queue_type_t::mClockScheduler;
   }
 

@@ -27,19 +27,19 @@ class PrimaryLogScrub : public PgScrubber {
  public:
   explicit PrimaryLogScrub(PrimaryLogPG* pg);
 
-  void _scrub_finish() final;
+  void _scrub_finish() final override;
 
   bool get_store_errors(const scrub_ls_arg_t& arg,
-			scrub_ls_result_t& res_inout) const final;
+			scrub_ls_result_t& res_inout) const final override;
 
   void stats_of_handled_objects(const object_stat_sum_t& delta_stats,
-				const hobject_t& soid) final;
+				const hobject_t& soid) final override;
 
   // the interface used by the scrubber-backend:
 
-  void add_to_stats(const object_stat_sum_t& stat) final;
+  void add_to_stats(const object_stat_sum_t& stat) final override;
 
-  void submit_digest_fixes(const digests_fixes_t& fixes) final;
+  void submit_digest_fixes(const digests_fixes_t& fixes) final override;
 
  private:
   // we know our PG is actually a PrimaryLogPG. Let's alias the pointer to that
@@ -48,5 +48,5 @@ class PrimaryLogScrub : public PgScrubber {
 
   // handle our part in stats collection
   object_stat_collection_t m_scrub_cstat;
-  void _scrub_clear_state() final;  // which just clears the stats
+  void _scrub_clear_state() final override;  // which just clears the stats
 };

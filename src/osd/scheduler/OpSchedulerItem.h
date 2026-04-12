@@ -206,11 +206,11 @@ protected:
 
 public:
   explicit PGOpQueueable(spg_t pg) : pgid(pg) {}
-  uint32_t get_queue_token() const final {
+  uint32_t get_queue_token() const final override {
     return get_pgid().ps();
   }
 
-  const spg_t& get_ordering_token() const final {
+  const spg_t& get_ordering_token() const final override {
     return get_pgid();
   }
 };
@@ -221,7 +221,7 @@ class PGOpItem : public PGOpQueueable {
 public:
   PGOpItem(spg_t pg, OpRequestRef op) : PGOpQueueable(pg), op(std::move(op)) {}
 
-  std::ostream &print(std::ostream &rhs) const final {
+  std::ostream &print(std::ostream &rhs) const final override {
     return rhs << "PGOpItem(op=" << *(op->get_req()) << ")";
   }
 
@@ -229,11 +229,11 @@ public:
     return fmt::format("PGOpItem(op={})", *(op->get_req()));
   }
 
-  std::optional<OpRequestRef> maybe_get_op() const final {
+  std::optional<OpRequestRef> maybe_get_op() const final override {
     return op;
   }
 
-   SchedulerClass get_scheduler_class() const final {
+   SchedulerClass get_scheduler_class() const final override {
     auto type = op->get_req()->get_type();
     if (type == CEPH_MSG_OSD_OP ||
 	type == CEPH_MSG_OSD_BACKOFF) {
@@ -243,20 +243,20 @@ public:
     }
   }
 
-  void run(OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final;
+  void run(OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final override;
 };
 
 class PGPeeringItem : public PGOpQueueable {
   PGPeeringEventRef evt;
 public:
   PGPeeringItem(spg_t pg, PGPeeringEventRef e) : PGOpQueueable(pg), evt(e) {}
-  std::ostream &print(std::ostream &rhs) const final {
+  std::ostream &print(std::ostream &rhs) const final override {
     return rhs << "PGPeeringEvent(" << evt->get_desc() << ")";
   }
-  std::string print() const final {
+  std::string print() const final override {
     return fmt::format("PGPeeringEvent({})", evt->get_desc());
   }
-  void run(OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final;
+  void run(OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final override;
   bool is_peering() const override {
     return true;
   }
@@ -266,7 +266,7 @@ public:
   const PGCreateInfo *creates_pg() const override {
     return evt->create_info.get();
   }
-  SchedulerClass get_scheduler_class() const final {
+  SchedulerClass get_scheduler_class() const final override {
     return SchedulerClass::immediate;
   }
 };
@@ -278,18 +278,18 @@ public:
     spg_t pg,
     epoch_t epoch_queued)
     : PGOpQueueable(pg), epoch_queued(epoch_queued) {}
-  std::ostream &print(std::ostream &rhs) const final {
+  std::ostream &print(std::ostream &rhs) const final override {
     return rhs << "PGSnapTrim(pgid=" << get_pgid()
 	       << " epoch_queued=" << epoch_queued
 	       << ")";
   }
-  std::string print() const final {
+  std::string print() const final override {
     return fmt::format(
 	"PGSnapTrim(pgid={} epoch_queued={})", get_pgid(), epoch_queued);
   }
   void run(
-    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final;
-  SchedulerClass get_scheduler_class() const final {
+    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final override;
+  SchedulerClass get_scheduler_class() const final override {
     return SchedulerClass::background_best_effort;
   }
 };
@@ -301,18 +301,18 @@ public:
     spg_t pg,
     epoch_t epoch_queued)
     : PGOpQueueable(pg), epoch_queued(epoch_queued) {}
-  std::ostream &print(std::ostream &rhs) const final {
+  std::ostream &print(std::ostream &rhs) const final override {
     return rhs << "PGScrub(pgid=" << get_pgid()
 	       << "epoch_queued=" << epoch_queued
 	       << ")";
   }
-  std::string print() const final {
+  std::string print() const final override {
     return fmt::format(
 	"PGScrub(pgid={} epoch_queued={})", get_pgid(), epoch_queued);
   }
   void run(
-    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final;
-  SchedulerClass get_scheduler_class() const final {
+    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final override;
+  SchedulerClass get_scheduler_class() const final override {
     return SchedulerClass::background_best_effort;
   }
 };
@@ -337,7 +337,7 @@ class PGScrubItem : public PGOpQueueable {
       , activation_index{op_index}
       , message_name{derivative_name}
   {}
-  std::ostream& print(std::ostream& rhs) const final
+  std::ostream& print(std::ostream& rhs) const final override
   {
     return rhs << message_name << "(pgid=" << get_pgid()
 	       << "epoch_queued=" << epoch_queued
@@ -352,7 +352,7 @@ class PGScrubItem : public PGOpQueueable {
 	   OSDShard* sdata,
 	   PGRef& pg,
 	   ThreadPool::TPHandle& handle) override = 0;
-  SchedulerClass get_scheduler_class() const final
+  SchedulerClass get_scheduler_class() const final override
   {
     return SchedulerClass::background_best_effort;
   }
@@ -363,7 +363,7 @@ class PGScrubResched : public PGScrubItem {
   PGScrubResched(spg_t pg, epoch_t epoch_queued)
       : PGScrubItem{pg, epoch_queued, "PGScrubResched"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubPushesUpdate : public PGScrubItem {
@@ -371,7 +371,7 @@ class PGScrubPushesUpdate : public PGScrubItem {
   PGScrubPushesUpdate(spg_t pg, epoch_t epoch_queued)
       : PGScrubItem{pg, epoch_queued, "PGScrubPushesUpdate"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubAppliedUpdate : public PGScrubItem {
@@ -382,7 +382,7 @@ class PGScrubAppliedUpdate : public PGScrubItem {
   void run(OSD* osd,
 	   OSDShard* sdata,
 	   PGRef& pg,
-	   [[maybe_unused]] ThreadPool::TPHandle& handle) final;
+	   [[maybe_unused]] ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubUnblocked : public PGScrubItem {
@@ -393,7 +393,7 @@ class PGScrubUnblocked : public PGScrubItem {
   void run(OSD* osd,
 	   OSDShard* sdata,
 	   PGRef& pg,
-	   [[maybe_unused]] ThreadPool::TPHandle& handle) final;
+	   [[maybe_unused]] ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubDigestUpdate : public PGScrubItem {
@@ -401,7 +401,7 @@ class PGScrubDigestUpdate : public PGScrubItem {
   PGScrubDigestUpdate(spg_t pg, epoch_t epoch_queued)
       : PGScrubItem{pg, epoch_queued, "PGScrubDigestUpdate"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubGotReplMaps : public PGScrubItem {
@@ -409,7 +409,7 @@ class PGScrubGotReplMaps : public PGScrubItem {
   PGScrubGotReplMaps(spg_t pg, epoch_t epoch_queued)
       : PGScrubItem{pg, epoch_queued, "PGScrubGotReplMaps"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGRepScrub : public PGScrubItem {
@@ -417,7 +417,7 @@ class PGRepScrub : public PGScrubItem {
   PGRepScrub(spg_t pg, epoch_t epoch_queued, Scrub::act_token_t op_token)
       : PGScrubItem{pg, epoch_queued, op_token, "PGRepScrub"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGRepScrubResched : public PGScrubItem {
@@ -425,7 +425,7 @@ class PGRepScrubResched : public PGScrubItem {
   PGRepScrubResched(spg_t pg, epoch_t epoch_queued, Scrub::act_token_t op_token)
       : PGScrubItem{pg, epoch_queued, op_token, "PGRepScrubResched"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubReplicaPushes : public PGScrubItem {
@@ -433,7 +433,7 @@ class PGScrubReplicaPushes : public PGScrubItem {
   PGScrubReplicaPushes(spg_t pg, epoch_t epoch_queued)
       : PGScrubItem{pg, epoch_queued, "PGScrubReplicaPushes"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubScrubFinished : public PGScrubItem {
@@ -441,7 +441,7 @@ class PGScrubScrubFinished : public PGScrubItem {
   PGScrubScrubFinished(spg_t pg, epoch_t epoch_queued)
     : PGScrubItem{pg, epoch_queued, "PGScrubScrubFinished"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubGetNextChunk : public PGScrubItem {
@@ -449,7 +449,7 @@ class PGScrubGetNextChunk : public PGScrubItem {
   PGScrubGetNextChunk(spg_t pg, epoch_t epoch_queued)
     : PGScrubItem{pg, epoch_queued, "PGScrubGetNextChunk"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubChunkIsBusy : public PGScrubItem {
@@ -457,7 +457,7 @@ class PGScrubChunkIsBusy : public PGScrubItem {
   PGScrubChunkIsBusy(spg_t pg, epoch_t epoch_queued)
     : PGScrubItem{pg, epoch_queued, "PGScrubChunkIsBusy"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGScrubChunkIsFree : public PGScrubItem {
@@ -465,7 +465,7 @@ class PGScrubChunkIsFree : public PGScrubItem {
   PGScrubChunkIsFree(spg_t pg, epoch_t epoch_queued)
     : PGScrubItem{pg, epoch_queued, "PGScrubChunkIsFree"}
   {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
+  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final override;
 };
 
 class PGRecovery : public PGOpQueueable {
@@ -484,23 +484,23 @@ public:
       epoch_queued(epoch_queued),
       reserved_pushes(reserved_pushes),
       priority(priority) {}
-  std::ostream &print(std::ostream &rhs) const final {
+  std::ostream &print(std::ostream &rhs) const final override {
     return rhs << "PGRecovery(pgid=" << get_pgid()
 	       << " epoch_queued=" << epoch_queued
 	       << " reserved_pushes=" << reserved_pushes
 	       << ")";
   }
-  std::string print() const final {
+  std::string print() const final override {
     return fmt::format(
 	"PGRecovery(pgid={} epoch_queued={} reserved_pushes={})", get_pgid(),
 	epoch_queued, reserved_pushes);
   }
-  uint64_t get_reserved_pushes() const final {
+  uint64_t get_reserved_pushes() const final override {
     return reserved_pushes;
   }
   void run(
-    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final;
-  SchedulerClass get_scheduler_class() const final {
+    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final override;
+  SchedulerClass get_scheduler_class() const final override {
     return priority_to_scheduler_class(priority);
   }
 };
@@ -517,18 +517,18 @@ public:
     : PGOpQueueable(pgid),
       time_queued(ceph_clock_now()),
       c(c), epoch(epoch), priority(priority) {}
-  std::ostream &print(std::ostream &rhs) const final {
+  std::ostream &print(std::ostream &rhs) const final override {
     return rhs << "PGRecoveryContext(pgid=" << get_pgid()
 	       << " c=" << c.get() << " epoch=" << epoch
 	       << ")";
   }
-  std::string print() const final {
+  std::string print() const final override {
     return fmt::format(
 	"PGRecoveryContext(pgid={} c={} epoch={})", get_pgid(), (void*)c.get(), epoch);
   }
   void run(
-    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final;
-  SchedulerClass get_scheduler_class() const final {
+    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final override;
+  SchedulerClass get_scheduler_class() const final override {
     return priority_to_scheduler_class(priority);
   }
 };
@@ -541,18 +541,18 @@ public:
     epoch_t epoch_queued)
     : PGOpQueueable(pg),
       epoch_queued(epoch_queued) {}
-  std::ostream &print(std::ostream &rhs) const final {
+  std::ostream &print(std::ostream &rhs) const final override {
     return rhs << "PGDelete(" << get_pgid()
 	       << " e" << epoch_queued
 	       << ")";
   }
-  std::string print() const final {
+  std::string print() const final override {
     return fmt::format(
 	"PGDelete(pgid={} epoch_queued={})", get_pgid(), epoch_queued);
   }
   void run(
-    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final;
-  SchedulerClass get_scheduler_class() const final {
+    OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final override;
+  SchedulerClass get_scheduler_class() const final override {
     return SchedulerClass::background_best_effort;
   }
 };
@@ -579,24 +579,24 @@ public:
     }
   }
 
-  std::ostream &print(std::ostream &rhs) const final {
+  std::ostream &print(std::ostream &rhs) const final override {
     return rhs << "PGRecoveryMsg(op=" << *(op->get_req()) << ")";
   }
 
-  std::string print() const final {
+  std::string print() const final override {
     return fmt::format("PGRecoveryMsg(op={})", *(op->get_req()));
   }
 
-  std::optional<OpRequestRef> maybe_get_op() const final {
+  std::optional<OpRequestRef> maybe_get_op() const final override {
     return op;
   }
 
-  SchedulerClass get_scheduler_class() const final {
+  SchedulerClass get_scheduler_class() const final override {
     return priority_to_scheduler_class(op->get_req()->get_priority());
   }
 
   void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle)
-      final;
+      final override;
 };
 
 }  // namespace ceph::osd::scheduler

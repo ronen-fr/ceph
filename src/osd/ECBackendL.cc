@@ -1443,7 +1443,7 @@ struct ECClassicalOp : ECCommonL::RMWPipeline::Op {
       std::map<hobject_t,extent_map> *written,
       std::map<shard_id_t, ObjectStore::Transaction> *transactions,
       DoutPrefixProvider *dpp,
-      const ceph_release_t require_osd_release) final
+      const ceph_release_t require_osd_release) final override
   {
     ceph_assert(t);
     ECTransactionL::generate_transactions(

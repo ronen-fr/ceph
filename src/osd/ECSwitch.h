@@ -314,7 +314,7 @@ public:
 
   uint64_t be_get_ondisk_size(uint64_t logical_size,
                               shard_id_t shard_id,
-                              bool object_is_legacy_ec) const final {
+                              bool object_is_legacy_ec) const final override {
     if (is_optimized())
     {
       return optimized.be_get_ondisk_size(logical_size, shard_id, object_is_legacy_ec);
@@ -425,16 +425,16 @@ public:
     return legacy.object_size_to_shard_size(size);
     // All shards are the same size.
   }
-  bool get_is_nonprimary_shard(shard_id_t shard) const final {
+  bool get_is_nonprimary_shard(shard_id_t shard) const final override {
     if (is_optimized()) {
       return optimized.get_is_nonprimary_shard(shard);
     }
     return false;
   }
-  bool get_is_hinfo_required() const final {
+  bool get_is_hinfo_required() const final override {
     return !is_optimized();
   }
-  bool get_is_ec_optimized() const final {
+  bool get_is_ec_optimized() const final override {
     return is_optimized();
   }
 };

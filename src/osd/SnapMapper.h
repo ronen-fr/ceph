@@ -381,7 +381,7 @@ private:
 
   /// Get snaps for oid - alternative interface
   tl::expected<std::set<snapid_t>, SnapMapReaderI::result_t> get_snaps(
-    const hobject_t &hoid) const final;
+    const hobject_t &hoid) const final override;
 
   /**
    * get_snaps_check_consistency
@@ -390,7 +390,7 @@ private:
    * snap->hobject_t mappings ('SNA_' entries).
    */
   tl::expected<std::set<snapid_t>, SnapMapReaderI::result_t>
-  get_snaps_check_consistency(const hobject_t &hoid) const final;
+  get_snaps_check_consistency(const hobject_t &hoid) const final override;
 };
 WRITE_CLASS_ENCODER(SnapMapper::object_snaps)
 WRITE_CLASS_ENCODER(SnapMapper::Mapping)

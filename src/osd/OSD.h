@@ -151,7 +151,7 @@ public:
     superblock = block;
   }
 
-  int get_nodeid() const final { return whoami; }
+  int get_nodeid() const final override { return whoami; }
 private:
   OSDMapRef osdmap;
 
@@ -253,7 +253,7 @@ public:
    * destruction.
    * returns nullopt if failing to lock.
    */
-  std::optional<PGLockWrapper> get_locked_pg(spg_t pgid) final;
+  std::optional<PGLockWrapper> get_locked_pg(spg_t pgid) final override;
 
   /**
    * the entity that counts the number of active replica scrub
