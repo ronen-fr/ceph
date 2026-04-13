@@ -34,47 +34,41 @@ SegmentManager::get_segment_manager(
 {
 #ifdef HAVE_ZNS
 LOG_PREFIX(SegmentManager::get_segment_manager);
-  return seastar::do_with(
-    static_cast<size_t>(0),
-    [FNAME,
-     dtype,
-     device](auto &nr_zones) {
-      return seastar::open_file_dma(
-	device + "/block",
-	seastar::open_flags::rw
-      ).then([FNAME,
-	      dtype,
-	      device,
-	      &nr_zones](auto file) {
-	return seastar::do_with(
-	  file,
-	  [&nr_zones](auto &f) -> seastar::future<int> {
-	    ceph_assert(f);
-	    return f.ioctl(BLKGETNRZONES, (void *)&nr_zones);
-	  });
-      }).then([FNAME,
-	       dtype,
-	       device,
-	       &nr_zones](auto ret) -> crimson::os::seastore::SegmentManagerRef {
-	crimson::os::seastore::SegmentManagerRef sm;
-	INFO("Found {} zones.", nr_zones);
-	if (nr_zones != 0) {
-	  return std::make_unique<
-	    segment_manager::zbd::ZBDSegmentManager
+  if (dtype == device_type_t::ZBD) {
+    return seastar::do_with(
+      static_cast<size_t>(0),
+      [FNAME, device](auto &nr_zones) {
+	return seastar::open_file_dma(
+	  device + "/block",
+	  seastar::open_flags::rw
+	).then([&nr_zones](auto file) {
+	  return seastar::do_with(
+	    file,
+	    [&nr_zones](auto &f) -> seastar::future<int> {
+	      ceph_assert(f);
+	      return f.ioctl(BLKGETNRZONES, (void *)&nr_zones);
+	    });
+	}).then([FNAME,
+		 device,
+		 &nr_zones](auto ret) -> crimson::os::seastore::SegmentManagerRef {
+	  INFO("Found {} zones.", nr_zones);
+	  if (nr_zones != 0) {
+	    return std::make_unique<
+	      segment_manager::zbd::ZBDSegmentManager
 	    >(device + "/block");
-	} else {
-	  return std::make_unique<
-	    segment_manager::block::BlockSegmentManager
-	    >(device + "/block", dtype);
-	}
+	  } else {
+	    return std::make_unique<
+	      segment_manager::block::BlockSegmentManager
+	    >(device + "/block", device_type_t::ZBD);
+	  }
+	});
       });
-    });
-#else
+  }
+#endif
   return seastar::make_ready_future<crimson::os::seastore::SegmentManagerRef>(
     std::make_unique<
       segment_manager::block::BlockSegmentManager
     >(device + "/block", dtype));
-#endif
 }
 
 }
