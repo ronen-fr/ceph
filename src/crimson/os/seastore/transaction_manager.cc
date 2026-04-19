@@ -186,6 +186,8 @@ TransactionManager::mount()
       });
     });
   }).safe_then([this] {
+    return epm->reclaim_dead_segments();
+  }).safe_then([this] {
     return epm->open_for_write();
   }).safe_then([FNAME, this] {
     epm->start_background();

@@ -1455,6 +1455,35 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
   });
 }
 
+SegmentManager::release_ertr::future<>
+SegmentCleaner::reclaim_dead_segments(std::size_t segments_needed)
+{
+  LOG_PREFIX(SegmentCleaner::reclaim_dead_segments);
+  if (segments.get_num_empty() >= segments_needed) {
+    co_return;
+  }
+  auto journal_tail = trimmer != nullptr
+    ? trimmer->get_journal_tail()
+    : journal_seq_t{};
+  INFO("only {} empty segments, need {}, reclaiming dead segments...",
+       segments.get_num_empty(), segments_needed);
+  for (const auto& [seg_id, segment_info] : segments) {
+    if (segment_info.is_closed() &&
+        !segment_info.is_in_journal(journal_tail) &&
+        space_tracker->get_usage(seg_id) == 0) {
+      INFO("reclaiming dead segment {}", seg_id);
+      co_await sm_group->release_segment(seg_id);
+      auto old_usage = calc_utilization(seg_id);
+      segments.mark_empty(seg_id);
+      auto new_usage = calc_utilization(seg_id);
+      adjust_segment_util(old_usage, new_usage);
+      if (segments.get_num_empty() >= segments_needed) {
+        break;
+      }
+    }
+  }
+}
+
 SegmentCleaner::mount_ret SegmentCleaner::mount()
 {
   LOG_PREFIX(SegmentCleaner::mount);

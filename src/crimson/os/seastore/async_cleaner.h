@@ -1241,6 +1241,12 @@ public:
   using clean_space_ret = clean_space_ertr::future<>;
   virtual clean_space_ret clean_space() = 0;
 
+  /// Release closed segments with zero live bytes (no-op for non-segment stores).
+  virtual SegmentManager::release_ertr::future<>
+  reclaim_dead_segments(std::size_t) {
+    return SegmentManager::release_ertr::now();
+  }
+
   virtual const std::set<device_id_t>& get_device_ids() const = 0;
 
   virtual std::size_t get_reclaim_size_per_cycle() const = 0;
@@ -1450,6 +1456,13 @@ public:
   std::size_t get_reclaim_size_per_cycle() const final {
     return config.reclaim_bytes_per_cycle;
   }
+
+  /// Release closed segments with zero live bytes that are no longer
+  /// referenced by the journal.  Called during mount before
+  /// open_for_write() to ensure enough free segments exist for the
+  /// OOL writers.
+  SegmentManager::release_ertr::future<>
+  reclaim_dead_segments(std::size_t segments_needed) final;
 
   // Testing interfaces
 

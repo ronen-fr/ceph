@@ -598,6 +598,12 @@ public:
     return background_process.run_cleaner_until_done();
   }
 
+  seastar::future<> reclaim_dead_segments() {
+    auto segments_needed =
+      data_writers_by_gen.size() + md_writers_by_gen.size();
+    return background_process.reclaim_dead_segments(segments_needed);
+  }
+
   bool get_checksum_needed(paddr_t addr) {
     // checksum offloading only for blocks physically stored in the device
 #ifdef UNIT_TESTS_BUILT
@@ -882,7 +888,17 @@ private:
     }
 
     seastar::future<> run_until_halt();
+
     seastar::future<> run_cleaner_until_done();
+
+    seastar::future<> reclaim_dead_segments(std::size_t segments_needed) {
+      return main_cleaner->reclaim_dead_segments(segments_needed
+      ).handle_error(
+        crimson::ct_error::assert_all{
+          "BackgroundProcess::reclaim_dead_segments error"
+        }
+      );
+    }
 
     bool is_no_background() const {
       return !trimmer || !main_cleaner;
