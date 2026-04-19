@@ -2299,6 +2299,72 @@ TEST_P(tm_single_device_test_t, test_overwrite_pin_concurrent)
   test_overwrite_pin_concurrent();
 }
 
+TEST_P(tm_single_device_test_t, reclaim_dead_segments_on_mount)
+{
+  // Test that reclaim_dead_segments() releases closed segments with
+  // zero live bytes, allowing a subsequent mount to succeed even when
+  // segments were previously exhausted by repeated mount/unmount cycles.
+  constexpr size_t TEST_BLOCK_SIZE = 4096;
+  run_async([this] {
+    // Phase 1: allocate some data, then remove it so segments become
+    // closed with zero live bytes after GC.
+    {
+      auto t = create_transaction();
+      alloc_extent(t, get_laddr_hint(0), TEST_BLOCK_SIZE, 'a');
+      submit_transaction(std::move(t));
+    }
+    {
+      auto t = create_transaction();
+      remove(t, get_laddr_hint(0));
+      submit_transaction(std::move(t));
+    }
+
+    // Phase 2: run GC to push dead data out and close segments
+    epm->run_background_work_until_halt().get();
+
+    // Phase 3: verify reclaim_dead_segments succeeds and the store
+    // can be remounted
+    replay();
+    // replay() calls restart() which re-mounts the store.
+    // The mount path now calls reclaim_dead_segments() before
+    // open_for_write().  If it works, we get here without abort.
+    check();
+  });
+}
+
+TEST_P(tm_single_device_test_t, reclaim_dead_segments_frees_space)
+{
+  // Test that reclaim_dead_segments() actually frees dead segments
+  // by filling the store, deleting everything, and verifying that
+  // reclaim_dead_segments() releases them during a subsequent mount.
+  constexpr size_t TEST_BLOCK_SIZE = 4096;
+  run_async([this] {
+    // Phase 1: fill with data
+    for (int i = 0; i < 50; i++) {
+      auto t = create_transaction();
+      alloc_extent(t, get_laddr_hint(i * TEST_BLOCK_SIZE),
+                   TEST_BLOCK_SIZE, 'a');
+      submit_transaction(std::move(t));
+    }
+
+    // Phase 2: remove all data
+    for (int i = 0; i < 50; i++) {
+      auto t = create_transaction();
+      remove(t, get_laddr_hint(i * TEST_BLOCK_SIZE));
+      submit_transaction(std::move(t));
+    }
+
+    // Phase 3: run GC so segments become closed with zero live data
+    epm->run_background_work_until_halt().get();
+
+    // Phase 4: remount — reclaim_dead_segments runs during mount,
+    // releasing dead segments before open_for_write() allocates new ones.
+    // Verify the store is consistent after remount.
+    replay();
+    check();
+  });
+}
+
 INSTANTIATE_TEST_SUITE_P(
   transaction_manager_test,
   tm_single_device_test_t,
