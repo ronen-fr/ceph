@@ -522,7 +522,7 @@ void SnapMapper::clear_snaps(
   const hobject_t &oid,
   MapCacher::Transaction<std::string, ceph::buffer::list> *t)
 {
-  dout(20) << __func__ << " " << oid << dendl;
+  dout(10) << __func__ << " " << oid << dendl;
   ceph_assert(check(oid));
   set<string> to_remove;
   to_remove.insert(to_object_key(oid));
@@ -589,6 +589,13 @@ int SnapMapper::update_snaps(
   // Tolerate missing keys but not disk errors
   if (r < 0 && r != -ENOENT)
     return r;
+  if (r == -ENOENT) {
+    // no existing mapping — create from scratch
+    dout(10) << __func__ << " " << oid
+	     << " no existing snap mapping, creating for " << new_snaps << dendl;
+    add_oid(oid, new_snaps, t);
+    return 0;
+  }
   if (old_snaps_check)
     ceph_assert(out.snaps == *old_snaps_check);
 
@@ -770,7 +777,7 @@ int SnapMapper::remove_oid(
   const hobject_t &oid,
   MapCacher::Transaction<std::string, ceph::buffer::list> *t)
 {
-  dout(20) << *this << __func__ << " " << oid << dendl;
+  dout(10) << *this << __func__ << " " << oid << dendl;
   ceph_assert(check(oid));
   return _remove_oid(oid, t);
 }
