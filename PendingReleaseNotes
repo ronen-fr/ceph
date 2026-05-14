@@ -42,6 +42,12 @@
 * RADOS: Stretch mode can now be entered even if the two dividing buckets differ
   in weight by a small fraction (default 0.1). This is tunable via
   `mon_stretch_max_bucket_weight_delta`.
+* RADOS: The amount of memory assigned to a Crimson OSD instance can now be limited
+  by setting `crimson-memory`. The configuration option is mapped into seastar's
+  ``--memory`` option. The default (0) means unlimited memory, which translates to
+  the total memory available on the system.
+  Limiting the allocated OSD memory reduces the size of a core-dump file created after
+  an OSD crash, thus facilitating debugging.
 
 * CephFS: The offline CephFS tools (cephfs-data-scan, cephfs-journal-tool,
   and cephfs-table-tool) now include progress tracking with ETA (Estimated Time of
