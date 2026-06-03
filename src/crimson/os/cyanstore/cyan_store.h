@@ -239,6 +239,13 @@ public:
     return shard_store;
   }
 
+  const FuturizedStore::Shard& get_sharded_store_unguarded(
+    store_index_t store_index) const override
+  {
+    assert(store_index < shard_stores.local().mshard_stores.size());
+    return *(shard_stores.local().mshard_stores[store_index]);
+  }
+
   seastar::future<std::tuple<int, std::string>>
   read_meta(const std::string& key) override;
 
