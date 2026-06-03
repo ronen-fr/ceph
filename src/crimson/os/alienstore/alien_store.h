@@ -126,6 +126,11 @@ public:
     return *this;
   }
 
+  const FuturizedStore::Shard& get_sharded_store_unguarded(
+    store_index_t store_index) const override {
+    return *this;
+  }
+
 private:
 
   template <class... Args>

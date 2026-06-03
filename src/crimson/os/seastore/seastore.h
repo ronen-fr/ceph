@@ -624,6 +624,14 @@ public:
     assert(shard_store.get_status() == true);
     return shard_store;
   }
+
+  const FuturizedStore::Shard& get_sharded_store_unguarded(
+    store_index_t store_index) const override
+  {
+    assert(store_index < shard_stores.local().mshard_stores.size());
+    return *(shard_stores.local().mshard_stores[store_index]);
+  }
+
   static col_obj_ranges_t
   get_objs_range(CollectionRef ch, unsigned bits);
 

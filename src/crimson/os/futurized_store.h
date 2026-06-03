@@ -255,6 +255,7 @@ public:
   // called on the shard and get this FuturizedStore::shard;
   virtual BackendStore get_backend_store(store_index_t store_index) = 0;
   virtual Shard& get_sharded_store(store_index_t store_index = 0) = 0;
+  virtual const Shard& get_sharded_store_unguarded(store_index_t store_index) const = 0;
 
   virtual seastar::future<std::tuple<int, std::string>> read_meta(
     const std::string& key) = 0;
