@@ -65,6 +65,15 @@ add_ceph_unittest(unittest-seastar-perfcounters
   --memory 256M --smp 1)
 target_link_libraries(unittest-seastar-perfcounters crimson)
 
+add_executable(unittest-seastar-pg-shard-mapping
+  test_pg_shard_mapping.cc
+  ${PROJECT_SOURCE_DIR}/src/crimson/osd/pg_map.cc)
+add_ceph_test(unittest-seastar-pg-shard-mapping
+  ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unittest-seastar-pg-shard-mapping
+  --memory 256M --smp 5)
+target_link_libraries(unittest-seastar-pg-shard-mapping
+  crimson-common GTest::GTest Boost::MPL)
+
 add_executable(unittest-seastar-lru
   test_lru.cc)
 add_ceph_unittest(unittest-seastar-lru
