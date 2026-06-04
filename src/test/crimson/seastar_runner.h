@@ -79,11 +79,14 @@ struct SeastarRunner {
 // Will remove once the ticket fixed.
 // Ceph ticket see: https://tracker.ceph.com/issues/65635
 #ifdef __aarch64__
-	seastar::smp::invoke_on_all([] {
+	return seastar::smp::invoke_on_all([] {
 	  using namespace std::chrono;
 	  seastar::engine().update_blocked_reactor_notify_ms(duration_cast<milliseconds>(10000h));
-	}).get();
+	});
+#else
+	return seastar::now();
 #endif
+      }).then([this] {
 	begin_signaled = true;
 	[[maybe_unused]] auto r = ::eventfd_write(begin_fd.get(), APP_RUNNING);
 	assert(r == 0);
