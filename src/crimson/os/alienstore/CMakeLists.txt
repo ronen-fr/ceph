@@ -36,6 +36,15 @@ if(WITH_BREAKPAD)
   target_link_libraries(crimson-alien-common Breakpad::client)
 endif()
 
+# These sources are intentionally compiled twice: once here (without
+# WITH_CRIMSON, for the alien/bluestore thread) and once in crimson-common
+# (with WITH_CRIMSON).  ld.bfd silently picks the first archive definition,
+# but Mold treats duplicates as errors.  Weaken all symbols in this archive
+# so the strong definitions from crimson-common win at link time.
+add_custom_command(TARGET crimson-alien-common POST_BUILD
+  COMMAND ${CMAKE_OBJCOPY} --weaken $<TARGET_FILE:crimson-alien-common>
+  COMMENT "Weakening symbols in crimson-alien-common for Mold compatibility")
+
 set(alien_store_srcs
   alien_store.cc
   thread_pool.cc
@@ -82,3 +91,7 @@ target_link_libraries(crimson-alienstore
     ${BLKID_LIBRARIES}
     ${UDEV_LIBRARIES}
     blk)
+
+# Same duplicate-symbol workaround as src/crimson/os/CMakeLists.txt, for
+# executables that link crimson-alienstore directly rather than via crimson-os.
+#target_link_options(crimson-alienstore INTERFACE -Wl,--allow-multiple-definition)
