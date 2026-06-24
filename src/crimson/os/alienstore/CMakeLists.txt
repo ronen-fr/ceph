@@ -41,9 +41,11 @@ endif()
 # (with WITH_CRIMSON).  ld.bfd silently picks the first archive definition,
 # but Mold treats duplicates as errors.  Weaken all symbols in this archive
 # so the strong definitions from crimson-common win at link time.
-add_custom_command(TARGET crimson-alien-common POST_BUILD
-  COMMAND ${CMAKE_OBJCOPY} --weaken $<TARGET_FILE:crimson-alien-common>
-  COMMENT "Weakening symbols in crimson-alien-common for Mold compatibility")
+if(USING_MOLD_LINKER)
+  add_custom_command(TARGET crimson-alien-common POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} --weaken $<TARGET_FILE:crimson-alien-common>
+    COMMENT "Weakening symbols in crimson-alien-common for Mold compatibility")
+endif()
 
 set(alien_store_srcs
   alien_store.cc
