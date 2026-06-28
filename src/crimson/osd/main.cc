@@ -151,17 +151,18 @@ int main(int argc, const char* argv[])
           sharded_perf_coll().start().get();
           auto stop_perf_coll = seastar::deferred_stop(sharded_perf_coll());
 
-          DEBUG("step 1: parsing config files");
+          DEBUG("parsing config files");
           local_conf().parse_config_files(early_config.conf_file_list).get();
           local_conf().parse_env().get();
           local_conf().parse_argv(config_proxy_args).get();
 
-          DEBUG("step 2: getting log_file from config");
+          DEBUG("initializing logger output");
           std::ofstream log_file_stream;
-          auto log_file = local_conf()->log_file;
-          DEBUG("step 2a: log_file is '{}'", log_file);
-          if (!log_file.empty()) {
-            DEBUG("step 2b: opening log file");
+          if (auto log_file = local_conf()->log_file; !log_file.empty()) {
+            // seastar::logger::do_log() writes to _out from every shard's thread
+            // with no lock. std::cerr is safe because it is unbuffered; a buffered
+            // ofstream is not. Disable buffering so each write() is a single syscall,
+            // matching cerr's thread-safety guarantee.
             log_file_stream.rdbuf()->pubsetbuf(nullptr, 0);
             log_file_stream.open(log_file, std::ios::app | std::ios::out);
             try {
@@ -169,19 +170,13 @@ int main(int argc, const char* argv[])
             } catch (const std::system_error& e) {
               ceph_abort_msg(fmt::format("unable to open log file: {}", e.what()));
             }
-            DEBUG("step 2c: setting logger ostream");
-            fprintf(stderr, "MOLD_DEBUG: about to call set_ostream, logger addr=%p\n",
-                    (void*)&logger());
-            fflush(stderr);
             logger().set_ostream(log_file_stream);
-            fprintf(stderr, "MOLD_DEBUG: set_ostream returned OK\n");
-            fflush(stderr);
           }
           auto reset_logger = seastar::defer([] {
             logger().set_ostream(std::cerr);
           });
 
-          DEBUG("step 3: writing pidfile");
+          DEBUG("writing pidfile");
           if (const auto ret = pidfile_write(local_conf()->pid_file);
               ret == -EACCES || ret == -EAGAIN) {
             ceph_abort_msg(
@@ -191,16 +186,18 @@ int main(int argc, const char* argv[])
                                        ret, cpp_strerror(-ret)));
           }
 
-          DEBUG("step 4: setting ignore SIGHUP");
+          DEBUG("setting ignore SIGHUP");
+          // just ignore SIGHUP, we don't reread settings. keep in mind signals
+          // handled by S* must be blocked for alien threads (see AlienStore).
           seastar::handle_signal(SIGHUP, [] {});
 
-          DEBUG("step 5: prometheus setup");
+          // start prometheus API server
           seastar::httpd::http_server_control prom_server;
           std::any stop_prometheus;
           if (uint16_t prom_port = config["prometheus_port"].as<uint16_t>();
               prom_port != 0) {
 
-            DEBUG("step 5a: starting prometheus server on port {}", prom_port);
+            DEBUG("starting prometheus server on port {}", prom_port);
             prom_server.start("prometheus").get();
             stop_prometheus = seastar::make_shared(seastar::deferred_stop(prom_server));
 
@@ -216,7 +213,7 @@ int main(int argc, const char* argv[])
             }).get();
           }
 
-          DEBUG("step 6: creating messengers");
+          DEBUG("creating messengers");
           const int whoami = std::stoi(local_conf()->name.get_id());
           const auto nonce = crimson::osd::get_nonce();
           crimson::net::MessengerRef cluster_msgr, client_msgr;
@@ -228,7 +225,6 @@ int main(int argc, const char* argv[])
                                                    nonce,
                                                    false);
           }
-          DEBUG("step 6a: creating heartbeat messengers");
           for (auto [msgr, name] : {make_pair(std::ref(hb_front_msgr), "hb_front"s),
                                     make_pair(std::ref(hb_back_msgr), "hb_back"s)}) {
             msgr = crimson::net::Messenger::create(entity_name_t::OSD(whoami),
@@ -237,34 +233,31 @@ int main(int argc, const char* argv[])
                                                    true);
           }
 
-          DEBUG("step 7: creating object store (type={}, data={})",
-                local_conf().get_val<std::string>("osd_objectstore"),
-                local_conf().get_val<std::string>("osd_data"));
+          DEBUG("creating object store");
           auto store = crimson::os::FuturizedStore::create(
             local_conf().get_val<std::string>("osd_objectstore"),
             local_conf().get_val<std::string>("osd_data"),
             local_conf().get_config_values());
-          DEBUG("step 7a: object store created");
+          INFO("passed objectstore is {}", local_conf().get_val<std::string>("osd_objectstore"));
 
-          DEBUG("step 8: creating OSD object");
           crimson::osd::OSD osd(
             whoami, nonce, std::ref(should_stop.abort_source()),
             std::ref(*store), cluster_msgr, client_msgr,
 	    hb_front_msgr, hb_back_msgr);
 
           if (config.count("mkkey")) {
-            DEBUG("step 9: generating keyring");
+            DEBUG("generating keyring");
             make_keyring().get();
           }
 
           if (local_conf()->no_mon_config) {
             INFO("bypassing the config fetch due to --no-mon-config");
           } else {
-            DEBUG("step 10: fetching config from monitors");
+            DEBUG("fetching config from monitors");
             crimson::osd::populate_config_from_mon().get();
           }
           if (config.count("mkfs")) {
-            DEBUG("step 11: running mkfs");
+            DEBUG("running mkfs");
             auto osd_uuid = local_conf().get_val<uuid_d>("osd_uuid");
             if (osd_uuid.is_zero()) {
               DEBUG("uuid not specified, generating random osd uuid");
@@ -283,12 +276,7 @@ int main(int argc, const char* argv[])
             return EXIT_SUCCESS;
           } else {
             DEBUG("starting OSD services");
-            try {
-              osd.start().get();
-            } catch (...) {
-              logger().error("OSD::start() failed: {}", std::current_exception());
-              throw;
-            }
+            osd.start().get();
           }
           INFO("crimson startup completed");
 
