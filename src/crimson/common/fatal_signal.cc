@@ -6,6 +6,9 @@
 #include <csignal>
 #include <iostream>
 #include <string_view>
+#include <ucontext.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 // boost is able to translate addresses
 // to lines with the following definition.
@@ -62,12 +65,26 @@ static void reraise_fatal(const int signum)
 [[gnu::noinline]] void FatalSignal::signal_entry(
   const int signum,
   siginfo_t* const info,
-  void*)
+  void* ucontext)
 {
   if (static std::atomic_bool handled{false}; handled.exchange(true)) {
     return;
   }
   assert(info);
+  if (ucontext) {
+    auto* uc = static_cast<ucontext_t*>(ucontext);
+    fprintf(stderr, "MOLD_DEBUG: SIGSEGV crash context:\n");
+    fprintf(stderr, "  RIP (instruction pointer): 0x%llx\n",
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RIP]);
+    fprintf(stderr, "  RSP (stack pointer):        0x%llx\n",
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RSP]);
+    fprintf(stderr, "  RBP (base pointer):         0x%llx\n",
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RBP]);
+    fprintf(stderr, "  RAX: 0x%llx\n",
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RAX]);
+    fprintf(stderr, "  Thread ID: %d\n", (int)syscall(SYS_gettid));
+    fflush(stderr);
+  }
   FatalSignal::signaled(signum, *info);
   reraise_fatal(signum);
 }
@@ -179,13 +196,9 @@ void FatalSignal::install_oneshot_signal_handler()
 [[gnu::noinline]] void FatalSignal::signaled(const int signum,
                                              const siginfo_t& siginfo)
 {
-  // Commented out for clean backtrace logs,
-  // can be used if needed:
-  // print_proc_maps();
-  // print_segv_info(siginfo);
-
   switch (signum) {
   case SIGSEGV:
+    print_segv_info(siginfo);
     print_backtrace("Got SIGSEGV");
     break;
   case SIGABRT:

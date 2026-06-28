@@ -30,22 +30,6 @@ if(WITH_CEPH_DEBUG_MUTEX)
     ${PROJECT_SOURCE_DIR}/src/common/condition_variable_debug.cc
     ${PROJECT_SOURCE_DIR}/src/common/shared_mutex_debug.cc)
 endif()
-add_library(crimson-alien-common STATIC
-  ${crimson_alien_common_srcs})
-if(WITH_BREAKPAD)
-  target_link_libraries(crimson-alien-common Breakpad::client)
-endif()
-
-# These sources are intentionally compiled twice: once here (without
-# WITH_CRIMSON, for the alien/bluestore thread) and once in crimson-common
-# (with WITH_CRIMSON).  ld.bfd silently picks the first archive definition,
-# but Mold treats duplicates as errors.  Weaken all symbols in this archive
-# so the strong definitions from crimson-common win at link time.
-if(USING_MOLD_LINKER)
-  add_custom_command(TARGET crimson-alien-common POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} --weaken $<TARGET_FILE:crimson-alien-common>
-    COMMENT "Weakening symbols in crimson-alien-common for Mold compatibility")
-endif()
 
 set(alien_store_srcs
   alien_store.cc
@@ -76,24 +60,32 @@ set(alien_store_srcs
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/OnodeScan.cc
   ${PROJECT_SOURCE_DIR}/src/os/memstore/MemStore.cc)
 
+# Merge alienstore + alien-common into a single archive.  The common sources
+# are compiled without WITH_CRIMSON and duplicate symbols in crimson-common.
+# ld.bfd resolves these by archive order; Mold treats them as errors.
+# After building, localize the duplicate symbols so they resolve internally
+# within this archive (for the alien/bluestore thread) while crimson-osd's
+# own references resolve from crimson-common (for seastar threads).
 add_library(crimson-alienstore STATIC
-  ${alien_store_srcs})
+  ${alien_store_srcs}
+  ${crimson_alien_common_srcs})
 if(WITH_LTTNG)
   add_dependencies(crimson-alienstore bluestore-tp)
 endif()
+if(WITH_BREAKPAD)
+  target_link_libraries(crimson-alienstore PRIVATE Breakpad::client)
+endif()
 
-# For crimson-alienstore WITH_CRIMSON is not defined
 target_link_libraries(crimson-alienstore
   PRIVATE
     seastar
     ${FMT_LIB}
     kv
     heap_profiler
-    crimson-alien-common
     ${BLKID_LIBRARIES}
     ${UDEV_LIBRARIES}
     blk)
 
-# Same duplicate-symbol workaround as src/crimson/os/CMakeLists.txt, for
-# executables that link crimson-alienstore directly rather than via crimson-os.
-#target_link_options(crimson-alienstore INTERFACE -Wl,--allow-multiple-definition)
+# Mold duplicate-symbol handling is done at the crimson-osd link step
+# (see src/crimson/osd/CMakeLists.txt) by ordering crimson-alienstore
+# before crimson-common with --allow-multiple-definition.
