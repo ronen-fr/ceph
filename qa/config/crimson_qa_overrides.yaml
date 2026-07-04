@@ -2,6 +2,7 @@ overrides:
   ceph:
     log-ignorelist:
     - \(POOL_APP_NOT_ENABLED\)
+    - \(PG_NOT_DEEP_SCRUBBED\)
     conf:
       global:
         enable experimental unrecoverable data corrupting features: crimson
