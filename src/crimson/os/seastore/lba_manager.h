@@ -330,6 +330,26 @@ public:
     Transaction &t,
     scan_mapped_space_func_t &&f) = 0;
 
+  /**
+   * Background rebalance interface.  The background loop in
+   * TransactionManager polls has_rebalance_work(), pops hints, and
+   * calls do_rebalance() inside REBALANCE transactions.  Defaults
+   * are no-ops; BtreeLBAManager overrides with a real implementation.
+   */
+  virtual bool has_rebalance_work() const { return false; }
+  virtual laddr_t pop_rebalance_hint() { ceph_abort("not implemented"); }
+
+  using rebalance_ret = base_iertr::future<>;
+  virtual rebalance_ret do_rebalance(Transaction &t, laddr_t hint) {
+    return base_iertr::now();
+  }
+
+  using rebalance_hints_t = std::vector<laddr_t>;
+  virtual rebalance_ret do_rebalance_batch(
+    Transaction &t, const rebalance_hints_t &hints) {
+    return base_iertr::now();
+  }
+
   virtual ~LBAManager() {}
 };
 using LBAManagerRef = std::unique_ptr<LBAManager>;
