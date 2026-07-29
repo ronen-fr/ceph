@@ -226,7 +226,9 @@ void SeaStore::Shard::register_metrics(store_index_t store_index)
     {txn_stage_t::SUBMIT_LBA_UPDATE,     sm::label_instance("stage", "submit_lba_update")},
     {txn_stage_t::SUBMIT_PREPARE_ENTER,  sm::label_instance("stage", "submit_prepare_enter")},
     {txn_stage_t::SUBMIT_PREPARE_RECORD, sm::label_instance("stage", "submit_prepare_record")},
-    {txn_stage_t::SUBMIT_JOURNAL,        sm::label_instance("stage", "submit_journal")},
+    {txn_stage_t::SUBMIT_JOURNAL,            sm::label_instance("stage", "submit_journal")},
+    {txn_stage_t::SUBMIT_JOURNAL_PIPELINE,   sm::label_instance("stage", "submit_journal_pipeline")},
+    {txn_stage_t::SUBMIT_JOURNAL_DEVICE_IO,  sm::label_instance("stage", "submit_journal_device_io")},
   };
   // Three tiers of the same per-stage histograms
   std::pair<std::array<seastar::metrics::histogram, STAGE_MAX>*, const char*>
@@ -1852,7 +1854,9 @@ seastar::future<> SeaStore::Shard::do_transaction_no_callbacks(
         {txn_stage_t::SUBMIT_LBA_UPDATE,     pd.lba_update},
         {txn_stage_t::SUBMIT_PREPARE_ENTER,  pd.prepare_enter},
         {txn_stage_t::SUBMIT_PREPARE_RECORD, pd.prepare_record},
-        {txn_stage_t::SUBMIT_JOURNAL,        pd.journal},
+        {txn_stage_t::SUBMIT_JOURNAL,            pd.journal},
+        {txn_stage_t::SUBMIT_JOURNAL_PIPELINE,   pd.journal_pipeline_wait},
+        {txn_stage_t::SUBMIT_JOURNAL_DEVICE_IO,  pd.journal_device_io},
       }};
 
     for (auto& [stage, dur] : stage_samples) {
@@ -3002,8 +3006,8 @@ shard_stats_t SeaStore::Shard::get_io_stats(
     auto calc_conflicts = [](uint64_t ios, uint64_t repeats) {
       return (double)(repeats-ios)/ios;
     };
-    INFO("iops={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f}),{:.2f} "
-         "conflicts={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f}) "
+    INFO("iops={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f},{:.2f}),{:.2f} "
+         "conflicts={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f},{:.2f}) "
          "outstanding={}({},{},{},{},{}),{},{},{}",
          // iops
          ret.io_num/seconds,
@@ -3013,6 +3017,7 @@ shard_stats_t SeaStore::Shard::get_io_stats(
          ret.trim_dirty_num/seconds,
          ret.cleaner_main_num/seconds,
          ret.cleaner_cold_num/seconds,
+         ret.rebalance_num/seconds,
          ret.flush_num/seconds,
          // conflicts
          calc_conflicts(ret.io_num, ret.repeat_io_num),
@@ -3022,6 +3027,7 @@ shard_stats_t SeaStore::Shard::get_io_stats(
          calc_conflicts(ret.trim_dirty_num, ret.repeat_trim_dirty_num),
          calc_conflicts(ret.cleaner_main_num, ret.repeat_cleaner_main_num),
          calc_conflicts(ret.cleaner_cold_num, ret.repeat_cleaner_cold_num),
+         calc_conflicts(ret.rebalance_num, ret.repeat_rebalance_num),
          // outstanding
          ret.pending_io_num,
          ret.starting_io_num,

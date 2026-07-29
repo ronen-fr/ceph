@@ -128,6 +128,12 @@ struct OrderingHandle {
   seastar::lowres_clock::time_point lock_acquire_time{};
   seastar::lowres_clock::duration lock_hold_time{0};
 
+  // Sub-phase durations within journal->submit_record(), filled by
+  // the journal implementation so do_submit_transaction can report them.
+  std::chrono::steady_clock::duration journal_pipeline_wait{0};
+  std::chrono::steady_clock::duration journal_device_io{0};
+  std::chrono::steady_clock::duration journal_finalize_wait{0};
+
   // in the future we might add further constructors / template to type
   // erasure while extracting the location of tracking events.
   OrderingHandle(std::unique_ptr<OperationProxy> op) : op(std::move(op)) {}
@@ -135,7 +141,10 @@ struct OrderingHandle {
     : op(std::move(other.op)),
       collection_ordering_lock(other.collection_ordering_lock),
       lock_acquire_time(other.lock_acquire_time),
-      lock_hold_time(other.lock_hold_time) {
+      lock_hold_time(other.lock_hold_time),
+      journal_pipeline_wait(other.journal_pipeline_wait),
+      journal_device_io(other.journal_device_io),
+      journal_finalize_wait(other.journal_finalize_wait) {
     other.collection_ordering_lock = nullptr;
   }
 
