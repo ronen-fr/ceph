@@ -485,9 +485,35 @@ struct FixedKVInternalNode
     resolve_relative_addrs(base);
   }
 
-  constexpr static size_t get_min_capacity() {
+  // Textbook B-tree minimum: (CAPACITY - 1) / 2.
+  constexpr static size_t get_default_min_capacity() {
     return (node_layout_t::get_capacity() - 1) / 2;
   }
+
+  /**
+   * CRTP hook: concrete node types (e.g. LBAInternalNode) override this
+   * to set a tree-specific minimum occupancy.  The default delegates to
+   * get_default_min_capacity().
+   */
+  constexpr static size_t get_min_capacity_for_type() {
+    return get_default_min_capacity();
+  }
+
+  // Effective minimum occupancy for this node type.  Dispatches through
+  // the CRTP parameter node_type_t so that per-tree overrides are used.
+  constexpr static size_t get_min_capacity() {
+    return node_type_t::get_min_capacity_for_type();
+  }
+
+  /**
+   * Background rebalance thresholds.  Defaults disable proactive
+   * rebalancing (split threshold == CAPACITY means "only at max",
+   * merge threshold == 0 means "never").  Tree-specific types
+   * (LBAInternalNode, LBALeafNode) shadow these with real values.
+   */
+  static constexpr size_t PROACTIVE_SPLIT_SIZE =
+    node_layout_t::get_capacity();
+  static constexpr size_t BACKGROUND_MERGE_SIZE = 0;
 
   bool at_max_capacity() const {
     assert(this->get_size() <= node_layout_t::get_capacity());
@@ -495,12 +521,10 @@ struct FixedKVInternalNode
   }
 
   bool at_min_capacity() const {
-    assert(this->get_size() >= (get_min_capacity() - 1));
     return this->get_size() <= get_min_capacity();
   }
 
   bool below_min_capacity() const {
-    assert(this->get_size() >= (get_min_capacity() - 1));
     return this->get_size() < get_min_capacity();
   }
 
@@ -869,9 +893,24 @@ struct FixedKVLeafNode
 	       << ", meta=" << this->get_meta();
   }
 
-  constexpr static size_t get_min_capacity() {
+  // See FixedKVInternalNode for documentation on min-capacity and
+  // background rebalance thresholds — same CRTP pattern applies here.
+
+  constexpr static size_t get_default_min_capacity() {
     return (node_layout_t::get_capacity() - 1) / 2;
   }
+
+  constexpr static size_t get_min_capacity_for_type() {
+    return get_default_min_capacity();
+  }
+
+  constexpr static size_t get_min_capacity() {
+    return node_type_t::get_min_capacity_for_type();
+  }
+
+  static constexpr size_t PROACTIVE_SPLIT_SIZE =
+    node_layout_t::get_capacity();
+  static constexpr size_t BACKGROUND_MERGE_SIZE = 0;
 
   bool at_max_capacity() const {
     assert(this->get_size() <= node_layout_t::get_capacity());
@@ -879,12 +918,10 @@ struct FixedKVLeafNode
   }
 
   bool at_min_capacity() const {
-    assert(this->get_size() >= (get_min_capacity() - 1));
     return this->get_size() <= get_min_capacity();
   }
 
   bool below_min_capacity() const {
-    assert(this->get_size() >= (get_min_capacity() - 1));
     return this->get_size() < get_min_capacity();
   }
 

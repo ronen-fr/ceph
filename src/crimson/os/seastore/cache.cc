@@ -138,6 +138,7 @@ void Cache::register_metrics(store_index_t store_index)
     {src_t::TRIM_ALLOC, {sm::label_instance("src", "TRIM_ALLOC")}},
     {src_t::CLEANER_MAIN, {sm::label_instance("src", "CLEANER_MAIN")}},
     {src_t::CLEANER_COLD, {sm::label_instance("src", "CLEANER_COLD")}},
+    {src_t::REBALANCE, {sm::label_instance("src", "REBALANCE")}},
   };
   assert(labels_by_src.size() == (std::size_t)src_t::MAX);
 
@@ -696,7 +697,9 @@ void Cache::register_metrics(store_index_t store_index)
           (src1 == Transaction::src_t::CLEANER_COLD &&
            src2 == Transaction::src_t::CLEANER_COLD) ||
           (src1 == Transaction::src_t::TRIM_ALLOC &&
-           src2 == Transaction::src_t::TRIM_ALLOC)) {
+           src2 == Transaction::src_t::TRIM_ALLOC) ||
+          (src1 == Transaction::src_t::REBALANCE &&
+           src2 == Transaction::src_t::REBALANCE)) {
         continue;
       }
       std::ostringstream oss;

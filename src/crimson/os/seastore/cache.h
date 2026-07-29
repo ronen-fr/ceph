@@ -1996,6 +1996,8 @@ private:
 	     src2 == Transaction::src_t::CLEANER_COLD));
     assert(!(src1 == Transaction::src_t::TRIM_ALLOC &&
              src2 == Transaction::src_t::TRIM_ALLOC));
+    assert(!(src1 == Transaction::src_t::REBALANCE &&
+             src2 == Transaction::src_t::REBALANCE));
 
     auto src1_value = static_cast<std::size_t>(src1);
     auto src2_value = static_cast<std::size_t>(src2);
