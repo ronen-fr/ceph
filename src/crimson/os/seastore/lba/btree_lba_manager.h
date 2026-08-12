@@ -481,16 +481,6 @@ public:
   }
 
   /**
-   * Look up the leaf at hint, then proactively split or merge it
-   * depending on its current size vs. the thresholds.  Called from
-   * TransactionManager::run_rebalance_loop inside a REBALANCE
-   * transaction.
-   */
-  rebalance_ret do_rebalance(
-    Transaction &t,
-    laddr_t hint) final;
-
-  /**
    * Process multiple rebalance hints within a single btree scope
    * (and thus a single transaction commit).  Amortizes journal-write
    * cost across the batch.

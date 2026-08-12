@@ -2811,41 +2811,6 @@ public:
   }
 
 
-  /**
-   * proactive_merge - merge or rebalance an under-threshold leaf from a
-   * background transaction.  Triggers at BACKGROUND_MERGE_SIZE instead of
-   * get_min_capacity().  Only handles the leaf level; parent underflow
-   * is left for subsequent background cycles.
-   */
-  handle_merge_ret proactive_merge(
-    op_context_t c,
-    iterator &iter)
-  {
-    LOG_PREFIX(FixedKVBtree::proactive_merge);
-    if (iter.get_depth() == 1 ||
-        iter.leaf.node->get_size() >= leaf_node_t::BACKGROUND_MERGE_SIZE) {
-      SUBTRACET(
-        seastore_fixedkv_tree,
-        "no proactive merge needed, leaf size {}, depth {}",
-        c.trans,
-        iter.leaf.node->get_size(),
-        iter.get_depth());
-      return seastar::now();
-    }
-
-    SUBTRACET(
-      seastore_fixedkv_tree,
-      "proactive merge, leaf size {} < threshold {}",
-      c.trans,
-      iter.leaf.node->get_size(),
-      leaf_node_t::BACKGROUND_MERGE_SIZE);
-    return iter.ensure_internal(c, 2
-    ).si_then([this, c, &iter] {
-      auto &parent_pos = iter.get_internal(2);
-      return merge_level(c, depth_t{1}, parent_pos, iter.leaf);
-    });
-  }
-
 private:
   /**
    * handle_merge - rebalance or merge underflowing nodes after a remove.

@@ -781,32 +781,6 @@ BtreeLBAManager::insert_mappings(
 // ---------------------------------------------------------------------------
 
 BtreeLBAManager::rebalance_ret
-BtreeLBAManager::do_rebalance(
-  Transaction &t,
-  laddr_t hint)
-{
-  auto c = get_context(t);
-  return with_btree<LBABtree>(
-    cache,
-    c,
-    [c, hint](auto &btree) {
-    return btree.lower_bound(
-      c, hint
-    ).si_then([c, &btree](auto iter) {
-      auto leaf = iter.get_leaf_node();
-      auto size = leaf->get_size();
-      if (size >= LBALeafNode::PROACTIVE_SPLIT_SIZE) {
-        return btree.proactive_split(c, iter);
-      } else if (size < LBALeafNode::BACKGROUND_MERGE_SIZE
-                 && size > 0) {
-        return btree.proactive_merge(c, iter);
-      }
-      return base_iertr::now();
-    });
-  });
-}
-
-BtreeLBAManager::rebalance_ret
 BtreeLBAManager::do_rebalance_batch(
   Transaction &t,
   const rebalance_hints_t &hints)

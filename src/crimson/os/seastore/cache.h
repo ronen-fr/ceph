@@ -1807,6 +1807,8 @@ private:
   // mutated in place, leaving their LBA-leaf crc stale; see _read_extent().
   const bool delta_based_overwrite_enabled;
   bool lazy_read_enabled;
+  // When true, use lowered LBA min_capacity and run background
+  // proactive splits.  Toggled via seastore_lba_background_rebalance.
   bool rebalance_enabled;
 
   // md_config_obs_t
