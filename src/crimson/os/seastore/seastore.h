@@ -59,7 +59,9 @@ enum class txn_stage_t : uint8_t {
     SUBMIT_LBA_UPDATE,     // update_lba_mappings
     SUBMIT_PREPARE_ENTER,  // enter(prepare) pipeline stage (global OrderedExclusive wait)
     SUBMIT_PREPARE_RECORD, // prepare_record (record encoding)
-    SUBMIT_JOURNAL,        // journal->submit_record -- POST-lock (not part of the hold)
+    SUBMIT_JOURNAL,            // journal->submit_record total
+    SUBMIT_JOURNAL_PIPELINE,   // waiting for DeviceSubmission + Finalize pipeline stages
+    SUBMIT_JOURNAL_DEVICE_IO,  // actual device write (io_uring submit to completion)
     MAX
 };
 
