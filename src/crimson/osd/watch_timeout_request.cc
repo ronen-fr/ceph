@@ -4,7 +4,7 @@
 #include "crimson/osd/watch.h"
 #include "crimson/osd/osd_operations/internal_client_request.h"
 
-#include <fmt/ostream.h>
+#include "common/fmt_common.h"
 
 // This translation unit holds the only part of the Watch machinery that is
 // coupled to the PG operation framework: the watch-timeout operation and the
@@ -18,14 +18,6 @@ namespace {
     return crimson::get_logger(ceph_subsys_osd);
   }
 }
-
-namespace crimson::osd {
-class WatchTimeoutRequest;
-}
-
-#if FMT_VERSION >= 90000
-template <> struct fmt::formatter<crimson::osd::WatchTimeoutRequest> : fmt::ostream_formatter {};
-#endif
 
 namespace crimson::osd {
 
@@ -42,6 +34,15 @@ public:
   const hobject_t& get_target_oid() const final;
   PG::do_osd_ops_params_t get_do_osd_ops_params() const final;
   std::vector<OSDOp> create_osd_ops() final;
+
+  auto fmt_print_ctx(auto& ctx) const -> decltype(ctx.out()) {
+    return fmt::format_to(
+      ctx.out(),
+      "WatchTimeoutRequest(id={}, cookie={}, entity={})",
+      get_id(),
+      watch->get_cookie(),
+      watch->get_entity());
+  }
 
 private:
   WatchRef watch;
