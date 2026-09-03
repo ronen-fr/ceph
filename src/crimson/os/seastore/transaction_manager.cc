@@ -962,6 +962,12 @@ TransactionManager::do_submit_transaction(
 
   SUBTRACET(seastore_t, "submitting record", tref);
   auto journal_start = std::chrono::steady_clock::now();
+  // The journal accumulates these into the handle with +=, and the handle
+  // survives eagain retries (reset_preserve_handle), so snapshot the running
+  // totals here and add only this attempt's delta below -- otherwise prior
+  // attempts' values would be re-counted on every retry.
+  auto journal_pipeline_wait_start = tref.get_handle().journal_pipeline_wait;
+  auto journal_device_io_start = tref.get_handle().journal_device_io;
   co_await journal->submit_record(
     std::move(record),
     tref.get_handle(),
@@ -990,9 +996,9 @@ TransactionManager::do_submit_transaction(
   tref.get_phase_durations().journal +=
     std::chrono::steady_clock::now() - journal_start;
   tref.get_phase_durations().journal_pipeline_wait +=
-    tref.get_handle().journal_pipeline_wait;
+    tref.get_handle().journal_pipeline_wait - journal_pipeline_wait_start;
   tref.get_phase_durations().journal_device_io +=
-    tref.get_handle().journal_device_io;
+    tref.get_handle().journal_device_io - journal_device_io_start;
 
   co_await trans_intr::make_interruptible(
     tref.get_handle().complete()
