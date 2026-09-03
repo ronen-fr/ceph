@@ -541,6 +541,20 @@ public:
     return piviter->get_key();
   }
 
+  void right_biased_split_into(
+    FixedKVNodeLayout &left,
+    FixedKVNodeLayout &right,
+    K pivot) const {
+    left.copy_from_foreign(left.begin(), begin(), end());
+    left.set_size(get_size());
+
+    right.set_size(0);
+
+    auto [lmeta, rmeta] = get_meta().split_into(pivot);
+    left.set_meta(lmeta);
+    right.set_meta(rmeta);
+  }
+
   /**
    * merge_from
    *

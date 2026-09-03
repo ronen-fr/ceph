@@ -644,6 +644,9 @@ protected:
     size_t src_start,
     size_t src_end)
   {
+    if (src_start == src_end) {
+      return;
+    }
     std::memmove(
       dest.children.data() + dest_start,
       src.children.data() + src_start,
@@ -680,6 +683,22 @@ protected:
     }
   }
 
+  void right_biased_split_child_ptrs(
+    Transaction &t,
+    T &left,
+    T &right)
+  {
+    auto &me = down_cast();
+    assert(!left.my_tracker);
+    assert(!right.my_tracker);
+    left.maybe_expand_children(me.get_size());
+    right.maybe_expand_children(0);
+    if (me.is_pending()) {
+      move_child_ptrs(left, me, 0, 0, me.get_size());
+      my_tracker = nullptr;
+    }
+  }
+
   void adjust_copy_src_dest_on_split(
     Transaction &t,
     T &left,
@@ -694,6 +713,27 @@ protected:
 
     push_copy_sources(t, left, me);
     push_copy_sources(t, right, me);
+  }
+
+  // Right-biased split: the left node was CoW'd via duplicate_for_write
+  // (mutation_pending with prior_instance).  The right node is freshly
+  // allocated (initial_pending) and needs copy_sources so that
+  // get_stable_for_key can find the original stable node.
+  void adjust_copy_src_dest_on_right_biased_split(
+    Transaction &t,
+    T &right)
+  {
+    auto &me = down_cast();
+    ceph_assert(me.is_pending());
+    push_copy_sources(t, right, me);
+  }
+
+  // Initialize copy_sources on a freshly allocated node (e.g. a new
+  // root) from a source node that covers the same key range.
+  void init_copy_sources_from(Transaction &t, T &src) {
+    auto &me = down_cast();
+    ceph_assert(me.is_initial_pending());
+    push_copy_sources(t, me, src);
   }
 
   void merge_child_ptrs(

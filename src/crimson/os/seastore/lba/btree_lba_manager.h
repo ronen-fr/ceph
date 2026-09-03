@@ -480,6 +480,9 @@ public:
   bool has_rebalance_work() const final {
     return !rebalance_hints.empty();
   }
+  size_t rebalance_hint_count() const final {
+    return rebalance_hints.size();
+  }
 
   /**
    * Remove and return an arbitrary laddr hint.  The hint identifies a

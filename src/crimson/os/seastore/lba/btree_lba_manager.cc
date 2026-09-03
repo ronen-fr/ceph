@@ -419,6 +419,7 @@ BtreeLBAManager::demote_extent(
     t,
     cursor,
     [&extent](lba_map_val_t val) {
+      std::ignore = extent;
       assert(val.pladdr.is_paddr());
       assert(val.shadow_paddr == extent.get_paddr());
       val.pladdr = pladdr_t(val.shadow_paddr);
@@ -1458,7 +1459,7 @@ BtreeLBAManager::remap_mappings(
   auto c = get_context(t);
   auto btree = co_await get_btree<LBABtree>(cache, c);
   auto iter = btree.make_partial_iter(c, *cursor);
-  auto orig_val = iter.get_val();
+  [[maybe_unused]] auto orig_val = iter.get_val();
   std::vector<LBACursorRef> ret;
   assert(orig_val.refcount == EXTENT_DEFAULT_REF_COUNT);
   assert(orig_indirect ||

@@ -109,6 +109,7 @@ public:
   ~Cache();
 
   bool is_rebalance_enabled() const { return rebalance_enabled; }
+  void set_rebalance_enabled(bool v) { rebalance_enabled = v; }
 
   cache_stats_t get_stats(bool report_detail, double seconds) const;
 
@@ -1779,6 +1780,9 @@ private:
   transaction_id_t next_id = 0;
 
   const bool force_backref = false;
+  // seastore_lba_background_rebalance: enable proactive LBA splits
+  // and lowered reactive merge threshold.  Updated by the background
+  // rebalance loop; TODO: replace with a proper config observer.
   bool rebalance_enabled;
 
   /**

@@ -1296,7 +1296,7 @@ public:
           } else {
             ++(get_tree_stats<self_type>(c.trans).num_inserts);
             return handle_split(
-              c, ret
+              c, ret, laddr
             ).si_then([c, laddr, val, &ret, child] {
               if (!ret.leaf.node->is_mutable()) {
                 CachedExtentRef mut = c.cache.duplicate_for_write(
@@ -1372,7 +1372,7 @@ public:
           } else {
             ++(get_tree_stats<self_type>(c.trans).num_inserts);
             return handle_split(
-              c, ret
+              c, ret, laddr
             ).si_then([c, laddr, &ret, child, &src_iter] {
               if (!ret.leaf.node->is_mutable()) {
                 CachedExtentRef mut = c.cache.duplicate_for_write(
@@ -2704,7 +2704,8 @@ private:
   void do_split(
     op_context_t c,
     iterator &iter,
-    depth_t split_from)
+    depth_t split_from,
+    node_key_t insert_key = min_max_t<node_key_t>::null)
   {
     LOG_PREFIX(FixedKVBtree::do_split);
     SUBTRACET(seastore_fixedkv_tree,
@@ -2723,6 +2724,10 @@ private:
         min_max_t<node_key_t>::min,
         get_root().get_location(),
         nullptr);
+      if (split_from > 1) {
+        nroot->init_copy_sources_from(
+          c.trans, *iter.get_internal(split_from).node);
+      }
       iter.internal.push_back({nroot, 0});
 
       get_tree_stats<self_type>(c.trans).depth = iter.get_depth();
@@ -2798,28 +2803,71 @@ private:
         }
       } else {
         auto &pos = iter.leaf;
-        SUBTRACET(
-          seastore_fixedkv_tree,
-          "splitting leaf {}, parent: {} at pos: {}",
-          c.trans,
-          *pos.node,
-          *parent_pos.node,
-          parent_pos.pos);
-        auto [left, right] = split_level(parent_pos, pos);
+        auto leaf_meta = pos.node->get_node_meta();
+        bool right_biased =
+          std::is_same_v<node_key_t, laddr_t> &&
+          insert_key != min_max_t<node_key_t>::null &&
+          c.cache.is_rebalance_enabled() &&
+          leaf_meta.end == min_max_t<node_key_t>::max &&
+          pos.pos == pos.node->get_size();
 
-        /* right->get_node_meta().begin == pivot == right->begin()->get_key()
-         * Thus, if pos.pos == left->get_size(), we want iter to point to
-         * left with pos.pos at the end rather than right with pos.pos = 0
-         * since the insertion would be to the left of the first element
-         * of right and thus necessarily less than right->get_node_meta().begin.
-         */
-        if (pos.pos <= left->get_size()) {
-          pos.node = left;
-        } else {
+        if (right_biased) {
+          SUBTRACET(
+            seastore_fixedkv_tree,
+            "right-biased leaf split {}, pivot {}, parent: {} at pos: {}",
+            c.trans,
+            *pos.node,
+            insert_key,
+            *parent_pos.node,
+            parent_pos.pos);
+
+          auto [left, right] =
+            pos.node->make_right_biased_split_children(c, insert_key);
+
+          auto parent_node = parent_pos.node;
+          auto parent_iter = parent_pos.get_iter();
+          parent_node->update(
+            parent_iter, left->get_paddr(), left.get());
+          parent_node->insert(
+            parent_iter + 1, insert_key,
+            right->get_paddr(), right.get());
+
+          SUBTRACET(
+            seastore_fixedkv_tree,
+            "right-biased split {} into left: {}, right: {}",
+            c.trans, *pos.node, *left, *right);
+          c.cache.retire_extent(c.trans, pos.node);
+
           pos.node = right;
-          pos.pos -= left->get_size();
-
+          pos.pos = 0;
           parent_pos.pos += 1;
+
+          get_tree_stats<self_type>(c.trans).extents_num_delta++;
+          get_tree_stats<self_type>(c.trans).num_splits++;
+        } else {
+          SUBTRACET(
+            seastore_fixedkv_tree,
+            "splitting leaf {}, parent: {} at pos: {}",
+            c.trans,
+            *pos.node,
+            *parent_pos.node,
+            parent_pos.pos);
+          auto [left, right] = split_level(parent_pos, pos);
+
+          /* right->get_node_meta().begin == pivot == right->begin()->get_key()
+           * Thus, if pos.pos == left->get_size(), we want iter to point to
+           * left with pos.pos at the end rather than right with pos.pos = 0
+           * since the insertion would be to the left of the first element
+           * of right and thus necessarily less than right->get_node_meta().begin.
+           */
+          if (pos.pos <= left->get_size()) {
+            pos.node = left;
+          } else {
+            pos.node = right;
+            pos.pos -= left->get_size();
+
+            parent_pos.pos += 1;
+          }
         }
       }
     }
@@ -2833,6 +2881,20 @@ private:
     ).si_then([this, c, &iter](auto split_from) {
       if (split_from > 0) {
         do_split(c, iter, split_from);
+      }
+      return seastar::now();
+    });
+  }
+
+  handle_split_ret handle_split(
+    op_context_t c,
+    iterator &iter,
+    node_key_t insert_key)
+  {
+    return iter.check_split(c
+    ).si_then([this, c, &iter, insert_key](auto split_from) {
+      if (split_from > 0) {
+        do_split(c, iter, split_from, insert_key);
       }
       return seastar::now();
     });
@@ -3038,11 +3100,6 @@ private:
       auto [liter, riter] = donor_is_left ?
         std::make_pair(donor_iter, iter) : std::make_pair(iter, donor_iter);
 
-      if (std::max(l->get_size(), r->get_size()) -
-          std::min(l->get_size(), r->get_size()) <= 1) {
-        co_return;
-      }
-
       if (l->get_size() + r->get_size() <=
           NodeType::node_layout_t::get_capacity()) {
         typename NodeType::Ref replacement;
@@ -3073,6 +3130,10 @@ private:
         c.cache.retire_extent(c.trans, l);
         c.cache.retire_extent(c.trans, r);
         get_tree_stats<self_type>(c.trans).extents_num_delta--;
+      } else if (std::max(l->get_size(), r->get_size()) -
+                 std::min(l->get_size(), r->get_size()) <= 1) {
+        // Already balanced (differ by at most 1) — rebalancing would
+        // be a no-op or move a single entry.
       } else {
         auto pivot_idx = l->get_balance_pivot_idx(*l, *r);
         LOG_PREFIX(FixedKVBtree::merge_level);

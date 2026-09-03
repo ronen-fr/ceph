@@ -3330,6 +3330,9 @@ struct shard_stats_t {
   uint64_t repeat_cleaner_cold_num = 0;
   uint64_t rebalance_num = 0;
   uint64_t repeat_rebalance_num = 0;
+  uint64_t rebalance_poll_count = 0;
+  uint64_t rebalance_hints_sum = 0;
+  uint64_t rebalance_hints_max = 0;
 
   uint64_t flush_num = 0;
   uint64_t pending_flush_num = 0;
@@ -3374,6 +3377,11 @@ struct shard_stats_t {
     repeat_cleaner_cold_num += o.repeat_cleaner_cold_num;
     rebalance_num += o.rebalance_num;
     repeat_rebalance_num += o.repeat_rebalance_num;
+    rebalance_poll_count += o.rebalance_poll_count;
+    rebalance_hints_sum += o.rebalance_hints_sum;
+    if (o.rebalance_hints_max > rebalance_hints_max) {
+      rebalance_hints_max = o.rebalance_hints_max;
+    }
 
     flush_num += o.flush_num;
     pending_flush_num += o.pending_flush_num;
@@ -3395,6 +3403,9 @@ struct shard_stats_t {
     repeat_cleaner_cold_num -= o.repeat_cleaner_cold_num;
     rebalance_num -= o.rebalance_num;
     repeat_rebalance_num -= o.repeat_rebalance_num;
+    rebalance_poll_count -= o.rebalance_poll_count;
+    rebalance_hints_sum -= o.rebalance_hints_sum;
+    rebalance_hints_max = 0;
     flush_num -= o.flush_num;
   }
 };

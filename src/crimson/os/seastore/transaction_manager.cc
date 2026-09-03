@@ -223,6 +223,12 @@ TransactionManager::run_rebalance_loop()
   using namespace std::chrono_literals;
   INFO("started");
   while (true) {
+    // Re-read the config each iteration; TODO: replace with a proper
+    // config observer so changes take effect without polling.
+    cache->set_rebalance_enabled(
+      crimson::common::get_conf<bool>(
+        "seastore_lba_background_rebalance"));
+
     if (!cache->is_rebalance_enabled()) {
       // Feature disabled — drain stale hints and sleep longer
       // to avoid busy-polling while waiting for re-enable.
@@ -241,6 +247,14 @@ TransactionManager::run_rebalance_loop()
       co_await seastar::sleep_abortable(25ms, rebalance_abort);
     } catch (const seastar::sleep_aborted&) {
       break;
+    }
+    {
+      auto hint_count = lba_manager->rebalance_hint_count();
+      ++(shard_stats.rebalance_poll_count);
+      shard_stats.rebalance_hints_sum += hint_count;
+      if (hint_count > shard_stats.rebalance_hints_max) {
+        shard_stats.rebalance_hints_max = hint_count;
+      }
     }
     constexpr size_t REBALANCE_BATCH_SIZE = 8;
     constexpr int MAX_PRIORITY_YIELDS = 3;

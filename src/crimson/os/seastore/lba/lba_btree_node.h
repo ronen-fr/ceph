@@ -85,48 +85,22 @@ struct LBAInternalNode
 
   static constexpr extent_types_t TYPE = extent_types_t::LADDR_INTERNAL;
 
-  // ~24% of INTERNAL_NODE_CAPACITY.  Lowered from the textbook 50% to
-  // reduce foreground merge frequency; proactive background splits keep
-  // nodes well above this floor.
+  // Textbook 50% min occupancy — same as the default.  The right-biased
+  // split handles the rightmost-leaf hotspot without needing a lowered
+  // merge threshold.
   constexpr static size_t get_min_capacity_for_type() {
-    return 40;
+    return get_default_min_capacity();
   }
 
-  // ~85% of INTERNAL_NODE_CAPACITY.  A midpoint split at this size
-  // produces halves of ~71, which is 15 entries above
-  // BACKGROUND_MERGE_SIZE — enough hysteresis that a small number of
-  // removes won't immediately trigger a merge.
-  static constexpr size_t PROACTIVE_SPLIT_SIZE = 143;
-
-  // ~33% of INTERNAL_NODE_CAPACITY.  Below this the reactive merge
-  // (in handle_merge) rebalances or merges with a sibling.
-  // Post-merge occupancy lands well below PROACTIVE_SPLIT_SIZE,
-  // avoiding split/merge oscillation.
-  static constexpr size_t BACKGROUND_MERGE_SIZE = 56;
+  // Base-class defaults: PROACTIVE_SPLIT_SIZE = CAPACITY (no proactive
+  // splits for internal nodes), BACKGROUND_MERGE_SIZE = 0.
 
   extent_types_t get_type() const final {
     return TYPE;
   }
 };
 
-// Threshold ordering invariants for LBAInternalNode:
-//   0 < min_capacity < BACKGROUND_MERGE_SIZE < PROACTIVE_SPLIT_SIZE/2 < PROACTIVE_SPLIT_SIZE < CAPACITY
-//
-// min_capacity < BACKGROUND_MERGE_SIZE:
-//   the rebalance-aware merge threshold is above the hard-floor min_capacity.
-// BACKGROUND_MERGE_SIZE < PROACTIVE_SPLIT_SIZE / 2:
-//   a midpoint split produces halves above the merge threshold (hysteresis).
-// PROACTIVE_SPLIT_SIZE < CAPACITY:
-//   proactive splits fire before the node is completely full.
-// 2 * min_capacity < CAPACITY:
-//   make_full_merge of two at-min nodes always fits in one node.
 static_assert(LBAInternalNode::get_min_capacity_for_type() > 0);
-static_assert(LBAInternalNode::get_min_capacity_for_type()
-              < LBAInternalNode::BACKGROUND_MERGE_SIZE);
-static_assert(LBAInternalNode::BACKGROUND_MERGE_SIZE
-              < LBAInternalNode::PROACTIVE_SPLIT_SIZE / 2);
-static_assert(LBAInternalNode::PROACTIVE_SPLIT_SIZE
-              < INTERNAL_NODE_CAPACITY);
 static_assert(2 * LBAInternalNode::get_min_capacity_for_type()
               < INTERNAL_NODE_CAPACITY);
 
@@ -191,25 +165,16 @@ struct LBALeafNode
 
   static constexpr extent_types_t TYPE = extent_types_t::LADDR_LEAF;
 
-  // ~24% of LEAF_NODE_CAPACITY.  Lowered from the textbook 50% to
-  // reduce foreground merge frequency; proactive background splits keep
-  // nodes well above this floor.
+  // Textbook 50% min occupancy — same as the default.  The right-biased
+  // split handles the rightmost-leaf hotspot without needing a lowered
+  // merge threshold.
   constexpr static size_t get_min_capacity_for_type() {
-    return 25;
+    return get_default_min_capacity();
   }
 
-  // ~75% of LEAF_NODE_CAPACITY.  A midpoint split at this size
-  // produces halves of ~40, which is 5 entries above
-  // BACKGROUND_MERGE_SIZE — enough hysteresis that a small number of
-  // removes won't immediately trigger a merge.
-  // TODO: restore to 90 after tuning; temporarily lowered for testing.
-  static constexpr size_t PROACTIVE_SPLIT_SIZE = 80;
-
-  // ~33% of LEAF_NODE_CAPACITY.  Below this the reactive merge
-  // (in handle_merge) rebalances or merges with a sibling.
-  // Post-merge occupancy lands well below PROACTIVE_SPLIT_SIZE,
-  // avoiding split/merge oscillation.
-  static constexpr size_t BACKGROUND_MERGE_SIZE = 35;
+  // Base-class defaults: PROACTIVE_SPLIT_SIZE = CAPACITY (no proactive
+  // splits — rightmost-leaf appends use right-biased splits instead),
+  // BACKGROUND_MERGE_SIZE = 0.
 
   void update(
     internal_const_iterator_t iter,
@@ -332,11 +297,22 @@ struct LBALeafNode
     LBALeafNode &right) final {
     this->split_child_ptrs(t, left, right);
   }
+  void on_right_biased_split(
+    Transaction &t,
+    LBALeafNode &left,
+    LBALeafNode &right) final {
+    this->right_biased_split_child_ptrs(t, left, right);
+  }
   void adjust_copy_src_dest_on_split(
     Transaction &t,
     LBALeafNode &left,
     LBALeafNode &right) final {
     this->parent_node_t::adjust_copy_src_dest_on_split(t, left, right);
+  }
+  void adjust_copy_src_dest_on_right_biased_split(
+    Transaction &t,
+    LBALeafNode &right) final {
+    this->parent_node_t::adjust_copy_src_dest_on_right_biased_split(t, right);
   }
 
   void on_merge(
@@ -512,14 +488,7 @@ struct LBALeafNode
   }
 };
 
-// Same threshold ordering invariants as LBAInternalNode (see above).
 static_assert(LBALeafNode::get_min_capacity_for_type() > 0);
-static_assert(LBALeafNode::get_min_capacity_for_type()
-              < LBALeafNode::BACKGROUND_MERGE_SIZE);
-static_assert(LBALeafNode::BACKGROUND_MERGE_SIZE
-              < LBALeafNode::PROACTIVE_SPLIT_SIZE / 2);
-static_assert(LBALeafNode::PROACTIVE_SPLIT_SIZE
-              < LEAF_NODE_CAPACITY);
 static_assert(2 * LBALeafNode::get_min_capacity_for_type()
               < LEAF_NODE_CAPACITY);
 

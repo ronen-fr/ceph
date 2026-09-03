@@ -359,6 +359,7 @@ public:
    * implementation.
    */
   virtual bool has_rebalance_work() const { return false; }
+  virtual size_t rebalance_hint_count() const { return 0; }
   virtual laddr_t pop_rebalance_hint() { ceph_abort("not implemented"); }
 
   using rebalance_ret = base_iertr::future<>;

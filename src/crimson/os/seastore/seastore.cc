@@ -332,6 +332,30 @@ void SeaStore::Shard::register_metrics(store_index_t store_index)
       )
     }
   );
+
+  metrics.add_group(
+    "seastore",
+    {
+      sm::make_counter(
+        "rebalance_poll_count",
+        [this] { return shard_stats.rebalance_poll_count; },
+        sm::description("background rebalance loop wakeups"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
+      sm::make_counter(
+        "rebalance_hints_sum",
+        [this] { return shard_stats.rebalance_hints_sum; },
+        sm::description("cumulative hint set sizes across rebalance polls"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
+      sm::make_gauge(
+        "rebalance_hints_max",
+        [this] { return shard_stats.rebalance_hints_max; },
+        sm::description("max hint set size seen at a rebalance poll"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
+    }
+  );
 }
 
 seastar::future<> SeaStore::get_shard_nums()

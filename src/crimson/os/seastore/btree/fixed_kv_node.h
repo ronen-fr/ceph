@@ -778,10 +778,19 @@ struct FixedKVLeafNode
     Transaction &t,
     node_type_t &left,
     node_type_t &right) = 0;
+  virtual void on_right_biased_split(
+    Transaction &t,
+    node_type_t &left,
+    node_type_t &right) {
+    on_split(t, left, right);
+  }
   virtual void adjust_copy_src_dest_on_split(
     Transaction &t,
     node_type_t &left,
     node_type_t &right) = 0;
+  virtual void adjust_copy_src_dest_on_right_biased_split(
+    Transaction &t,
+    node_type_t &right) {}
 
   std::tuple<Ref, Ref, NODE_KEY>
   make_split_children(op_context_t c) {
@@ -798,6 +807,20 @@ struct FixedKVLeafNode
       left,
       right,
       pivot);
+  }
+
+  std::tuple<Ref, Ref>
+  make_right_biased_split_children(op_context_t c, NODE_KEY pivot) {
+    auto left = c.cache.template alloc_new_non_data_extent<node_type_t>(
+      c.trans, node_size, {placement_hint_t::HOT, INIT_GENERATION});
+    auto right = c.cache.template alloc_new_non_data_extent<node_type_t>(
+      c.trans, node_size, {placement_hint_t::HOT, INIT_GENERATION});
+    this->on_right_biased_split(c.trans, *left, *right);
+    this->right_biased_split_into(*left, *right, pivot);
+    left->range = left->get_meta();
+    right->range = right->get_meta();
+    this->adjust_copy_src_dest_on_split(c.trans, *left, *right);
+    return {left, right};
   }
 
   virtual void on_merge(
