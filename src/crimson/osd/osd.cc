@@ -305,6 +305,30 @@ seastar::future<OSDMeta> OSD::open_or_create_meta_coll(FuturizedStore &store)
   });
 }
 
+namespace {
+
+/// Fail a --mkfs step with a plain error exit rather than an abort.
+///
+/// mkfs is a one-shot tool invocation, and its failures are overwhelmingly
+/// environmental: no space for the backing device files, wrong permissions
+/// on osd_data, a path that is not there. Aborting turns every one of those
+/// into a SIGABRT plus a core dump, which buries the single line that says
+/// what actually went wrong. Throwing instead lets main() report the error
+/// and exit non-zero.
+auto mkfs_step_failed(std::string what)
+{
+  return crimson::stateful_ec::handle(
+    [what = std::move(what)](const std::error_code &ec) {
+      LOG_PREFIX(OSD::mkfs);
+      auto osd_data = local_conf().get_val<std::string>("osd_data");
+      ERROR("{} in {}: {}", what, osd_data, ec.message());
+      return seastar::make_exception_future<>(
+        std::system_error(ec, fmt::format("{} in {}", what, osd_data)));
+    });
+}
+
+}
+
 seastar::future<> OSD::mkfs(
   FuturizedStore &store,
   unsigned whoami,
@@ -318,16 +342,12 @@ seastar::future<> OSD::mkfs(
 
   DEBUG("calling store mkfs");
   co_await store.mkfs(osd_uuid).handle_error(
-    crimson::stateful_ec::assert_failure(fmt::format(
-      "{} error creating empty object store in {}",
-       FNAME, local_conf().get_val<std::string>("osd_data")).c_str())
+    mkfs_step_failed("error creating empty object store")
   );
 
   DEBUG("mounting store mkfs");
   co_await store.mount().handle_error(
-    crimson::stateful_ec::assert_failure(fmt::format(
-      "{} error mounting object store in {}",
-      FNAME, local_conf().get_val<std::string>("osd_data")).c_str())
+    mkfs_step_failed("error mounting object store")
   );
 
   {
