@@ -27,6 +27,9 @@ struct msgr_stats_t {
   uint64_t send_cross_core = 0;
   uint64_t out_writes = 0;
   uint64_t out_flushes = 0;
+  // standalone ack frames; every other ack rides in a message header
+  uint64_t ack_frames_sent = 0;
+  uint64_t ack_frames_received = 0;
   int64_t connections_open = 0;
   // from send() to the message being encoded for the socket (lowres)
   seastar::metrics::histogram send_queue_wait;

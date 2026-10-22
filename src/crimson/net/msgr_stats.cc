@@ -34,6 +34,12 @@ msgr_stats_t::msgr_stats_t(const std::string& msgr_name, bool export_metrics)
     sm::make_counter("out_flushes", out_flushes,
       sm::description("socket flushes; msgs_sent/out_flushes is the batch size"),
       {label}),
+    sm::make_counter("ack_frames_sent", ack_frames_sent,
+      sm::description("standalone ack frames written; "
+                      "other acks ride in message headers"),
+      {label}),
+    sm::make_counter("ack_frames_received", ack_frames_received,
+      sm::description("standalone ack frames read"), {label}),
     sm::make_gauge("connections_open", connections_open,
       sm::description("connections whose IO is open on this reactor"),
       {label}),

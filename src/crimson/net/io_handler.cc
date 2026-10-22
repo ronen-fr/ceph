@@ -108,9 +108,11 @@ IOHandler::sweep_out_pending_msgs_to_sent(
 #endif
   }
 
+  auto &s = get_stats();
   if (require_ack && num_msgs == 0u) {
     auto ack_frame = AckFrame::Encode(in_seq);
     bl.append(frame_assembler->get_buffer(ack_frame));
+    ++s.ack_frames_sent;
 #ifdef UNIT_TESTS_BUILT
     auto tag = AckFrame::tag;
     tags.push_back(tag);
@@ -118,7 +120,6 @@ IOHandler::sweep_out_pending_msgs_to_sent(
   }
 
   assert(out_pending_stamps.size() == num_msgs);
-  auto &s = get_stats();
   const auto sweep_start = seastar::lowres_clock::now();
   std::size_t num_swept = 0;
   for (std::size_t i = 0; i < num_msgs; ++i) {
@@ -1196,6 +1197,7 @@ void IOHandler::do_in_dispatch()
               // handle_message_ack() logic
               auto ack = AckFrame::Decode(payload->back());
               logger().debug("{} GOT AckFrame: seq={}", conn, ack.seq());
+              ++get_stats().ack_frames_received;
               ack_out_sent(ack.seq());
             });
           case Tag::KEEPALIVE2:
