@@ -30,6 +30,10 @@ struct msgr_stats_t {
   // standalone ack frames; every other ack rides in a message header
   uint64_t ack_frames_sent = 0;
   uint64_t ack_frames_received = 0;
+  // why an ack frame became due: no message carried the ack within
+  // crimson_msgr_ack_delay, or the unacked messages/bytes reached a limit
+  uint64_t acks_forced_by_timer = 0;
+  uint64_t acks_forced_by_limit = 0;
   int64_t connections_open = 0;
   // from send() to the message being encoded for the socket (lowres)
   seastar::metrics::histogram send_queue_wait;

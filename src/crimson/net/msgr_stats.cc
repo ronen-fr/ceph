@@ -40,6 +40,14 @@ msgr_stats_t::msgr_stats_t(const std::string& msgr_name, bool export_metrics)
       {label}),
     sm::make_counter("ack_frames_received", ack_frames_received,
       sm::description("standalone ack frames read"), {label}),
+    sm::make_counter("acks_forced_by_timer", acks_forced_by_timer,
+      sm::description("ack frames due because no message carried the ack "
+                      "within crimson_msgr_ack_delay"),
+      {label}),
+    sm::make_counter("acks_forced_by_limit", acks_forced_by_limit,
+      sm::description("ack frames due because the unacked messages or bytes "
+                      "reached their limit"),
+      {label}),
     sm::make_gauge("connections_open", connections_open,
       sm::description("connections whose IO is open on this reactor"),
       {label}),
