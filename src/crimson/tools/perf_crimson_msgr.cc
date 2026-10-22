@@ -28,6 +28,7 @@
 #include "crimson/net/Connection.h"
 #include "crimson/net/Dispatcher.h"
 #include "crimson/net/Messenger.h"
+#include "crimson/net/SocketMessenger.h"
 #include "crimson/osd/stop_signal.h"
 
 using namespace std;
@@ -76,6 +77,67 @@ double get_reactor_utilization() {
   auto value = (*metric)();
   return value.ui();
 }
+
+// what the messengers of one side did, from their msgr_stats_t
+struct msgr_counters_t {
+  uint64_t msgs_sent = 0;
+  uint64_t msgs_received = 0;
+  uint64_t out_writes = 0;
+  uint64_t out_flushes = 0;
+  uint64_t ack_frames_sent = 0;
+  uint64_t ack_frames_received = 0;
+  uint64_t acks_forced_by_timer = 0;
+  uint64_t acks_forced_by_limit = 0;
+
+  // this reactor's share
+  static msgr_counters_t of(crimson::net::Messenger &msgr) {
+    auto &s = static_cast<crimson::net::SocketMessenger&>(msgr).get_stats();
+    return {s.msgs_sent, s.msgs_received, s.out_writes, s.out_flushes,
+            s.ack_frames_sent, s.ack_frames_received,
+            s.acks_forced_by_timer, s.acks_forced_by_limit};
+  }
+
+  msgr_counters_t operator+(const msgr_counters_t &o) const {
+    return {msgs_sent + o.msgs_sent,
+            msgs_received + o.msgs_received,
+            out_writes + o.out_writes,
+            out_flushes + o.out_flushes,
+            ack_frames_sent + o.ack_frames_sent,
+            ack_frames_received + o.ack_frames_received,
+            acks_forced_by_timer + o.acks_forced_by_timer,
+            acks_forced_by_limit + o.acks_forced_by_limit};
+  }
+
+  msgr_counters_t operator-(const msgr_counters_t &o) const {
+    return {msgs_sent - o.msgs_sent,
+            msgs_received - o.msgs_received,
+            out_writes - o.out_writes,
+            out_flushes - o.out_flushes,
+            ack_frames_sent - o.ack_frames_sent,
+            ack_frames_received - o.ack_frames_received,
+            acks_forced_by_timer - o.acks_forced_by_timer,
+            acks_forced_by_limit - o.acks_forced_by_limit};
+  }
+
+  void report(std::string_view side) const {
+    auto ratio = [](uint64_t n, uint64_t d) {
+      return d ? static_cast<double>(n) / d : 0.0;
+    };
+    std::cout << fmt::format(
+      "{} messenger:\n"
+      "  messages sent: {}, received: {}\n"
+      "  write batches: {} ({:.2f} messages per batch), flushes: {}\n"
+      "  ack frames sent: {} ({:.2f}% of batches, {:.4f} per message "
+      "received), received: {}\n"
+      "  ack frames due by timer: {}, by limit: {}",
+      side,
+      msgs_sent, msgs_received,
+      out_writes, ratio(msgs_sent, out_writes), out_flushes,
+      ack_frames_sent, 100 * ratio(ack_frames_sent, out_writes),
+      ratio(ack_frames_sent, msgs_received), ack_frames_received,
+      acks_forced_by_timer, acks_forced_by_limit) << std::endl;
+  }
+};
 
 enum class perf_mode_t {
   both,
@@ -307,6 +369,21 @@ static seastar::future<> run(
             logger().error("Server: "
                            "there is another instance running at {}", addr);
           }));
+        });
+      }
+
+      seastar::future<msgr_counters_t> get_msgr_counters() {
+        return container().invoke_on(msgr_sid, [](auto &server) {
+          // without a fixed cpu, the connections run on any reactor
+          auto &msgr = *server.msgr;
+          return seastar::map_reduce(
+              boost::make_counting_iterator(0u),
+              boost::make_counting_iterator(seastar::this_smp_shard_count()),
+              [&msgr](unsigned shard) {
+            return seastar::smp::submit_to(shard, [&msgr] {
+              return msgr_counters_t::of(msgr);
+            });
+          }, msgr_counters_t{}, std::plus<msgr_counters_t>{});
         });
       }
 
@@ -811,6 +888,18 @@ static seastar::future<> run(
         });
       }
 
+      seastar::future<msgr_counters_t> get_msgr_counters() {
+        return container().map_reduce0([](auto &client) {
+          msgr_counters_t counters;
+          if (client.is_active()) {
+            for (auto &conn_state : client.conn_states) {
+              counters = counters + msgr_counters_t::of(*conn_state.msgr);
+            }
+          }
+          return counters;
+        }, msgr_counters_t{}, std::plus<msgr_counters_t>{});
+      }
+
       seastar::future<> connect_wait_verify(const entity_addr_t& peer_addr) {
         return container().invoke_on_all([peer_addr](auto& client) {
           // start clients in active cores
@@ -1003,7 +1092,10 @@ static seastar::future<> run(
       }
 
      public:
-      seastar::future<> dispatch_with_timer(unsigned ramptime, unsigned msgtime) {
+      // on_collect() is called once the ramp-up is over
+      seastar::future<> dispatch_with_timer(
+          unsigned ramptime, unsigned msgtime,
+          std::function<seastar::future<>()> on_collect) {
         logger().info("[all clients]: start sending MOSDOps from {} clients * {} conns",
                       num_clients, num_conns);
         return container().invoke_on_all([] (auto& client) {
@@ -1025,6 +1117,8 @@ static seastar::future<> run(
               }
             }
           });
+        }).then([on_collect=std::move(on_collect)] {
+          return on_collect();
         }).then([this, msgtime] {
           logger().info("[all clients]: reporting {} seconds...\n", msgtime);
           return seastar::do_with(
@@ -1210,9 +1304,32 @@ static seastar::future<> run(
         client->init()
       ).then_unpack([client, addr = client_conf.server_addr] {
         return client->connect_wait_verify(addr);
-      }).then([client, ramptime = client_conf.ramptime,
+      }).then([client, server, ramptime = client_conf.ramptime,
                msgtime = client_conf.msgtime] {
-        return client->dispatch_with_timer(ramptime, msgtime);
+        return seastar::do_with(
+            msgr_counters_t{}, msgr_counters_t{},
+            [client, server, ramptime, msgtime](auto &c_start, auto &s_start) {
+          return client->dispatch_with_timer(ramptime, msgtime,
+              [client, server, &c_start, &s_start] {
+            return client->get_msgr_counters(
+            ).then([server, &c_start](auto counters) {
+              c_start = counters;
+              return server->get_msgr_counters();
+            }).then([&s_start](auto counters) {
+              s_start = counters;
+            });
+          }).then([client, &c_start] {
+            return client->get_msgr_counters(
+            ).then([&c_start](auto counters) {
+              (counters - c_start).report("client");
+            });
+          }).then([server, &s_start] {
+            return server->get_msgr_counters(
+            ).then([&s_start](auto counters) {
+              (counters - s_start).report("server");
+            });
+          });
+        });
       }).then([client] {
         return client->shutdown();
       }).then([server] {
@@ -1232,7 +1349,21 @@ static seastar::future<> run(
         return client->connect_wait_verify(addr);
       }).then([client, ramptime = client_conf.ramptime,
                msgtime = client_conf.msgtime] {
-        return client->dispatch_with_timer(ramptime, msgtime);
+        return seastar::do_with(
+            msgr_counters_t{}, [client, ramptime, msgtime](auto &c_start) {
+          return client->dispatch_with_timer(ramptime, msgtime,
+              [client, &c_start] {
+            return client->get_msgr_counters(
+            ).then([&c_start](auto counters) {
+              c_start = counters;
+            });
+          }).then([client, &c_start] {
+            return client->get_msgr_counters(
+            ).then([&c_start](auto counters) {
+              (counters - c_start).report("client");
+            });
+          });
+        });
       }).then([client] {
         return client->shutdown();
       });
@@ -1246,6 +1377,7 @@ static seastar::future<> run(
         server->init(server_conf.addr, server_conf.is_fixed_cpu,
                      server_conf.lossless).get();
         should_stop.wait().get();
+        server->get_msgr_counters().get().report("server (whole run)");
         server->shutdown().get();
       });
     }
