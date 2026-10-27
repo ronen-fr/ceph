@@ -415,6 +415,35 @@ public:
     object_copy_cursor_t& cursor,
     object_copy_data_t& reply);
 
+  /// a source object, as fetched by COPY_FROM
+  struct copy_from_source_t {
+    uint64_t size = 0;
+    utime_t mtime;
+    /// user xattrs, with their '_' prefix
+    std::map<std::string, ceph::bufferlist, std::less<>> attrs;
+    ceph::bufferlist data;
+    bool has_omap = false;
+    ceph::bufferlist omap_header;
+    std::map<std::string, ceph::bufferlist> omap;
+    std::optional<uint32_t> data_digest;
+    std::optional<uint32_t> omap_digest;
+    uint32_t truncate_seq = 0;
+    uint64_t truncate_size = 0;
+  };
+
+  /**
+   * copy_from
+   *
+   * Replaces the object's data, xattrs and omap with those of 'src'
+   * (the final step of COPY_FROM). Not supported for EC pools.
+   */
+  void copy_from(
+    ObjectState& os,
+    const copy_from_source_t& src,
+    uint32_t op_flags,
+    ceph::os::Transaction& txn,
+    osd_op_params_t& osd_op_params,
+    object_stat_sum_t& delta_stats);
   interruptible_future<> omap_remove_range(
     ObjectState& os,
     const OSDOp& osd_op,

@@ -1719,6 +1719,9 @@ void PG::on_change(ceph::os::Transaction &t) {
   clear_log_entry_maps();
   context_registry_on_change();
   obc_loader.notify_on_change(is_primary());
+  for (auto tid : std::exchange(internal_client_reads, {})) {
+    std::ignore = shard_services.internal_client_cancel(tid);
+  }
   recovery_backend->on_peering_interval_change(t);
   backend->on_actingset_changed(is_primary());
   wait_for_active_blocker.unblock();

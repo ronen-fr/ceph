@@ -335,6 +335,31 @@ private:
     OSDOp& osd_op,
     const ObjectState& os);
 
+  // stateful_ec: errors returned by the source object's primary
+  using copy_from_ertr = crimson::errorator<
+    crimson::stateful_ec,
+    crimson::ct_error::enoent,
+    crimson::ct_error::invarg,
+    crimson::ct_error::operation_not_supported,
+    crimson::ct_error::input_output_error,
+    crimson::ct_error::file_too_large>;
+  using copy_from_iertr = ::crimson::interruptible::interruptible_errorator<
+    ::crimson::osd::IOInterruptCondition,
+    copy_from_ertr>;
+  /// handles both COPY_FROM and COPY_FROM2
+  copy_from_iertr::future<> do_copy_from(OSDOp& osd_op);
+  struct copy_source_t {
+    PGBackend::copy_from_source_t obj;
+    version_t user_version = 0;
+    mempool::osd_pglog::vector<std::pair<osd_reqid_t, version_t>> reqids;
+    mempool::osd_pglog::map<uint32_t, int> reqid_return_codes;
+  };
+  /// fetches the source object for do_copy_from(), in COPY_GET chunks
+  copy_from_iertr::future<copy_source_t> fetch_copy_source(
+    const object_t& src_oid,
+    const object_locator_t& src_oloc,
+    const ceph_osd_op& op);
+
   template <class Func>
   auto do_const_op(Func&& f);
 
@@ -429,7 +454,10 @@ public:
       osd_op_params.emplace();
       osd_op_params->req_id = msg->get_reqid();
       osd_op_params->mtime = msg->get_mtime();
-      osd_op_params->user_modify = (m == modified_by::user);
+    }
+    // any user-modifying op makes the whole request one
+    if (m == modified_by::user) {
+      osd_op_params->user_modify = true;
     }
   }
 

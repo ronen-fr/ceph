@@ -1037,6 +1037,11 @@ private:
 
 
 public:
+  /// InternalOSDClient reads issued on behalf of this PG's client ops
+  /// (see OpsExecuter::do_copy_from()). Cancelled on interval change, as
+  /// the waiting ops are to be interrupted.
+  std::set<ceph_tid_t> internal_client_reads;
+
   cached_map_t get_osdmap() const { return peering_state.get_osdmap(); }
   eversion_t get_next_version() {
     return eversion_t(get_osdmap_epoch(),

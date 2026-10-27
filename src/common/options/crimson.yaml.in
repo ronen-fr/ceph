@@ -144,6 +144,16 @@ options:
   level: advanced
   desc: The maximum number of concurrent I/O operations, 0 for unlimited
   default: 0
+- name: crimson_osd_copyfrom_max_inmem_bytes
+  type: size
+  level: advanced
+  desc: The largest source object a COPY_FROM operation would copy
+  long_desc: COPY_FROM fetches the whole source object into memory before
+    writing it to the destination object. Larger source objects are
+    rejected with EFBIG.
+  default: 64_M
+  see_also:
+  - osd_copyfrom_max_chunk
 
 - name: crimson_osd_stat_interval
   type: int

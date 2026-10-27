@@ -14,7 +14,9 @@
 #include <fmt/ostream.h>
 
 #include <seastar/core/thread.hh>
+#include <seastar/util/defer.hh>
 
+#include "common/errno.h"
 #include "common/snap_fmt.h"
 #include "crimson/common/log.h"
 #include "crimson/osd/exceptions.h"
@@ -653,6 +655,272 @@ OpsExecuter::copy_get_iertr::future<> OpsExecuter::do_copy_get(
   encode(reply, osd_op.outdata, features);
 }
 
+OpsExecuter::copy_from_iertr::future<OpsExecuter::copy_source_t>
+OpsExecuter::fetch_copy_source(
+  const object_t& src_oid,
+  const object_locator_t& src_oloc,
+  const ceph_osd_op& op)
+{
+  LOG_PREFIX(OpsExecuter::fetch_copy_source);
+  using crimson::common::local_conf;
+  auto& shard_services = pg->get_shard_services();
+  const uint64_t chunk_size = local_conf()->osd_copyfrom_max_chunk;
+  // the whole source object is held in memory until it is written
+  const uint64_t max_size = local_conf().get_val<Option::size_t>(
+    "crimson_osd_copyfrom_max_inmem_bytes");
+  int read_flags = 0;
+  if (op.copy_from.flags & CEPH_OSD_COPY_FROM_FLAG_RWORDERED) {
+    read_flags |= CEPH_OSD_FLAG_RWORDERED;
+  }
+
+  copy_source_t src;
+  // All chunks but the first are fetched along with an ASSERT_VER
+  // on the source's user_version, which makes the copy atomic.
+  src.user_version = op.copy_from.src_version;
+  object_copy_cursor_t cursor;
+  uint32_t src_flags = 0;
+  uint32_t src_data_digest = 0;
+  uint32_t src_omap_digest = 0;
+  uint32_t data_digest = -1;
+  uint32_t omap_digest = -1;
+  uint64_t fetched_bytes = 0;
+  do {
+    const bool first = cursor.is_initial();
+    std::vector<OSDOp> ops;
+    if (src.user_version) {
+      auto& assert_ver = ops.emplace_back();
+      assert_ver.op.op = CEPH_OSD_OP_ASSERT_VER;
+      assert_ver.op.assert_ver.ver = src.user_version;
+    }
+    auto& copy_get = ops.emplace_back();
+    copy_get.op.op = CEPH_OSD_OP_COPY_GET;
+    copy_get.op.copy_get.max = chunk_size;
+    copy_get.op.flags = op.copy_from.src_fadvise_flags;
+    encode(cursor, copy_get.indata);
+    encode(chunk_size, copy_get.indata);
+
+    const ceph_tid_t tid = shard_services.get_tid();
+    pg->internal_client_reads.insert(tid);
+    auto unregister = seastar::defer([this, tid] {
+      pg->internal_client_reads.erase(tid);
+    });
+    auto result = co_await interruptor::make_interruptible(
+      shard_services.internal_client_read(
+	tid, src_oid, src_oloc, snapid_t(op.copy_from.snapid),
+	std::move(ops), read_flags));
+    if (const int r = result ? (*result)->get_result() : result.error();
+	r < 0) {
+      DEBUGDPP("{}: fetching {} failed: {}",
+	       *pg, get_target(), src_oid.name, cpp_strerror(r));
+      co_await copy_from_iertr::future<>(
+	crimson::stateful_ec{std::error_code(-r, std::generic_category())});
+    }
+
+    auto reply = std::move(*result);
+    std::vector<OSDOp> reply_ops;
+    reply->claim_ops(reply_ops);
+    object_copy_data_t chunk;
+    std::map<std::string, ceph::bufferlist> chunk_omap;
+    bool decoded = false;
+    try {
+      if (!reply_ops.empty()) {
+	auto p = reply_ops.back().outdata.cbegin();
+	decode(chunk, p);
+	if (chunk.omap_data.length()) {
+	  auto q = chunk.omap_data.cbegin();
+	  decode(chunk_omap, q);
+	}
+	decoded = true;
+      }
+    } catch (const ceph::buffer::error&) {
+    }
+    if (!decoded) {
+      ERRORDPP("{}: failed to decode COPY_GET reply for {}",
+	       *pg, get_target(), src_oid.name);
+      co_await copy_from_iertr::future<>(
+	crimson::ct_error::input_output_error::make());
+    }
+
+    if (first) {
+      if (!src.user_version) {
+	src.user_version = reply->get_user_version();
+      }
+      src.obj.size = chunk.size;
+      src.obj.mtime = chunk.mtime;
+      src.obj.truncate_seq = chunk.truncate_seq;
+      src.obj.truncate_size = chunk.truncate_size;
+      src_flags = chunk.flags;
+      src_data_digest = chunk.data_digest;
+      src_omap_digest = chunk.omap_digest;
+      for (auto& [key, val] : chunk.attrs) {
+	src.obj.attrs["_" + key] = std::move(val);
+      }
+      if (chunk.size > max_size) {
+	INFODPP("{}: source {} is too large ({} > {})",
+		*pg, get_target(), src_oid.name, chunk.size, max_size);
+	co_await copy_from_iertr::future<>(
+	  crimson::ct_error::file_too_large::make());
+      }
+    }
+    if (!cursor.data_complete) {
+      data_digest = chunk.data.crc32c(data_digest);
+      fetched_bytes += chunk.data.length();
+      src.obj.data.claim_append(chunk.data);
+    }
+    if (!cursor.omap_complete) {
+      if (chunk.omap_header.length()) {
+	src.obj.has_omap = true;
+	omap_digest = chunk.omap_header.crc32c(omap_digest);
+	fetched_bytes += chunk.omap_header.length();
+	src.obj.omap_header.claim_append(chunk.omap_header);
+      }
+      if (chunk.omap_data.length()) {
+	src.obj.has_omap = true;
+	// the digest does not cover the encoded count of keys
+	ceph::bufferlist keys;
+	keys.substr_of(chunk.omap_data, 4, chunk.omap_data.length() - 4);
+	omap_digest = keys.crc32c(omap_digest);
+	fetched_bytes += chunk.omap_data.length();
+	src.obj.omap.merge(chunk_omap);
+      }
+    }
+    if (fetched_bytes > max_size) {
+      INFODPP("{}: source {} is too large (more than {} bytes)",
+	      *pg, get_target(), src_oid.name, max_size);
+      co_await copy_from_iertr::future<>(
+	crimson::ct_error::file_too_large::make());
+    }
+    cursor = chunk.cursor;
+    if (cursor.is_complete()) {
+      src.reqids = std::move(chunk.reqids);
+      src.reqid_return_codes = std::move(chunk.reqid_return_codes);
+    } else if (!src.user_version) {
+      ERRORDPP("{}: source {} has no user_version", *pg, get_target(), src_oid.name);
+      co_await copy_from_iertr::future<>(
+	crimson::ct_error::input_output_error::make());
+    }
+  } while (!cursor.is_complete());
+
+  if (src.obj.has_omap && !pg->get_pgpool().info.supports_omap()) {
+    co_await copy_from_iertr::future<>(
+      crimson::ct_error::operation_not_supported::make());
+  }
+  if (src.obj.data.length() != src.obj.size) {
+    ERRORDPP("{}: source {} size {} != {} bytes copied",
+	     *pg, get_target(), src_oid.name, src.obj.size, src.obj.data.length());
+    co_await copy_from_iertr::future<>(
+      crimson::ct_error::input_output_error::make());
+  }
+  if (src_flags & object_copy_data_t::FLAG_DATA_DIGEST) {
+    if (data_digest != src_data_digest) {
+      ERRORDPP("{}: data digest {:#x} != source {} data digest {:#x}",
+	       *pg, get_target(), data_digest, src_oid.name, src_data_digest);
+      pg->get_clog_error() << pg->get_pgid() << " copy from " << src_oid
+			   << " to " << get_target() << " data digest 0x"
+			   << std::hex << data_digest << " != source 0x"
+			   << src_data_digest << std::dec;
+      co_await copy_from_iertr::future<>(
+	crimson::ct_error::input_output_error::make());
+    }
+    src.obj.data_digest = data_digest;
+  }
+  if (src_flags & object_copy_data_t::FLAG_OMAP_DIGEST) {
+    if (omap_digest != src_omap_digest) {
+      ERRORDPP("{}: omap digest {:#x} != source {} omap digest {:#x}",
+	       *pg, get_target(), omap_digest, src_oid.name, src_omap_digest);
+      pg->get_clog_error() << pg->get_pgid() << " copy from " << src_oid
+			   << " to " << get_target() << " omap digest 0x"
+			   << std::hex << omap_digest << " != source 0x"
+			   << src_omap_digest << std::dec;
+      co_await copy_from_iertr::future<>(
+	crimson::ct_error::input_output_error::make());
+    }
+    src.obj.omap_digest = omap_digest;
+  }
+  co_return src;
+}
+
+OpsExecuter::copy_from_iertr::future<> OpsExecuter::do_copy_from(
+  OSDOp& osd_op)
+{
+  LOG_PREFIX(OpsExecuter::do_copy_from);
+  const ceph_osd_op& op = osd_op.op;
+  const auto flags = op.copy_from.flags;
+  object_t src_oid;
+  object_locator_t src_oloc;
+  std::optional<std::pair<uint32_t, uint64_t>> truncate;
+  bool decoded = true;
+  try {
+    auto p = osd_op.indata.cbegin();
+    decode(src_oid, p);
+    decode(src_oloc, p);
+    // COPY_FROM2 may override the truncate_seq/size of the source
+    if (op.op == CEPH_OSD_OP_COPY_FROM2 &&
+	(flags & CEPH_OSD_COPY_FROM_FLAG_TRUNCATE_SEQ)) {
+      uint32_t truncate_seq;
+      uint64_t truncate_size;
+      decode(truncate_seq, p);
+      decode(truncate_size, p);
+      truncate.emplace(truncate_seq, truncate_size);
+    }
+  } catch (const ceph::buffer::error&) {
+    decoded = false;
+  }
+  if (!decoded) {
+    co_await copy_from_iertr::future<>(crimson::ct_error::invarg::make());
+  }
+  if (op.op == CEPH_OSD_OP_COPY_FROM2 && (flags & ~CEPH_OSD_COPY_FROM_FLAGS)) {
+    DEBUGDPP("{}: unknown flags {:#x}", *pg, get_target(), flags);
+    co_await copy_from_iertr::future<>(crimson::ct_error::invarg::make());
+  }
+  if (flags & (CEPH_OSD_COPY_FROM_FLAG_FLUSH |
+	       CEPH_OSD_COPY_FROM_FLAG_MAP_SNAP_CLONE)) {
+    // cache-tiering only
+    DEBUGDPP("{}: unsupported flags {:#x}", *pg, get_target(), flags);
+    co_await copy_from_iertr::future<>(
+      crimson::ct_error::operation_not_supported::make());
+  }
+  if (pg->get_pgpool().info.is_erasure()) {
+    // TODO: support EC destinations
+    DEBUGDPP("{}: EC destination", *pg, get_target());
+    co_await copy_from_iertr::future<>(
+      crimson::ct_error::operation_not_supported::make());
+  }
+  pg_t src_raw_pg;
+  if (pg->get_osdmap()->object_locator_to_pg(
+	src_oid, src_oloc, src_raw_pg) < 0) {
+    co_await copy_from_iertr::future<>(crimson::ct_error::enoent::make());
+  }
+  if (const hobject_t src(src_oid, src_oloc.key,
+			  snapid_t(op.copy_from.snapid),
+			  src_raw_pg.ps(), src_raw_pg.pool(), src_oloc.nspace);
+      src == get_target()) {
+    DEBUGDPP("{}: copy from self", *pg, get_target());
+    co_await copy_from_iertr::future<>(crimson::ct_error::invarg::make());
+  }
+
+  ++num_write;
+  // the user_version is set explicitly, to that of the source object
+  check_init_op_params(modified_by::sys);
+  // Note: the target object stays write-locked while the source is
+  // fetched. Two concurrent copies, each from the target of the other,
+  // would block each other until the next interval change (as in the
+  // classic OSD).
+  auto src = co_await fetch_copy_source(src_oid, src_oloc, op);
+  if (truncate) {
+    std::tie(src.obj.truncate_seq, src.obj.truncate_size) = *truncate;
+  }
+  DEBUGDPP("{}: copying {} ({} bytes, {} omap keys, {} xattrs) uv {}",
+	   *pg, get_target(), src_oid.name, src.obj.size, src.obj.omap.size(),
+	   src.obj.attrs.size(), src.user_version);
+  pg->get_backend().copy_from(
+    obc->obs, src.obj, op.flags, txn, *osd_op_params, delta_stats);
+  osd_op_params->user_version_override = src.user_version;
+  osd_op_params->mtime = src.obj.mtime;
+  osd_op_params->extra_reqids = std::move(src.reqids);
+  osd_op_params->extra_reqid_return_codes = std::move(src.reqid_return_codes);
+}
+
 OpsExecuter::interruptible_errorated_future<OpsExecuter::osd_op_errorator>
 OpsExecuter::execute_op(OSDOp& osd_op)
 {
@@ -697,6 +965,7 @@ OpsExecuter::do_execute_op(OSDOp& osd_op)
   case CEPH_OSD_OP_WRITEFULL:
   case CEPH_OSD_OP_WRITESAME:
   case CEPH_OSD_OP_APPEND:
+  case CEPH_OSD_OP_COPY_FROM:
   case CEPH_OSD_OP_COPY_FROM2:
     if (pg->is_local_store_full() && !get_message().has_flag(CEPH_OSD_FLAG_FULL_TRY)) {
       return crimson::ct_error::eagain::make();
@@ -935,6 +1204,9 @@ OpsExecuter::do_execute_op(OSDOp& osd_op)
     return do_read_op([this, &osd_op](auto&, const auto& os) {
       return do_copy_get(osd_op, os);
     });
+  case CEPH_OSD_OP_COPY_FROM:
+  case CEPH_OSD_OP_COPY_FROM2:
+    return do_copy_from(osd_op);
 
   default:
     logger().warn("unknown op {}", ceph_osd_op_name(op.op));
@@ -1026,16 +1298,26 @@ pg_log_entry_t OpsExecuter::prepare_head_update(
      obc->ssc->snapset.seq = snapc.seq;
   }
 
+  // a user modification bumps the user_version. Otherwise, COPY_FROM
+  // sets the object's user_version to that of the source object.
+  const std::optional<version_t> new_user_version =
+    osd_op_params->user_modify ?
+      std::optional<version_t>{osd_op_params->at_version.version} :
+      osd_op_params->user_version_override;
+
   pg_log_entry_t ret{
     obc->obs.exists ?
       pg_log_entry_t::MODIFY : pg_log_entry_t::DELETE,
     obc->obs.oi.soid,
     osd_op_params->at_version,
     obc->obs.oi.version,
-    osd_op_params->user_modify ? osd_op_params->at_version.version : 0,
+    new_user_version.value_or(0),
     osd_op_params->req_id,
     osd_op_params->mtime,
     op_info.allows_returnvec() && !ops.empty() ? ops.back().rval.code : 0};
+  ret.extra_reqids = std::move(osd_op_params->extra_reqids);
+  ret.extra_reqid_return_codes =
+    std::move(osd_op_params->extra_reqid_return_codes);
 
   if (op_info.allows_returnvec()) {
     // also the per-op values are recorded in the pg log
@@ -1048,8 +1330,8 @@ pg_log_entry_t OpsExecuter::prepare_head_update(
   if (obc->obs.exists) {
     obc->obs.oi.prior_version = obc->obs.oi.version;
     obc->obs.oi.version = osd_op_params->at_version;
-    if (osd_op_params->user_modify)
-      obc->obs.oi.user_version = osd_op_params->at_version.version;
+    if (new_user_version)
+      obc->obs.oi.user_version = *new_user_version;
     obc->obs.oi.last_reqid = osd_op_params->req_id;
     obc->obs.oi.mtime = osd_op_params->mtime;
     obc->obs.oi.local_mtime = ceph_clock_now();

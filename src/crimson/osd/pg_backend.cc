@@ -1586,6 +1586,89 @@ PGBackend::fill_in_copy_get(
     cursor.omap_offset, cursor.omap_complete);
 }
 
+void PGBackend::copy_from(
+  ObjectState& os,
+  const copy_from_source_t& src,
+  uint32_t op_flags,
+  ceph::os::Transaction& txn,
+  osd_op_params_t& osd_op_params,
+  object_stat_sum_t& delta_stats)
+{
+  ceph_assert(!is_erasure());
+  auto& oi = os.oi;
+  const uint64_t old_size = os.exists ? oi.size : 0;
+  if (os.exists) {
+    // the object is replaced: its data, xattrs and omap are all dropped
+    txn.remove(coll->get_cid(),
+	       ghobject_t{oi.soid, ghobject_t::NO_GEN, get_shard()});
+    txn.create(coll->get_cid(),
+	       ghobject_t{oi.soid, ghobject_t::NO_GEN, get_shard()});
+    // even if the source has no omap: log-based recovery must wipe
+    // the omap of the replaced object (see https://tracker.ceph.com/issues/81367)
+    osd_op_params.clean_regions.mark_omap_dirty();
+    if (oi.is_omap()) {
+      oi.clear_flag(object_info_t::FLAG_OMAP);
+      delta_stats.num_objects_omap--;
+    }
+    if (oi.is_whiteout()) {
+      oi.clear_flag(object_info_t::FLAG_WHITEOUT);
+      delta_stats.num_whiteouts--;
+    }
+    if (old_size) {
+      interval_set<uint64_t> ch;
+      ch.insert(0, old_size);
+      osd_op_params.modified_ranges.union_of(ch);
+    }
+  } else {
+    os.exists = true;
+    oi.new_object();
+    txn.touch(coll->get_cid(), ghobject_t{oi.soid});
+    delta_stats.num_objects++;
+  }
+
+  if (src.data.length()) {
+    txn.write(coll->get_cid(), ghobject_t{oi.soid},
+	      0, src.data.length(), src.data, op_flags);
+  }
+  osd_op_params.clean_regions.mark_data_region_dirty(
+    0, std::max(old_size, src.size));
+  delta_stats.num_bytes += static_cast<int64_t>(src.size) -
+			   static_cast<int64_t>(old_size);
+  oi.size = src.size;
+
+  if (src.has_omap) {
+    if (src.omap_header.length()) {
+      txn.omap_setheader(coll->get_cid(), ghobject_t{oi.soid},
+			 src.omap_header);
+    }
+    if (!src.omap.empty()) {
+      txn.omap_setkeys(coll->get_cid(), ghobject_t{oi.soid}, src.omap);
+    }
+    oi.set_flag(object_info_t::FLAG_OMAP);
+    delta_stats.num_objects_omap++;
+    osd_op_params.clean_regions.mark_omap_dirty();
+  }
+  if (!src.attrs.empty()) {
+    txn.setattrs(coll->get_cid(), ghobject_t{oi.soid}, src.attrs);
+  }
+
+  if (src.data_digest) {
+    oi.set_data_digest(*src.data_digest);
+  } else {
+    oi.clear_data_digest();
+  }
+  if (src.omap_digest) {
+    oi.set_omap_digest(*src.omap_digest);
+  } else {
+    oi.clear_omap_digest();
+  }
+  oi.truncate_seq = src.truncate_seq;
+  oi.truncate_size = src.truncate_size;
+  oi.mtime = src.mtime;
+  delta_stats.num_wr++;
+  delta_stats.num_wr_kb += shift_round_up(src.size, 10);
+}
+
 PGBackend::ll_read_ierrorator::future<>
 PGBackend::omap_get_keys(
   const ObjectState& os,
