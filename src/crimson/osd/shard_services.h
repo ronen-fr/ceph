@@ -20,6 +20,7 @@
 #include "osd/PeeringState.h"
 #include "crimson/common/log.h"
 #include "crimson/osd/heartbeat.h"
+#include "crimson/osd/internal_osd_client.h"
 #include "crimson/osd/osdmap_service.h"
 #include "crimson/osd/osdmap_gate.h"
 #include "crimson/osd/osd_meta.h"
@@ -268,6 +269,7 @@ private:
   cached_map_t &get_osdmap() { return osdmap; }
   void update_map(cached_map_t new_osdmap) {
     osdmap = std::move(new_osdmap);
+    internal_client->handle_osd_map(osdmap);
   }
 
   crimson::net::Messenger &cluster_msgr;
@@ -276,6 +278,7 @@ private:
   seastar::future<> send_to_osd(int peer, MessageURef m, epoch_t from_epoch);
 
   crimson::mon::Client &monc;
+  std::unique_ptr<InternalOSDClient> internal_client;
   seastar::future<> osdmap_subscribe(version_t epoch, bool force_request);
 
   crimson::mgr::Client &mgrc;
@@ -537,6 +540,10 @@ public:
   }
 
   FORWARD_TO_OSD_SINGLETON(send_to_osd)
+
+  /// see InternalOSDClient::read(); 'tid' should come from get_tid()
+  FORWARD_TO_OSD_SINGLETON_TARGET(internal_client_read, internal_client->read)
+  FORWARD_TO_OSD_SINGLETON_TARGET(internal_client_cancel, internal_client->cancel)
 
   crimson::os::BackendStore get_store(store_index_t store_index) {
     auto store = local_state.b_store;

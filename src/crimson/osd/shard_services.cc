@@ -276,6 +276,7 @@ OSDSingletonState::OSDSingletonState(
     cluster_msgr(cluster_msgr),
     public_msgr(public_msgr),
     monc(monc),
+    internal_client(std::make_unique<InternalOSDClient>(whoami, monc)),
     mgrc(mgrc),
     local_reserver(
       &cct,

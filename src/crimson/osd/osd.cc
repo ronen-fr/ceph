@@ -657,10 +657,11 @@ seastar::future<> OSD::start()
     DEBUG("starting mon and mgr clients");
     return seastar::when_all_succeed(monc->start(),
                                      mgrc->start());
-  }).then_unpack([this, FNAME] {    
+  }).then_unpack([this, FNAME] {
     DEBUG("adding to crush");
     return _add_me_to_crush();
   });
+  co_await osd_singleton_state.local().internal_client->start();
   co_await _add_device_class();
   if (is_rotational.has_value()) {
     co_await shard_services.invoke_on_all([this](auto &local_service) {
@@ -927,6 +928,7 @@ seastar::future<> OSD::stop()
     DEBUG("prepared to stop");
     public_msgr->stop();
     cluster_msgr->stop();
+    co_await osd_singleton_state.local().internal_client->stop();
     auto gate_close_fut = gate.close_all();
     co_await asok->stop();
     co_await heartbeat->stop();

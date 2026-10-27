@@ -6,6 +6,7 @@ add_executable(crimson-osd
   lsan_suppressions.cc
   main.cc
   main_config_bootstrap_helpers.cc
+  internal_osd_client.cc
   osd.cc
   osd_meta.cc
   pg.cc
