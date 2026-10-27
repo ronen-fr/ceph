@@ -580,6 +580,79 @@ OpsExecuter::list_snaps_iertr::future<> OpsExecuter::do_list_snaps(
   return read_ierrorator::now();
 }
 
+OpsExecuter::copy_get_iertr::future<> OpsExecuter::do_copy_get(
+  OSDOp& osd_op,
+  const ObjectState& os)
+{
+  LOG_PREFIX(OpsExecuter::do_copy_get);
+  object_copy_cursor_t cursor;
+  uint64_t out_max = 0;
+  bool decoded = true;
+  try {
+    auto p = osd_op.indata.cbegin();
+    decode(cursor, p);
+    decode(out_max, p);
+  } catch (const ceph::buffer::error&) {
+    decoded = false;
+  }
+  if (!decoded) {
+    co_await copy_get_iertr::future<>(crimson::ct_error::invarg::make());
+  }
+
+  const auto& oi = os.oi;
+  const uint64_t features = msg->get_features();
+  object_copy_data_t reply;
+  if (!os.exists || oi.is_whiteout()) {
+    // the requester still needs the reqids, so that a resent
+    // copy-from (whose source was meanwhile removed) can be detected
+    // as a dup on the destination.
+    pg->get_log().get_log().get_object_reqids(
+      oi.soid, 10, &reply.reqids, &reply.reqid_return_codes);
+    encode(reply, osd_op.outdata, features);
+    co_await copy_get_iertr::future<>(crimson::ct_error::enoent::make());
+  }
+
+  reply.size = oi.size;
+  reply.mtime = oi.mtime;
+  ceph_assert(obc->ssc);
+  if (oi.soid.is_snap()) {
+    const auto& clone_snaps = obc->ssc->snapset.clone_snaps;
+    auto p = clone_snaps.find(oi.soid.snap);
+    if (p == clone_snaps.end()) {
+      ERRORDPP("{} missing from clone_snaps", *pg, oi.soid);
+      co_await copy_get_iertr::future<>(
+	crimson::ct_error::object_corrupted::make());
+    }
+    reply.snaps = p->second;
+  } else {
+    reply.snap_seq = obc->ssc->snapset.seq;
+  }
+  if (oi.is_data_digest()) {
+    reply.flags |= object_copy_data_t::FLAG_DATA_DIGEST;
+    reply.data_digest = oi.data_digest;
+  }
+  if (oi.is_omap_digest()) {
+    reply.flags |= object_copy_data_t::FLAG_OMAP_DIGEST;
+    reply.omap_digest = oi.omap_digest;
+  }
+  reply.truncate_seq = oi.truncate_seq;
+  reply.truncate_size = oi.truncate_size;
+
+  co_await pg->get_backend().fill_in_copy_get(
+    os, obc->attr_cache, pg->get_pgpool().info.supports_omap(),
+    out_max, osd_op.op.flags, cursor, reply);
+
+  if (cursor.is_complete()) {
+    // reqids are only included in the final chunk
+    pg->get_log().get_log().get_object_reqids(
+      oi.soid, 10, &reply.reqids, &reply.reqid_return_codes);
+  }
+  DEBUGDPP("{}: complete={} {} reqids", *pg, oi.soid,
+	   cursor.is_complete(), reply.reqids.size());
+  reply.cursor = cursor;
+  encode(reply, osd_op.outdata, features);
+}
+
 OpsExecuter::interruptible_errorated_future<OpsExecuter::osd_op_errorator>
 OpsExecuter::execute_op(OSDOp& osd_op)
 {
@@ -857,6 +930,10 @@ OpsExecuter::do_execute_op(OSDOp& osd_op)
   case CEPH_OSD_OP_LIST_SNAPS:
     return do_snapset_op([this, &osd_op](const auto &os, const auto &ss) {
       return do_list_snaps(osd_op, os, ss);
+    });
+  case CEPH_OSD_OP_COPY_GET:
+    return do_read_op([this, &osd_op](auto&, const auto& os) {
+      return do_copy_get(osd_op, os);
     });
 
   default:

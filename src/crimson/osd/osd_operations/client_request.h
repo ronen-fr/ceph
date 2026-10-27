@@ -260,6 +260,8 @@ private:
       Ref<PG> pg,
       unsigned this_instance_id);
   bool is_pg_op() const;
+  /// a COPY_GET sent by a peer OSD's internal client (see COPY_FROM)
+  bool is_internal_copy_get() const;
 
   CommonPGPipeline &client_pp(PG &pg);
 

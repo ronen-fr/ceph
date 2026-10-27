@@ -1480,6 +1480,112 @@ PGBackend::omap_get_header(
   }
 }
 
+PGBackend::read_ierrorator::future<>
+PGBackend::fill_in_copy_get(
+  const ObjectState& os,
+  const ObjectContext::attr_cache_t& attr_cache,
+  bool pool_supports_omap,
+  uint64_t out_max,
+  uint32_t op_flags,
+  object_copy_cursor_t& cursor,
+  object_copy_data_t& reply)
+{
+  const auto& oi = os.oi;
+
+  // attrs: user xattrs only (with the leading '_' stripped). They are
+  // sent in full with the first chunk and do not count against out_max.
+  if (!cursor.attr_complete) {
+    crimson::os::FuturizedStore::Shard::attrs_t attrs;
+    if (is_erasure()) {
+      attrs = attr_cache;
+    } else {
+      attrs = co_await crimson::os::with_store<
+	&crimson::os::FuturizedStore::Shard::get_attrs>(
+	  store, coll, ghobject_t{oi.soid}, 0);
+    }
+    for (auto& [key, val] : attrs) {
+      if (key.size() > 1 && key[0] == '_') {
+	reply.attrs[key.substr(1)] = std::move(val);
+      }
+    }
+    cursor.attr_complete = true;
+  }
+
+  int64_t left = out_max;
+  if (left > 0 && !cursor.data_complete) {
+    if (cursor.data_offset < oi.size) {
+      const uint64_t max_read =
+	std::min<uint64_t>(oi.size - cursor.data_offset, left);
+      auto bl = co_await _read(
+	oi.soid, oi.size, cursor.data_offset, max_read, op_flags);
+      if (!_read_verify_data(oi, bl)) {
+	co_await read_ierrorator::future<>(
+	  crimson::ct_error::object_corrupted::make());
+      }
+      left -= max_read;
+      cursor.data_offset += max_read;
+      reply.data = std::move(bl);
+    }
+    if (cursor.data_offset == oi.size) {
+      cursor.data_complete = true;
+    }
+  }
+
+  if (!pool_supports_omap || !oi.is_omap()) {
+    cursor.omap_complete = true;
+  } else if (left > 0 && !cursor.omap_complete) {
+    ceph_assert(cursor.data_complete);
+    if (cursor.omap_offset.empty()) {
+      reply.omap_header = co_await omap_get_header(
+	coll, ghobject_t{oi.soid}, op_flags);
+    }
+    ceph::bufferlist omap_data;
+    uint32_t omap_keys = 0;
+    omap_iterate_cb_t callback =
+      [&omap_data, &omap_keys, &left, &cursor]
+      (std::string_view key, std::string_view value) {
+      ++omap_keys;
+      encode(key, omap_data);
+      encode(value, omap_data);
+      left -= key.length() + 4 + value.length() + 4;
+      if (left <= 0) {
+	cursor.omap_offset = key;
+	return ObjectStore::omap_iter_ret_t::STOP;
+      }
+      return ObjectStore::omap_iter_ret_t::NEXT;
+    };
+    const auto ret = co_await maybe_do_omap_iterate(
+      store, coll, oi,
+      ObjectStore::omap_iter_seek_t{
+	.seek_position = cursor.omap_offset,
+	.seek_type = ObjectStore::omap_iter_seek_t::UPPER_BOUND},
+      std::move(callback)
+    ).handle_error(
+      crimson::ct_error::enodata::handle([] {
+	// only returned for !oi.is_omap(), which was checked above
+	return seastar::make_ready_future<ObjectStore::omap_iter_ret_t>(
+	  ObjectStore::omap_iter_ret_t::NEXT);
+      }),
+      ll_read_errorator::pass_further{});
+    if (ret == ObjectStore::omap_iter_ret_t::NEXT) {
+      // the iteration reached the end of the omap
+      cursor.omap_complete = true;
+    }
+    if (omap_keys) {
+      encode(omap_keys, reply.omap_data);
+      reply.omap_data.claim_append(omap_data);
+    }
+  }
+  logger().debug(
+    "{}: {} attrs, {} data bytes, {} omap header bytes, {} omap data bytes;"
+    " cursor: attr_complete={} data_offset={} data_complete={}"
+    " omap_offset='{}' omap_complete={}",
+    __func__, reply.attrs.size(), reply.data.length(),
+    reply.omap_header.length(), reply.omap_data.length(),
+    cursor.attr_complete, cursor.data_offset, cursor.data_complete,
+    cursor.omap_offset, cursor.omap_complete);
+}
+
 PGBackend::ll_read_ierrorator::future<>
 PGBackend::omap_get_keys(
   const ObjectState& os,

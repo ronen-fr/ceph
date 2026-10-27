@@ -396,6 +396,25 @@ public:
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params,
     object_stat_sum_t& delta_stats);
+
+  /**
+   * fill_in_copy_get
+   *
+   * Reads the next COPY_GET chunk of the object into 'reply': user
+   * xattrs (first call only), then data, then omap, until 'out_max'
+   * bytes are consumed. Advances 'cursor' accordingly.
+   * Object metadata (size, digests, snaps, reqids...) is the caller's
+   * responsibility.
+   */
+  read_ierrorator::future<> fill_in_copy_get(
+    const ObjectState& os,
+    const ObjectContext::attr_cache_t& attr_cache,
+    bool pool_supports_omap,
+    uint64_t out_max,
+    uint32_t op_flags,
+    object_copy_cursor_t& cursor,
+    object_copy_data_t& reply);
+
   interruptible_future<> omap_remove_range(
     ObjectState& os,
     const OSDOp& osd_op,

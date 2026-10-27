@@ -326,6 +326,15 @@ private:
     const ObjectState& os,
     const SnapSet& ss);
 
+  using copy_get_ertr = read_errorator::extend<
+    crimson::ct_error::invarg>;
+  using copy_get_iertr = ::crimson::interruptible::interruptible_errorator<
+    ::crimson::osd::IOInterruptCondition,
+    copy_get_ertr>;
+  copy_get_iertr::future<> do_copy_get(
+    OSDOp& osd_op,
+    const ObjectState& os);
+
   template <class Func>
   auto do_const_op(Func&& f);
 

@@ -114,6 +114,18 @@ bool ClientRequest::is_pg_op() const
     [](auto& op) { return ceph_osd_op_type_pg(op.op.op); });
 }
 
+bool ClientRequest::is_internal_copy_get() const
+{
+  return m->get_source().is_osd() &&
+    !m->ops.empty() &&
+    std::all_of(
+      begin(m->ops), end(m->ops),
+      [](auto& op) {
+	return op.op.op == CEPH_OSD_OP_COPY_GET ||
+	       op.op.op == CEPH_OSD_OP_ASSERT_VER;
+      });
+}
+
 ClientRequest::interruptible_future<>
 ClientRequest::reply_op_error(const Ref<PG>& pg, int err)
 {
@@ -178,9 +190,15 @@ ClientRequest::interruptible_future<> ClientRequest::with_pg_process_interruptib
 
   // admit in QoS order, then HOLD the slot for the op's lifetime
   // (its destructor == mClock RequestCompletion).
-  auto throttle = co_await interruptor::make_interruptible(
-    shard_services->get_throttle(
-      scheduler::params_t{cost, prio, owner, SchedulerClass::client}));
+  // A COPY_GET issued by a peer OSD on behalf of a COPY_FROM is not
+  // throttled: the COPY_FROM is holding a slot while waiting on it, and
+  // with a bounded concurrency all slots could end up held that way.
+  std::optional<OperationThrottler::ThrottleReleaser> throttle;
+  if (!is_internal_copy_get()) {
+    throttle.emplace(co_await interruptor::make_interruptible(
+      shard_services->get_throttle(
+	scheduler::params_t{cost, prio, owner, SchedulerClass::client})));
+  }
 
   DEBUGDPP("{}.{}: waited for active, entering get_obc stage ",
            pg, *this, this_instance_id);
