@@ -390,7 +390,6 @@ TEST_P(LibRadosMiscPP, BigAttrPP) {
 }
 
 TEST_P(LibRadosMiscPP, CopyPP) {
-  SKIP_IF_CRIMSON();
   bufferlist bl, x;
   bl.append("hi there");
   x.append("bar");
@@ -562,7 +561,6 @@ TEST_P(LibRadosTwoPoolsECPP, CopyFrom) {
 }
 
 TEST_P(LibRadosMiscPP, CopyScrubPP) {
-  SKIP_IF_CRIMSON();
   bufferlist bl, x;
   for (int i=0; i<100; ++i)
     x.append("barrrrrrrrrrrrrrrrrrrrrrrrrr");
