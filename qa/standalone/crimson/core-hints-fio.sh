@@ -14,6 +14,10 @@
 #     (osd_pg_shard_op_remote vs op_local, from 'dump_metrics');
 #   - the fraction of ops the client sent on per-core connections
 #     (objecter op_send_core vs op_send, from the fio clients' admin sockets);
+#   - the fraction of ops the client sent while their PG was due to switch
+#     to its core connection, but had ops in flight (op_send_switch_pending
+#     vs op_send), and the PG holds started / expired (core_switch_hold,
+#     core_switch_hold_expired; see objecter_osd_core_switch_grace);
 #   - the load of the OSDs' reactor cores: busy time over the measured part
 #     of the run (reactor_cpu_busy_ms), averaged over all of them, and of the
 #     busiest one. Per-core values are kept in <RESULTS_DIR>/<run>.cores.tsv,
@@ -41,7 +45,9 @@
 #   CLIENT_CPUS    the CPUs (taskset list) to run fio on        (default: any)
 #   OSD_EXTRA_ARGS more OSD command line options, e.g. "--ms_tcp_nodelay=false"
 #   CLIENT_CONF_EXTRA  more [client] settings, ';'-separated, e.g.
-#                  "ms tcp nodelay = false; ms async op threads = 6"
+#                  "ms tcp nodelay = false; ms async op threads = 6", or
+#                  "objecter osd core switch grace = 0" (never hold a PG's
+#                  ops for it to switch to its core connection)
 #   OSD_MEMORY     memory per OSD (crimson_memory)              (default: 4G)
 #   STORE          cyanstore | seastore | bluestore (alienstore) (default: seastore)
 #   SEASTORE_DEVS  seastore: comma-separated block devices, one per OSD (in
@@ -516,12 +522,14 @@ function _osd_metrics() {
         "{\"prefix\": \"dump_metrics\", \"group\": \"$group\", \"format\": \"json\"}"
 }
 
-# sum of the objecter op_send / op_send_core counters of a mode's running
-# fio clients, printed as "<op_send> <op_send_core> <clients read>".
+# sum of the objecter counters of a mode's running fio clients, printed as
+# "<op_send> <op_send_core> <clients read> <op_send_switch_pending>
+#  <core_switch_hold> <core_switch_hold_expired> <op_switch_held>".
 # The details go to <out>.
 function _client_counters() {
     local dir=$1 mode=$2 out=$3
     local asok dump send=0 core=0 s c found=0
+    local pend=0 holds=0 expired=0 held=0 p h e d
     : > $out
     for asok in $dir/fio-$mode.*.asok; do
         [ -S "$asok" ] || continue
@@ -530,18 +538,31 @@ function _client_counters() {
             echo "$asok: perf dump failed: $dump" >> $out
             continue
         fi
-        s=$(jq '.objecter.op_send // 0' <<<"$dump")
-        c=$(jq '.objecter.op_send_core // 0' <<<"$dump")
-        echo "$asok: op_send $s op_send_core $c" >> $out
+        read s c p h e d < <(jq -r '.objecter |
+            "\(.op_send // 0) \(.op_send_core // 0)" +
+            " \(.op_send_switch_pending // 0) \(.core_switch_hold // 0)" +
+            " \(.core_switch_hold_expired // 0) \(.op_switch_held // 0)"' \
+            <<<"$dump")
+        if [ -z "$d" ]; then
+            echo "$asok: unexpected perf dump: $dump" >> $out
+            continue
+        fi
+        echo "$asok: op_send $s op_send_core $c op_send_switch_pending $p" \
+             "core_switch_hold $h core_switch_hold_expired $e" \
+             "op_switch_held $d" >> $out
         send=$((send + s))
         core=$((core + c))
+        pend=$((pend + p))
+        holds=$((holds + h))
+        expired=$((expired + e))
+        held=$((held + d))
         found=$((found + 1))
     done
     if [ $found = 0 ]; then
         echo "WARNING: no fio client ($mode) counters read; see $out" >&2
         { echo "no readable admin socket in $dir:"; ls -l $dir; } >> $out
     fi
-    echo "$send $core $found"
+    echo "$send $core $found $pend $holds $expired $held"
 }
 
 # per reactor counters of all OSDs, as lines of
@@ -664,7 +685,7 @@ function _fio_run() {
     local d_local d_remote
     d_local=$(awk '{ t += $3 } END { print t + 0 }' $RESULTS_DIR/$tag.ops.tsv)
     d_remote=$(awk '{ t += $4 } END { print t + 0 }' $RESULTS_DIR/$tag.ops.tsv)
-    local hop_pct client_pct=n/a
+    local hop_pct client_pct=n/a pend_pct=n/a holds=n/a
     hop_pct=$(awk -v l=$d_local -v r=$d_remote \
                   'BEGIN { t = l + r; printf "%.1f", t ? 100 * r / t : 0 }')
     # per client op, over the window
@@ -683,10 +704,16 @@ function _fio_run() {
     if [ ${c[2]} -gt 0 ] && [ ${c[0]} -gt 0 ]; then
         client_pct=$(awk -v s=${c[0]} -v k=${c[1]} \
                          'BEGIN { printf "%.1f", 100 * k / s }')
+        pend_pct=$(awk -v s=${c[0]} -v p=${c[3]} \
+                       'BEGIN { printf "%.1f", 100 * p / s }')
     fi
+    # PG holds started/expired (over the whole run, as are the client
+    # counters)
+    [ ${c[2]} -gt 0 ] && holds="${c[4]}/${c[5]}"
 
     jq -r --arg rw $rw --arg mode $mode --arg rep $rep \
           --arg hop $hop_pct --arg client $client_pct \
+          --arg pend $pend_pct --arg holds $holds \
           --arg cpu_avg $cpu_avg --arg cpu_max $cpu_max \
           --arg tasks_op $tasks_op --arg polls_op $polls_op \
           --arg segs_op $segs_op --arg clnt_cores $clnt_cores '
@@ -697,7 +724,7 @@ function _fio_run() {
          (($j.read.clat_ns.percentile["99.000000"] // 0) / 1000 | floor),
          ($j.write.clat_ns.mean / 1000 | floor),
          (($j.write.clat_ns.percentile["99.000000"] // 0) / 1000 | floor),
-         $hop, $client, $cpu_avg, $cpu_max,
+         $hop, $client, $pend, $holds, $cpu_avg, $cpu_max,
          $tasks_op, $polls_op, $segs_op, $clnt_cores] | @tsv' \
         $RESULTS_DIR/$tag.json >> $RESULTS_DIR/summary.tsv || return 1
     echo "$d_remote $((d_local + d_remote))" > $dir/$tag.hops
@@ -705,7 +732,7 @@ function _fio_run() {
 
 function _print_summary() {
     {
-        printf 'workload\tmode\trep\trd_iops\twr_iops\trd_lat_us\trd_p99_us\twr_lat_us\twr_p99_us\tosd_hop_%%\tcore_send_%%\tcpu_avg_%%\tcpu_max_%%\ttasks/op\tpolls/op\tsegs/op\tclnt_cores\n'
+        printf 'workload\tmode\trep\trd_iops\twr_iops\trd_lat_us\trd_p99_us\twr_lat_us\twr_p99_us\tosd_hop_%%\tcore_send_%%\tpend_%%\tholds/exp\tcpu_avg_%%\tcpu_max_%%\ttasks/op\tpolls/op\tsegs/op\tclnt_cores\n'
         cat $RESULTS_DIR/summary.tsv
     } | column -t -s $'\t' | tee $RESULTS_DIR/summary.txt
     echo "fio outputs and summary in $RESULTS_DIR"
