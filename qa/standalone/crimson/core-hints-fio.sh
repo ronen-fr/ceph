@@ -18,6 +18,10 @@
 #     to its core connection, but had ops in flight (op_send_switch_pending
 #     vs op_send), and the PG holds started / expired (core_switch_hold,
 #     core_switch_hold_expired; see objecter_osd_core_switch_grace);
+#   - the delays of the PG switches that had to wait for the PG's ops to
+#     drain, average/longest (core_switch_delay), and the ops canceled after
+#     being sent whose answer was awaited before switching, all/given up on
+#     (op_unanswered, op_unanswered_forgotten);
 #   - the load of the OSDs' reactor cores: busy time over the measured part
 #     of the run (reactor_cpu_busy_ms), averaged over all of them, and of the
 #     busiest one. Per-core values are kept in <RESULTS_DIR>/<run>.cores.tsv,
@@ -524,12 +528,16 @@ function _osd_metrics() {
 
 # sum of the objecter counters of a mode's running fio clients, printed as
 # "<op_send> <op_send_core> <clients read> <op_send_switch_pending>
-#  <core_switch_hold> <core_switch_hold_expired> <op_switch_held>".
-# The details go to <out>.
+#  <core_switch_hold> <core_switch_hold_expired> <op_switch_held>
+#  <switch delays: sum (us)> <switch delays: count> <switch delays: max (us)>
+#  <op_unanswered> <op_unanswered_forgotten>".
+# The details (and more counters) go to <out>.
 function _client_counters() {
     local dir=$1 mode=$2 out=$3
-    local asok dump send=0 core=0 s c found=0
-    local pend=0 holds=0 expired=0 held=0 p h e d
+    local asok dump found=0 i
+    # per _client_counter_fields(): summed, but for field 8, a max
+    local -a sum=(0 0 0 0 0 0 0 0 0 0 0 0 0 0) v
+    local max_i=8
     : > $out
     for asok in $dir/fio-$mode.*.asok; do
         [ -S "$asok" ] || continue
@@ -538,31 +546,49 @@ function _client_counters() {
             echo "$asok: perf dump failed: $dump" >> $out
             continue
         fi
-        read s c p h e d < <(jq -r '.objecter |
-            "\(.op_send // 0) \(.op_send_core // 0)" +
-            " \(.op_send_switch_pending // 0) \(.core_switch_hold // 0)" +
-            " \(.core_switch_hold_expired // 0) \(.op_switch_held // 0)"' \
-            <<<"$dump")
-        if [ -z "$d" ]; then
+        v=($(jq -r "$(_client_counter_fields)" <<<"$dump"))
+        if [ ${#v[@]} -ne ${#sum[@]} ]; then
             echo "$asok: unexpected perf dump: $dump" >> $out
             continue
         fi
-        echo "$asok: op_send $s op_send_core $c op_send_switch_pending $p" \
-             "core_switch_hold $h core_switch_hold_expired $e" \
-             "op_switch_held $d" >> $out
-        send=$((send + s))
-        core=$((core + c))
-        pend=$((pend + p))
-        holds=$((holds + h))
-        expired=$((expired + e))
-        held=$((held + d))
+        {
+            echo "$asok:"
+            jq -r '.objecter | to_entries[] |
+                   select(.key | test("core|switch|unanswered|op_send")) |
+                   "  \(.key): \(.value | tojson)"' <<<"$dump"
+        } >> $out
+        for i in ${!v[@]}; do
+            if [ $i = $max_i ]; then
+                [ ${v[$i]} -gt ${sum[$i]} ] && sum[$i]=${v[$i]}
+            else
+                sum[$i]=$((sum[$i] + v[$i]))
+            fi
+        done
         found=$((found + 1))
     done
     if [ $found = 0 ]; then
         echo "WARNING: no fio client ($mode) counters read; see $out" >&2
         { echo "no readable admin socket in $dir:"; ls -l $dir; } >> $out
     fi
-    echo "$send $core $found $pend $holds $expired $held"
+    # in the order documented above
+    echo "${sum[0]} ${sum[1]} $found ${sum[2]} ${sum[3]} ${sum[4]} ${sum[5]}" \
+         "${sum[6]} ${sum[7]} ${sum[8]} ${sum[9]} ${sum[10]}"
+}
+
+# the jq program extracting from an objecter perf dump, as one line, the
+# counters _client_counters() sums. Times are in microseconds.
+function _client_counter_fields() {
+    echo '
+def us(t): ((t // 0) | tonumber) * 1000000 | floor;
+.objecter |
+[.op_send, .op_send_core, .op_send_switch_pending, .core_switch_hold,
+ .core_switch_hold_expired, .op_switch_held,
+ us(.core_switch_delay.sum), .core_switch_delay.avgcount,
+ us(.core_switch_delay.max_inc),
+ .op_unanswered, .op_unanswered_forgotten,
+ .op_unanswered_answered, .op_unanswered_reset,
+ .core_switch_delayed_unanswered] |
+map(. // 0 | tostring) | join(" ")'
 }
 
 # per reactor counters of all OSDs, as lines of
@@ -686,6 +712,7 @@ function _fio_run() {
     d_local=$(awk '{ t += $3 } END { print t + 0 }' $RESULTS_DIR/$tag.ops.tsv)
     d_remote=$(awk '{ t += $4 } END { print t + 0 }' $RESULTS_DIR/$tag.ops.tsv)
     local hop_pct client_pct=n/a pend_pct=n/a holds=n/a
+    local sw_delay=n/a unans=n/a
     hop_pct=$(awk -v l=$d_local -v r=$d_remote \
                   'BEGIN { t = l + r; printf "%.1f", t ? 100 * r / t : 0 }')
     # per client op, over the window
@@ -710,10 +737,22 @@ function _fio_run() {
     # PG holds started/expired (over the whole run, as are the client
     # counters)
     [ ${c[2]} -gt 0 ] && holds="${c[4]}/${c[5]}"
+    # the delays of the PG switches delayed by their ops in flight (ms):
+    # average/longest
+    if [ ${c[2]} -gt 0 ]; then
+        sw_delay=-
+        [ ${c[8]} -gt 0 ] &&
+            sw_delay=$(awk -v s=${c[7]} -v n=${c[8]} -v m=${c[9]} \
+                           'BEGIN { printf "%.1f/%.1f", s / n / 1000, m / 1000 }')
+        # ops canceled after being sent, whose answer was awaited before
+        # their PG switched: all/given up on
+        unans="${c[10]}/${c[11]}"
+    fi
 
     jq -r --arg rw $rw --arg mode $mode --arg rep $rep \
           --arg hop $hop_pct --arg client $client_pct \
           --arg pend $pend_pct --arg holds $holds \
+          --arg sw_delay $sw_delay --arg unans $unans \
           --arg cpu_avg $cpu_avg --arg cpu_max $cpu_max \
           --arg tasks_op $tasks_op --arg polls_op $polls_op \
           --arg segs_op $segs_op --arg clnt_cores $clnt_cores '
@@ -724,7 +763,7 @@ function _fio_run() {
          (($j.read.clat_ns.percentile["99.000000"] // 0) / 1000 | floor),
          ($j.write.clat_ns.mean / 1000 | floor),
          (($j.write.clat_ns.percentile["99.000000"] // 0) / 1000 | floor),
-         $hop, $client, $pend, $holds, $cpu_avg, $cpu_max,
+         $hop, $client, $pend, $holds, $sw_delay, $unans, $cpu_avg, $cpu_max,
          $tasks_op, $polls_op, $segs_op, $clnt_cores] | @tsv' \
         $RESULTS_DIR/$tag.json >> $RESULTS_DIR/summary.tsv || return 1
     echo "$d_remote $((d_local + d_remote))" > $dir/$tag.hops
@@ -732,7 +771,7 @@ function _fio_run() {
 
 function _print_summary() {
     {
-        printf 'workload\tmode\trep\trd_iops\twr_iops\trd_lat_us\trd_p99_us\twr_lat_us\twr_p99_us\tosd_hop_%%\tcore_send_%%\tpend_%%\tholds/exp\tcpu_avg_%%\tcpu_max_%%\ttasks/op\tpolls/op\tsegs/op\tclnt_cores\n'
+        printf 'workload\tmode\trep\trd_iops\twr_iops\trd_lat_us\trd_p99_us\twr_lat_us\twr_p99_us\tosd_hop_%%\tcore_send_%%\tpend_%%\tholds/exp\tsw_delay_ms\tunans/forg\tcpu_avg_%%\tcpu_max_%%\ttasks/op\tpolls/op\tsegs/op\tclnt_cores\n'
         cat $RESULTS_DIR/summary.tsv
     } | column -t -s $'\t' | tee $RESULTS_DIR/summary.txt
     echo "fio outputs and summary in $RESULTS_DIR"
