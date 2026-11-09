@@ -71,6 +71,14 @@
 #                  (a job's fio 'size' is their product)
 #   FIO_PREFILL_BS, FIO_PREFILL_IODEPTH  block size and iodepth of writing
 #                  the objects initially                        (default: 1m, 4)
+#   FIO_RATE_IOPS  cap the load: total IOPS over all the fio jobs (fio's
+#                  rate_iops, split evenly among them; randrw: 70% reads).
+#                  Compares the modes' latencies at the same load, rather
+#                  than at saturation, where the latency mostly shows where
+#                  the IODEPTH * NUMJOBS ops in flight queue up. Keep it
+#                  below both modes' unlimited IOPS        (default: unset)
+#   FIO_RATE_PROCESS  with FIO_RATE_IOPS: fio's rate_process, poisson
+#                  (random arrivals) or linear              (default: poisson)
 #                  Note: crimson_memory is split evenly among an OSD's
 #                  reactors, and a reactor that runs out of it fails its
 #                  connections (std::bad_alloc). Keep OSD_MEMORY / OSD_SMP
@@ -109,6 +117,8 @@ FIO_NRFILES=${FIO_NRFILES:-32}
 FIO_FILESIZE=${FIO_FILESIZE:-4m}
 FIO_PREFILL_BS=${FIO_PREFILL_BS:-1m}
 FIO_PREFILL_IODEPTH=${FIO_PREFILL_IODEPTH:-4}
+FIO_RATE_IOPS=${FIO_RATE_IOPS:-}
+FIO_RATE_PROCESS=${FIO_RATE_PROCESS:-poisson}
 REPEAT=${REPEAT:-1}
 # Note: teardown() takes any file in the build dir whose name starts or ends
 # with "core" for a core dump (with a relative kernel.core_pattern), and
@@ -156,7 +166,7 @@ function _save_params() {
              OSD_EXTRA_ARGS STORE SEASTORE_BACKEND SEASTORE_DEVS SEASTORE_SIZE \
              CLIENT_CPUS CLIENT_CONF_EXTRA WORKLOADS REPEAT FIO_RUNTIME FIO_RAMP \
              FIO_BS FIO_IODEPTH FIO_NUMJOBS FIO_NRFILES FIO_FILESIZE \
-             FIO_PREFILL_BS FIO_PREFILL_IODEPTH; do
+             FIO_PREFILL_BS FIO_PREFILL_IODEPTH FIO_RATE_IOPS FIO_RATE_PROCESS; do
         echo "$v=${!v}"
     done
     echo "git=$(git -C $CEPH_ROOT describe --always --dirty 2>/dev/null)"
@@ -186,6 +196,20 @@ function _check_params() {
     if [ $FIO_RUNTIME -lt 10 ]; then
         echo "ERROR: FIO_RUNTIME must be at least 10 (seconds)"
         return 1
+    fi
+    if [ -n "$FIO_RATE_IOPS" ]; then
+        if ! [[ "$FIO_RATE_IOPS" =~ ^[0-9]+$ ]] ||
+           [ $FIO_RATE_IOPS -lt $FIO_NUMJOBS ]; then
+            echo "ERROR: FIO_RATE_IOPS must be a number of IOPS, at least" \
+                 "FIO_NUMJOBS ($FIO_NUMJOBS)"
+            return 1
+        fi
+        case "$FIO_RATE_PROCESS" in
+            poisson|linear) ;;
+            *)
+                echo "ERROR: FIO_RATE_PROCESS must be poisson or linear"
+                return 1 ;;
+        esac
     fi
     if [ -n "$OSD_CPU_BASE" ]; then
         local last=$((OSD_CPU_BASE + NUM_OSDS * OSD_SMP - 1))
@@ -666,6 +690,16 @@ function _fio_run() {
     local extra=(time_based=1 runtime=$FIO_RUNTIME ramp_time=$FIO_RAMP
                  touch_objects=0)
     [ $rw = randrw ] && extra+=(rwmixread=70)
+    if [ -n "$FIO_RATE_IOPS" ]; then
+        # per job. A single rate_iops value caps reads and writes each
+        local job_iops=$(( (FIO_RATE_IOPS + FIO_NUMJOBS - 1) / FIO_NUMJOBS ))
+        if [ $rw = randrw ]; then
+            extra+=(rate_iops=$((job_iops * 70 / 100)),$((job_iops * 30 / 100)))
+        else
+            extra+=(rate_iops=$job_iops)
+        fi
+        extra+=(rate_process=$FIO_RATE_PROCESS)
+    fi
     _fio_job $conf $rw "${extra[@]}" > $dir/$tag.fio || return 1
 
     rm -f $dir/fio-$mode.*.asok
