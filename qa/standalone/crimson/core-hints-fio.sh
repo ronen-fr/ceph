@@ -38,6 +38,23 @@
 # Run with:
 #   cd build && ../qa/run-standalone.sh crimson/core-hints-fio.sh
 #
+# CPU frequency: with a power-saving governor, each core's frequency follows
+# its load, so the CPU cost of an op, and a core's capacity, vary between
+# runs and between the modes (which load the cores differently). For
+# comparable runs, fix the frequency of the OSD and client CPUs first
+# (intel_pstate shown; the setting is recorded in <RESULTS_DIR>/params.txt):
+#   # all OSD and client CPUs: always request the highest frequency
+#   sudo cpupower -c 6-191 frequency-set -g performance
+#   # optional, for the most repeatable runs: no turbo, so every core runs at
+#   # the same fixed frequency whatever the package's power and heat
+#   echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
+#   # check
+#   cat /sys/devices/system/cpu/cpu32/cpufreq/scaling_governor   # performance
+#   grep MHz /proc/cpuinfo | sort | uniq -c | sort -nr | head -3
+#   # restore afterwards
+#   sudo cpupower -c 6-191 frequency-set -g powersave
+#   echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
+#
 # Tunables (environment):
 #   NUM_OSDS       OSDs                                         (default: 3)
 #   POOL_SIZE      the replicated pool's size                   (default: 3)
@@ -170,6 +187,10 @@ function _save_params() {
         echo "$v=${!v}"
     done
     echo "git=$(git -C $CEPH_ROOT describe --always --dirty 2>/dev/null)"
+    # the CPU frequency setting (see above): "<governor>:<CPUs>" per governor
+    echo "cpu_governors=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null |
+        sort | uniq -c | awk '{ printf "%s%s:%s", (NR > 1 ? "," : ""), $2, $1 }')"
+    echo "no_turbo=$(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null)"
 }
 
 # keep the OSD and fio client logs (teardown() removes the test dir):
