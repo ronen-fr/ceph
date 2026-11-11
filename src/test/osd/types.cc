@@ -3118,16 +3118,16 @@ TEST(MOSDOpReply, core_hint_roundtrip)
   EXPECT_EQ(fmt::format("{}", *decoded->get_core_hint()), "core 3 port 6810");
 }
 
-// without a hint, a reply is encoded as v8, as before
+// the hint is optional: a v9 reply may name none
 TEST(MOSDOpReply, no_core_hint)
 {
   auto reply = ceph::make_message<MOSDOpReply>();
   auto decoded = reply_roundtrip(reply, CEPH_FEATURES_ALL);
-  EXPECT_EQ(decoded->get_header().version, 8);
+  EXPECT_EQ(decoded->get_header().version, 9);
   EXPECT_FALSE(decoded->get_core_hint().has_value());
 }
 
-// the reply's version, not a feature bit, tells whether it carries a hint
+// no feature gates it: any peer gets v9, and older ones ignore the hint
 TEST(MOSDOpReply, core_hint_regardless_of_features)
 {
   auto reply = ceph::make_message<MOSDOpReply>();

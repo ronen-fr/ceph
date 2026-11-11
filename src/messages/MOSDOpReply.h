@@ -54,8 +54,7 @@ private:
   int32_t retry_attempt = -1;
   bool do_redirect;
   request_redirect_t redirect;
-  /// the PG's owning core on a Crimson OSD. Encoded only when set, as v9
-  /// (else the reply is encoded as v8)
+  /// (v9) the PG's owning core on a Crimson OSD, if it names one
   std::optional<osd_core_hint_t> core_hint;
 
 public:
@@ -242,13 +241,9 @@ public:
       }
       encode_trace(payload, features);
       if (header.version == HEAD_VERSION) {
-        if (core_hint) {
-          // appended last: a v8 decoder stops after the trace, ignoring it
-          encode(*core_hint, payload);
-        } else {
-          // nothing to add: byte-identical to a v8 reply
-          header.version = 8;
-        }
+        // optional (a presence flag, then the hint). Appended last: older
+        // decoders, including the kernel's, stop before it
+        encode(core_hint, payload);
       }
     }
   }
@@ -283,9 +278,7 @@ public:
       if (do_redirect)
 	decode(redirect, p);
       decode_trace(p);
-      // a v9 reply carries a hint (else it is encoded as v8)
-      core_hint.emplace();
-      decode(*core_hint, p);
+      decode(core_hint, p);
     } else if (header.version < 2) {
       ceph_osd_reply_head head;
       decode(head, p);
