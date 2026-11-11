@@ -3118,22 +3118,50 @@ TEST(MOSDOpReply, core_hint_roundtrip)
   EXPECT_EQ(fmt::format("{}", *decoded->get_core_hint()), "core 3 port 6810");
 }
 
+// without a hint, a reply is encoded as v8, as before
 TEST(MOSDOpReply, no_core_hint)
 {
   auto reply = ceph::make_message<MOSDOpReply>();
   auto decoded = reply_roundtrip(reply, CEPH_FEATURES_ALL);
-  EXPECT_EQ(decoded->get_header().version, 9);
+  EXPECT_EQ(decoded->get_header().version, 8);
   EXPECT_FALSE(decoded->get_core_hint().has_value());
 }
 
-TEST(MOSDOpReply, core_hint_dropped_for_old_peer)
+// the reply's version, not a feature bit, tells whether it carries a hint
+TEST(MOSDOpReply, core_hint_regardless_of_features)
 {
   auto reply = ceph::make_message<MOSDOpReply>();
   reply->set_core_hint(osd_core_hint_t{3, 6810});
   auto decoded = reply_roundtrip(
     reply, CEPH_FEATURES_ALL & ~CEPH_FEATURE_SERVER_VAMPIRE);
-  EXPECT_EQ(decoded->get_header().version, 8);
-  EXPECT_FALSE(decoded->get_core_hint().has_value());
+  EXPECT_EQ(decoded->get_header().version, 9);
+  ASSERT_TRUE(decoded->get_core_hint().has_value());
+  EXPECT_EQ(*decoded->get_core_hint(), (osd_core_hint_t{3, 6810}));
+}
+
+// a v8 decoder reads a v9 reply: all of it but the trailing hint
+TEST(MOSDOpReply, v9_read_as_v8)
+{
+  auto reply = ceph::make_message<MOSDOpReply>();
+  reply->set_tid(42);
+  reply->set_result(-2);
+  reply->set_reply_versions(eversion_t(5, 7), 7);
+  reply->set_core_hint(osd_core_hint_t{3, 6810});
+  reply->encode_payload(CEPH_FEATURES_ALL);
+  ASSERT_EQ(reply->get_header().version, 9);
+
+  auto out = ceph::make_message<MOSDOpReply>();
+  auto header = reply->get_header();
+  header.version = 8;  // as a decoder knowing up to v8 takes it
+  out->set_header(header);
+  ceph::buffer::list payload = reply->get_payload();
+  out->set_payload(payload);
+  out->decode_payload();
+  EXPECT_EQ(out->get_tid(), 42u);
+  EXPECT_EQ(out->get_result(), -2);
+  EXPECT_EQ(out->get_replay_version(), eversion_t(5, 7));
+  EXPECT_EQ(out->get_user_version(), 7u);
+  EXPECT_FALSE(out->get_core_hint().has_value());
 }
 
 /*

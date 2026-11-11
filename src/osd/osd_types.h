@@ -355,12 +355,12 @@ std::ostream& operator<<(std::ostream& out, const request_redirect_t& redir);
 /**
  * osd_core_hint_t
  *
- * Sent by a Crimson OSD in MOSDOpReply (to peers with SERVER_VAMPIRE):
- * the reactor core that owns the PG addressed by the op, and the port on
- * which that core accepts client connections - on the IP of the OSD's
- * address the client already uses. Advisory only: an op sent to any of
- * the OSD's addresses is still served. Versioned, so that it may carry
- * more (e.g. a per-core IP) later.
+ * Sent by a Crimson OSD in MOSDOpReply, as a v9 reply (which older
+ * decoders read as v8, ignoring the hint): the reactor core that owns the
+ * PG addressed by the op, and the port on which that core accepts client
+ * connections - on the IP of the OSD's address the client already uses.
+ * Advisory only: an op sent to any of the OSD's addresses is still
+ * served. Versioned, so that it may carry more (e.g. a per-core IP) later.
  */
 struct osd_core_hint_t {
   uint32_t core = 0;
