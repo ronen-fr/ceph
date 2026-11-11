@@ -389,11 +389,11 @@ std::ostream& operator<<(std::ostream& out, const request_redirect_t& redir) {
 }
 
 // -- osd_core_hint_t --
-void osd_core_hint_t::encode(ceph::buffer::list& bl, uint64_t features) const
+void osd_core_hint_t::encode(ceph::buffer::list& bl) const
 {
   ENCODE_START(1, 1, bl);
   encode(core, bl);
-  encode(addrs, bl, features);
+  encode(port, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -401,23 +401,21 @@ void osd_core_hint_t::decode(ceph::buffer::list::const_iterator& bl)
 {
   DECODE_START(1, bl);
   decode(core, bl);
-  decode(addrs, bl);
+  decode(port, bl);
   DECODE_FINISH(bl);
 }
 
 void osd_core_hint_t::dump(Formatter *f) const
 {
   f->dump_unsigned("core", core);
-  f->dump_object("addrs", addrs);
+  f->dump_unsigned("port", port);
 }
 
 list<osd_core_hint_t> osd_core_hint_t::generate_test_instances()
 {
   list<osd_core_hint_t> o;
   o.push_back(osd_core_hint_t());
-  entity_addr_t a;
-  a.parse("v2:127.0.0.1:6810/1234");
-  o.push_back(osd_core_hint_t(3, entity_addrvec_t(a)));
+  o.push_back(osd_core_hint_t(3, 6810));
   return o;
 }
 

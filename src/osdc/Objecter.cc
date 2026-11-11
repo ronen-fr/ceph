@@ -2741,8 +2741,9 @@ void Objecter::_session_apply_core_hint(OSDSession *s,
   using osdc::core_route::HostBlocks;
   const auto now = ceph::coarse_mono_clock::now();
   const auto out = s->core_routes.apply_hint(pgid, hint, s->con, [&] {
+    // (called only with s->con set)
     return !core_host_blocks.is_blocked(
-      HostBlocks::host_of(hint.addrs.front()), now);
+      HostBlocks::host_of(s->con->get_peer_addrs().msgr2_addr()), now);
   });
   switch (out.what) {
   case what_t::unchanged:
@@ -2754,9 +2755,10 @@ void Objecter::_session_apply_core_hint(OSDSession *s,
 		   << ": connecting to its host is blocked" << dendl;
     logger->inc(l_osdc_core_hint_blocked);
     return;
-  case what_t::mismatch:
+  case what_t::invalid:
     ldout(cct, 1) << __func__ << " osd." << s->osd << " pg " << pgid
-		  << ": ignoring hint " << fmt::format("{}", hint) << " not matching "
+		  << ": ignoring hint " << fmt::format("{}", hint) << ": no port,"
+		  << " or no msgr2 address in "
 		  << (s->con ? s->con->get_peer_addrs() : entity_addrvec_t{})
 		  << dendl;
     return;
@@ -2770,10 +2772,10 @@ void Objecter::_session_apply_core_hint(OSDSession *s,
 		 << ")" << dendl;
   logger->inc(l_osdc_core_hint_change);
   if (out.connect) {
-    auto con = messenger->connect_to_osd(hint.addrs);
+    auto con = messenger->connect_to_osd(entity_addrvec_t(out.addr));
     con->set_priv(RefCountedPtr{s});
     ldout(cct, 10) << __func__ << " osd." << s->osd << " core " << hint.core
-		   << ": connecting to " << hint.addrs << " " << con << dendl;
+		   << ": connecting to " << out.addr << " " << con << dendl;
     // not routed to until connected (see ms_handle_connect())
     s->core_routes.add_core_con(hint.core, std::move(con), now);
     logger->inc(l_osdc_core_cons);

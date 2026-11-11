@@ -94,17 +94,18 @@ hint_outcome_t SessionRoutes::apply_hint(const spg_t& pgid,
     return out;
   }
 
-  // the hinted address must belong to the OSD instance we are talking to
-  if (!main_con || hint.addrs.empty() ||
-      std::none_of(main_con->get_peer_addrs().v.begin(),
-                   main_con->get_peer_addrs().v.end(),
-                   [&hint](const entity_addr_t& a) {
-                     return a.is_same_host(hint.addrs.front()) &&
-                       a.get_nonce() == hint.addrs.front().get_nonce();
-                   })) {
-    out.what = hint_outcome_t::what_t::mismatch;
+  // the core's listener: the OSD instance's address we already use (as
+  // the reply came from it), on the hinted port
+  if (hint.port == 0 || !main_con) {
+    out.what = hint_outcome_t::what_t::invalid;
     return out;
   }
+  out.addr = main_con->get_peer_addrs().msgr2_addr();
+  if (out.addr.is_blank_ip()) {
+    out.what = hint_outcome_t::what_t::invalid;
+    return out;
+  }
+  out.addr.set_port(hint.port);
 
   out.connect = !core_cons.contains(hint.core);
   if (out.connect && !may_connect()) {

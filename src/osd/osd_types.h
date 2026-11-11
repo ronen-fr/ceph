@@ -356,26 +356,28 @@ std::ostream& operator<<(std::ostream& out, const request_redirect_t& redir);
  * osd_core_hint_t
  *
  * Sent by a Crimson OSD in MOSDOpReply (to peers with SERVER_VAMPIRE):
- * the reactor core that owns the PG addressed by the op, and the
- * address on which that core accepts client connections. Advisory
- * only: an op sent to any of the OSD's addresses is still served.
+ * the reactor core that owns the PG addressed by the op, and the port on
+ * which that core accepts client connections - on the IP of the OSD's
+ * address the client already uses. Advisory only: an op sent to any of
+ * the OSD's addresses is still served. Versioned, so that it may carry
+ * more (e.g. a per-core IP) later.
  */
 struct osd_core_hint_t {
   uint32_t core = 0;
-  entity_addrvec_t addrs;
+  uint16_t port = 0;
 
   osd_core_hint_t() = default;
-  osd_core_hint_t(uint32_t core, const entity_addrvec_t& addrs)
-    : core(core), addrs(addrs) {}
+  osd_core_hint_t(uint32_t core, uint16_t port)
+    : core(core), port(port) {}
 
   bool operator==(const osd_core_hint_t&) const = default;
 
-  void encode(ceph::buffer::list& bl, uint64_t features) const;
+  void encode(ceph::buffer::list& bl) const;
   void decode(ceph::buffer::list::const_iterator& bl);
   void dump(ceph::Formatter *f) const;
   static std::list<osd_core_hint_t> generate_test_instances();
 };
-WRITE_CLASS_ENCODER_FEATURES(osd_core_hint_t)
+WRITE_CLASS_ENCODER(osd_core_hint_t)
 
 namespace fmt {
 template <>
@@ -383,7 +385,7 @@ struct formatter<osd_core_hint_t> {
   constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
   template <typename FormatContext>
   auto format(const osd_core_hint_t& h, FormatContext& ctx) const {
-    return fmt::format_to(ctx.out(), "core {} at {}", h.core, h.addrs);
+    return fmt::format_to(ctx.out(), "core {} port {}", h.core, h.port);
   }
 };
 } // namespace fmt

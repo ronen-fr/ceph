@@ -93,7 +93,7 @@ class PerShardState {
 
   epoch_t up_epoch = 0;
 
-  /// sent to clients in op replies: this core, and the address of its
+  /// sent to clients in op replies: this core, and the port of its
   /// client listener. Unset unless crimson_osd_core_listeners.
   std::optional<osd_core_hint_t> core_hint;
   void set_core_hint(std::optional<osd_core_hint_t> hint) {

@@ -75,11 +75,10 @@ protected:
     return c;
   }
 
-  /// a hint of pgid to core c, of the OSD instance main_con talks to
-  osd_core_hint_t hint(uint32_t c,
-                       const char* a = "v2:127.0.0.1:6810/1234") const
+  /// a hint of pgid to core c, whose listener is on 'port'
+  osd_core_hint_t hint(uint32_t c, uint16_t port = 6810) const
   {
-    return osd_core_hint_t(c, entity_addrvec_t(addr(a)));
+    return osd_core_hint_t(c, port);
   }
 
   /// pgid is hinted to 'core', and connected to it
@@ -137,6 +136,8 @@ TEST_F(SessionRoutesTest, FirstHintAsksToConnect)
   EXPECT_EQ(hint_outcome_t::what_t::changed, out.what);
   EXPECT_FALSE(out.prev_core);
   EXPECT_TRUE(out.connect);
+  // the main connection's address (IP, nonce), on the hinted port
+  EXPECT_EQ(addr("v2:127.0.0.1:6810/1234"), out.addr);
   EXPECT_EQ(std::optional<uint32_t>(core), route_of(pg).hinted_core);
 }
 
@@ -161,27 +162,25 @@ TEST_F(SessionRoutesTest, NewHintReportsThePreviousCore)
 {
   hinted_and_connected();
   auto out = routes.apply_hint(
-    pg, hint(other_core, "v2:127.0.0.1:6811/1234"), main_con, may_connect);
+    pg, hint(other_core, 6811), main_con, may_connect);
   EXPECT_EQ(hint_outcome_t::what_t::changed, out.what);
   EXPECT_EQ(std::optional<uint32_t>(core), out.prev_core);
   EXPECT_TRUE(out.connect);
 }
 
-TEST_F(SessionRoutesTest, HintOfAnotherOsdInstanceIsIgnored)
+TEST_F(SessionRoutesTest, UnusableHintIsIgnored)
 {
-  const auto mismatch = hint_outcome_t::what_t::mismatch;
-  // another nonce: the OSD restarted
-  EXPECT_EQ(mismatch, routes.apply_hint(
-    pg, hint(core, "v2:127.0.0.1:6810/999"), main_con, may_connect).what);
-  // another host
-  EXPECT_EQ(mismatch, routes.apply_hint(
-    pg, hint(core, "v2:127.0.0.2:6810/1234"), main_con, may_connect).what);
-  // no address
-  EXPECT_EQ(mismatch, routes.apply_hint(
-    pg, osd_core_hint_t(core, entity_addrvec_t{}), main_con, may_connect).what);
-  // no main connection to compare with
-  EXPECT_EQ(mismatch, routes.apply_hint(pg, hint(core), nullptr, may_connect).what);
+  const auto invalid = hint_outcome_t::what_t::invalid;
+  // no port
+  EXPECT_EQ(invalid, routes.apply_hint(
+    pg, hint(core, 0), main_con, may_connect).what);
+  // no main connection, whose address to use
+  EXPECT_EQ(invalid, routes.apply_hint(pg, hint(core), nullptr, may_connect).what);
+  // a main connection without a msgr2 address
+  EXPECT_EQ(invalid, routes.apply_hint(
+    pg, hint(core), make_con("v1:127.0.0.1:6789/1234"), may_connect).what);
   EXPECT_FALSE(route_of(pg).hinted_core);
+  EXPECT_EQ(0u, may_connect_calls);
 }
 
 TEST_F(SessionRoutesTest, DesiredCoreOnlyOnceConnected)
@@ -604,7 +603,7 @@ TEST_F(SessionRoutesTest, CoreResetFallsBackToMain)
 TEST_F(SessionRoutesTest, CoreResetLeavesOtherCoresAlone)
 {
   hinted_and_connected();
-  routes.apply_hint(pg2, hint(other_core, "v2:127.0.0.1:6811/1234"), main_con,
+  routes.apply_hint(pg2, hint(other_core, 6811), main_con,
                     may_connect);
   connected(other_core, other_con);
   op_route_t op;
@@ -730,7 +729,7 @@ TEST_F(SessionRoutesTest, IdleCoresAreThoseNothingUses)
   EXPECT_EQ((std::vector<uint32_t>{core, other_core}), routes.idle_cores());
 
   // a PG holding its ops to switch to other_core
-  routes.apply_hint(pg2, hint(other_core, "v2:127.0.0.1:6811/1234"), main_con,
+  routes.apply_hint(pg2, hint(other_core, 6811), main_con,
                     may_connect);
   routes.pg_routes.at(pg2).holding = true;
   EXPECT_EQ((std::vector<uint32_t>{core}), routes.idle_cores());

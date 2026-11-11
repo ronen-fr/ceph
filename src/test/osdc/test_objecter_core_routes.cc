@@ -201,7 +201,7 @@ protected:
     r->set_tid(tid);
     r->set_op_returns(std::vector<pg_log_op_return_item_t>(1));
     if (hint) {
-      r->set_core_hint(osd_core_hint_t(pg_core, core_addrs));
+      r->set_core_hint(osd_core_hint_t(pg_core, core_addrs.front().get_port()));
     }
     r->set_connection(con);
     objecter->ms_fast_dispatch2(r);

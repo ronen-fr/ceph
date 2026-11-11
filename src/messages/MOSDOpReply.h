@@ -242,12 +242,7 @@ public:
       encode_trace(payload, features);
       if (header.version == HEAD_VERSION) {
         if (HAVE_FEATURE(features, SERVER_VAMPIRE)) {
-          // not encode(core_hint, ...): the std::optional<> overload has no
-          // features-aware form, and osd_core_hint_t needs them for its addrs
-          encode(core_hint.has_value(), payload);
-          if (core_hint) {
-            encode(*core_hint, payload, features);
-          }
+          encode(core_hint, payload);
         } else {
           header.version = 8;
         }
@@ -285,12 +280,7 @@ public:
       if (do_redirect)
 	decode(redirect, p);
       decode_trace(p);
-      bool has_core_hint;
-      decode(has_core_hint, p);
-      if (has_core_hint) {
-        core_hint.emplace();
-        decode(*core_hint, p);
-      }
+      decode(core_hint, p);
     } else if (header.version < 2) {
       ceph_osd_reply_head head;
       decode(head, p);

@@ -3107,9 +3107,7 @@ static ceph::ref_t<MOSDOpReply> reply_roundtrip(
 
 TEST(MOSDOpReply, core_hint_roundtrip)
 {
-  entity_addr_t a;
-  ASSERT_TRUE(a.parse("v2:127.0.0.1:6810/1234"));
-  const osd_core_hint_t hint{3, entity_addrvec_t(a)};
+  const osd_core_hint_t hint{3, 6810};
 
   auto reply = ceph::make_message<MOSDOpReply>();
   reply->set_core_hint(hint);
@@ -3117,8 +3115,7 @@ TEST(MOSDOpReply, core_hint_roundtrip)
   EXPECT_EQ(decoded->get_header().version, 9);
   ASSERT_TRUE(decoded->get_core_hint().has_value());
   EXPECT_EQ(*decoded->get_core_hint(), hint);
-  EXPECT_EQ(fmt::format("{}", *decoded->get_core_hint()),
-            "core 3 at v2:127.0.0.1:6810/1234");
+  EXPECT_EQ(fmt::format("{}", *decoded->get_core_hint()), "core 3 port 6810");
 }
 
 TEST(MOSDOpReply, no_core_hint)
@@ -3131,11 +3128,8 @@ TEST(MOSDOpReply, no_core_hint)
 
 TEST(MOSDOpReply, core_hint_dropped_for_old_peer)
 {
-  entity_addr_t a;
-  ASSERT_TRUE(a.parse("v2:127.0.0.1:6810/1234"));
-
   auto reply = ceph::make_message<MOSDOpReply>();
-  reply->set_core_hint(osd_core_hint_t{3, entity_addrvec_t(a)});
+  reply->set_core_hint(osd_core_hint_t{3, 6810});
   auto decoded = reply_roundtrip(
     reply, CEPH_FEATURES_ALL & ~CEPH_FEATURE_SERVER_VAMPIRE);
   EXPECT_EQ(decoded->get_header().version, 8);

@@ -34,9 +34,10 @@
  *
  * A Crimson OSD with per-core listeners (crimson_osd_core_listeners)
  * attaches to its op replies an osd_core_hint_t: the core owning the
- * op's PG, and the address of that core's listener. The session opens a
- * connection to the hinted core, and, once it is connected, sends the
- * PG's ops on it, saving the OSD a cross-core hop per op.
+ * op's PG, and the port of that core's listener. The session opens a
+ * connection to that port, on the OSD's address its main connection uses,
+ * and, once it is connected, sends the PG's ops on it, saving the OSD a
+ * cross-core hop per op.
  *
  * Reachability: a lossy client connection that cannot connect (e.g. a
  * firewall letting only the OSD's main ports through) is not reset by
@@ -154,16 +155,19 @@ struct unanswered_op_t {
 struct hint_outcome_t {
   enum class what_t {
     unchanged,  ///< the PG was hinted to this core already
-    mismatch,   ///< ignored: not an address of the OSD instance
+    invalid,    ///< ignored: no port, or no OSD address to use it on
     blocked,    ///< ignored: connecting to the core is not allowed now
     changed,    ///< the PG is hinted to a new core
   };
   what_t what = what_t::unchanged;
   /// changed: the core hinted before
   std::optional<uint32_t> prev_core;
-  /// changed: no connection to the hinted core yet. The caller opens one,
-  /// and adds it with add_core_con()
+  /// changed: no connection to the hinted core yet. The caller opens one
+  /// to 'addr', and adds it with add_core_con()
   bool connect = false;
+  /// connect: the address of the core's listener (the main connection's
+  /// msgr2 address, on the hinted port)
+  entity_addr_t addr;
 };
 
 /// canceled ops no longer awaited: (tid, PG)
@@ -283,9 +287,10 @@ public:
   using may_connect_fn_t = std::function<bool()>;
 
   /// note the core hinted for pgid in an op reply. main_con: the
-  /// session's main connection, whose OSD instance the hint must be of.
-  /// A hint asking for a new connection that may_connect() refuses is
-  /// not recorded: a later one will ask again
+  /// session's main connection, whose address (and OSD instance) the
+  /// core's listener is reached at, on the hinted port. A hint asking for
+  /// a new connection that may_connect() refuses is not recorded: a later
+  /// one will ask again
   hint_outcome_t apply_hint(const spg_t& pgid,
                             const osd_core_hint_t& hint,
                             const ConnectionRef& main_con,

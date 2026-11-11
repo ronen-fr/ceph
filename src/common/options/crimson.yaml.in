@@ -159,8 +159,8 @@ options:
   long_desc: The public messenger binds one more port (from the
              ms_bind_port_min..ms_bind_port_max range) per reactor core.
              A connection accepted on a core's port is served on that core.
-             Replies to client ops carry the address of the core owning the
-             PG, so that clients running Vampire or later can send ops
+             Replies to client ops name the core owning the PG and its
+             port, so that clients running Vampire or later can send ops
              directly to that core.
   see_also:
   - ms_bind_port_min
