@@ -41,3 +41,13 @@ add_executable(unittest_objecter_direct_reads
   )
 add_ceph_unittest(unittest_objecter_direct_reads)
 target_link_libraries(unittest_objecter_direct_reads osdc global ${BLKID_LIBRARIES})
+
+# unittest_objecter_core_route
+# SessionRoutes on its own; objecter_core_route.cc is compiled into
+# libcommon (see src/CMakeLists.txt)
+add_executable(unittest_objecter_core_route
+  test_objecter_core_route.cc
+  $<TARGET_OBJECTS:unit-main>
+  )
+add_ceph_unittest(unittest_objecter_core_route)
+target_link_libraries(unittest_objecter_core_route global ${BLKID_LIBRARIES})
