@@ -12,6 +12,10 @@ namespace {
 /// the last hold id: unique in the process, so that the timer of an
 /// ended hold never ends a newer one (whatever its session or Objecter)
 std::atomic<uint64_t> last_hold_seq{0};
+/// the last route generation: unique in the process, so that an op sent
+/// before its route was reset, or forgotten and created again, is never
+/// taken as in flight on the new one
+std::atomic<uint64_t> last_route_gen{0};
 } // namespace
 
 // -- events: connections
@@ -22,11 +26,16 @@ hint_followed_t SessionRoutes::follow_hint(const spg_t& pgid,
                                            time_point now,
                                            HostBlocks& blocks,
                                            const connect_fn_t& connect,
+                                           const for_each_op_fn_t& for_each_op,
                                            const config_t& cfg)
 {
   if (!cfg.enabled) {
     // not recorded: once the routing is turned on, the next hint connects
     return hint_followed_t{.what = hint_followed_t::what_t::invalid};
+  }
+  if (!active) {
+    // the OSD routes by cores: track the session's ops from now on
+    activate(now, for_each_op);
   }
   const auto existing = pg_routes.find(pgid);
   if (existing != pg_routes.end() &&
@@ -66,7 +75,8 @@ hint_followed_t SessionRoutes::follow_hint(const spg_t& pgid,
   }
   // (a route is created only for a hint followed)
   auto& route =
-    existing != pg_routes.end() ? existing->second : pg_routes[pgid];
+    existing != pg_routes.end() ? existing->second : route_for(pgid, now);
+  route.last_used = now;
   out.what = hint_followed_t::what_t::changed;
   out.prev_core = route.hinted_core;
   route.hinted_core = hint.core;
@@ -136,20 +146,16 @@ session_reset_t SessionRoutes::reset_session()
   out.cons.swap(core_cons);
   connecting.clear();
   probes.clear();
-  for (auto& [pgid, route] : pg_routes) {
-    route.hinted_core.reset();
-    route.core.reset();
-    route.end_switch_wait();
-    route.holding = false;
-    // what was in flight went with the connections
-    route.in_flight = 0;
-    ++route.gen;
-  }
   out.forgotten = forget_unanswered_if([](const unanswered_op_t&) {
     return true;
   });
+  // what was in flight went with the connections, and the holds end. (The
+  // ops keep their routes: their generations are no longer used)
+  pg_routes.clear();
   drained_holds.clear();
   drained_flag = false;
+  // until the OSD (maybe another instance) hints again
+  active = false;
   return out;
 }
 
@@ -160,6 +166,10 @@ SessionRoutes::periodic_timeouts_check(time_point now,
                                        const config_t& cfg)
 {
   timeouts_checked_t out;
+  if (!active) {
+    // nothing is tracked
+    return out;
+  }
   if (!unanswered.empty()) {
     out.forgotten = prune_unanswered(now, cfg);
   }
@@ -201,12 +211,23 @@ SessionRoutes::periodic_timeouts_check(time_point now,
     }
   }
 
-  for (const auto& [pgid, route] : pg_routes) {
+  for (auto i = pg_routes.begin(); i != pg_routes.end();) {
+    const auto& route = i->second;
     if (route.holding) {
       ++out.pgs_holding;
-    } else if (route.switch_due_since && route.busy()) {
-      ++out.pgs_switch_pending;
+    } else if (route.busy()) {
+      if (route.switch_due_since) {
+        ++out.pgs_switch_pending;
+      }
+    } else if (route.last_used + cfg.route_idle_ttl < now) {
+      // e.g. the PG moved to another OSD. (Were it to come back, its first
+      // op goes on the main connection, and the hint in its reply
+      // switches it again)
+      i = pg_routes.erase(i);
+      ++out.routes_pruned;
+      continue;
     }
+    ++i;
   }
   return out;
 }
@@ -221,7 +242,11 @@ routing_t SessionRoutes::route_or_hold(const spg_t& pgid,
   // a previous send (or hold) of op is void
   retire_op(op);
   routing_t out;
-  auto& route = pg_routes[pgid];
+  if (!active) {
+    // on the main connection, untracked (see SessionRoutes)
+    return out;
+  }
+  auto& route = route_for(pgid, now);
   if (!route.holding && route.switch_pending_since && route.busy() &&
       desired_core(route, cfg.enabled) != route.core &&
       cfg.grace > ceph::timespan::zero() &&
@@ -244,17 +269,18 @@ routing_t SessionRoutes::route_or_hold(const spg_t& pgid,
     out.hold_seq = route.hold_seq;
     return out;
   }
-  route_op(pgid, op, now, cfg, out);
+  route_op(pgid, route, op, now, cfg, out);
   return out;
 }
 
 void SessionRoutes::route_op(const spg_t& pgid,
+                             pg_route_t& route,
                              op_route_t& op,
                              time_point now,
                              const config_t& cfg,
                              routing_t& out)
 {
-  auto& route = pg_routes[pgid];
+  route.last_used = now;
   out.desired = desired_core(route, cfg.enabled);
   if (out.desired == route.core) {
     route.end_switch_wait();
@@ -438,6 +464,37 @@ bool SessionRoutes::is_held(const op_route_t& op) const
 
 // -- the rest
 
+pg_route_t& SessionRoutes::route_for(const spg_t& pgid, time_point now)
+{
+  auto [i, added] = pg_routes.try_emplace(pgid);
+  if (added) {
+    i->second.gen = ++last_route_gen;
+    i->second.last_used = now;
+  }
+  return i->second;
+}
+
+void SessionRoutes::activate(time_point now,
+                             const for_each_op_fn_t& for_each_op)
+{
+  ceph_assert(!active);
+  active = true;
+  if (!for_each_op) {
+    return;
+  }
+  // (some may not have been sent yet: their next route_or_hold() retires
+  // them first)
+  for_each_op([this, now](const spg_t& pgid, op_route_t& op) {
+    if (is_in_flight(op)) {
+      // visited already
+      return;
+    }
+    auto& route = route_for(pgid, now);
+    ++route.in_flight;
+    op = op_route_t{.pgid = pgid, .core = std::nullopt, .gen = route.gen};
+  });
+}
+
 std::optional<core_id_t> SessionRoutes::desired_core(const pg_route_t& route,
                                                      bool enabled) const
 {
@@ -538,7 +595,7 @@ void SessionRoutes::reset_core(core_id_t core, core_con_dropped_t& out)
       // all of its ops in flight were sent on that connection
       route.core.reset();
       route.in_flight = 0;
-      ++route.gen;
+      route.gen = ++last_route_gen;
       out.rerouted.insert(pgid);
     }
   }

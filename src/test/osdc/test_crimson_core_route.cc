@@ -77,6 +77,19 @@ protected:
     return a.get_port() == core_port ? core_con : other_con;
   };
 
+  /// the session's ops, as visited when the session activates (none,
+  /// unless a test sets them)
+  for_each_op_fn_t session_ops;
+
+  /// most tests start with an active session (its OSD hinted already). An
+  /// unusable hint activates it, with no other effect
+  void SetUp() override
+  {
+    ASSERT_EQ(hint_followed_t::what_t::invalid,
+              follow(spg_t(pg_t(99, 1)), hint(core, 0)).what);
+    ASSERT_TRUE(routes.is_active());
+  }
+
   static ConnectionRef make_con(const char* a)
   {
     auto c = ceph::make_ref<MockConnection>(0);
@@ -94,7 +107,7 @@ protected:
                          int now = 90)
   {
     return routes.follow_hint(pgid, h, main_con, at(now), blocks, connect,
-                              cfg);
+                              session_ops, cfg);
   }
 
   /// pgid is hinted to 'core', and connected to it
@@ -225,12 +238,13 @@ TEST_F(SessionRoutesTest, UnusableHintIsIgnored)
   // no port
   EXPECT_EQ(invalid, follow(pg, hint(core, 0)).what);
   // no main connection, whose address to use
-  EXPECT_EQ(invalid, routes.follow_hint(pg, hint(core), nullptr, at(90),
-                                        blocks, connect, cfg).what);
+  EXPECT_EQ(invalid, routes.follow_hint(
+    pg, hint(core), nullptr, at(90), blocks, connect, session_ops,
+    cfg).what);
   // a main connection without a msgr2 address
   EXPECT_EQ(invalid, routes.follow_hint(
     pg, hint(core), make_con("v1:127.0.0.1:6789/1234"), at(90), blocks,
-    connect, cfg).what);
+    connect, session_ops, cfg).what);
   EXPECT_EQ(nullptr, routes.route_of(pg));
   EXPECT_EQ(0u, connect_calls);
 }
@@ -565,7 +579,7 @@ TEST_F(SessionRoutesTest, CoreDropForgetsTheCanceledOpsSentOnIt)
   EXPECT_TRUE(route_of(pg).busy());
   EXPECT_EQ((forgotten_t{{1, pg}}), routes.reset_session().forgotten);
   EXPECT_FALSE(routes.has_unanswered());
-  EXPECT_FALSE(route_of(pg).busy());
+  EXPECT_EQ(nullptr, routes.route_of(pg));
 }
 
 TEST_F(SessionRoutesTest, CanceledOpOfADroppedConIsNotAwaited)
@@ -851,17 +865,145 @@ TEST_F(SessionRoutesTest, ResetSessionForgetsEverything)
   EXPECT_EQ(0u, routes.num_core_cons());
   EXPECT_FALSE(routes.has_drained_holds());
   EXPECT_TRUE(routes.release_drained_holds(at(121)).empty());
-  EXPECT_FALSE(route_of(pg).hinted_core);
-  EXPECT_FALSE(route_of(pg).holding);
+  EXPECT_FALSE(routes.is_active());
+  EXPECT_EQ(nullptr, routes.route_of(pg));
+  EXPECT_EQ(nullptr, routes.route_of(pg2));
   EXPECT_FALSE(routes.is_held(held));
   // nothing is in flight any more: the Objecter resends it all
-  EXPECT_EQ(0u, route_of(pg2).in_flight);
+  EXPECT_FALSE(routes.is_in_flight(other));
   routes.retire_op(other);
-  EXPECT_EQ(0u, route_of(pg2).in_flight);
 
+  // until the OSD hints again, ops are not tracked
   op_route_t b;
-  route(b, 130);
-  EXPECT_FALSE(b.core);
+  EXPECT_EQ(routing_t::what_t::stayed, route(b, 130).what);
+  EXPECT_FALSE(b.pgid);
+  EXPECT_EQ(nullptr, routes.route_of(pg));
+
+  // the next hint tracks the session's ops again. One sent before the
+  // reset is not taken as in flight on the new route
+  session_ops = [&](const op_visitor_t& visit) { visit(pg, b); };
+  follow(pg, hint(core), 131);
+  EXPECT_TRUE(routes.is_active());
+  EXPECT_TRUE(routes.is_in_flight(b));
+  EXPECT_EQ(1u, route_of(pg).in_flight);
+  routes.retire_op(a);
+  routes.retire_op(held);
+  EXPECT_EQ(1u, route_of(pg).in_flight);
+}
+
+// -- activation (the session starts inactive)
+
+namespace {
+class InactiveSessionRoutesTest : public SessionRoutesTest {
+protected:
+  void SetUp() override {}
+};
+} // namespace
+
+TEST_F(InactiveSessionRoutesTest, OpsAreNotTracked)
+{
+  EXPECT_FALSE(routes.is_active());
+  op_route_t op;
+  auto out = route(op, 100);
+  EXPECT_EQ(routing_t::what_t::stayed, out.what);
+  EXPECT_FALSE(out.core);
+  EXPECT_FALSE(out.con);
+  EXPECT_FALSE(op.pgid);
+  EXPECT_FALSE(routes.is_in_flight(op));
+  EXPECT_EQ(nullptr, routes.route_of(pg));
+  EXPECT_FALSE(routes.retire_canceled_op(1, op, at(101)));
+  EXPECT_FALSE(routes.has_unanswered());
+  EXPECT_EQ(0u, check(102).routes_pruned);
+}
+
+TEST_F(InactiveSessionRoutesTest, HintWhileRoutingOffDoesNotActivate)
+{
+  cfg.enabled = false;
+  follow(pg, hint(core));
+  EXPECT_FALSE(routes.is_active());
+}
+
+TEST_F(InactiveSessionRoutesTest, UnusableHintActivates)
+{
+  EXPECT_EQ(hint_followed_t::what_t::invalid, follow(pg, hint(core, 0)).what);
+  EXPECT_TRUE(routes.is_active());
+  EXPECT_EQ(0u, connect_calls);
+  EXPECT_EQ(nullptr, routes.route_of(pg));
+}
+
+TEST_F(InactiveSessionRoutesTest, FirstHintCountsTheSessionOps)
+{
+  op_route_t a, b, c, d;
+  route(a, 100);  // not tracked
+  route(b, 100, &pg2);
+  // (a visited twice is counted once)
+  session_ops = [&](const op_visitor_t& visit) {
+    visit(pg, a);
+    visit(pg2, b);
+    visit(pg, a);
+  };
+  hinted_and_connected();
+  EXPECT_TRUE(routes.is_active());
+  EXPECT_TRUE(routes.is_in_flight(a));
+  EXPECT_FALSE(a.core);
+  EXPECT_EQ(1u, route_of(pg).in_flight);
+  EXPECT_EQ(1u, route_of(pg2).in_flight);
+
+  // a is on the main connection: pg switches once it drains
+  EXPECT_EQ(routing_t::what_t::pending, route(c, 101).what);
+  routes.retire_op(a);
+  routes.retire_op(c);
+  EXPECT_EQ(routing_t::what_t::switched, route(d, 102).what);
+}
+
+// -- idle routes
+
+TEST_F(SessionRoutesTest, IdleRoutesArePruned)
+{
+  cfg.route_idle_ttl = ceph::timespan(60s);
+  op_route_t a, b, c;
+  route(a, 100);
+  routes.retire_op(a);  // pg is idle since 100
+  route(b, 100, &pg2);  // pg2 is busy
+  EXPECT_EQ(0u, check(160).routes_pruned);
+  EXPECT_EQ(1u, check(161).routes_pruned);
+  EXPECT_EQ(nullptr, routes.route_of(pg));
+  EXPECT_EQ(1u, route_of(pg2).in_flight);
+
+  // still tracked
+  route(c, 162);
+  EXPECT_EQ(1u, route_of(pg).in_flight);
+}
+
+TEST_F(SessionRoutesTest, HoldingRoutesAreNotPruned)
+{
+  cfg.grace = ceph::timespan(10s);
+  cfg.route_idle_ttl = ceph::timespan(60s);
+  op_route_t a, held;
+  make_pending(a);
+  route(held, 120);
+  routes.retire_op(a);  // drained, but the hold is not released yet
+  EXPECT_EQ(0u, check(500).routes_pruned);
+  EXPECT_EQ(1u, check(500).pgs_holding);
+  EXPECT_EQ(1u, routes.release_drained_holds(at(501)).size());
+}
+
+TEST_F(SessionRoutesTest, OpOfAForgottenRouteIsNotInFlight)
+{
+  cfg.route_idle_ttl = ceph::timespan(60s);
+  hinted_and_connected();
+  op_route_t a, b;
+  route(a, 100);
+  ASSERT_EQ(std::optional<core_id_t>(core), a.core);
+  // a's connection resets: the Objecter is to resend a
+  routes.drop_core_con(core_con, drop_why_t::reset, at(101), blocks);
+  EXPECT_EQ(1u, check(200).routes_pruned);
+
+  // a new route for pg, before a is resent
+  route(b, 201);
+  EXPECT_FALSE(routes.is_in_flight(a));
+  routes.retire_op(a);
+  EXPECT_EQ(1u, route_of(pg).in_flight);
 }
 
 // -- stats
