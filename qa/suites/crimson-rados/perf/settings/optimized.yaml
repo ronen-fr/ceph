@@ -9,7 +9,7 @@ overrides:
         debug filestore: "0/0"
         debug journal: "0/0"
         debug ms: "0/0"
-        debug osd: "0/0"
+        debug osd: 20
       global:
         auth client required: none
         auth cluster required: none
@@ -37,7 +37,7 @@ overrides:
         debug journaler: "0/0"
         debug objectcacher: "0/0"
         debug client: "0/0"
-        debug osd: "0/0"
+        debug osd: 20
         debug optracker: "0/0"
         debug objclass: "0/0"
         debug filestore: "0/0"
